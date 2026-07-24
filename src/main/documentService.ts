@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
-import type { OperationHistoryItem, OperationHistoryScope } from '../core/operationJournal';
+import type { OperationHistoryScope } from '../core/operationJournal';
 import {
   DocumentSystemContractError,
   documentCommandMutatesProtectedSystemTagDefinition,
@@ -338,37 +338,16 @@ export class DocumentService implements DocumentSystemHost {
     origin: OperationHistoryScope,
     query: OperationHistoryQuery,
   ): HistoryMutationGuardContext {
-    const history = this.core.operationHistory({ action: 'list', origin, limit: 100 });
-    const topOperationId = action === 'undo'
-      ? history.cursor?.topUndoOperationId
-      : history.cursor?.topRedoOperationId;
-    const canExecute = action === 'undo' ? history.canUndo : history.canRedo;
-    if (!canExecute) {
-      return { status: 'none', targets: [] };
-    }
-    if (!topOperationId) {
-      return query.operationId
-        ? { status: 'none', targets: [] }
-        : { status: 'unknown', targets: [] };
-    }
-    if (query.operationId && query.operationId !== topOperationId) return { status: 'none', targets: [] };
-
-    const items = history.items ?? [];
-    const topIndex = items.findIndex((item) => item.operationId === topOperationId);
-    if (topIndex < 0) return { status: 'unknown', targets: [] };
-
-    const requestedSteps = boundedHistorySteps(query.steps);
-    if (requestedSteps === 0) return { status: 'none', targets: [] };
-    const direction = action === 'undo' ? 1 : -1;
-    const targets: OperationHistoryItem[] = [];
-    for (let step = 0; step < requestedSteps; step += 1) {
-      const item = items[topIndex + (step * direction)];
-      if (!item) break;
-      targets.push(item);
-    }
+    const preflight = this.core.preflightOperationHistory({
+      action,
+      origin,
+      steps: query.steps,
+      operationId: query.operationId,
+    });
+    if (preflight.status !== 'known') return preflight;
     return {
       status: 'known',
-      targets: targets.map((item) => ({
+      targets: preflight.targets.map((item) => ({
         operationId: item.operationId,
         affectedNodeIds: item.affectedNodeIds,
         affectedNodeCount: item.affectedNodeCount,
@@ -1328,12 +1307,6 @@ function historyOrigin(value: unknown, fallback?: DocumentMutationMeta['origin']
   if (fallback === 'agent') return 'agent';
   if (fallback === 'user') return 'user';
   return 'all';
-}
-
-function boundedHistorySteps(value: number | undefined) {
-  if (value === undefined) return 1;
-  const bounded = Math.max(1, Math.min(value, 10));
-  return Number.isNaN(bounded) ? 0 : Math.ceil(bounded);
 }
 
 function historyChangeOrigin(value: unknown): DocumentProjectionChangedEvent['origin'] {

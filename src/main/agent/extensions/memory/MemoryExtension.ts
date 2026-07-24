@@ -22,7 +22,7 @@ import type {
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
-import { TAG_DAY_ID, type DocumentProjection, type NodeProjection } from '../../../../core/types';
+import { TAG_DAY_ID, TRASH_ID, type DocumentProjection, type NodeProjection } from '../../../../core/types';
 import type { DocumentMutationMeta } from '../../../documentService';
 import { uuidV7 } from '../../uuid';
 import {
@@ -603,9 +603,8 @@ function memoryGraphMayChange(
   generatedNodeIds: ReadonlySet<string>,
 ): boolean {
   const reservedTagIds = new Set<string>(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
-  const argumentStrings = deepStrings(args);
-  if (argumentStrings.some((value) => reservedTagIds.has(value))) return true;
   const index = new Map(projection.nodes.map((node) => [node.id, node]));
+  if (commandUsesReservedTag(command, args, projection.nodes, index, reservedTagIds)) return true;
   const reservedTaggedNodes = projection.nodes.filter((node) => node.tags.some((tagId) => reservedTagIds.has(tagId)));
   const reservedTaggedIds = new Set(reservedTaggedNodes.map((node) => node.id));
   const protectedAncestors = new Set<string>();
@@ -839,11 +838,95 @@ function historyMutationMayChangeMemory(
   return false;
 }
 
-function deepStrings(value: unknown): string[] {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(deepStrings);
-  if (!value || typeof value !== 'object') return [];
-  return Object.values(value as Record<string, unknown>).flatMap(deepStrings);
+function commandUsesReservedTag(
+  command: DocumentCommand,
+  args: Readonly<Record<string, unknown>>,
+  nodes: readonly NodeProjection[],
+  index: ReadonlyMap<string, NodeProjection>,
+  reservedTagIds: ReadonlySet<string>,
+): boolean {
+  if (
+    (command === 'create_tagged_node'
+      || command === 'apply_tag'
+      || command === 'remove_tag'
+      || command === 'batch_apply_tag')
+    && typeof args.tagId === 'string'
+    && reservedTagIds.has(args.tagId)
+  ) {
+    return true;
+  }
+
+  const activeDefinitions = nodes.filter((node) => (
+    node.type === 'tagDef' && !projectionNodeIsInTrash(node, index)
+  ));
+  const firstDefinitionByName = new Map<string, string>();
+  const materializedDefinitionByName = new Map<string, string>();
+  for (const definition of activeDefinitions) {
+    const key = definitionNameKey(definition.content.text);
+    if (!key) continue;
+    if (!firstDefinitionByName.has(key)) firstDefinitionByName.set(key, definition.id);
+    materializedDefinitionByName.set(key, definition.id);
+  }
+  const resolvesToReserved = (name: unknown, definitions: ReadonlyMap<string, string>) => (
+    typeof name === 'string' && reservedTagIds.has(definitions.get(definitionNameKey(name)) ?? '')
+  );
+  const materializedNameIsReserved = (name: unknown) => resolvesToReserved(name, materializedDefinitionByName);
+
+  switch (command) {
+    case 'create_tag_and_tagged_node':
+      return resolvesToReserved(args.name, firstDefinitionByName);
+    case 'create_nodes_from_tree':
+      return createNodeTreesUseReservedTag(args.nodes, materializedNameIsReserved);
+    case 'paste_nodes_into_node':
+      return pasteRowMetaUsesReservedTag(args.firstMeta, materializedNameIsReserved)
+        || createNodeTreesUseReservedTag(args.children, materializedNameIsReserved)
+        || createNodeTreesUseReservedTag(args.siblingsAfter, materializedNameIsReserved);
+    default:
+      return false;
+  }
+}
+
+function createNodeTreesUseReservedTag(
+  value: unknown,
+  nameIsReserved: (name: unknown) => boolean,
+): boolean {
+  if (!Array.isArray(value)) return false;
+  const pending = [...value];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const tree = entry as Record<string, unknown>;
+    if (pasteRowMetaUsesReservedTag(tree, nameIsReserved)) return true;
+    if (Array.isArray(tree.children)) pending.push(...tree.children);
+  }
+  return false;
+}
+
+function pasteRowMetaUsesReservedTag(
+  value: unknown,
+  nameIsReserved: (name: unknown) => boolean,
+): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const tags = (value as Record<string, unknown>).tags;
+  return Array.isArray(tags) && tags.some(nameIsReserved);
+}
+
+function projectionNodeIsInTrash(
+  node: NodeProjection,
+  index: ReadonlyMap<string, NodeProjection>,
+): boolean {
+  let current: NodeProjection | undefined = node;
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    if (current.id === TRASH_ID) return true;
+    visited.add(current.id);
+    current = current.parentId ? index.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+function definitionNameKey(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 function addDescendants(rootId: string, index: ReadonlyMap<string, NodeProjection>, output: Set<string>): void {

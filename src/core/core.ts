@@ -150,6 +150,11 @@ export type {
   OperationHistoryScope,
 };
 
+export type OperationHistoryPreflightResult =
+  | { status: 'none'; targets: readonly [] }
+  | { status: 'known'; targets: readonly OperationHistoryEntry[] }
+  | { status: 'unknown'; targets: readonly [] };
+
 export interface CoreRevisionDelta {
   revision: number;
   changedNodeIds: string[];
@@ -2890,6 +2895,24 @@ export class Core {
     }, this.operationStackState(origin));
   }
 
+  preflightOperationHistory(
+    query: OperationHistoryQuery & { action: 'undo' | 'redo' },
+  ): OperationHistoryPreflightResult {
+    const origin = query.origin ?? 'agent';
+    const requestedSteps = boundedOperationHistorySteps(query.steps);
+    if (requestedSteps === 0) return { status: 'none', targets: [] };
+    const values = this.loro.historyStackValues(origin, query.action, requestedSteps);
+    if (!values) return { status: 'unknown', targets: [] };
+    if (values.length === 0) return { status: 'none', targets: [] };
+
+    const targets = values.map((value) => this.resolveOperationHistoryStackValue(value));
+    if (query.operationId && targets[0]?.operationId !== query.operationId) {
+      return { status: 'none', targets: [] };
+    }
+    if (targets.some((target) => !target)) return { status: 'unknown', targets: [] };
+    return { status: 'known', targets: targets as OperationHistoryEntry[] };
+  }
+
   withOrigin<T>(origin: CommitOrigin, fn: () => T, metadata: CoreTransactionMetadata = {}): T {
     this.commitOriginStack.push(commitOriginFor(origin));
     this.commitMetadataStack.push(metadata);
@@ -3136,7 +3159,7 @@ export class Core {
   ): OperationHistoryResult {
     const undoing = action === 'undo';
     const changed: OperationHistoryItem[] = [];
-    const requestedSteps = Math.max(1, Math.min(steps, 10));
+    const requestedSteps = boundedOperationHistorySteps(steps);
 
     for (let index = 0; index < requestedSteps; index += 1) {
       const stackBefore = this.operationStackState(origin);
@@ -4675,6 +4698,11 @@ function summarizeOperationHistoryAction(origin: 'agent' | 'user' | 'system', ac
   if (origin === 'agent') return `Agent ${action.replace(/_/g, ' ')}.`;
   if (origin === 'user') return `User ${action.replace(/_/g, ' ')}.`;
   return `System ${action.replace(/_/g, ' ')}.`;
+}
+
+function boundedOperationHistorySteps(value: number | undefined) {
+  const bounded = Math.max(1, Math.min(value ?? 1, 10));
+  return Number.isNaN(bounded) ? 0 : Math.ceil(bounded);
 }
 
 function focus(nodeId: string, options: FocusOptions = {}): FocusHint {

@@ -193,12 +193,20 @@ Node mutation carries exact Thread, Turn, and Item causation. The mutation
 classifier evaluates command owners, targets, and destination parents: creating
 an ordinary sibling directly under a Daily Note is not a Memory mutation, while
 writing beneath a canonical container or changing a container/date ancestor is.
+Tag-bearing commands resolve names through the same normalized active-definition
+lookup as Core, including nested tree and paste metadata; only a name that
+actually resolves to a protected Memory tag is sensitive. Arbitrary text that
+mentions a reserved tag name or ID is not classified as a tag mutation.
 Applying or removing `#day` is protected only on an ancestor of reserved-tagged
 Memory, where it can create or destroy canonical identity. Agent
 `outline_undo_stack` undo/redo carries the same causation and passes through the
-same coordinator. Before execution, DocumentService resolves the actual stack
-targets and their exact affected Node IDs. At the original commit boundary, the
-guard also persists an internal monotonic `affectsMemory` bit in the operation
+same coordinator. Core mirrors each origin-specific Loro UndoManager through its
+push/pop callbacks, preserving grouping, retention, redo clearing, and
+cross-scope metadata gaps. Before execution, DocumentService preflights the
+requested targets from that authoritative stack order, never journal adjacency,
+and passes their exact affected Node IDs. A mirror/top mismatch fails closed. At
+the original commit boundary, the guard also persists an internal monotonic
+`affectsMemory` bit in the operation
 journal and Loro undo value; a grouped operation remains sensitive if any child
 mutation touched Memory. Execution checks both that durable classification and
 the current graph, so de-canonicalized, deleted, restored, and newly canonical

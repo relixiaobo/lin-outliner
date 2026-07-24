@@ -449,6 +449,53 @@ describe('Codex Memory contracts', () => {
     }, projection)).toThrow('not authorized');
   });
 
+  test('resolves reserved Memory tag names only from structured tag fields', () => {
+    const projection = memoryProjection();
+    const extension = new MemoryExtension(
+      memoryStore(),
+      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
+    );
+    const richText = (text: string) => ({ text, marks: [], inlineRefs: [] });
+    const tree = (tags: string[] = [], children: unknown[] = []) => ({
+      content: richText('Tree node'),
+      tags,
+      children,
+    });
+
+    expect(extension.authorizeMutation('create_tag_and_tagged_node', {
+      parentId: 'ordinary:1',
+      content: richText('Named tag'),
+      name: ' D-MEMORY ',
+    }, {}, projection)).toBe(true);
+    expect(extension.authorizeMutation('create_nodes_from_tree', {
+      parentId: 'ordinary:1',
+      nodes: [tree([], [tree(['d-belief'])])],
+    }, {}, projection)).toBe(true);
+
+    const pasteCases = [
+      { firstMeta: { tags: ['d-question'] }, children: [], siblingsAfter: [] },
+      { firstMeta: {}, children: [tree([], [tree(['d-guidance'])])], siblingsAfter: [] },
+      { firstMeta: {}, children: [], siblingsAfter: [tree(['d-episode'])] },
+    ];
+    for (const args of pasteCases) {
+      expect(extension.authorizeMutation('paste_nodes_into_node', {
+        nodeId: 'ordinary:1',
+        content: richText('Paste'),
+        ...args,
+      }, {}, projection)).toBe(true);
+    }
+
+    expect(extension.authorizeMutation('create_node', {
+      parentId: 'ordinary:1',
+      text: 'Ordinary text mentioning tag:d-memory and d-memory',
+    }, {}, projection)).toBe(false);
+    expect(extension.authorizeMutation('create_tag_and_tagged_node', {
+      parentId: 'ordinary:1',
+      content: richText('d-memory appears only in content'),
+      name: 'ordinary-tag',
+    }, {}, projection)).toBe(false);
+  });
+
   test('rejects feature Turns that would move stray tagged content into the canonical graph', () => {
     const store = memoryStore();
     const projection = memoryProjection();

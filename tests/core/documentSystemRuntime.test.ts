@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LIBRARY_ID, SCHEMA_ID, TRASH_ID } from '../../src/core/types';
 import type { Thread, Turn } from '../../src/core/agent/protocol';
+import { MemoryExtension } from '../../src/main/agent/extensions/memory/MemoryExtension';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { MemoryControlStore } from '../../src/main/agent/extensions/memory/MemoryControlStore';
 import { Phase1 } from '../../src/main/agent/extensions/memory/Phase1';
@@ -264,6 +265,76 @@ describe('Document system runtime', () => {
     expect(history.items?.[0]).toMatchObject({ tool: 'node_create', causation });
   });
 
+  test('persists Memory sensitivity for commands that resolve reserved tag names', async () => {
+    const instance = await service();
+    const timeline = new TimelineMemoryStore(instance);
+    const control = new MemoryControlStore(
+      ':memory:',
+      new Database(':memory:') as unknown as SqliteDatabase,
+    );
+    const extension = new MemoryExtension(control, timeline);
+    const richText = (text: string) => ({ text, marks: [], inlineRefs: [] });
+    const taggedTree = (tag: string, children: unknown[] = []) => ({
+      content: richText(`Tagged ${tag}`),
+      tags: [tag],
+      children,
+    });
+
+    try {
+      await timeline.ensureTagDefinitions();
+      instance.setMutationGuard((command, args, meta, projection) => ({
+        affectsMemory: extension.authorizeMutation(command, args, meta, projection),
+      }));
+      const todayId = instance.getProjection().todayId;
+
+      await instance.handle('create_tag_and_tagged_node', {
+        parentId: todayId,
+        content: richText('Daily Memory'),
+        name: ' D-MEMORY ',
+      }, { origin: 'user', operationId: 'op:named-memory-tag', tool: 'node_create' });
+      await instance.handle('create_nodes_from_tree', {
+        parentId: todayId,
+        nodes: [{ content: richText('Tree root'), children: [taggedTree('d-belief')] }],
+      }, { origin: 'user', operationId: 'op:named-memory-tree', tool: 'node_create' });
+      const target = await instance.handle('create_node', {
+        parentId: todayId,
+        index: null,
+        text: 'Paste target mentioning tag:d-memory',
+      }, { origin: 'user', operationId: 'op:ordinary-tag-text', tool: 'node_create' }) as {
+        focus?: { nodeId?: string };
+      };
+      await instance.handle('paste_nodes_into_node', {
+        nodeId: target.focus?.nodeId,
+        content: richText('Pasted Memory'),
+        firstMeta: { tags: ['d-question'] },
+        children: [{ content: richText('Child'), children: [taggedTree('d-guidance')] }],
+        siblingsAfter: [taggedTree('d-episode')],
+      }, { origin: 'user', operationId: 'op:named-memory-paste', tool: 'node_edit' });
+
+      const history = await instance.operationHistory({ action: 'list', origin: 'user', limit: 20 });
+      const byId = new Map((history.items ?? []).map((item) => [item.operationId, item]));
+      expect(byId.get('op:named-memory-tag')?.affectsMemory).toBe(true);
+      expect(byId.get('op:named-memory-tree')?.affectsMemory).toBe(true);
+      expect(byId.get('op:named-memory-paste')?.affectsMemory).toBe(true);
+      expect(byId.get('op:ordinary-tag-text')?.affectsMemory).toBe(false);
+
+      expect((await instance.operationHistory(
+        { action: 'undo', origin: 'user' },
+        { origin: 'user', tool: 'outline_undo_stack' },
+      )).count).toBe(1);
+      await expect(instance.operationHistory(
+        { action: 'redo', origin: 'user' },
+        { origin: 'agent', tool: 'outline_undo_stack' },
+      )).rejects.toThrow('Memory Nodes can be changed only');
+      expect((await instance.operationHistory(
+        { action: 'redo', origin: 'user' },
+        { origin: 'user', tool: 'outline_undo_stack' },
+      )).count).toBe(1);
+    } finally {
+      control.close();
+    }
+  });
+
   test('routes mutating operation history through coordination and the Memory guard with causation', async () => {
     const instance = await service();
     const causation = { threadId: uuidV7(), turnId: uuidV7(), itemId: uuidV7() };
@@ -330,6 +401,51 @@ describe('Document system runtime', () => {
     expect(observedTargets[1]).toHaveLength(2);
     expect(observedTargets[1]?.[0]).toContain(first.focus?.nodeId);
     expect(observedTargets[1]?.[1]).toContain(second.focus?.nodeId);
+  });
+
+  test('preflights branched multi-step history from the authoritative Loro stack', async () => {
+    const instance = await service();
+    const rootId = instance.getProjection().rootId;
+    instance.setMutationGuard((_command, _args, meta) => ({
+      affectsMemory: meta.operationId === 'op:memory-a',
+    }));
+    await instance.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'A Memory-sensitive',
+    }, { origin: 'user', operationId: 'op:memory-a', tool: 'node_create' });
+    await instance.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'B ordinary',
+    }, { origin: 'user', operationId: 'op:ordinary-b', tool: 'node_create' });
+    expect((await instance.operationHistory(
+      { action: 'undo', origin: 'user' },
+      { origin: 'user', tool: 'outline_undo_stack' },
+    )).undone?.[0]?.operationId).toBe('op:ordinary-b');
+    await instance.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'C ordinary',
+    }, { origin: 'user', operationId: 'op:ordinary-c', tool: 'node_create' });
+
+    let preflightTargets: Array<{ operationId: string; affectsMemory?: boolean }> = [];
+    instance.setMutationGuard((command, args) => {
+      if (command === 'undo') {
+        preflightTargets = (args.historyMutation as {
+          targets: Array<{ operationId: string; affectsMemory?: boolean }>;
+        }).targets;
+      }
+    });
+    expect((await instance.operationHistory(
+      { action: 'undo', origin: 'user', steps: 2 },
+      { origin: 'agent', tool: 'outline_undo_stack' },
+    )).count).toBe(2);
+    expect(preflightTargets.map((target) => target.operationId)).toEqual([
+      'op:ordinary-c',
+      'op:memory-a',
+    ]);
+    expect(preflightTargets.map((target) => target.affectsMemory)).toEqual([false, true]);
   });
 
   test('fails closed when an executable all-origin stack item has no journal metadata', async () => {

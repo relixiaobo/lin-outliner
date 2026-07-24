@@ -581,7 +581,12 @@ or destination applies/removes a reserved tag, mutates a descendant of a
 canonical container, or changes ancestry so content enters or leaves the
 canonical hierarchy. Creating an ordinary sibling directly under the Daily Note
 is not a Memory mutation merely because that Daily Note contains a Memory
-container. Applying or removing `#day` is a Memory-graph mutation only when its
+container. Commands that accept tag names use the same trimmed, case-normalized
+active-definition resolution as their Core mutation, including recursive
+`CreateNodeTree.tags` and paste `firstMeta`, `children`, and `siblingsAfter`.
+They are Memory-sensitive only when that structured tag field resolves to a
+fixed reserved tag ID; arbitrary content strings are never scanned as tag
+semantics. Applying or removing `#day` is a Memory-graph mutation only when its
 target is an ancestor of reserved-tagged Memory and can therefore create or
 destroy canonical identity. The Node command path preflights that entire change
 set and validates command causation: direct renderer/user edits, explicit
@@ -602,9 +607,16 @@ can still edit the Nodes directly.
 
 `outline_undo_stack` undo/redo uses the same DocumentService mutation
 coordinator and causation metadata as every other Agent Node mutation. History
-list remains read-only. Before mutation, DocumentService resolves the actual
-origin-specific undo/redo stack targets and passes each target's complete
-`affectedNodeIds` to the Memory guard. Every original document commit also
+list remains read-only. Each origin-specific Loro UndoManager maintains an
+exact host mirror from its push/pop callbacks. The mirror applies Loro's
+100-entry retention, treats an explicit undo group as one stack entry, clears
+redo with the real manager, and retains metadata-less entries introduced by a
+different scoped manager. Before mutation, Core verifies the mirror top against
+the real UndoManager and returns the requested targets in actual execution
+order; DocumentService never infers later targets from adjacent journal rows.
+Any divergence or unresolved executable value is `unknown` and fails closed.
+DocumentService passes each known target's complete `affectedNodeIds` to the
+Memory guard. Every original document commit also
 persists an internal boolean `affectsMemory` in its journal entry and Loro undo
 value. Transaction and text-edit grouping merge this bit monotonically: one
 Memory-sensitive child makes the complete undo step sensitive. Execution checks
