@@ -257,16 +257,11 @@ test.describe('workspace layout resizing', () => {
 
     const tagBar = page.locator('.panel-title-toolbar-row .tag-bar');
     await expect(tagBar.locator('.tag-badge')).toHaveCount(11);
-    const metrics = await tagBar.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        clientWidth: element.clientWidth,
-        height: rect.height,
-        scrollWidth: element.scrollWidth,
-      };
-    });
-    expect(metrics.height).toBeGreaterThan(20);
-    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    // Badge projection can settle before the narrow-rail clamp transition.
+    await expect.poll(async () => tagBar.evaluate((element) => (
+      element.scrollWidth <= element.clientWidth + 1
+    ))).toBe(true);
+    expect(await tagBar.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(20);
   });
 
   test('inline row tag bars wrap without overflowing plain text rows', async ({ page }) => {
@@ -292,24 +287,15 @@ test.describe('workspace layout resizing', () => {
 
     const inlineTagBar = row(page, ids.alpha).locator('.row-inline-tag-slot .tag-bar').first();
     await expect(inlineTagBar.locator('.tag-badge')).toHaveCount(10);
-    const metrics = await inlineTagBar.evaluate((element, betaId) => {
+    await expect.poll(async () => inlineTagBar.evaluate((element, betaId) => {
       const rect = element.getBoundingClientRect();
       const nextRowRect = document.querySelector(`[data-node-id="${betaId}"] > .row`)?.getBoundingClientRect();
       const rowRect = element.closest('[data-node-id]')?.getBoundingClientRect();
-      return {
-        bottom: rect.bottom,
-        clientWidth: element.clientWidth,
-        height: rect.height,
-        nextRowTop: nextRowRect?.top ?? rect.bottom,
-        right: rect.right,
-        rowRight: rowRect?.right ?? rect.right,
-        scrollWidth: element.scrollWidth,
-      };
-    }, ids.beta);
-    expect(metrics.height).toBeGreaterThan(20);
-    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
-    expect(metrics.right).toBeLessThanOrEqual(metrics.rowRight + 1);
-    expect(metrics.bottom).toBeLessThanOrEqual(metrics.nextRowTop + 1);
+      return rect.height > 20
+        && element.scrollWidth <= element.clientWidth + 1
+        && rect.right <= (rowRect?.right ?? rect.right) + 1
+        && rect.bottom <= (nextRowRect?.top ?? rect.bottom) + 1;
+    }, ids.beta)).toBe(true);
   });
 
   test('window chrome toggles align to the traffic lights and stay icon-only', async ({ page }) => {

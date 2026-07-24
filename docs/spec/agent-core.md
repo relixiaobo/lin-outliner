@@ -203,6 +203,8 @@ the history source of truth. Large binary tool outputs live in the Thread-owned
 payload directory and canonical Items retain file references. Ephemeral Threads
 remain memory-only except for temporary payload files, which follow the same
 Thread deletion lifecycle and are removed when the service closes.
+Forks copy only payloads referenced by inherited Items into their own directory,
+so provenance remains shared while payload deletion remains Thread-local.
 
 Startup reconciles catalog and history projections from rollouts. A Turn left
 `inProgress` by host restart is completed as `interrupted`; every unfinished

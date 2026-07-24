@@ -90,10 +90,12 @@ Thread-owned content-addressed payload store. The Item keeps only a bounded
 renderer/history projection plus an immutable `outputRef` containing digest,
 MIME type, byte length, and summary. `thread/item/output/read` validates the
 requested Thread/Turn/Item/ref tuple and byte length before returning text.
-Forked Items retain origin provenance, so copied history resolves the same
-immutable payload without duplicating it. Payload reads never become provider
-history authority; prior model messages are rebuilt from canonical Items and
-their full output references.
+Forked Items retain origin provenance while materializing referenced payloads
+under the fork's own Thread directory. Payload reads resolve through the
+requested Thread, so deleting the source Thread cannot invalidate inherited
+text or image results. Payload reads never become provider history authority;
+prior model messages are rebuilt from canonical Items and their full output
+references.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image
@@ -102,7 +104,9 @@ owning Thread's payload directory and the Item stores only that file reference.
 Base64 length is validated before decoding, with independent per-image and
 per-tool-call byte budgets. Invalid, oversized, over-count, and over-total image
 outputs produce one structured omission summary instead of bytes or unbounded
-Item entries. Deleting the Thread deletes the payload directory.
+Item entries. Forking rewrites Thread-owned image references to the fork's own
+payload directory while leaving external readable file paths unchanged.
+Deleting a Thread deletes only that Thread's payload directory.
 
 ## Tools And Causation
 

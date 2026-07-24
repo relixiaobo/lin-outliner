@@ -7,7 +7,7 @@ import type {
   FilePreviewPresentation,
   OutlinerPanelView,
   PanelView,
-  ThreadDebugPanelState,
+  ThreadRunDetailsPanelState,
   WorkspaceContentPanelState,
   WorkspaceLayout,
   WorkspacePanelState,
@@ -124,13 +124,13 @@ function filePreviewPanel(
   return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
 }
 
-function threadDebugPanel(
+function threadRunDetailsPanel(
   id: string,
   threadId: string,
   turnId: string,
   size = 1,
-): ThreadDebugPanelState {
-  return { id, type: 'thread-debug', threadId, turnId, size };
+): ThreadRunDetailsPanelState {
+  return { id, type: 'thread-run-details', threadId, turnId, size };
 }
 
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
@@ -196,10 +196,10 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
   const size = sanitizeSize(value.size);
-  if (value.type === 'thread-debug') {
+  if (value.type === 'thread-run-details') {
     return typeof value.threadId === 'string' && value.threadId.length > 0
       && typeof value.turnId === 'string' && value.turnId.length > 0
-      ? threadDebugPanel(value.id, value.threadId, value.turnId, size)
+      ? threadRunDetailsPanel(value.id, value.threadId, value.turnId, size)
       : null;
   }
   if (value.type !== 'workspace') return null;
@@ -576,9 +576,9 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openThreadDebugPanel = useCallback((threadId: string, turnId: string) => {
+  const openThreadRunDetailsPanel = useCallback((threadId: string, turnId: string) => {
     const exactPanel = panels.find((panel) => (
-      panel.type === 'thread-debug' && panel.threadId === threadId && panel.turnId === turnId
+      panel.type === 'thread-run-details' && panel.threadId === threadId && panel.turnId === turnId
     ));
     if (exactPanel) {
       setActivePanelId(exactPanel.id);
@@ -586,12 +586,12 @@ export function useWorkspaceLayout({
       return;
     }
 
-    const reusablePanel = panels.find((panel) => panel.type === 'thread-debug');
+    const reusablePanel = panels.find((panel) => panel.type === 'thread-run-details');
     if (reusablePanel) {
       setActivePanelId(reusablePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === reusablePanel.id
-          ? threadDebugPanel(panel.id, threadId, turnId, panel.size)
+          ? threadRunDetailsPanel(panel.id, threadId, turnId, panel.size)
           : panel
       )));
       clearPreviewNavigationState();
@@ -609,7 +609,7 @@ export function useWorkspaceLayout({
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id
-          ? threadDebugPanel(panel.id, threadId, turnId, panel.size)
+          ? threadRunDetailsPanel(panel.id, threadId, turnId, panel.size)
           : panel
       )));
       clearPreviewNavigationState();
@@ -624,7 +624,7 @@ export function useWorkspaceLayout({
     const panelId = nextId('panel');
     preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
-    setPanels((prev) => [...prev, threadDebugPanel(panelId, threadId, turnId)]);
+    setPanels((prev) => [...prev, threadRunDetailsPanel(panelId, threadId, turnId)]);
     clearPreviewNavigationState();
   }, [
     canFitPanelCount,
@@ -705,7 +705,7 @@ export function useWorkspaceLayout({
     navigateRoot,
     openPanel,
     openPreview,
-    openThreadDebugPanel,
+    openThreadRunDetailsPanel,
     panels,
     repairMissingOutlinerRoots,
     resizePanelPair,

@@ -9,7 +9,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared'
 import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
-import { ThreadDebugPanel } from '../agent/components/ThreadDebugPanel';
+import { ThreadRunDetailsPanel } from '../agent/components/ThreadRunDetailsPanel';
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -114,8 +114,8 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 trigger={props.trigger}
                 ui={props.ui}
               />
-            ) : panel.type === 'thread-debug' ? (
-              <ThreadDebugPanel
+            ) : panel.type === 'thread-run-details' ? (
+              <ThreadRunDetailsPanel
                 onClose={() => props.onClosePanel(panel.id)}
                 showClose={activePanels.length > 1}
                 threadId={panel.threadId}

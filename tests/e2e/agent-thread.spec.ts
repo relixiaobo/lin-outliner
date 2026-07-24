@@ -96,7 +96,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(usage).toContainText('Input120');
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
-    const runDetails = page.locator('.outline-panel-surface.is-thread-debug');
+    const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
     await expect(runDetails).toBeVisible();
     await expect(runDetails).toContainText('Run Details');
     await expect(runDetails).toContainText('Summary');
@@ -105,8 +105,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(runDetails).toContainText('Thread ID');
     await expect(runDetails).toContainText('Turn ID');
     await expect(runDetails).toContainText('Session ID');
-    await runDetails.locator('.agent-debug-execution-event').first().locator('.agent-debug-message-head').click();
-    await expect(runDetails.locator('.agent-debug-execution-event').first()).toContainText('"type": "userMessage"');
+    await runDetails.locator('.thread-run-details-execution-event').first().locator('.thread-run-details-message-head').click();
+    await expect(runDetails.locator('.thread-run-details-execution-event').first()).toContainText('"type": "userMessage"');
 
     await userMessage.hover();
     expect(await userMessage.locator('.thread-message-actions').getByRole('button').evaluateAll((buttons) => (

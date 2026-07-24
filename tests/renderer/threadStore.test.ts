@@ -124,9 +124,9 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([]);
   });
 
-  test('does not manufacture partial history from notifications for an unloaded Thread', async () => {
-    const selected = thread('thread-1', 2);
-    const unloaded = thread('thread-2', 1);
+  test('updates catalog metadata without manufacturing history for an unloaded Thread', async () => {
+    const selected = thread('thread-1', 50);
+    const unloaded = { ...thread('thread-2', 10), preview: '' };
     let notify: (notification: AgentCoreNotification) => void = () => undefined;
     const client = {
       onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
@@ -144,10 +144,42 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
 
-    const completed = turn('turn-unloaded', 'completed', 'must load canonically');
+    const active = turn('turn-unloaded', 'inProgress', '');
+    const userItemId = 'turn-unloaded-user';
+    const started: Turn = {
+      ...active,
+      items: [{
+        type: 'userMessage',
+        id: userItemId,
+        provenance: {
+          originThreadId: unloaded.id,
+          originTurnId: active.id,
+          originItemId: userItemId,
+        },
+        clientId: null,
+        content: [{ type: 'text', text: '  Background activity  ' }],
+      }],
+      startedAt: 100,
+    };
+    notify({ type: 'turn/started', threadId: unloaded.id, turnId: started.id, turn: started });
+
+    expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
+    expect(store.getSnapshot().threads[0]).toMatchObject({
+      id: unloaded.id,
+      preview: 'Background activity',
+      updatedAt: 100,
+    });
+
+    const completed: Turn = {
+      ...started,
+      status: 'completed',
+      completedAt: 110,
+      durationMs: 10,
+    };
     notify({ type: 'turn/completed', threadId: unloaded.id, turnId: completed.id, turn: completed });
 
     expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
+    expect(store.getSnapshot().threads[0]).toMatchObject({ id: unloaded.id, updatedAt: 110 });
   });
 
   test('updates an untitled Thread preview and activity time from Turn notifications', async () => {

@@ -26,7 +26,7 @@ export function WorkspacePanelSurface({
   const t = useT();
   const workspaceViewClass = panel.type === 'workspace' ? `is-${panel.view.kind}` : '';
   const closeOwnedByChild = panel.type === 'workspace'
-    || panel.type === 'thread-debug';
+    || panel.type === 'thread-run-details';
   return (
     <div
       className={[

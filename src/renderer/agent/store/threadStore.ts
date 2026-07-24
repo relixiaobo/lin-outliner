@@ -350,8 +350,9 @@ export class ThreadStore {
       || notification.type === 'item/completed'
       || notification.type === 'item/delta'
     );
-    if (historyNotification) {
-      if (!this.snapshot.turnsByThread.has(notification.threadId)) return;
+    const historyLoaded = historyNotification
+      && this.snapshot.turnsByThread.has(notification.threadId);
+    if (historyLoaded) {
       this.historyRevisions.set(
         notification.threadId,
         (this.historyRevisions.get(notification.threadId) ?? 0) + 1,
@@ -380,7 +381,7 @@ export class ThreadStore {
           preview: thread.preview.trim() ? thread.preview : preview,
           updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
         }));
-        this.updateTurn(notification.threadId, notification.turn);
+        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn);
         return;
       }
       case 'turn/completed': {
@@ -392,7 +393,8 @@ export class ThreadStore {
           ...thread,
           updatedAt: Math.max(thread.updatedAt, notification.turn.completedAt ?? notification.turn.startedAt),
         }));
-        this.updateTurn(notification.threadId, notification.turn, { providerRetryByThread });
+        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { providerRetryByThread });
+        else this.patch({ providerRetryByThread });
         return;
       }
       case 'turn/providerRetry/changed': {
@@ -410,9 +412,11 @@ export class ThreadStore {
       }
       case 'item/started':
       case 'item/completed':
+        if (!historyLoaded) return;
         this.updateItem(notification.threadId, notification.turnId, notification.item);
         return;
       case 'item/delta':
+        if (!historyLoaded) return;
         this.updateItemDelta(notification.threadId, notification.turnId, notification.itemId, notification.delta);
         return;
       case 'userInput/requested': {

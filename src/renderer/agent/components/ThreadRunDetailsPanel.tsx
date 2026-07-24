@@ -26,34 +26,34 @@ import {
   formatUsageCost,
 } from './ThreadUsageBreakdown';
 
-interface ThreadDebugPanelProps {
+interface ThreadRunDetailsPanelProps {
   readonly onClose: () => void;
   readonly showClose: boolean;
   readonly threadId: string;
   readonly turnId: string;
 }
 
-interface ThreadDebugDetail {
+interface ThreadRunDetailsData {
   readonly thread: Thread;
   readonly turn: Turn;
 }
 
-export function ThreadDebugPanel({
+export function ThreadRunDetailsPanel({
   onClose,
   showClose,
   threadId,
   turnId,
-}: ThreadDebugPanelProps) {
+}: ThreadRunDetailsPanelProps) {
   const t = useT();
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
-  const { detail, error, loading, refresh } = useThreadDebugDetail(threadId, turnId);
+  const { detail, error, loading, refresh } = useThreadRunDetails(threadId, turnId);
   return (
-    <main className="main-panel agent-debug-panel">
+    <main className="main-panel thread-run-details-panel">
       <PanelStickyBreadcrumb
         breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
         canGoBack={false}
         closeLabel={t.nodePanel.closePanel}
-        currentTitle={t.agent.debug.title}
+        currentTitle={t.agent.runDetails.title}
         origin={null}
         onBack={() => undefined}
         onClose={onClose}
@@ -62,35 +62,35 @@ export function ThreadDebugPanel({
         stickyRef={stickyBreadcrumbRef}
         titleDocked={false}
       >
-        <span className="panel-breadcrumb-segment panel-breadcrumb-current agent-debug-breadcrumb-title">
+        <span className="panel-breadcrumb-segment panel-breadcrumb-current thread-run-details-breadcrumb-title">
           <span className="panel-breadcrumb-current-label" data-current-page-title>
-            {t.agent.debug.title}
+            {t.agent.runDetails.title}
           </span>
         </span>
       </PanelStickyBreadcrumb>
-      <div className="panel-inner agent-debug-content">
+      <div className="panel-inner thread-run-details-content">
         {loading && !detail ? (
-          <EmptyState icon={LoaderIcon} loading role="status" title={t.agent.debug.loading} />
+          <EmptyState icon={LoaderIcon} loading role="status" title={t.agent.runDetails.loading} />
         ) : null}
         {error ? (
           <ErrorState
             message={error}
             onRetry={() => void refresh()}
-            retryLabel={t.agent.debug.retry}
+            retryLabel={t.agent.runDetails.retry}
           />
         ) : null}
-        {detail ? <ThreadDebugDetailView detail={detail} /> : null}
+        {detail ? <ThreadRunDetailsView detail={detail} /> : null}
         {!loading && !error && !detail ? (
-          <EmptyState className="agent-debug-empty" title={t.agent.debug.unavailable} />
+          <EmptyState className="thread-run-details-empty" title={t.agent.runDetails.unavailable} />
         ) : null}
       </div>
     </main>
   );
 }
 
-function useThreadDebugDetail(threadId: string, turnId: string) {
+function useThreadRunDetails(threadId: string, turnId: string) {
   const t = useT();
-  const [detail, setDetail] = useState<ThreadDebugDetail | null>(null);
+  const [detail, setDetail] = useState<ThreadRunDetailsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestRef = useRef(0);
@@ -106,15 +106,15 @@ function useThreadDebugDetail(threadId: string, turnId: string) {
         readCanonicalTurn(threadId, turnId),
       ]);
       if (requestRef.current !== request) return;
-      if (!turn) throw new Error(t.agent.debug.unavailable);
+      if (!turn) throw new Error(t.agent.runDetails.unavailable);
       setDetail({ thread: threadResponse.thread, turn });
     } catch (caught) {
       if (requestRef.current !== request) return;
-      setError(caught instanceof Error && caught.message ? caught.message : t.agent.debug.unavailable);
+      setError(caught instanceof Error && caught.message ? caught.message : t.agent.runDetails.unavailable);
     } finally {
       if (requestRef.current === request) setLoading(false);
     }
-  }, [t.agent.debug.unavailable, threadId, turnId]);
+  }, [t.agent.runDetails.unavailable, threadId, turnId]);
 
   useEffect(() => {
     void refresh();
@@ -146,50 +146,50 @@ async function readCanonicalTurn(threadId: string, turnId: string): Promise<Turn
   return null;
 }
 
-function ThreadDebugDetailView({ detail }: { readonly detail: ThreadDebugDetail }) {
+function ThreadRunDetailsView({ detail }: { readonly detail: ThreadRunDetailsData }) {
   const t = useT();
   const { thread, turn } = detail;
   const userInput = turn.items.flatMap((item): readonly ThreadUserContent[] => (
     item.type === 'userMessage' ? item.content : []
   ));
   return (
-    <div className="agent-debug-run-detail">
-      <DebugPanelSection title={t.agent.debug.summary}>
+    <div className="thread-run-details-body">
+      <RunDetailsSection title={t.agent.runDetails.summary}>
         <RunSummaryHeader turn={turn} />
-      </DebugPanelSection>
+      </RunDetailsSection>
 
-      <DebugPanelSection title={t.agent.debug.modelInput}>
-        <div className="agent-debug-context-card">
-          <ContextDisclosure defaultOpen resetKey={turn.id} title={t.agent.debug.currentRequest}>
+      <RunDetailsSection title={t.agent.runDetails.modelInput}>
+        <div className="thread-run-details-context-card">
+          <ContextDisclosure defaultOpen resetKey={turn.id} title={t.agent.runDetails.currentRequest}>
             {userInput.length > 0 ? (
               <ReadOnlyCodeBlock
-                className="agent-debug-code-block agent-debug-inline-code-block"
+                className="thread-run-details-code-block thread-run-details-inline-code-block"
                 code={jsonText(userInput)}
                 language="json"
               />
             ) : (
-              <span className="is-muted">{t.agent.debug.noUserInput}</span>
+              <span className="is-muted">{t.agent.runDetails.noUserInput}</span>
             )}
           </ContextDisclosure>
-          <ContextDisclosure resetKey={turn.id} title={t.agent.debug.canonicalContext}>
-            <dl className="agent-debug-identity-list">
-              <DebugIdentity label={t.agent.debug.threadId} value={thread.id} />
-              <DebugIdentity label={t.agent.debug.turnId} value={turn.id} />
-              <DebugIdentity label={t.agent.debug.sessionId} value={thread.sessionId} />
-              <DebugIdentity label={t.agent.debug.originThreadId} value={turn.provenance.originThreadId} />
-              <DebugIdentity label={t.agent.debug.originTurnId} value={turn.provenance.originTurnId} />
-              <DebugIdentity label={t.agent.debug.trigger} value={jsonText(turn.provenance.trigger)} />
+          <ContextDisclosure resetKey={turn.id} title={t.agent.runDetails.canonicalContext}>
+            <dl className="thread-run-details-identity-list">
+              <RunDetailsIdentity label={t.agent.runDetails.threadId} value={thread.id} />
+              <RunDetailsIdentity label={t.agent.runDetails.turnId} value={turn.id} />
+              <RunDetailsIdentity label={t.agent.runDetails.sessionId} value={thread.sessionId} />
+              <RunDetailsIdentity label={t.agent.runDetails.originThreadId} value={turn.provenance.originThreadId} />
+              <RunDetailsIdentity label={t.agent.runDetails.originTurnId} value={turn.provenance.originTurnId} />
+              <RunDetailsIdentity label={t.agent.runDetails.trigger} value={jsonText(turn.provenance.trigger)} />
             </dl>
           </ContextDisclosure>
         </div>
-      </DebugPanelSection>
+      </RunDetailsSection>
 
-      <DebugPanelSection
-        className="agent-debug-execution-section"
-        title={t.agent.debug.execution({ count: 1 })}
+      <RunDetailsSection
+        className="thread-run-details-execution-section"
+        title={t.agent.runDetails.execution({ count: 1 })}
       >
         <TurnExecutionCard turn={turn} />
-      </DebugPanelSection>
+      </RunDetailsSection>
     </div>
   );
 }
@@ -205,8 +205,8 @@ function RunSummaryHeader({ turn }: { readonly turn: Turn }) {
     ? `${formatTimestamp(turn.startedAt, locale)} - ${formatTimestamp(turn.completedAt, locale)}`
     : formatTimestamp(turn.startedAt, locale);
   return (
-    <div className="agent-debug-run-summary">
-      <dl className="agent-debug-run-summary-facts">
+    <div className="thread-run-details-run-summary">
+      <dl className="thread-run-details-run-summary-facts">
         {turn.status !== 'completed' ? (
           <div>
             <dt>{t.agent.thread.status}</dt>
@@ -220,20 +220,20 @@ function RunSummaryHeader({ turn }: { readonly turn: Turn }) {
           <small>{t.agent.message.reasoningEffort}: {turn.execution.reasoningEffort}</small>
         </div>
         <div>
-          <dt>{t.agent.debug.duration}</dt>
+          <dt>{t.agent.runDetails.duration}</dt>
           <dd>{formatDuration(turn.durationMs)}</dd>
           <small>{timeRange}</small>
         </div>
         <div>
-          <dt>{t.agent.debug.itemCount}</dt>
+          <dt>{t.agent.runDetails.itemCount}</dt>
           <dd>{formatNumber(turn.items.length)}</dd>
-          <small>{t.agent.debug.toolCount}: {formatNumber(tools.length)}</small>
+          <small>{t.agent.runDetails.toolCount}: {formatNumber(tools.length)}</small>
         </div>
         <div>
-          <dt>{t.agent.debug.inputContext}</dt>
+          <dt>{t.agent.runDetails.inputContext}</dt>
           <dd>{formatCompactTokens(inputContext)}</dd>
           <small>{t.agent.message.cachedShare}: {cachedShare}</small>
-          <small>{t.agent.debug.outputTokens}: {formatCompactTokens(usage.output)}</small>
+          <small>{t.agent.runDetails.outputTokens}: {formatCompactTokens(usage.output)}</small>
         </div>
         <div>
           <dt>{t.agent.message.cost}</dt>
@@ -249,36 +249,36 @@ function TurnExecutionCard({ turn }: { readonly turn: Turn }) {
   const [open, setOpen] = useState(true);
   return (
     <details
-      className="agent-debug-round-card"
+      className="thread-run-details-execution-card"
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={open}
     >
-      <summary className="agent-debug-round-head">
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className="agent-debug-disclosure-title">{t.agent.debug.turnExecution}</span>
+      <summary className="thread-run-details-execution-head">
+        <ChevronDownIcon className="thread-run-details-summary-chevron" size={ICON_SIZE.tiny} />
+        <span className="thread-run-details-disclosure-title">{t.agent.runDetails.turnExecution}</span>
         {turn.status !== 'completed' ? (
-          <span className={`agent-debug-status-pill is-${turn.status}`}>
+          <span className={`thread-run-details-status-pill is-${turn.status}`}>
             {t.agent.thread.item.status[turn.status]}
           </span>
         ) : null}
         <div
-          className="agent-debug-usage-hover"
+          className="thread-run-details-usage-hover"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
           }}
         >
           <IconButton
-            className="agent-debug-usage-info-button"
+            className="thread-run-details-usage-info-button"
             icon={InfoIcon}
             iconSize={ICON_SIZE.tiny}
-            label={t.agent.debug.executionDetails}
-            title={t.agent.debug.executionDetails}
+            label={t.agent.runDetails.executionDetails}
+            title={t.agent.runDetails.executionDetails}
             variant="panel"
           />
           <div
-            aria-label={t.agent.debug.executionDetails}
-            className="agent-debug-usage-popover"
+            aria-label={t.agent.runDetails.executionDetails}
+            className="thread-run-details-usage-popover"
             role="tooltip"
           >
             <ThreadUsageBreakdown usage={turn.execution.usage} />
@@ -286,7 +286,7 @@ function TurnExecutionCard({ turn }: { readonly turn: Turn }) {
         </div>
       </summary>
       {open ? (
-        <div className="agent-debug-execution-list">
+        <div className="thread-run-details-execution-list">
           {turn.items.map((item) => <ExecutionItemRow item={item} key={item.id} />)}
         </div>
       ) : null}
@@ -297,15 +297,15 @@ function TurnExecutionCard({ turn }: { readonly turn: Turn }) {
 function ExecutionItemRow({ item }: { readonly item: ThreadItem }) {
   const encoded = jsonText(item);
   return (
-    <details className="agent-debug-part-details agent-debug-execution-event">
-      <summary className="agent-debug-part-head agent-debug-message-head">
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className="agent-debug-role-label">{itemRole(item)}</span>
+    <details className="thread-run-details-part-details thread-run-details-execution-event">
+      <summary className="thread-run-details-part-head thread-run-details-message-head">
+        <ChevronDownIcon className="thread-run-details-summary-chevron" size={ICON_SIZE.tiny} />
+        <span className="thread-run-details-role-label">{itemRole(item)}</span>
         <strong title={itemSummary(item)}>{itemSummary(item)}</strong>
         <code>{formatBytes(new TextEncoder().encode(encoded).byteLength)}</code>
       </summary>
       <ReadOnlyCodeBlock
-        className="agent-debug-code-block"
+        className="thread-run-details-code-block"
         code={encoded}
         language="json"
       />
@@ -313,7 +313,7 @@ function ExecutionItemRow({ item }: { readonly item: ThreadItem }) {
   );
 }
 
-function DebugPanelSection({
+function RunDetailsSection({
   children,
   className,
   title,
@@ -323,8 +323,8 @@ function DebugPanelSection({
   readonly title: string;
 }) {
   return (
-    <section className={`agent-debug-detail-section${className ? ` ${className}` : ''}`}>
-      <header className="agent-debug-section-header">
+    <section className={`thread-run-details-detail-section${className ? ` ${className}` : ''}`}>
+      <header className="thread-run-details-section-header">
         <h3>{title}</h3>
       </header>
       {children}
@@ -347,20 +347,20 @@ function ContextDisclosure({
   useEffect(() => setOpen(defaultOpen), [defaultOpen, resetKey]);
   return (
     <details
-      className="agent-debug-disclosure"
+      className="thread-run-details-disclosure"
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={open}
     >
       <summary>
-        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className="agent-debug-disclosure-title">{title}</span>
+        <ChevronDownIcon className="thread-run-details-summary-chevron" size={ICON_SIZE.tiny} />
+        <span className="thread-run-details-disclosure-title">{title}</span>
       </summary>
-      <div className="agent-debug-disclosure-body">{children}</div>
+      <div className="thread-run-details-disclosure-body">{children}</div>
     </details>
   );
 }
 
-function DebugIdentity({ label, value }: { readonly label: string; readonly value: string }) {
+function RunDetailsIdentity({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div>
       <dt>{label}</dt>

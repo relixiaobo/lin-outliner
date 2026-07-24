@@ -155,7 +155,7 @@ export function App() {
     navigateRoot: setActivePanelRoot,
     openPanel,
     openPreview,
-    openThreadDebugPanel,
+    openThreadRunDetailsPanel,
     panels,
     repairMissingOutlinerRoots,
     resizePanelPair,
@@ -635,7 +635,7 @@ export function App() {
           index={index}
           railState={agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenTurnDetails={openThreadDebugPanel}
+          onOpenTurnDetails={openThreadRunDetailsPanel}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

@@ -234,7 +234,7 @@ needed to read the current data:
 
 ```ts
 {
-  type: 'thread-debug',
+  type: 'thread-run-details',
   threadId: ThreadId,
   turnId: TurnId,
 }

@@ -503,7 +503,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!item || !('outputRef' in item) || !item.outputRef || item.outputRef.id !== request.outputId) {
       return { output: null };
     }
-    const text = await this.payloads.readText(item.provenance.originThreadId, request.outputId);
+    const text = await this.payloads.readText(request.threadId, request.outputId);
     if (text === null || Buffer.byteLength(text, 'utf8') !== item.outputRef.byteLength) return { output: null };
     return { output: { ref: item.outputRef, text } };
   }
@@ -673,17 +673,64 @@ export class ThreadService implements ThreadServiceExtensionHost {
         configuration: sourceRecord.configuration,
         nameOrigin: request.name === undefined ? 'derived' : 'manual',
       });
-      for (const inheritedTurn of inherited) {
-        const copied = copyTurn(inheritedTurn, thread.id, now);
-        await this.recordNotification({
-          type: 'turn/completed',
-          threadId: thread.id,
-          turnId: copied.id,
-          turn: copied,
-        });
+      try {
+        const copiedTurns: Turn[] = [];
+        for (const inheritedTurn of inherited) {
+          copiedTurns.push(await this.copyForkedTurnPayloads(source.id, thread.id, inheritedTurn, now));
+        }
+        for (const copied of copiedTurns) {
+          await this.recordNotification({
+            type: 'turn/completed',
+            threadId: thread.id,
+            turnId: copied.id,
+            turn: copied,
+          });
+        }
+      } catch (error) {
+        await this.deleteThread(thread.id);
+        throw error;
       }
       return { thread: this.requireThread(thread.id).thread };
     }));
+  }
+
+  private async copyForkedTurnPayloads(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    sourceTurn: Turn,
+    now: number,
+  ): Promise<Turn> {
+    const copied = copyTurn(sourceTurn, now);
+    const items: ThreadItem[] = [];
+    for (const item of copied.items) {
+      if ('outputRef' in item && item.outputRef) {
+        const payloadCopied = await this.payloads.copyTextToThread(
+          sourceThreadId,
+          targetThreadId,
+          item.outputRef.id,
+        );
+        if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
+      }
+      if (item.type !== 'dynamicToolCall' || !item.contentItems) {
+        items.push(item);
+        continue;
+      }
+      const contentItems = [];
+      for (const content of item.contentItems) {
+        contentItems.push(content.type === 'image'
+          ? {
+              ...content,
+              imageRef: await this.payloads.copyImageToThread(
+                sourceThreadId,
+                targetThreadId,
+                content.imageRef,
+              ),
+            }
+          : content);
+      }
+      items.push({ ...item, contentItems });
+    }
+    return decodeTurn({ ...copied, items });
   }
 
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
@@ -2451,17 +2498,17 @@ function initialTurnExecution(
   };
 }
 
-function copyTurn(source: Turn, targetThreadId: ThreadId, now: number): Turn {
+function copyTurn(source: Turn, now: number): Turn {
   const id = uuidV7(now);
   return decodeTurn({
     ...source,
     id,
-    items: source.items.map((item) => copyItem(item, targetThreadId, id, now)),
+    items: source.items.map((item) => copyItem(item, now)),
     itemsView: 'full',
   });
 }
 
-function copyItem(source: ThreadItem, _targetThreadId: ThreadId, _targetTurnId: string, now: number): ThreadItem {
+function copyItem(source: ThreadItem, now: number): ThreadItem {
   const id = uuidV7(now);
   return decodeThreadItem({
     ...source,

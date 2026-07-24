@@ -81,6 +81,47 @@ class ControlledExecutor implements TurnExecutor {
   }
 }
 
+class ForkPayloadExecutor extends ControlledExecutor {
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    const itemId = context.recorder.createItemId();
+    const started: ThreadItem = {
+      type: 'dynamicToolCall',
+      id: itemId,
+      provenance: context.recorder.localProvenance(itemId),
+      status: 'inProgress',
+      outputRef: null,
+      namespace: 'test',
+      tool: 'payload',
+      arguments: {},
+      contentItems: null,
+      success: null,
+      durationMs: null,
+    };
+    await context.recorder.started(started);
+    const outputRef = await context.persistOutputText(
+      itemId,
+      'complete inherited output',
+      'text/plain',
+      'Complete inherited output',
+    );
+    const imageRef = await context.persistOutputImage(
+      itemId,
+      0,
+      Buffer.from('inherited image').toString('base64'),
+      'image/png',
+    );
+    await context.recorder.completed({
+      ...started,
+      status: 'completed',
+      outputRef,
+      contentItems: [{ type: 'image', imageRef }],
+      success: true,
+      durationMs: 1,
+    });
+    return completedExecutionResult();
+  }
+}
+
 class ControlledNameGenerator implements ThreadNameGenerator {
   readonly contexts: ThreadNameGenerationContext[] = [];
   private readonly completions: Array<(name: string | null) => void> = [];
@@ -786,6 +827,61 @@ describe('ThreadService', () => {
     expect(copied.items[0]?.provenance).toEqual(sourceTurn.items[0]?.provenance);
     expect(copied.items[0]).toMatchObject({ type: 'userMessage', clientId: null });
     await fixture.service.close();
+  });
+
+  test('keeps inherited text and image payloads after deleting the source Thread', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const clock = () => ++now;
+    const opened = await openFixture(root, new ForkPayloadExecutor(), clock);
+    await opened.service.initialize();
+    const source = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    const accepted = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Create payloads' }],
+    });
+    await opened.service.waitForIdle(source.id);
+    const sourceTurn = opened.service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
+    const sourceItem = sourceTurn.items.find((item) => item.type === 'dynamicToolCall');
+    if (!sourceItem?.outputRef) throw new Error('Source payload Item missing');
+
+    const fork = (await opened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkTurn = opened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
+    const forkItem = forkTurn.items.find((item) => item.type === 'dynamicToolCall');
+    if (!forkItem?.outputRef) throw new Error('Fork payload Item missing');
+    const forkImage = forkItem.contentItems?.find((content) => content.type === 'image');
+    if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
+
+    expect(forkItem.provenance).toEqual(sourceItem.provenance);
+    expect(forkImage.imageRef).toContain(join('payloads', fork.id));
+    expect(await opened.service.readItemOutput({
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      outputId: forkItem.outputRef.id,
+    })).toMatchObject({ output: { text: 'complete inherited output' } });
+    expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
+
+    await opened.service.deleteThread(source.id);
+
+    expect(opened.service.readThread({ threadId: fork.id }).thread.id).toBe(fork.id);
+    expect(await opened.service.readItemOutput({
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      outputId: forkItem.outputRef.id,
+    })).toMatchObject({ output: { text: 'complete inherited output' } });
+    expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
+    await opened.service.close();
   });
 
   test('rolls back the terminal Turn in place and retries failed commit hooks without restart', async () => {

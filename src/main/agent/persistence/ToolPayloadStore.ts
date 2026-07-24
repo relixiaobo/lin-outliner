@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import type {
   ThreadId,
   ThreadItemOutputReference,
@@ -18,6 +19,7 @@ const TEXT_MIME_EXTENSIONS = {
   'application/json': '.json',
 } as const satisfies Readonly<Record<ThreadItemOutputReference['mimeType'], string>>;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
+const IMAGE_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:gif|jpg|png|webp|bin)$/;
 
 export const MAX_TOOL_PAYLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS = Math.ceil(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4;
@@ -65,6 +67,31 @@ export class ToolPayloadStore {
     return null;
   }
 
+  async copyTextToThread(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    outputId: string,
+  ): Promise<boolean> {
+    if (!SHA_256_PATTERN.test(outputId)) throw new Error('Invalid tool output digest');
+    const targetDirectory = join(this.rootPath, targetThreadId);
+    await mkdir(targetDirectory, { recursive: true });
+    for (const extension of Object.values(TEXT_MIME_EXTENSIONS)) {
+      const filename = `${outputId}${extension}`;
+      try {
+        await copyFile(
+          join(this.rootPath, sourceThreadId, filename),
+          join(targetDirectory, filename),
+          constants.COPYFILE_EXCL,
+        );
+        return true;
+      } catch (error) {
+        if (isAlreadyExists(error)) return true;
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    return false;
+  }
+
   async writeImage(
     threadId: ThreadId,
     itemId: string,
@@ -90,6 +117,27 @@ export class ToolPayloadStore {
       if (!isAlreadyExists(error)) throw error;
     });
     return path;
+  }
+
+  async copyImageToThread(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    imageRef: string,
+  ): Promise<string> {
+    const sourceDirectory = resolve(this.rootPath, sourceThreadId);
+    const sourcePath = resolve(imageRef);
+    if (dirname(sourcePath) !== sourceDirectory) return imageRef;
+    const filename = basename(sourcePath);
+    if (!IMAGE_PAYLOAD_FILENAME_PATTERN.test(filename)) {
+      throw new Error('Invalid tool image payload reference');
+    }
+    const targetDirectory = resolve(this.rootPath, targetThreadId);
+    const targetPath = join(targetDirectory, filename);
+    await mkdir(targetDirectory, { recursive: true });
+    await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL).catch((error: unknown) => {
+      if (!isAlreadyExists(error)) throw error;
+    });
+    return targetPath;
   }
 
   async deleteThread(threadId: ThreadId): Promise<void> {

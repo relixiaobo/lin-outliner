@@ -33,25 +33,25 @@ describe('useWorkspaceLayout history focus', () => {
     });
 
     act(() => {
-      h.api.openThreadDebugPanel('thread-alpha', 'turn-one');
+      h.api.openThreadRunDetailsPanel('thread-alpha', 'turn-one');
     });
 
-    const debugPanel = h.api.panels.find((panel) => panel.type === 'thread-debug');
-    expect(debugPanel).toMatchObject({
-      type: 'thread-debug',
+    const runDetailsPanel = h.api.panels.find((panel) => panel.type === 'thread-run-details');
+    expect(runDetailsPanel).toMatchObject({
+      type: 'thread-run-details',
       threadId: 'thread-alpha',
       turnId: 'turn-one',
     });
-    expect(h.api.activePanelId).toBe(debugPanel?.id);
+    expect(h.api.activePanelId).toBe(runDetailsPanel?.id);
     expect(h.api.panels).toHaveLength(2);
 
     act(() => {
-      h.api.openThreadDebugPanel('thread-beta', 'turn-two');
+      h.api.openThreadRunDetailsPanel('thread-beta', 'turn-two');
     });
 
     expect(h.api.panels).toHaveLength(2);
-    expect(h.api.panels.find((panel) => panel.id === debugPanel?.id)).toMatchObject({
-      type: 'thread-debug',
+    expect(h.api.panels.find((panel) => panel.id === runDetailsPanel?.id)).toMatchObject({
+      type: 'thread-run-details',
       threadId: 'thread-beta',
       turnId: 'turn-two',
     });
@@ -72,7 +72,7 @@ describe('useWorkspaceLayout history focus', () => {
         },
         {
           id: 'panel-debug',
-          type: 'thread-debug',
+          type: 'thread-run-details',
           size: 1,
           threadId: 'thread-alpha',
           turnId: 'turn-one',
@@ -83,7 +83,7 @@ describe('useWorkspaceLayout history focus', () => {
     expect(h.api.activePanelId).toBe('panel-debug');
     expect(h.api.panels[1]).toEqual({
       id: 'panel-debug',
-      type: 'thread-debug',
+      type: 'thread-run-details',
       size: 1,
       threadId: 'thread-alpha',
       turnId: 'turn-one',

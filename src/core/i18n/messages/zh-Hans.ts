@@ -1042,7 +1042,7 @@ commandPalette: {
         searchFailed: ({ query }) => `网页搜索失败 · ${query}`,
       },
     },
-    debug: {
+    runDetails: {
       title: '运行详情',
       loading: '正在加载运行详情...',
       unavailable: '无法获取运行详情。',

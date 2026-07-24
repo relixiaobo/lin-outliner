@@ -1104,7 +1104,7 @@ commandPalette: {
         searchFailed: ({ query }: { query: string }) => `Web search failed · ${query}`,
       },
     },
-    debug: {
+    runDetails: {
       title: 'Run Details',
       loading: 'Loading Run Details...',
       unavailable: 'Run Details are unavailable.',
