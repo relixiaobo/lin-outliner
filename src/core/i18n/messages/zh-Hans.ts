@@ -982,6 +982,7 @@ commandPalette: {
         noOutput: '无输出',
         copyArguments: '复制参数',
         copyOutput: '复制输出',
+        commandFailedWithExitCode: ({ code }) => `命令执行失败，退出码为 ${code}`,
         status: {
           inProgress: '进行中',
           completed: '已完成',

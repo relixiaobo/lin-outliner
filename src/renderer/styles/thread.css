@@ -1301,11 +1301,6 @@
   line-height: var(--line-meta-tight);
 }
 
-.thread-tool-exit {
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-}
-
 .thread-loaded-skill {
   display: flex;
   max-width: min(100%, 520px);
@@ -1392,19 +1387,16 @@
   color: var(--text-faint);
 }
 
-.thread-reasoning-toggle,
-.thread-reasoning-summary {
+.thread-reasoning-toggle {
   display: flex;
   max-width: min(100%, 520px);
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
+  padding: 0;
   color: inherit;
   font: inherit;
   text-align: left;
-}
-
-.thread-reasoning-toggle {
   transition: color var(--motion-fast);
 }
 

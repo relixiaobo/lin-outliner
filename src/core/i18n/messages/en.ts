@@ -1044,6 +1044,7 @@ commandPalette: {
         noOutput: 'No output',
         copyArguments: 'Copy arguments',
         copyOutput: 'Copy output',
+        commandFailedWithExitCode: ({ code }: { code: number }) => `Command failed with exit code ${code}`,
         status: {
           inProgress: 'In progress',
           completed: 'Completed',

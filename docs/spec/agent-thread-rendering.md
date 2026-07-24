@@ -28,16 +28,18 @@ Thread execution selections, active input requests, and Goals live in
 - plans render their current step list without becoming a separate work object
 - reasoning uses the established `Thinking` / `Thought` disclosure with a
   one-line gist while collapsed and every provider-supplied summary/content
-  part in the expanded body; a terminal single-part, single-line provider
-  summary renders as a static Thought row because there is no additional body
-  to disclose; only the actual tail Item streams
+  part in the expanded body; every non-empty reasoning Item remains expandable,
+  including a single-part or single-line provider summary, so truncation never
+  removes access to the complete text; only the actual tail Item streams
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
   status plus direct argument/result data; structured arguments and results render
   as their JSON rather than a second presentation model, while command output,
   file interaction, copy actions, and image previews retain their native
-  affordances; a completed row rests on its tool-type icon rather than a generic
+  affordances; a successful shell exit code is redundant with the completed row
+  and stays hidden, while a non-zero exit code is rendered as an explicit failure
+  explanation; a completed row rests on its tool-type icon rather than a generic
   success check, while only failure carries a status ring
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the

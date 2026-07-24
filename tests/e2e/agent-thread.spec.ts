@@ -976,6 +976,8 @@ test.describe('canonical agent Thread surface', () => {
     const thought = page.locator('.thread-reasoning-toggle').first();
     await expect(thought).toBeVisible();
     await expect(thought).toHaveAccessibleName(/Thought.*Inspect the current workspace/);
+    await expect(thought.locator('.thread-reasoning-headline')).toHaveCSS('font-weight', '400');
+    await expect(thought.locator('.thread-reasoning-gist')).toHaveCSS('font-weight', '400');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
     await expect(thoughtChevron).toHaveCSS('opacity', '0');
     const activity = page.getByRole('button', { name: 'Ran a command · read a node' });
@@ -992,9 +994,20 @@ test.describe('canonical agent Thread surface', () => {
     await expect(reasoningBody).toContainText('Inspect the current workspace');
     await expect(reasoningBody).toContainText('The workspace has enough evidence.');
     await expect(reasoningBody.locator('p')).toHaveCount(2);
-    const summaryOnlyReasoning = page.locator('.thread-reasoning-summary');
-    await expect(summaryOnlyReasoning).toHaveText('Thought· Preparing the final response');
-    await expect(summaryOnlyReasoning.getByRole('button')).toHaveCount(0);
+    const [thoughtHeadlineBox, reasoningBodyBox] = await Promise.all([
+      thought.locator('.thread-reasoning-headline').boundingBox(),
+      reasoningBody.boundingBox(),
+    ]);
+    expect(thoughtHeadlineBox).toBeTruthy();
+    expect(reasoningBodyBox).toBeTruthy();
+    expect(Math.abs(thoughtHeadlineBox!.x - reasoningBodyBox!.x)).toBeLessThan(1);
+    const singleLineThought = page.locator('.thread-reasoning-toggle').nth(1);
+    await expect(singleLineThought).toHaveAccessibleName(/Thought.*Preparing the final response/);
+    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'false');
+    await singleLineThought.click();
+    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'true');
+    await expect(singleLineThought.locator('xpath=..').locator('.thread-reasoning-body'))
+      .toHaveText('Preparing the final response');
 
     const activityStatus = activity.locator('.thread-disclosure-status');
     const activityChevron = activity.locator('.thread-disclosure-chevron');
@@ -1019,6 +1032,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(commandAlignment).not.toBeNull();
     expect(commandAlignment!).toBeLessThan(1);
     await command.click();
+    await expect(command.locator('xpath=..')).not.toContainText('exit 0');
     await expect(command.locator('xpath=..').getByRole('button', { name: 'Copy output' })).toHaveCount(1);
     await command.locator('xpath=..').locator('.thread-tool-section').last().locator('.agent-code-block').hover();
     await page.getByRole('button', { name: 'Copy output' }).click();
@@ -1057,6 +1071,67 @@ test.describe('canonical agent Thread surface', () => {
       'tool:01910000-0000-7000-8000-00000000aa03': true,
       'tools:01910000-0000-7000-8000-00000000aa03': true,
     });
+  });
+
+  test('explains only non-zero shell exit codes', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000af01';
+      const commandId = '01910000-0000-7000-8000-00000000af02';
+      const answerId = '01910000-0000-7000-8000-00000000af03';
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: commandId,
+              type: 'commandExecution',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: commandId },
+              command: 'false',
+              cwd: '/mock/workspace',
+              processId: null,
+              status: 'failed',
+              commandActions: [],
+              aggregatedOutput: 'permission denied',
+              exitCode: 2,
+              durationMs: 4,
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: answerId },
+              text: 'The command failed.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 5,
+          durationMs: 4,
+        },
+      });
+    });
+
+    await page.getByRole('button', { name: 'Worked for <1s' }).click();
+    const commandDetails = page.locator('.thread-tool').filter({ hasText: 'false' });
+    const command = commandDetails.locator('.thread-tool-toggle');
+    await command.click();
+    await expect(commandDetails).toContainText('Command failed with exit code 2');
+    await expect(commandDetails).not.toContainText('exit 2');
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {

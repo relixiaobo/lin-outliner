@@ -477,19 +477,6 @@ function ReasoningDisclosure({
   const text = parts.join('\n\n');
   const trimmed = text.trim();
   if (!trimmed) return streaming ? <div className="thread-reasoning is-thinking">{t.agent.thinking.thinking}</div> : null;
-  const hasDetails = streaming
-    || defaultExpanded
-    || parts.filter((part) => part.trim()).length > 1
-    || trimmed.includes('\n');
-  if (!hasDetails) {
-    const gist = reasoningGist(trimmed);
-    return (
-      <div className="thread-item thread-reasoning thread-reasoning-summary">
-        <span className="thread-reasoning-headline">{t.agent.thinking.thought}</span>
-        {gist ? <span className="thread-reasoning-gist" title={gist}>· {gist}</span> : null}
-      </div>
-    );
-  }
   const expanded = expandState.isExpanded(disclosureId, defaultExpanded || streaming);
   const gist = expanded ? '' : reasoningGist(trimmed);
   return (
@@ -751,7 +738,9 @@ function toolDetail(
         input: item.command,
         inputLanguage: 'bash',
         output: item.aggregatedOutput,
-        body: item.exitCode === null ? null : <small className="thread-tool-exit">exit {item.exitCode}</small>,
+        error: item.exitCode !== null && item.exitCode !== 0
+          ? t.agent.thread.item.commandFailedWithExitCode({ code: item.exitCode })
+          : null,
       };
     case 'fileChange':
       return {
