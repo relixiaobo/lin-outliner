@@ -724,6 +724,11 @@ export type ThreadItemDelta =
 export type AgentCoreNotification =
   | { readonly type: 'thread/started'; readonly threadId: ThreadId; readonly thread: Thread }
   | {
+      readonly type: 'thread/name/updated';
+      readonly threadId: ThreadId;
+      readonly threadName?: string;
+    }
+  | {
       readonly type: 'thread/status/changed';
       readonly threadId: ThreadId;
       readonly status: ThreadStatus;
