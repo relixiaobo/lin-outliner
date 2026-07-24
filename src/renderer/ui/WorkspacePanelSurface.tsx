@@ -24,8 +24,9 @@ export function WorkspacePanelSurface({
   size,
 }: WorkspacePanelSurfaceProps) {
   const t = useT();
-  const workspaceViewClass = `is-${panel.view.kind}`;
-  const closeOwnedByChild = panel.view.kind === 'outliner' || panel.view.kind === 'file-preview';
+  const workspaceViewClass = panel.type === 'workspace' ? `is-${panel.view.kind}` : '';
+  const closeOwnedByChild = panel.type === 'workspace'
+    || panel.type === 'thread-debug';
   return (
     <div
       className={[

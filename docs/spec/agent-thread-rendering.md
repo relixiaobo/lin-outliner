@@ -105,16 +105,25 @@ error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
 Copy, Continue in new chat, and Details commands.
 
-The Details icon preserves the established two-level interaction. Hover or
-keyboard focus shows a non-interactive usage breakdown with token and cost
-segments. Click opens the message details popover with timestamp, provider,
-model, reasoning effort, token summary, and cost. The popover is anchored in a
-portal, closes on outside pointer or Escape, and cannot be clipped by transcript
-scrolling.
+The Details icon preserves the established two-level interaction without
+duplicating information surfaces. Hover or keyboard focus shows one
+non-interactive card containing timestamp, provider, model, reasoning effort,
+and the complete token/cost usage breakdown. The card is anchored in a portal
+and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
+Details from the native message menu, opens the workspace Run Details pane.
 
-Normal Thread UI may visually group Items by Turn without printing every Turn ID.
-Details and diagnostics must show the same Thread, Turn, and Item identities as
-the transport.
+Run Details preserves the established debug-page structure: Summary, Model
+Input disclosures, and an expandable Execution list with raw JSON for every
+canonical Item. It reads the canonical Thread and full Turn rollout directly;
+it does not recreate the removed debug-run, round, or event projection. The
+page adds canonical Thread, Turn, Session, provenance, and trigger identities
+alongside the existing model, timing, tool, token, and cost facts. Opening a
+different Turn reuses the existing Run Details pane, while opening the same Turn
+focuses it.
+
+Normal Thread UI may visually group Items by Turn without printing every Turn
+ID. Run Details and diagnostics must show the same Thread, Turn, and Item
+identities as the transport.
 
 ## Interaction States
 

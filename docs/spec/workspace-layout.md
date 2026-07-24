@@ -229,10 +229,26 @@ File preview uses the same workspace panel host and the same history stack:
 }
 ```
 
+Agent Run Details is a workspace pane that stores only the canonical location
+needed to read the current data:
+
+```ts
+{
+  type: 'thread-debug',
+  threadId: ThreadId,
+  turnId: TurnId,
+}
+```
+
+The same Thread and Turn focus an existing pane. A different Turn reuses the
+existing Run Details pane before creating another one. The canvas always keeps
+an outliner anchor; opening diagnostics may replace only a pane whose removal
+leaves another outliner anchor.
+
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v5`). It is UI state; document content remains in
+(`lin-outliner:workspace-layout:v6`). It is UI state; document content remains in
 the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
@@ -248,7 +264,8 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent Thread state, scroll, or input.
+- Agent Thread transcript, scroll, or input. A Run Details pane persists only
+  its canonical Thread and Turn IDs, never a second transcript projection.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
 

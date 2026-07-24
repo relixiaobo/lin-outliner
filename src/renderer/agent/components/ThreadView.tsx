@@ -87,8 +87,9 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../../ui/interactions/disclosureScrollAnchor';
-import { formatDateTime, formatNumber } from '../../ui/formatting';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
+import { formatDateTime } from '../../ui/formatting';
+import { ThreadUsageBreakdown } from './ThreadUsageBreakdown';
 
 interface ThreadViewProps {
   readonly composerEnabled: boolean;
@@ -110,6 +111,7 @@ interface ThreadViewProps {
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
@@ -292,6 +294,7 @@ export function ThreadView({
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onOpenTurnDetails,
   onReadToolOutput,
   onSend,
   onSubmitUserInput,
@@ -777,6 +780,7 @@ export function ThreadView({
                     onContinueInNewChat={onContinueInNewChat}
                     onOpenNodeReference={onOpenNodeReference}
                     onOpenThread={onOpenThread}
+                    onOpenTurnDetails={onOpenTurnDetails}
                     onReadToolOutput={onReadToolOutput}
                     turn={turn}
                   />
@@ -930,6 +934,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onContinueInNewChat,
   onOpenNodeReference,
   onOpenThread,
+  onOpenTurnDetails,
   onReadToolOutput,
   turn,
 }: {
@@ -941,10 +946,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly turn: Turn;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const responseItem = lastAgentResponse(turn);
   const contentBlocks = groupTurnContent(turn);
   const editUserMessage = useCallback(
@@ -972,14 +977,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
     });
     if (action === 'copy') await copyTurn();
     else if (action === 'continueInNewChat') await continueInNewChat();
-    else if (action === 'details') setDetailsOpen(true);
-  }, [continueInNewChat, copyTurn, turn]);
+    else if (action === 'details') onOpenTurnDetails(turn);
+  }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
   const responseTail = turn.status === 'inProgress' ? null : (
     <ThreadResponseTail
-      detailsOpen={detailsOpen}
       onCopy={copyTurn}
-      onDetailsOpenChange={setDetailsOpen}
       onContinueInNewChat={continueInNewChat}
+      onOpenDetails={() => onOpenTurnDetails(turn)}
       turn={turn}
     />
   );
@@ -1043,16 +1047,14 @@ const ThreadTurnView = memo(function ThreadTurnView({
 });
 
 function ThreadResponseTail({
-  detailsOpen,
   onCopy,
-  onDetailsOpenChange,
   onContinueInNewChat,
+  onOpenDetails,
   turn,
 }: {
-  readonly detailsOpen: boolean;
   readonly onCopy: () => Promise<void>;
-  readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onContinueInNewChat: () => Promise<void>;
+  readonly onOpenDetails: () => void;
   readonly turn: Turn;
 }) {
   const t = useT();
@@ -1094,7 +1096,7 @@ function ThreadResponseTail({
             iconSize={ICON_SIZE.menu}
             label={t.agent.message.details}
             onBlur={() => setUsageHoverOpen(false)}
-            onClick={() => onDetailsOpenChange(!detailsOpen)}
+            onClick={onOpenDetails}
             onFocus={() => setUsageHoverOpen(true)}
             onMouseEnter={() => setUsageHoverOpen(true)}
             onMouseLeave={() => setUsageHoverOpen(false)}
@@ -1102,81 +1104,12 @@ function ThreadResponseTail({
             title=""
             variant="message"
           />
-          {usageHoverOpen && !detailsOpen ? (
+          {usageHoverOpen ? (
             <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
-          ) : null}
-          {detailsOpen ? (
-            <ThreadResponseDetails
-              anchorRef={detailsButtonRef}
-              onClose={() => onDetailsOpenChange(false)}
-              turn={turn}
-            />
           ) : null}
         </span>
       </div>
     </>
-  );
-}
-
-function ThreadResponseDetails({
-  anchorRef,
-  onClose,
-  turn,
-}: {
-  readonly anchorRef: RefObject<HTMLElement | null>;
-  readonly onClose: () => void;
-  readonly turn: Turn;
-}) {
-  const t = useT();
-  const { locale } = useI18n();
-  const detailsRef = useRef<HTMLDivElement | null>(null);
-  const usage = turn.execution.usage;
-  const cost = usage.cost?.total;
-  const style = useAnchoredOverlay(detailsRef, {
-    anchorRef,
-    gap: 8,
-    layoutKey: `${turn.id}:${turn.completedAt ?? turn.startedAt}`,
-    maxHeight: 360,
-    placement: 'top-end',
-    width: 320,
-  });
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (detailsRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [anchorRef, onClose]);
-  return createPortal(
-    <div
-      aria-label={t.agent.message.details}
-      className="thread-response-details"
-      ref={detailsRef}
-      role="dialog"
-      style={style}
-    >
-      <dl className="thread-response-details-list">
-        <div><dt>{t.agent.message.timestamp}</dt><dd>{formatTimestamp(turn.completedAt ?? turn.startedAt, locale)}</dd></div>
-        <div><dt>{t.agent.message.provider}</dt><dd>{turn.execution.modelProvider}</dd></div>
-        <div><dt>{t.agent.message.model}</dt><dd>{turn.execution.model}</dd></div>
-        <div><dt>{t.agent.message.reasoningEffort}</dt><dd>{turn.execution.reasoningEffort}</dd></div>
-        <div><dt>{t.agent.message.tokens}</dt><dd>{usageSummary(turn, t.agent.message.tokenLabels)}</dd></div>
-        {cost !== undefined && cost !== null ? (
-          <div><dt>{t.agent.message.cost}</dt><dd>{formatCost(cost)}</dd></div>
-        ) : null}
-      </dl>
-    </div>,
-    document.body,
   );
 }
 
@@ -1187,72 +1120,35 @@ function ThreadUsageHoverCard({
   readonly anchorRef: RefObject<HTMLElement | null>;
   readonly turn: Turn;
 }) {
+  const t = useT();
+  const { locale } = useI18n();
   const cardRef = useRef<HTMLDivElement | null>(null);
   const usage = turn.execution.usage;
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
-    layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${usage.cost?.total ?? 0}`,
-    maxHeight: 280,
+    layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.execution.modelProvider}:${turn.execution.model}:${turn.execution.reasoningEffort}:${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${usage.cost?.total ?? 0}`,
+    maxHeight: 420,
     placement: 'top-end',
-    width: 248,
+    width: 320,
   });
   return createPortal(
     <div className="thread-response-usage-card" ref={cardRef} role="tooltip" style={style}>
-      <ThreadUsageBreakdown turn={turn} />
+      <dl className="thread-response-usage-context">
+        <div>
+          <dt>{t.agent.message.timestamp}</dt>
+          <dd>{formatDateTime(turn.completedAt ?? turn.startedAt, locale, {
+            dateStyle: 'medium',
+            timeStyle: 'medium',
+          })}</dd>
+        </div>
+        <div><dt>{t.agent.message.provider}</dt><dd>{turn.execution.modelProvider}</dd></div>
+        <div><dt>{t.agent.message.model}</dt><dd>{turn.execution.model}</dd></div>
+        <div><dt>{t.agent.message.reasoningEffort}</dt><dd>{turn.execution.reasoningEffort}</dd></div>
+      </dl>
+      <ThreadUsageBreakdown usage={usage} />
     </div>,
     document.body,
-  );
-}
-
-function ThreadUsageBreakdown({ turn }: { readonly turn: Turn }) {
-  const t = useT();
-  const usage = turn.execution.usage;
-  const cost = usage.cost;
-  const rows = [
-    { cost: cost?.input, kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input },
-    { cost: cost?.output, kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output },
-    { cost: cost?.cacheRead, kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead },
-    { cost: cost?.cacheWrite, kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite },
-  ] as const;
-  const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
-  return (
-    <>
-      <div className="thread-response-usage-title-row">
-        <div className="thread-response-usage-title">{t.agent.message.usageDetails}</div>
-        {cachedShare ? (
-          <div className="thread-response-usage-meta">
-            {t.agent.message.cachedShare}: <strong>{cachedShare}</strong>
-          </div>
-        ) : null}
-      </div>
-      <div aria-hidden className="thread-response-usage-bar">
-        {rows.map((row) => (
-          <span
-            className={`is-${row.kind}`}
-            key={row.kind}
-            style={usageSegmentStyle(row.tokens, usage.totalTokens)}
-          />
-        ))}
-      </div>
-      <div aria-label={t.agent.message.usageDetails} className="thread-response-usage-breakdown">
-        {[...rows, {
-          cost: cost?.total,
-          kind: 'total' as const,
-          label: t.agent.message.tokenLabels.total,
-          tokens: usage.totalTokens,
-        }].map((row) => (
-          <div
-            className={`${row.kind === 'total' ? 'is-total' : ''}${row.tokens === 0 && !row.cost ? ' is-zero' : ''}`.trim() || undefined}
-            key={row.kind}
-          >
-            <span><i className={`is-${row.kind}`} />{row.label}</span>
-            <strong>{formatNumber(row.tokens)}</strong>
-            <strong>{row.cost === undefined ? t.agent.message.usageUnavailable : formatCost(row.cost)}</strong>
-          </div>
-        ))}
-      </div>
-    </>
   );
 }
 
@@ -1345,47 +1241,6 @@ function jsonText(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function usageSummary(
-  turn: Turn,
-  labels: Messages['agent']['message']['tokenLabels'],
-): string {
-  const usage = turn.execution.usage;
-  const rows: ReadonlyArray<readonly [string, number]> = [
-    [labels.input, usage.input],
-    [labels.output, usage.output],
-    [labels.cacheRead, usage.cacheRead],
-    [labels.cacheWrite, usage.cacheWrite],
-    [labels.total, usage.totalTokens],
-  ];
-  return rows.map(([label, value]) => `${label} ${formatNumber(value)}`).join(' · ');
-}
-
-function formatCachedShare(input: number, cacheRead: number, cacheWrite: number): string | null {
-  const cacheActivity = cacheRead + cacheWrite;
-  const inputContext = input + cacheActivity;
-  if (cacheActivity <= 0 || inputContext <= 0) return null;
-  return `${Math.round((cacheRead / inputContext) * 100)}%`;
-}
-
-function usageSegmentStyle(value: number, total: number): CSSProperties {
-  const share = total > 0 ? value / total : 0;
-  return {
-    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
-  } as CSSProperties;
-}
-
-function formatTimestamp(timestamp: number, locale: string): string {
-  return formatDateTime(timestamp, locale, {
-    dateStyle: 'medium',
-    timeStyle: 'medium',
-  });
-}
-
-function formatCost(value: number): string {
-  if (value <= 0) return '$0.0000';
-  return value < 0.01 ? `$${value.toFixed(5)}` : `$${value.toFixed(4)}`;
 }
 
 function assertNever(value: never): never {

@@ -212,7 +212,7 @@ test.describe('outliner navigation and page title parity', () => {
     }));
     const savedScrollTop = await panel.evaluate((element) => element.scrollTop);
     await expect.poll(async () => page.evaluate((rootId) => {
-      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v5');
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v6');
       if (!raw) return 0;
       const layout = JSON.parse(raw) as {
         activePanelId?: string;

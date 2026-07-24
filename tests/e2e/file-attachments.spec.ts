@@ -719,7 +719,7 @@ test.describe('file attachments', () => {
     await expect(readerPane.locator('.backlinks-section')).toHaveCount(0);
 
     await expect.poll(async () => page.evaluate(() => {
-      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v5');
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v6');
       if (!raw) return null;
       const layout = JSON.parse(raw) as {
         activePanelId?: string;

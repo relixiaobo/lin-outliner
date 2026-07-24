@@ -7,6 +7,7 @@ import type {
   FilePreviewPresentation,
   OutlinerPanelView,
   PanelView,
+  ThreadDebugPanelState,
   WorkspaceContentPanelState,
   WorkspaceLayout,
   WorkspacePanelState,
@@ -14,7 +15,8 @@ import type {
 import { isRecord } from '../state/persistence';
 
 let nextWorkspaceId = 0;
-const STORAGE_KEY = 'lin-outliner:workspace-layout:v5';
+const STORAGE_KEY = 'lin-outliner:workspace-layout:v6';
+const STORAGE_VERSION = 6;
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 
@@ -122,6 +124,15 @@ function filePreviewPanel(
   return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
 }
 
+function threadDebugPanel(
+  id: string,
+  threadId: string,
+  turnId: string,
+  size = 1,
+): ThreadDebugPanelState {
+  return { id, type: 'thread-debug', threadId, turnId, size };
+}
+
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
   if (samePanelView(panel.view, view)) return panel;
   return {
@@ -185,6 +196,12 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
   const size = sanitizeSize(value.size);
+  if (value.type === 'thread-debug') {
+    return typeof value.threadId === 'string' && value.threadId.length > 0
+      && typeof value.turnId === 'string' && value.turnId.length > 0
+      ? threadDebugPanel(value.id, value.threadId, value.turnId, size)
+      : null;
+  }
   if (value.type !== 'workspace') return null;
   const view = sanitizePanelView(value.view, nodeIds);
   if (!view) return null;
@@ -222,7 +239,7 @@ function loadPersistedLayout(initial: DocumentProjection): WorkspaceLayout | nul
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || parsed.version !== 5) return null;
+    if (!isRecord(parsed) || parsed.version !== STORAGE_VERSION) return null;
     if (parsed.localDate !== todayIsoLocalDate()) return null;
     return sanitizeLayout(parsed, nodeIds);
   } catch {
@@ -234,7 +251,7 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
   if (!activePanelId || panels.length === 0) return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: 5,
+      version: STORAGE_VERSION,
       localDate: todayIsoLocalDate(),
       activePanelId,
       panels,
@@ -402,7 +419,9 @@ export function useWorkspaceLayout({
       keepActive(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id
-          ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
+          ? isWorkspacePanel(panel)
+            ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
+            : filePreviewPanel(panel.id, target, panel.size, nodeId, presentation)
           : panel
       )));
     } else {
@@ -557,6 +576,64 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
+  const openThreadDebugPanel = useCallback((threadId: string, turnId: string) => {
+    const exactPanel = panels.find((panel) => (
+      panel.type === 'thread-debug' && panel.threadId === threadId && panel.turnId === turnId
+    ));
+    if (exactPanel) {
+      setActivePanelId(exactPanel.id);
+      clearPreviewNavigationState();
+      return;
+    }
+
+    const reusablePanel = panels.find((panel) => panel.type === 'thread-debug');
+    if (reusablePanel) {
+      setActivePanelId(reusablePanel.id);
+      setPanels((prev) => prev.map((panel) => (
+        panel.id === reusablePanel.id
+          ? threadDebugPanel(panel.id, threadId, turnId, panel.size)
+          : panel
+      )));
+      clearPreviewNavigationState();
+      return;
+    }
+
+    if (panels.length >= MAX_PERSISTED_PANELS) {
+      const replacePanel = [...panels].reverse().find((candidate) => (
+        panels.some((panel) => panel.id !== candidate.id && Boolean(panelOutlinerAnchor(panel)))
+      ));
+      if (!replacePanel) {
+        onPanelOpenRejected?.();
+        return;
+      }
+      setActivePanelId(replacePanel.id);
+      setPanels((prev) => prev.map((panel) => (
+        panel.id === replacePanel.id
+          ? threadDebugPanel(panel.id, threadId, turnId, panel.size)
+          : panel
+      )));
+      clearPreviewNavigationState();
+      return;
+    }
+
+    if (!canFitPanelCount(panels.length + 1)) {
+      onPanelOpenRejected?.();
+      return;
+    }
+
+    const panelId = nextId('panel');
+    preparePanelCount(panels.length + 1);
+    setActivePanelId(panelId);
+    setPanels((prev) => [...prev, threadDebugPanel(panelId, threadId, turnId)]);
+    clearPreviewNavigationState();
+  }, [
+    canFitPanelCount,
+    clearPreviewNavigationState,
+    onPanelOpenRejected,
+    panels,
+    preparePanelCount,
+  ]);
+
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
     if (!initializedRef.current || panels.length === 0) return null;
     if (!hasMissingOutlinerRoot(panels, nodeIds)) return null;
@@ -628,6 +705,7 @@ export function useWorkspaceLayout({
     navigateRoot,
     openPanel,
     openPreview,
+    openThreadDebugPanel,
     panels,
     repairMissingOutlinerRoots,
     resizePanelPair,

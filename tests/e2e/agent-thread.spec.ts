@@ -86,14 +86,27 @@ test.describe('canonical agent Thread surface', () => {
     const messageDetailsButton = responseActions.getByRole('button', { name: 'Details' });
     await messageDetailsButton.hover();
     const usage = page.getByRole('tooltip');
+    await expect(usage).toHaveCount(1);
+    await expect(usage.locator('.thread-response-usage-context')).toContainText('Timestamp');
+    await expect(usage.locator('.thread-response-usage-context')).toContainText('Provideropenai');
+    await expect(usage.locator('.thread-response-usage-context')).toContainText('Modelopenai/gpt-5.4');
+    await expect(usage.locator('.thread-response-usage-context')).toContainText('Reasoningmedium');
     await expect(usage).toContainText('Usage details');
+    await expect(usage).toContainText('Cached: 21%');
     await expect(usage).toContainText('Input120');
     await messageDetailsButton.click();
-    const messageDetails = page.getByRole('dialog', { name: 'Details' });
-    await expect(messageDetails).toContainText('openai/gpt-5.4');
-    await expect(messageDetails).toContainText('Total 200');
-    await page.keyboard.press('Escape');
-    await expect(messageDetails).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
+    const runDetails = page.locator('.outline-panel-surface.is-thread-debug');
+    await expect(runDetails).toBeVisible();
+    await expect(runDetails).toContainText('Run Details');
+    await expect(runDetails).toContainText('Summary');
+    await expect(runDetails).toContainText('Model Input');
+    await expect(runDetails).toContainText('Execution (1)');
+    await expect(runDetails).toContainText('Thread ID');
+    await expect(runDetails).toContainText('Turn ID');
+    await expect(runDetails).toContainText('Session ID');
+    await runDetails.locator('.agent-debug-execution-event').first().locator('.agent-debug-message-head').click();
+    await expect(runDetails.locator('.agent-debug-execution-event').first()).toContainText('"type": "userMessage"');
 
     await userMessage.hover();
     expect(await userMessage.locator('.thread-message-actions').getByRole('button').evaluateAll((buttons) => (
@@ -118,6 +131,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'thread/list',
       'thread/start',
+      'thread/read',
       'thread/turns/list',
       'turn/start',
       'goal/get',

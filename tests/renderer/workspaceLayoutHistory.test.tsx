@@ -19,6 +19,77 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
+  test('opens and reuses one canonical Thread Run Details pane', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.openThreadDebugPanel('thread-alpha', 'turn-one');
+    });
+
+    const debugPanel = h.api.panels.find((panel) => panel.type === 'thread-debug');
+    expect(debugPanel).toMatchObject({
+      type: 'thread-debug',
+      threadId: 'thread-alpha',
+      turnId: 'turn-one',
+    });
+    expect(h.api.activePanelId).toBe(debugPanel?.id);
+    expect(h.api.panels).toHaveLength(2);
+
+    act(() => {
+      h.api.openThreadDebugPanel('thread-beta', 'turn-two');
+    });
+
+    expect(h.api.panels).toHaveLength(2);
+    expect(h.api.panels.find((panel) => panel.id === debugPanel?.id)).toMatchObject({
+      type: 'thread-debug',
+      threadId: 'thread-beta',
+      turnId: 'turn-two',
+    });
+    expect(h.clearFocusAndSelectionCalls).toBe(2);
+  });
+
+  test('restores a same-day Thread Run Details pane beside its outliner anchor', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-debug',
+      panels: [
+        {
+          id: 'panel-test',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-debug',
+          type: 'thread-debug',
+          size: 1,
+          threadId: 'thread-alpha',
+          turnId: 'turn-one',
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-debug');
+    expect(h.api.panels[1]).toEqual({
+      id: 'panel-debug',
+      type: 'thread-debug',
+      size: 1,
+      threadId: 'thread-alpha',
+      turnId: 'turn-one',
+    });
+  });
+
   test('new file preview panes can open as file-only readers', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
@@ -202,8 +273,8 @@ describe('useWorkspaceLayout history focus', () => {
 function renderLayout(layout: WorkspaceLayout) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const storage = new MemoryStorage();
-  storage.setItem('lin-outliner:workspace-layout:v5', JSON.stringify({
-    version: 5,
+  storage.setItem('lin-outliner:workspace-layout:v6', JSON.stringify({
+    version: 6,
     localDate: todayIsoLocalDate(),
     ...layout,
   }));

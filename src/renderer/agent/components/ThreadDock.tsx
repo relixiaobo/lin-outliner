@@ -30,6 +30,7 @@ interface ThreadDockProps {
   readonly index: DocumentIndex;
   readonly railState: ThreadRailState;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenTurnDetails: (threadId: string, turnId: string) => void;
   readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   readonly onResizeReset: () => void;
   readonly onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -39,6 +40,7 @@ export function ThreadDock({
   index,
   railState,
   onOpenNodeReference,
+  onOpenTurnDetails,
   onResizeKeyDown,
   onResizeReset,
   onResizeStart,
@@ -259,6 +261,7 @@ export function ThreadDock({
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onOpenNodeReference={onOpenNodeReference}
               onOpenThread={(threadId) => threadStore.selectThread(threadId)}
+              onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onSend={(content) => threadStore.send(content)}
               onSubmitUserInput={(answers) => userInput

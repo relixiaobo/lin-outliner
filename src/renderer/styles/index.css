@@ -15,6 +15,7 @@
 @import './breadcrumb.css';
 @import './agent-dock.css';
 @import './thread.css';
+@import './agent-debug.css';
 @import './code.css';
 @import './file-preview.css';
 @import './confirm-dialog.css';

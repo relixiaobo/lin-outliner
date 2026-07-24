@@ -9,6 +9,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared'
 import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
+import { ThreadDebugPanel } from '../agent/components/ThreadDebugPanel';
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -64,7 +65,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             showClose={activePanels.length > 1}
             size={panel.size}
           >
-            {panel.view.kind === 'outliner' ? (
+            {panel.type === 'workspace' && panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
                 rootId={panel.view.rootId}
@@ -86,7 +87,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />
-            ) : panel.view.kind === 'file-preview' ? (
+            ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
                 activePanel={props.activePanelId === panel.id}
                 panelId={panel.id}
@@ -112,6 +113,13 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 target={panel.view.target}
                 trigger={props.trigger}
                 ui={props.ui}
+              />
+            ) : panel.type === 'thread-debug' ? (
+              <ThreadDebugPanel
+                onClose={() => props.onClosePanel(panel.id)}
+                showClose={activePanels.length > 1}
+                threadId={panel.threadId}
+                turnId={panel.turnId}
               />
             ) : (
               null

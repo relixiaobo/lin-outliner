@@ -41,6 +41,7 @@ const colorSchemeDeclarationFiles = new Map([
 ]);
 const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
+  ['src/renderer/styles/agent-debug.css', 'Run Details disclosures and usage overlay become immediate.'],
   ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
   ['src/renderer/styles/file-preview.css', 'URL translation header spinner becomes a static loading state.'],
@@ -48,6 +49,7 @@ const reducedMotionRuleFiles = new Map([
 ]);
 const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
+  ['src/renderer/styles/agent-debug.css', 'Run Details usage material becomes opaque.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
 ]);
 const contrastRuleFiles = new Map([
@@ -76,7 +78,8 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
-  ['src/renderer/styles/thread.css|.thread-response-details, .thread-response-usage-card', 'Thread response detail and usage overlays.'],
+  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Run Details usage overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -103,7 +106,8 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
-  ['src/renderer/styles/thread.css|.thread-response-details, .thread-response-usage-card', 'Thread response detail and usage overlays.'],
+  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Run Details usage overlay.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
