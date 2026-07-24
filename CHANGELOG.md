@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Memory on daily timeline Nodes (PR #434, codex-3)** — added durable
+  Codex-style Memory as ordinary editable Daily Notes Nodes under deterministic
+  protected `#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and
+  `#d-guidance` tags. The feature includes immutable Memory admission snapshots,
+  private control/provenance storage, Phase 1 extraction, Phase 2 consolidation,
+  generated-node lineage, rollback invalidation, confirmed Reset, derived
+  briefings, citations, settings, Open Memory, and fail-closed foreground
+  mutation/history authorization. **Gate (main):** four review rounds caught
+  publication, visibility, rollback, Reset, and history-authorization bugs,
+  including reserved tag-name redo and branched multi-step undo bypasses; all
+  were fixed before merge. Final head `cc8220f` passed typecheck, full
+  `test:core` (1299 pass, 6 environment-dependent skips), full `test:renderer`
+  (741 pass), docs check, diff check, and focused old-bypass repros.
 - **Canonical Thread Agent Core replacement (PR #429, codex-3)** — replaced the
   former Conversation / Channel / Run / Issue agent stack with one canonical
   TypeScript Thread / Turn / ThreadItem implementation across persistence,

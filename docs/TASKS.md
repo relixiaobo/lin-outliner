@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429 and its interface sequence #428/#430–#433) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434, and the Core interface sequence #428/#430–#433) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,9 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-24).** Open PR queue: none. Recently merged: #429
-(`codex-3/agent-codex-core-runtime`) after iterative main review, completing the
-interface sequence #428/#430–#433; see *Recently completed*. #423
+**In flight (2026-07-24).** Open PR queue: none. Recently merged: #434
+(`codex-3/agent-codex-memory`) after iterative main review; see *Recently
+completed*. #429 (`codex-3/agent-codex-core-runtime`) after iterative main
+review, completing the interface sequence #428/#430–#433; see *Recently
+completed*. #423
 (`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
 iterative main review; its three implementation plans remain `draft` below. #427
 (`codex/tag-selector-active-tag-index`) merged 2026-07-21 after
@@ -270,11 +272,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-codex-memory** (`draft`, plan merged #423; unblocked by the complete
-  `agent-codex-core` replacement shipped in #429) — add Codex-style Memory as one complete
-  extension in one PR, publishing canonical editable `#d-*` Memory Nodes on the
-  daily timeline. It may proceed independently of Automations after Core lands.
-  See `docs/plans/agent-codex-memory.md`.
 - **agent-codex-automations** (`draft`, plan merged #423; unblocked by the complete
   `agent-codex-core` replacement shipped in #429) — add one host-owned Codex-style Automation
   scheduler as a complete feature in one PR, with canonical Threads and Turns as
@@ -584,6 +581,23 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-codex-memory**
+  (`codex-3/agent-codex-memory`, PR #434, codex-3, merged 2026-07-24,
+  plan-track) — added Codex-style durable Memory as editable Daily Timeline
+  Nodes under deterministic protected `#d-*` tags, with immutable Turn admission,
+  private control/provenance state, two-phase extraction and consolidation,
+  rollback invalidation, Reset recovery, derived briefings, citations, settings,
+  and foreground mutation authorization. The shipped design is folded into
+  `docs/spec/agent-memory.md` and related Agent specs; the plan is archived at
+  `docs/plans/archive/agent-codex-memory.md`.
+  **Gate (main):** review found multiple Memory publication, visibility,
+  rollback, and history-authorization issues across four rounds. Codex-3 fixed
+  every finding before merge; final head `cc8220f` had no reportable findings.
+  Verified with typecheck, `docs:check`, diff check, full `test:core` (1299
+  pass, 6 environment-dependent skips), full `test:renderer` (741 pass), and
+  focused old-bypass repros proving reserved-tag-name redo and branched
+  multi-step undo are rejected before touching Memory.
 
 - **agent-codex-core**
   (`codex-3/agent-codex-core-runtime`, PR #429, codex-3, merged 2026-07-24,
