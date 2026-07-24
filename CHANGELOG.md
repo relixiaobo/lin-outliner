@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Agent Core Thread-name notification interface (PR #433, codex-3)** —
+  added the Codex-aligned `thread/name/updated` contract for the complete
+  replacement in #429, carrying `threadId` plus an optional non-empty
+  `threadName`. The codec accepts the upstream omitted or null no-name forms and
+  normalizes both to an omitted field, while rejecting empty names, legacy
+  aliases, and unknown fields. **Gate (main):** review caught that the initial
+  contract required explicit null even though Codex omits `None`; the optional
+  shape and regression coverage were fixed before merge. Verified with
+  typecheck, 17 focused protocol tests, the full Core suite (1726 pass), docs
+  check, and diff check.
 - **Codex Agent Core rollback interface (PR #432, codex-3)** — defined
   append-only audit plus same-Thread `thread/rollback`, exact omitted-Turn
   extension hooks, current-history projection semantics, cumulative side-effect
