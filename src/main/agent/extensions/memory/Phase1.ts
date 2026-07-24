@@ -5,9 +5,11 @@ import {
   type MemoryCategory,
   type MemoryStage1EvidenceItem,
   type MemoryStage1Output,
+  type MemoryStage1Statement,
 } from '../../../../core/agent/memory';
 import type { Thread, ThreadItem, Turn } from '../../../../core/agent/protocol';
 import { isoLocalDate } from '../../../../core/localDate';
+import { freshNodeId } from '../../../../core/nodeId';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
 import { uuidV7 } from '../../uuid';
 import {
@@ -20,8 +22,8 @@ import {
   memoryNodeFingerprint,
   TimelineMemoryStore,
   timelineDigest,
+  timelineNodeStateFingerprint,
   type PreparedTimelineDateOutput,
-  type TimelinePublication,
 } from './TimelineMemoryStore';
 
 const MAX_EVIDENCE_ITEMS = 500;
@@ -52,6 +54,19 @@ interface Stage1PublicationPayload {
   readonly dates: readonly PreparedTimelineDateOutput[];
   readonly nodes: readonly MemoryGeneratedNodeRecord[];
   readonly lineage: readonly MemoryLineageInput[];
+  readonly targetSnapshots: readonly Stage1TargetSnapshot[];
+}
+
+interface Stage1TargetSnapshot {
+  readonly nodeId: string;
+  readonly fingerprint: string | null;
+  readonly generatedState: 'missing' | 'generated' | 'userAuthoritative';
+}
+
+export interface CollectedMemoryEvidence {
+  readonly items: readonly MemoryStage1EvidenceItem[];
+  readonly sourceVersion: string;
+  readonly polluted: boolean;
 }
 
 export class Phase1 {
@@ -73,7 +88,7 @@ export class Phase1 {
     if (claimStatus.featureMode !== 'enabled' || this.control.threadMode(source.thread.id) !== 'enabled') {
       return 'ineligible';
     }
-    const sourceVersion = memoryEvidenceFingerprint(evidence.items);
+    const sourceVersion = evidence.sourceVersion;
     if (this.control.source(source.thread.id)?.sourceVersion === sourceVersion) return 'unchanged';
     for (const item of evidence.items) {
       if (!this.control.claimOrigin(item.originItemId, item.threadId, item.turnId, item.sourceDate, item.contentHash)) {
@@ -89,37 +104,58 @@ export class Phase1 {
       signal,
     });
     if (signal.aborted) throw abortError();
-    const output = normalizeStage1Output(decodeMemoryStage1Output(parseJsonObject(raw)));
+    const output = validateStage1Output(
+      normalizeStage1Output(decodeMemoryStage1Output(parseJsonObject(raw))),
+      evidence.items,
+    );
     await this.validateClaim(source.thread.id, sourceVersion, claimStatus.featureModeGeneration, claimStatus.resetEpoch, signal);
     if (output.dates.length === 0) {
-      this.control.finalizeStage1NoOutput(source.thread.id, sourceVersion);
+      await this.timeline.withWriteGate(async () => {
+        await this.validateClaim(
+          source.thread.id,
+          sourceVersion,
+          claimStatus.featureModeGeneration,
+          claimStatus.resetEpoch,
+          signal,
+        );
+        this.control.finalizeStage1NoOutput(source.thread.id, sourceVersion);
+      });
       return 'noOutput';
     }
 
-    const payload = preparePublicationPayload(
-      source.thread,
-      evidence.items,
-      output,
-      sourceVersion,
-      this.timeline,
-      this.control,
-    );
-    const operationId = `memory:stage1:${uuidV7()}`;
-    const generation = this.control.allocatePublicationGeneration();
-    const digest = timelineDigest({ operationId, generation, payload });
-    const journal: MemoryPublicationRecord<Stage1PublicationPayload> = {
-      id: operationId,
-      kind: 'stage1',
-      status: 'prepared',
-      generation,
-      featureGeneration: claimStatus.featureModeGeneration,
-      resetEpoch: claimStatus.resetEpoch,
-      digest,
-      payload,
-      createdAt: Date.now(),
-    };
-    this.control.preparePublication(journal);
-    await this.publishPrepared(journal, signal);
+    await this.timeline.withWriteGate(async () => {
+      await this.validateClaim(
+        source.thread.id,
+        sourceVersion,
+        claimStatus.featureModeGeneration,
+        claimStatus.resetEpoch,
+        signal,
+      );
+      const payload = preparePublicationPayload(
+        source.thread,
+        evidence.items,
+        output,
+        sourceVersion,
+        this.timeline,
+        this.control,
+      );
+      const operationId = `memory:stage1:${uuidV7()}`;
+      const generation = this.control.allocatePublicationGeneration();
+      const digest = timelineDigest({ operationId, generation, payload });
+      const journal: MemoryPublicationRecord<Stage1PublicationPayload> = {
+        id: operationId,
+        kind: 'stage1',
+        status: 'prepared',
+        generation,
+        featureGeneration: claimStatus.featureModeGeneration,
+        resetEpoch: claimStatus.resetEpoch,
+        digest,
+        payload,
+        createdAt: Date.now(),
+      };
+      this.control.preparePublication(journal);
+      await this.publishPreparedWithinWriteGate(journal, signal);
+    });
     return 'published';
   }
 
@@ -130,37 +166,36 @@ export class Phase1 {
     await this.timeline.withWriteGate(async () => this.finalize(journal));
   }
 
-  private async publishPrepared(
+  private async publishPreparedWithinWriteGate(
     journal: MemoryPublicationRecord<Stage1PublicationPayload>,
     signal: AbortSignal,
   ): Promise<void> {
-    await this.timeline.withWriteGate(async () => {
-      await this.timeline.publishWithinWriteGate({
-        operationId: journal.id,
-        generation: journal.generation,
-        digest: journal.digest,
-        dates: journal.payload.dates,
-      }, async () => {
-        const current = this.control.status();
-        if (
-          signal.aborted
-          || current.featureMode !== 'enabled'
-          || current.featureModeGeneration !== journal.featureGeneration
-          || current.resetEpoch !== journal.resetEpoch
-        ) throw abortError();
-        if (this.control.threadMode(journal.payload.threadId) !== 'enabled') throw abortError();
-        if (this.control.activeRollbacks().some((rollback) => rollback.threadId === journal.payload.threadId)) {
-          throw new Error('Thread rollback invalidated the Memory extraction');
-        }
-        if (journal.payload.lineage.some((edge) => this.control.isTurnExcluded(edge.turnId))) throw abortError();
-        const currentSource = this.control.source(journal.payload.threadId);
-        if (currentSource?.polluted) throw new Error('Polluted Thread cannot publish Memory');
-        if (this.validateSource && !await this.validateSource(journal.payload.threadId, journal.payload.sourceVersion)) {
-          throw new Error('Thread changed during Memory extraction');
-        }
-      });
-      this.finalize(journal);
+    await this.timeline.publishWithinWriteGate({
+      operationId: journal.id,
+      generation: journal.generation,
+      digest: journal.digest,
+      dates: journal.payload.dates,
+    }, async () => {
+      const current = this.control.status();
+      if (
+        signal.aborted
+        || current.featureMode !== 'enabled'
+        || current.featureModeGeneration !== journal.featureGeneration
+        || current.resetEpoch !== journal.resetEpoch
+      ) throw abortError();
+      if (this.control.threadMode(journal.payload.threadId) !== 'enabled') throw abortError();
+      if (this.control.activeRollbacks().some((rollback) => rollback.threadId === journal.payload.threadId)) {
+        throw new Error('Thread rollback invalidated the Memory extraction');
+      }
+      if (journal.payload.lineage.some((edge) => this.control.isTurnExcluded(edge.turnId))) throw abortError();
+      const currentSource = this.control.source(journal.payload.threadId);
+      if (currentSource?.polluted) throw new Error('Polluted Thread cannot publish Memory');
+      if (this.validateSource && !await this.validateSource(journal.payload.threadId, journal.payload.sourceVersion)) {
+        throw new Error('Thread changed during Memory extraction');
+      }
+      validateTargetSnapshots(journal.payload.targetSnapshots, this.timeline, this.control);
     });
+    this.finalize(journal);
   }
 
   private finalize(journal: MemoryPublicationRecord<Stage1PublicationPayload>): void {
@@ -200,16 +235,14 @@ export class Phase1 {
 export function collectMemoryEvidence(
   source: Phase1Source,
   control: MemoryControlStore,
-): { items: readonly MemoryStage1EvidenceItem[]; polluted: boolean } {
+): CollectedMemoryEvidence {
   if (
     source.thread.ephemeral
     || source.thread.parentThreadId !== null
     || source.thread.threadSource !== 'user'
-  ) return { items: [], polluted: false };
-  const cutoff = control.resetCutoff(source.thread.id);
-  const items: MemoryStage1EvidenceItem[] = [];
-  let localPosition = 0;
-  let totalChars = 0;
+  ) return { items: [], sourceVersion: memoryEvidenceFingerprint([]), polluted: false };
+  const currentResetEpoch = control.status().resetEpoch;
+  const candidates: MemoryStage1EvidenceItem[] = [];
   let polluted = false;
 
   for (const turn of source.turns) {
@@ -218,31 +251,41 @@ export function collectMemoryEvidence(
     const automation = turn.provenance.trigger.kind === 'feature'
       && turn.provenance.trigger.feature === 'automation';
     const eligible = Boolean(admission?.eligibleAtAdmission)
+      && admission?.resetEpoch === currentResetEpoch
       && !control.isTurnExcluded(turn.id)
       && !automation;
     for (const item of turn.items) {
-      localPosition += 1;
-      if (!eligible || localPosition <= cutoff) continue;
+      if (!eligible) continue;
       if (item.provenance.originThreadId !== source.thread.id) continue;
       if (isExternalContextItem(item)) polluted = true;
       const content = evidenceContent(item);
       if (!content) continue;
-      const bounded = content.slice(0, Math.max(0, MAX_EVIDENCE_CHARS - totalChars));
-      if (!bounded || items.length >= MAX_EVIDENCE_ITEMS) continue;
-      totalChars += bounded.length;
-      items.push({
+      candidates.push({
         threadId: source.thread.id,
         turnId: turn.id,
         itemId: item.id,
         originItemId: item.provenance.originItemId,
         sourceDate: control.originSourceDate(item.provenance.originItemId) ?? isoLocalDate(new Date(turn.startedAt)),
         kind: item.type,
-        content: bounded,
-        contentHash: sha256(bounded),
+        content,
+        contentHash: sha256(content),
       });
     }
   }
-  return { items, polluted };
+  const sourceVersion = memoryEvidenceFingerprint(candidates);
+  const items: MemoryStage1EvidenceItem[] = [];
+  let totalChars = 0;
+  for (let index = candidates.length - 1; index >= 0 && items.length < MAX_EVIDENCE_ITEMS; index -= 1) {
+    const candidate = candidates[index]!;
+    const remaining = MAX_EVIDENCE_CHARS - totalChars;
+    if (remaining <= 0) break;
+    const content = candidate.content.slice(0, remaining);
+    if (!content) continue;
+    items.push({ ...candidate, content });
+    totalChars += content.length;
+  }
+  items.reverse();
+  return { items: Object.freeze(items), sourceVersion, polluted };
 }
 
 function preparePublicationPayload(
@@ -254,7 +297,20 @@ function preparePublicationPayload(
   control: MemoryControlStore,
 ): Stage1PublicationPayload {
   const graph = timeline.graph();
-  const previous = control.generatedNodesForThread(thread.id);
+  const graphById = new Map(graph.nodes.map((entry) => [entry.node.id, entry]));
+  const previous = control.generatedNodesForThread(thread.id).filter((entry) => {
+    if (entry.userAuthoritative) return false;
+    const current = graphById.get(entry.nodeId);
+    if (current && entry.fingerprint === memoryNodeFingerprint({
+      category: current.category,
+      sourceDate: current.sourceDate,
+      parentKey: current.category === 'memory' ? `date:${current.sourceDate}` : current.node.parentId ?? '',
+      tags: current.node.tags,
+      text: current.node.content.text,
+    })) return true;
+    control.markNodeUserAuthoritative(entry.nodeId);
+    return false;
+  });
   const dates: PreparedTimelineDateOutput[] = [];
   const nodes: MemoryGeneratedNodeRecord[] = [];
   const lineage: MemoryLineageInput[] = [];
@@ -268,62 +324,94 @@ function preparePublicationPayload(
     const previousContainer = previousForDate.find((entry) => entry.category === 'memory');
     const containerId = existingContainer
       ?? previousContainer?.nodeId
-      ?? uuidV7();
+      ?? freshNodeId();
     const containerGenerated = existingContainer === undefined || previousContainer?.nodeId === existingContainer;
-    const episodeId = previousForDate.find((entry) => entry.category === 'episode')?.nodeId ?? uuidV7();
+    const episodeId = previousForDate.find((entry) => entry.category === 'episode')?.nodeId ?? freshNodeId();
     const beliefIds = stableIds(previousForDate, 'belief', date.beliefs.length);
     const questionIds = stableIds(previousForDate, 'question', date.questions.length);
     const guidanceIds = stableIds(previousForDate, 'guidance', date.guidance.length);
-    const prepared = { ...date, containerId, containerGenerated, episodeId, beliefIds, questionIds, guidanceIds };
+    const prepared: PreparedTimelineDateOutput = {
+      sourceDate: date.sourceDate,
+      headline: date.headline.text,
+      episode: date.episode.text,
+      beliefs: date.beliefs.map((statement) => statement.text),
+      questions: date.questions.map((statement) => statement.text),
+      guidance: date.guidance.map((statement) => statement.text),
+      containerId,
+      containerGenerated,
+      episodeId,
+      beliefIds,
+      questionIds,
+      guidanceIds,
+    };
     dates.push(prepared);
-    const records = [
-      ...(containerGenerated ? [generated(
+    const records: Array<readonly [MemoryGeneratedNodeRecord, MemoryStage1Statement]> = [
+      ...(containerGenerated ? [[generated(
         containerId,
         'memory',
         date.sourceDate,
         `date:${date.sourceDate}`,
-        date.headline,
+        date.headline.text,
         now,
-      )] : []),
-      generated(episodeId, 'episode', date.sourceDate, containerId, date.episode, now),
-      ...date.beliefs.map((text, index) => generated(
+      ), date.headline] as const] : []),
+      [generated(episodeId, 'episode', date.sourceDate, containerId, date.episode.text, now), date.episode],
+      ...date.beliefs.map((statement, index) => [generated(
         beliefIds[index]!,
         'belief',
         date.sourceDate,
         episodeId,
-        text,
+        statement.text,
         now,
-      )),
-      ...date.questions.map((text, index) => generated(
+      ), statement] as const),
+      ...date.questions.map((statement, index) => [generated(
         questionIds[index]!,
         'question',
         date.sourceDate,
         episodeId,
-        text,
+        statement.text,
         now,
-      )),
-      ...date.guidance.map((text, index) => generated(
+      ), statement] as const),
+      ...date.guidance.map((statement, index) => [generated(
         guidanceIds[index]!,
         'guidance',
         date.sourceDate,
         episodeId,
-        text,
+        statement.text,
         now,
-      )),
+      ), statement] as const),
     ];
-    nodes.push(...records);
-    for (const node of records) {
-      for (const item of dateEvidence) {
+    nodes.push(...records.map(([record]) => record));
+    const evidenceByOrigin = new Map(dateEvidence.map((item) => [item.originItemId, item]));
+    for (const [node, statement] of records) {
+      for (const originItemId of statement.originItemIds) {
+        const item = evidenceByOrigin.get(originItemId)!;
         lineage.push({
           nodeId: node.nodeId,
           threadId: thread.id,
           turnId: item.turnId,
-          originItemId: item.originItemId,
+          originItemId,
         });
       }
     }
   }
-  return { threadId: thread.id, sourceVersion, dates, nodes, lineage };
+  const projection = timeline.projection();
+  const graphAtPrepare = timeline.graph(projection);
+  const generatedAtPrepare = new Map(control.generatedNodes().map((entry) => [entry.nodeId, entry]));
+  const targetIds = new Set(dates.flatMap((date) => [
+    date.containerId,
+    date.episodeId,
+    ...date.beliefIds,
+    ...date.questionIds,
+    ...date.guidanceIds,
+  ]));
+  const targetSnapshots = [...targetIds].map((nodeId): Stage1TargetSnapshot => ({
+    nodeId,
+    fingerprint: timelineNodeStateFingerprint(nodeId, projection, graphAtPrepare),
+    generatedState: generatedAtPrepare.get(nodeId)?.userAuthoritative
+      ? 'userAuthoritative'
+      : generatedAtPrepare.has(nodeId) ? 'generated' : 'missing',
+  }));
+  return { threadId: thread.id, sourceVersion, dates, nodes, lineage, targetSnapshots };
 }
 
 function stableIds(
@@ -332,7 +420,7 @@ function stableIds(
   count: number,
 ): readonly string[] {
   const candidates = previous.filter((entry) => entry.category === category).map((entry) => entry.nodeId);
-  return Object.freeze(Array.from({ length: count }, (_, index) => candidates[index] ?? uuidV7()));
+  return Object.freeze(Array.from({ length: count }, (_, index) => candidates[index] ?? freshNodeId()));
 }
 
 function generated(
@@ -363,13 +451,58 @@ function normalizeStage1Output(output: MemoryStage1Output): MemoryStage1Output {
   return {
     dates: output.dates.map((date) => ({
       ...date,
-      headline: redactSecretLikeContent(date.headline),
-      episode: redactSecretLikeContent(date.episode),
-      beliefs: date.beliefs.map((text) => redactSecretLikeContent(text)),
-      questions: date.questions.map((text) => redactSecretLikeContent(text)),
-      guidance: date.guidance.map((text) => redactSecretLikeContent(text)),
+      headline: redactStatement(date.headline),
+      episode: redactStatement(date.episode),
+      beliefs: date.beliefs.map(redactStatement),
+      questions: date.questions.map(redactStatement),
+      guidance: date.guidance.map(redactStatement),
     })),
   };
+}
+
+function redactStatement(statement: MemoryStage1Statement): MemoryStage1Statement {
+  return { ...statement, text: redactSecretLikeContent(statement.text) };
+}
+
+function validateStage1Output(
+  output: MemoryStage1Output,
+  evidence: readonly MemoryStage1EvidenceItem[],
+): MemoryStage1Output {
+  const byOrigin = new Map(evidence.map((item) => [item.originItemId, item]));
+  for (const date of output.dates) {
+    const statements = [date.headline, date.episode, ...date.beliefs, ...date.questions, ...date.guidance];
+    for (const statement of statements) {
+      for (const originItemId of statement.originItemIds) {
+        const item = byOrigin.get(originItemId);
+        if (!item) throw new Error(`Memory Stage 1 cited unknown evidence: ${originItemId}`);
+        if (item.sourceDate !== date.sourceDate) {
+          throw new Error(`Memory Stage 1 evidence date mismatch: ${originItemId}`);
+        }
+      }
+    }
+  }
+  return output;
+}
+
+function validateTargetSnapshots(
+  snapshots: readonly Stage1TargetSnapshot[],
+  timeline: TimelineMemoryStore,
+  control: MemoryControlStore,
+): void {
+  const projection = timeline.projection();
+  const graph = timeline.graph(projection);
+  const generated = new Map(control.generatedNodes().map((entry) => [entry.nodeId, entry]));
+  for (const snapshot of snapshots) {
+    const currentState = generated.get(snapshot.nodeId)?.userAuthoritative
+      ? 'userAuthoritative'
+      : generated.has(snapshot.nodeId) ? 'generated' : 'missing';
+    if (
+      currentState !== snapshot.generatedState
+      || timelineNodeStateFingerprint(snapshot.nodeId, projection, graph) !== snapshot.fingerprint
+    ) {
+      throw new Error(`Memory Node changed during extraction: ${snapshot.nodeId}`);
+    }
+  }
 }
 
 function evidenceContent(item: ThreadItem): string | null {
@@ -416,11 +549,11 @@ function stage1Prompt(items: readonly MemoryStage1EvidenceItem[]): string {
     output: {
       dates: [{
         sourceDate: 'YYYY-MM-DD',
-        headline: 'concise daily memory headline',
-        episode: 'durable episode or observed pattern',
-        beliefs: ['stable self-contained update'],
-        questions: ['useful unresolved uncertainty'],
-        guidance: ['future handling instruction'],
+        headline: { text: 'concise daily memory headline', originItemIds: ['exact evidence originItemId'] },
+        episode: { text: 'durable episode or observed pattern', originItemIds: ['exact evidence originItemId'] },
+        beliefs: [{ text: 'stable self-contained update', originItemIds: ['exact evidence originItemId'] }],
+        questions: [{ text: 'useful unresolved uncertainty', originItemIds: ['exact evidence originItemId'] }],
+        guidance: [{ text: 'future handling instruction', originItemIds: ['exact evidence originItemId'] }],
       }],
     },
   });

@@ -82,8 +82,9 @@ complete Items remain excluded after re-enable. Existing Memory Nodes remain
 visible and directly editable, but are neither implicitly read nor generated.
 
 Thread disable applies to subsequent admissions. An already admitted Turn keeps
-its immutable admission result, while in-flight background publication still
-rechecks the current Thread mode and cannot commit after disable.
+its immutable admission result. The mode transition uses the same Memory write
+gate as publication: after the disable request returns, no publication prepared
+under the old mode can commit.
 
 ## Extraction
 
@@ -92,9 +93,12 @@ startup, within a ten-day age window and after six hours of idle time. Later
 eligible idle transitions enqueue the same durable per-Thread job rather than a
 timer per Thread.
 
-Phase 1 builds a deterministic source version from ordered, locally originated,
-eligible Items and canonical content hashes. It includes user messages, final
-agent messages, completed tool evidence, verification, corrections, stable
+Phase 1 builds a deterministic source version from every ordered, locally
+originated, eligible Item and canonical content hash. The version covers the
+complete eligible stream even when model input is limited to the latest 500
+Items and 120,000 characters, so a long Thread never stops becoming dirty. It
+includes user messages, final agent messages, completed tool evidence,
+verification, corrections, stable
 preferences, decisions, workflow facts, and reusable failure prevention. It
 excludes reasoning, injected instructions, transient status, copied fork
 prefixes, Automation Turns, disabled/reset-excluded Turns, and unbounded document
@@ -107,17 +111,24 @@ Memory disabled. Hidden internal Threads do not publish renderer notifications
 or invoke ordinary extension admission, context, Item, lifecycle, or tool hooks;
 the model receives the exact Memory system prompt without Skill preparation or
 the general interactive-agent prompt. Strict bounded JSON produces zero or more
-source-date episode groups. Secret-like content is redacted before publication.
+source-date episode groups. Every headline, episode, belief, question, and
+guidance statement carries a non-empty, exact set of supplied `originItemId`
+values from that source date; lineage is recorded per statement rather than per
+day. Secret-like content is redacted before publication.
 A no-signal result withdraws that source's old generated lineage and schedules
 global cleanup.
 
-Stage 1 prepares stable Node IDs, output, lineage, feature generation, reset
-epoch, command digest, and a unique publication generation in
-`memories.sqlite`. Under the Memory write gate it rechecks modes, exclusions,
-rollback state, source version, and pollution, then applies all Node commands and
-one projection-neutral `agent.memory` system receipt in a single non-user-undo
-document transaction. SQLite finalizes source state only after that transaction
-commits.
+Under the Memory write gate, Stage 1 rechecks modes, exclusions, rollback state,
+source version, and pollution, then rebuilds every target from the current graph.
+It prepares canonical `node:<uuid>` IDs, exact lineage, feature generation, reset
+epoch, command digest, target fingerprints and authority states, and a unique
+publication generation in `memories.sqlite` without releasing the gate. It then
+applies all Node commands and one projection-neutral `agent.memory` system
+receipt in a single non-user-undo document transaction. A generated Node whose
+fingerprint changed during model work is first promoted to user-authoritative
+and is never overwritten. The trusted transaction resolves only after workspace
+bytes containing both Nodes and receipt are durably flushed; SQLite finalizes
+source state only after that durable commit.
 
 ## Consolidation
 
@@ -147,10 +158,13 @@ Deletion fails closed if any descendant is unselected, ordinary, or
 user-authoritative. User-authoritative Nodes cannot be updated or deleted by the
 model. Create operations cannot target a deleted or non-canonical parent.
 
-Before commit, Phase 2 rechecks every structural input fingerprint, mode
-generation, reset epoch, and the exact ordered rollback set under the Memory
-write gate. A durable journal stores canonical commands, output fingerprints,
-new generated records, complete lineage, and rollback IDs. The document
+Phase 2 acquires the Memory write gate before preparing publication, then
+rechecks every structural input fingerprint, the complete identity of every
+deletion subtree including ordinary descendants, mode generation, reset epoch,
+and the exact ordered rollback set. It writes a durable journal containing
+canonical commands, output fingerprints, deletion-subtree fingerprints, new
+generated records, complete lineage, and rollback IDs without releasing the
+gate. The document
 transaction writes the matching receipt; finalization uses only journaled state,
 never mutable live Nodes. A rollback is reconciled only after every remaining
 canonical generated Node has current evidence or is deleted.
@@ -175,11 +189,20 @@ Turn may use ordinary Node tools to remember, update, or forget only when the
 user message explicitly requests that operation. Renderer-authored edits remain
 ordinary user mutations. Automation, Subagent, excluded, stale-generation, and
 unrelated feature Turns cannot change the canonical Memory graph. Every agent
-Node mutation carries exact Thread, Turn, and Item causation.
+Node mutation carries exact Thread, Turn, and Item causation. The mutation
+classifier evaluates command owners, targets, and destination parents: creating
+an ordinary sibling directly under a Daily Note is not a Memory mutation, while
+writing beneath a canonical container or changing a container/date ancestor is.
+Agent `outline_undo_stack` undo/redo carries the same causation and passes through
+the same coordinator and fail-closed guard because history can restore Memory
+that is absent from the current projection.
 
 When a final response used derived Memory, Core appends a canonical commentary
-Item containing `memoryCitation`. Each entry links to the real timeline Node and
-the citation also links to supporting source Threads that still exist. Deleting
+Item containing `memoryCitation`. The renderer treats it as a dedicated,
+always-visible citation row immediately below the final response, not as part of
+the earlier collapsed process block. Each entry links to the real timeline Node
+and the citation links only to supporting source Threads that still exist and
+are active/navigable. Archived and deleted Threads produce no dead link. Deleting
 a source Thread does not delete already published Memory Nodes or their retained
 evidence; those Nodes remain user-editable until ordinary editing, consolidation,
 or Reset changes them. Usage counts distinct current `originItemId` values, so
@@ -201,14 +224,16 @@ stranded preparation against the complete durable marker before admitting new
 Turns.
 
 Reset means "forget current Memory and learn only from future Turns." Under the
-host admission barrier and Memory write gate it snapshots every persistent root
-Thread's terminal Item cutoff, retains every active Turn ID as an indivisible
-exclusion, and prepares the next reset epoch. One document transaction
-permanently deletes only the snapshotted canonical `#d-memory` containers and
-writes the Reset receipt. SQLite finalization clears generated content indexes,
-lineage, source state, citations, rollback invalidations, and jobs while
-preserving feature mode, Thread modes, admission snapshots, cutoffs, exclusions,
-and tag definitions.
+host admission barrier and Memory write gate it advances the reset epoch and
+retains every active Turn ID as an indivisible exclusion. Phase 1 accepts only
+Turns whose immutable admission snapshot carries the current epoch, so rollback
+or replacement cannot move an Item across a positional boundary. One document
+transaction permanently deletes the snapshotted canonical `#d-memory`
+containers and every descendant inside them, including untagged ordinary notes,
+then writes the Reset receipt. Notes outside those containers and stray tagged
+subtrees survive. SQLite finalization clears generated content indexes, lineage,
+source state, citations, rollback invalidations, and jobs while preserving
+feature mode, Thread modes, admission snapshots, exclusions, and tag definitions.
 
 Reset does not interrupt active user Turns or reverse side effects. Items that
 such a Turn completes afterward remain excluded, and its stale admission epoch
@@ -218,7 +243,7 @@ with its complete subtree.
 ## Crash Recovery
 
 `<userData>/agent/memories.sqlite` stores modes, admissions, exclusions,
-cutoffs, source versions, origin claims, generated fingerprints, lineage,
+source versions, origin claims, generated fingerprints, lineage,
 citation usage, leases/jobs, publication journals, reset epochs, visibility
 generations, and rollback invalidations. Published prose exists only in Nodes.
 

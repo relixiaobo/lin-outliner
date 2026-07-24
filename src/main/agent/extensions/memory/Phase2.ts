@@ -7,6 +7,7 @@ import {
 } from '../../../../core/agent/memory';
 import type { Thread } from '../../../../core/agent/protocol';
 import type { DocumentProjection } from '../../../../core/types';
+import { freshNodeId } from '../../../../core/nodeId';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -20,6 +21,7 @@ import {
   memoryNodeFingerprint,
   timelineDigest,
   timelineNodeFingerprint,
+  timelineSubtreeFingerprint,
   type CanonicalMemoryNode,
   type TimelineConsolidationChange,
 } from './TimelineMemoryStore';
@@ -29,6 +31,7 @@ const GENERATED_UNUSED_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 
 interface ConsolidationPublicationPayload {
   readonly inputFingerprints: Readonly<Record<string, string>>;
+  readonly deletionSubtreeFingerprints: Readonly<Record<string, string>>;
   readonly changes: readonly TimelineConsolidationChange[];
   readonly upsertedNodes: readonly MemoryGeneratedNodeRecord[];
   readonly lineage: readonly MemoryLineageInput[];
@@ -76,33 +79,52 @@ export class Phase2 {
       return 'unchanged';
     }
 
-    const operationId = `memory:stage2:${uuidV7()}`;
-    const generation = this.control.allocatePublicationGeneration();
-    const prepared = prepareConsolidation(modelChanges, selected, this.timeline, this.control);
-    const payload: ConsolidationPublicationPayload = {
-      inputFingerprints: Object.fromEntries(selected.map((entry) => [entry.nodeId, entry.fingerprint])),
-      changes: prepared.changes,
-      upsertedNodes: prepared.upsertedNodes,
-      lineage: prepared.lineage,
-      releasedNodeIds: prepared.releasedNodeIds,
-      rollbackIds,
-      reconciledRollbackIds: prepared.reconciledRollbackIds,
-      needsFollowUp: prepared.needsFollowUp,
-    };
-    const digest = timelineDigest({ operationId, generation, payload });
-    const journal: MemoryPublicationRecord<ConsolidationPublicationPayload> = {
-      id: operationId,
-      kind: 'stage2',
-      status: 'prepared',
-      generation,
-      featureGeneration: status.featureModeGeneration,
-      resetEpoch: status.resetEpoch,
-      digest,
-      payload,
-      createdAt: Date.now(),
-    };
-    this.control.preparePublication(journal);
-    await this.publishPrepared(journal, signal);
+    await this.timeline.withWriteGate(async () => {
+      validateConsolidationInputs(
+        this.control,
+        this.timeline,
+        selected,
+        rollbackIds,
+        status.featureModeGeneration,
+        status.resetEpoch,
+        signal,
+      );
+      const operationId = `memory:stage2:${uuidV7()}`;
+      const generation = this.control.allocatePublicationGeneration();
+      const prepared = prepareConsolidation(modelChanges, selected, this.timeline, this.control);
+      const projection = this.timeline.projection();
+      const deletionSubtreeFingerprints = Object.fromEntries(prepared.changes.flatMap((change) => {
+        if (change.action !== 'delete') return [];
+        const fingerprint = timelineSubtreeFingerprint(change.nodeId, projection);
+        if (!fingerprint) throw new Error(`Memory deletion target disappeared during preparation: ${change.nodeId}`);
+        return [[change.nodeId, fingerprint]];
+      }));
+      const payload: ConsolidationPublicationPayload = {
+        inputFingerprints: Object.fromEntries(selected.map((entry) => [entry.nodeId, entry.fingerprint])),
+        deletionSubtreeFingerprints,
+        changes: prepared.changes,
+        upsertedNodes: prepared.upsertedNodes,
+        lineage: prepared.lineage,
+        releasedNodeIds: prepared.releasedNodeIds,
+        rollbackIds,
+        reconciledRollbackIds: prepared.reconciledRollbackIds,
+        needsFollowUp: prepared.needsFollowUp,
+      };
+      const digest = timelineDigest({ operationId, generation, payload });
+      const journal: MemoryPublicationRecord<ConsolidationPublicationPayload> = {
+        id: operationId,
+        kind: 'stage2',
+        status: 'prepared',
+        generation,
+        featureGeneration: status.featureModeGeneration,
+        resetEpoch: status.resetEpoch,
+        digest,
+        payload,
+        createdAt: Date.now(),
+      };
+      this.control.preparePublication(journal);
+      await this.publishPreparedWithinWriteGate(journal, signal);
+    });
     return 'published';
   }
 
@@ -193,37 +215,18 @@ export class Phase2 {
       }) => node);
   }
 
-  private async publishPrepared(
+  private async publishPreparedWithinWriteGate(
     journal: MemoryPublicationRecord<ConsolidationPublicationPayload>,
     signal: AbortSignal,
   ): Promise<void> {
-    await this.timeline.withWriteGate(async () => {
-      await this.timeline.applyConsolidationWithinWriteGate(
-        journal.id,
-        journal.generation,
-        journal.digest,
-        journal.payload.changes,
-        () => {
-          const status = this.control.status();
-          if (
-            signal.aborted
-            || status.featureMode !== 'enabled'
-            || status.featureModeGeneration !== journal.featureGeneration
-            || status.resetEpoch !== journal.resetEpoch
-          ) throw abortError();
-          const currentRollbackIds = this.control.activeRollbacks().map((rollback) => rollback.rollbackId);
-          if (!sameStrings(currentRollbackIds, journal.payload.rollbackIds)) {
-            throw new Error('Memory rollback state changed during consolidation');
-          }
-          const graph = this.timeline.graph();
-          const current = new Map(graph.nodes.map((entry) => [entry.node.id, timelineNodeFingerprint(entry)]));
-          for (const [nodeId, fingerprint] of Object.entries(journal.payload.inputFingerprints)) {
-            if (current.get(nodeId) !== fingerprint) throw new Error(`Memory Node changed during consolidation: ${nodeId}`);
-          }
-        },
-      );
-      this.finalize(journal);
-    });
+    await this.timeline.applyConsolidationWithinWriteGate(
+      journal.id,
+      journal.generation,
+      journal.digest,
+      journal.payload.changes,
+      () => validatePreparedConsolidation(this.control, this.timeline, journal, signal),
+    );
+    this.finalize(journal);
   }
 
   private finalize(journal: MemoryPublicationRecord<ConsolidationPublicationPayload>): void {
@@ -238,6 +241,76 @@ export class Phase2 {
       reconciledRollbackIds: journal.payload.reconciledRollbackIds,
       needsFollowUp: journal.payload.needsFollowUp,
     });
+  }
+}
+
+function validateConsolidationInputs(
+  control: MemoryControlStore,
+  timeline: TimelineMemoryStore,
+  selected: readonly MemoryConsolidationNode[],
+  rollbackIds: readonly string[],
+  featureGeneration: number,
+  resetEpoch: number,
+  signal: AbortSignal,
+): void {
+  validateConsolidationState(
+    control,
+    timeline,
+    Object.fromEntries(selected.map((entry) => [entry.nodeId, entry.fingerprint])),
+    rollbackIds,
+    featureGeneration,
+    resetEpoch,
+    signal,
+  );
+}
+
+function validatePreparedConsolidation(
+  control: MemoryControlStore,
+  timeline: TimelineMemoryStore,
+  journal: MemoryPublicationRecord<ConsolidationPublicationPayload>,
+  signal: AbortSignal,
+): void {
+  validateConsolidationState(
+    control,
+    timeline,
+    journal.payload.inputFingerprints,
+    journal.payload.rollbackIds,
+    journal.featureGeneration,
+    journal.resetEpoch,
+    signal,
+  );
+  const projection = timeline.projection();
+  for (const [nodeId, fingerprint] of Object.entries(journal.payload.deletionSubtreeFingerprints)) {
+    if (timelineSubtreeFingerprint(nodeId, projection) !== fingerprint) {
+      throw new Error(`Memory deletion subtree changed during consolidation: ${nodeId}`);
+    }
+  }
+}
+
+function validateConsolidationState(
+  control: MemoryControlStore,
+  timeline: TimelineMemoryStore,
+  inputFingerprints: Readonly<Record<string, string>>,
+  rollbackIds: readonly string[],
+  featureGeneration: number,
+  resetEpoch: number,
+  signal: AbortSignal,
+): void {
+  const status = control.status();
+  if (
+    signal.aborted
+    || status.featureMode !== 'enabled'
+    || status.featureModeGeneration !== featureGeneration
+    || status.resetEpoch !== resetEpoch
+  ) throw abortError();
+  const currentRollbackIds = control.activeRollbacks().map((rollback) => rollback.rollbackId);
+  if (!sameStrings(currentRollbackIds, rollbackIds)) {
+    throw new Error('Memory rollback state changed during consolidation');
+  }
+  const graph = timeline.graph();
+  const current = new Map(graph.nodes.map((entry) => [entry.node.id, timelineNodeFingerprint(entry)]));
+  for (const [nodeId, fingerprint] of Object.entries(inputFingerprints)) {
+    if (current.get(nodeId) !== fingerprint) throw new Error(`Memory Node changed during consolidation: ${nodeId}`);
   }
 }
 
@@ -284,7 +357,7 @@ function prepareConsolidation(
     change.action === 'create' ? [] : [[change.nodeId, change] as const]
   )));
   const temporaryIds = new Map(changes.flatMap((change) => (
-    change.action === 'create' ? [[change.temporaryId, uuidV7()] as const] : []
+    change.action === 'create' ? [[change.temporaryId, freshNodeId()] as const] : []
   )));
   const createdEntries = new Map<string, {
     readonly nodeId: string;

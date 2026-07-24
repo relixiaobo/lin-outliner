@@ -80,6 +80,10 @@ describe('Memory settings', () => {
 
     const confirm = rendered.document.querySelector<HTMLButtonElement>('.confirm-dialog .button-danger');
     if (!confirm) throw new Error('Missing Reset confirmation');
+    expect(rendered.document.querySelector('.confirm-dialog')?.textContent)
+      .toContain('including untagged ordinary notes');
+    expect(rendered.document.querySelector('.confirm-dialog')?.textContent)
+      .toContain('Notes outside those containers are preserved');
     await act(async () => {
       confirm.click();
       await Promise.resolve();

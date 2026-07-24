@@ -5,7 +5,6 @@ import {
   memoryCategoryForTagId,
   memoryTagId,
   type MemoryCategory,
-  type MemoryStage1DateOutput,
 } from '../../../../core/agent/memory';
 import type {
   DocumentSystemHost,
@@ -29,7 +28,13 @@ export interface TimelineMemoryHost extends DocumentSystemHost {
   getProjection(): DocumentProjection;
 }
 
-export interface PreparedTimelineDateOutput extends MemoryStage1DateOutput {
+export interface PreparedTimelineDateOutput {
+  readonly sourceDate: string;
+  readonly headline: string;
+  readonly episode: string;
+  readonly beliefs: readonly string[];
+  readonly questions: readonly string[];
+  readonly guidance: readonly string[];
   readonly containerId: string;
   readonly containerGenerated: boolean;
   readonly episodeId: string;
@@ -367,6 +372,55 @@ export function timelineNodeFingerprint(entry: CanonicalMemoryNode, text = entry
     tags: entry.node.tags,
     text,
   });
+}
+
+export function timelineNodeStateFingerprint(
+  nodeId: string,
+  projection: DocumentProjection,
+  graph = canonicalMemoryGraph(projection),
+): string | null {
+  const node = nodeIndex(projection).get(nodeId);
+  if (!node) return null;
+  const canonical = graph.nodes.find((entry) => entry.node.id === nodeId);
+  return timelineDigest({
+    id: node.id,
+    parentId: node.parentId ?? null,
+    children: node.children,
+    tags: [...node.tags].sort(),
+    text: node.content.text,
+    category: canonical?.category ?? null,
+    sourceDate: canonical?.sourceDate ?? null,
+  });
+}
+
+export function timelineSubtreeFingerprint(nodeId: string, projection: DocumentProjection): string | null {
+  const index = nodeIndex(projection);
+  if (!index.has(nodeId)) return null;
+  const nodes: Array<{
+    id: string;
+    parentId: string | null;
+    children: readonly string[];
+    tags: readonly string[];
+    text: string;
+  }> = [];
+  const stack = [nodeId];
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
+    const node = index.get(currentId);
+    if (!node) continue;
+    nodes.push({
+      id: node.id,
+      parentId: node.parentId ?? null,
+      children: node.children,
+      tags: [...node.tags].sort(),
+      text: node.content.text,
+    });
+    stack.push(...node.children);
+  }
+  return timelineDigest(nodes.sort((left, right) => left.id.localeCompare(right.id)));
 }
 
 function publicationReceipt(publication: TimelinePublication): DocumentSystemReceipt {

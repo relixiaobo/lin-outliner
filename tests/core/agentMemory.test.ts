@@ -54,11 +54,11 @@ describe('Codex Memory contracts', () => {
     expect(decodeMemoryStage1Output({
       dates: [{
         sourceDate: '2026-07-24',
-        headline: 'A durable decision',
-        episode: 'The user selected the clean replacement.',
-        beliefs: ['The project is pre-release.'],
+        headline: statement('A durable decision'),
+        episode: statement('The user selected the clean replacement.'),
+        beliefs: [statement('The project is pre-release.')],
         questions: [],
-        guidance: ['Do not preserve compatibility paths.'],
+        guidance: [statement('Do not preserve compatibility paths.')],
       }],
     }).dates[0]?.sourceDate).toBe('2026-07-24');
     expect(() => decodeMemoryStage1Output({ dates: [], extra: true })).toThrow('unknown field');
@@ -121,14 +121,20 @@ describe('Codex Memory contracts', () => {
 
     const resetPublication = publication('reset', {
       epoch: 1,
-      cutoffs: { [THREAD_ID]: 4 },
       excludedTurnIds: [TURN_ID],
       containerIds: [],
     });
     store.preparePublication(resetPublication);
-    store.finalizeReset(resetPublication.id, 1, { [THREAD_ID]: 4 }, [TURN_ID]);
-    expect(store.resetCutoff(THREAD_ID)).toBe(4);
+    store.finalizeReset(resetPublication.id, 1, [TURN_ID]);
     expect(store.status().resetEpoch).toBe(1);
+
+    const oldTurn = userTurn('old history', undefined, { kind: 'user' }, 'turn:old-epoch', 'item:old-epoch');
+    store.writeAdmission({ ...admissionSnapshot(oldTurn), admittedAt: 15 });
+    const newTurn = userTurn('new history', undefined, { kind: 'user' }, 'turn:new-epoch', 'item:new-epoch');
+    store.writeAdmission({ ...admissionSnapshot(newTurn), resetEpoch: 1, admittedAt: 40 });
+    const thread = rootThread([oldTurn, newTurn]);
+    expect(collectMemoryEvidence({ thread, turns: thread.turns ?? [] }, store).items.map((item) => item.content))
+      .toEqual(['new history']);
   });
 
   test('commits rollback invalidation atomically and removes stale origins', () => {
@@ -332,6 +338,37 @@ describe('Codex Memory contracts', () => {
     expect(evidence.items[0]?.sourceDate).toBe('2020-01-02');
   });
 
+  test('fingerprints all eligible evidence while sending only the latest bounded window', () => {
+    const store = memoryStore();
+    const turns = Array.from({ length: 501 }, (_, index) => userTurn(
+      `evidence ${index}`,
+      undefined,
+      { kind: 'user' },
+      `turn:long:${index}`,
+      `item:long:${index}`,
+    ));
+    const thread = rootThread(turns);
+    for (const turn of turns) store.writeAdmission(admissionSnapshot(turn));
+
+    const first = collectMemoryEvidence({ thread, turns }, store);
+    expect(first.items).toHaveLength(500);
+    expect(first.items[0]?.originItemId).toBe('item:long:1');
+    expect(first.items.at(-1)?.originItemId).toBe('item:long:500');
+
+    const next = userTurn(
+      'evidence 501',
+      undefined,
+      { kind: 'user' },
+      'turn:long:501',
+      'item:long:501',
+    );
+    store.writeAdmission(admissionSnapshot(next));
+    const second = collectMemoryEvidence({ thread, turns: [...turns, next] }, store);
+    expect(second.sourceVersion).not.toBe(first.sourceVersion);
+    expect(second.items[0]?.originItemId).toBe('item:long:2');
+    expect(second.items.at(-1)?.originItemId).toBe('item:long:501');
+  });
+
   test('never backfills activity admitted while global or Thread Memory is disabled', () => {
     const store = memoryStore();
     const globalDisabledTurn = userTurn(
@@ -458,6 +495,51 @@ describe('Codex Memory contracts', () => {
       nodeId: 'stray:memory',
       patch: { ops: [] },
     }, meta, projection)).not.toThrow();
+  });
+
+  test('classifies Memory mutations by command targets instead of Daily Note ancestors', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const automation = rootThread([userTurn(
+      'Maintain the daily note',
+      undefined,
+      { kind: 'feature', feature: 'automation' },
+      'turn:automation-targets',
+      'item:automation-targets',
+    )]);
+    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
+    extension.bindHost(memoryThreadHost(automation));
+    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
+    const meta = {
+      origin: 'agent' as const,
+      causation: {
+        threadId: THREAD_ID,
+        turnId: 'turn:automation-targets',
+        itemId: 'item:automation-targets',
+      },
+    };
+
+    expect(() => extension.authorizeMutation('create_node', {
+      id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a01',
+      parentId: 'day',
+      index: null,
+      text: 'Ordinary Daily Note sibling',
+    }, meta, projection)).not.toThrow();
+    expect(() => extension.authorizeMutation('create_node', {
+      id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a02',
+      parentId: MEMORY_NODE_ID,
+      index: null,
+      text: 'Memory descendant',
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('move_node', {
+      nodeId: 'day',
+      parentId: DAILY_NOTES_ID,
+      index: null,
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'agent',
+      steps: 1,
+    }, meta, projection)).toThrow('not authorized');
   });
 
   test('invalidates polluted origins before global reconciliation', () => {
@@ -735,7 +817,6 @@ describe('Codex Memory contracts', () => {
     });
     const resetPublication = publication('reset', {
       epoch: 1,
-      cutoffs: { [THREAD_ID]: 4 },
       excludedTurnIds: [TURN_ID],
       containerIds: [MEMORY_NODE_ID],
     });
@@ -743,7 +824,7 @@ describe('Codex Memory contracts', () => {
     expect(store.isTurnExcluded(TURN_ID)).toBe(true);
     expect(store.nextJob(20)?.kind).toBe('reset');
 
-    store.finalizeReset(resetPublication.id, 1, { [THREAD_ID]: 4 }, [TURN_ID]);
+    store.finalizeReset(resetPublication.id, 1, [TURN_ID]);
     expect(store.status().resetEpoch).toBe(1);
     expect(store.activeRollbacks()).toEqual([]);
     expect(store.nextJob(20)).toBeNull();
@@ -767,7 +848,6 @@ describe('Codex Memory contracts', () => {
     extension.bindHost({
       ...memoryThreadHost(thread),
       activeRootUserTurns: () => [{ threadId: thread.id, turnId: activeTurn.id }],
-      terminalItemPosition: () => 1,
     });
     extension.contributeTurnAdmission(admissionContext(thread, activeTurn));
 
@@ -788,7 +868,13 @@ describe('Codex Memory contracts', () => {
 
   test('rejects a Phase 1 result when Thread Memory is disabled during model work', async () => {
     const store = memoryStore();
-    const thread = rootThread([userTurn('remember the selected architecture')]);
+    const thread = rootThread([userTurn(
+      'remember the selected architecture',
+      undefined,
+      { kind: 'user' },
+      'turn:phase1-user-edit',
+      'item:phase1-user-edit',
+    )]);
     const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection())));
     extension.bindHost(memoryThreadHost(thread));
     extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
@@ -813,15 +899,208 @@ describe('Codex Memory contracts', () => {
     resolveModel(JSON.stringify({
       dates: [{
         sourceDate: '2026-07-24',
-        headline: 'Architecture decision',
-        episode: 'The user selected the clean architecture.',
-        beliefs: ['The project uses the clean architecture.'],
+        headline: statement('Architecture decision', ['item:phase1-user-edit']),
+        episode: statement('The user selected the clean architecture.', ['item:phase1-user-edit']),
+        beliefs: [statement('The project uses the clean architecture.', ['item:phase1-user-edit'])],
         questions: [],
-        guidance: ['Preserve the selected architecture.'],
+        guidance: [statement('Preserve the selected architecture.', ['item:phase1-user-edit'])],
       }],
     }));
     await expect(run).rejects.toMatchObject({ name: 'AbortError' });
     expect(store.preparedPublications()).toEqual([]);
+  });
+
+  test('preserves a user edit made while Phase 1 model work is running', async () => {
+    const store = memoryStore();
+    const timelineState = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(timelineState.host);
+    seedGeneratedGraph(store, timeline);
+    const thread = rootThread([userTurn(
+      'remember the selected architecture',
+      undefined,
+      { kind: 'user' },
+      'turn:phase1-user-edit',
+      'item:phase1-user-edit',
+    )]);
+    store.writeAdmission(admissionSnapshot(thread.turns![0]!));
+    let resolveModel!: (value: string) => void;
+    const modelOutput = new Promise<string>((resolve) => { resolveModel = resolve; });
+    const phase = new Phase1(store, timeline, { run: () => modelOutput }, () => true);
+
+    const run = phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal);
+    timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')!.content = {
+      text: 'User authoritative edit',
+      spans: [],
+    };
+    resolveModel(JSON.stringify({
+      dates: [{
+        sourceDate: '2026-07-24',
+        headline: statement('Architecture decision', ['item:phase1-user-edit']),
+        episode: statement('The user selected the clean architecture.', ['item:phase1-user-edit']),
+        beliefs: [statement('Generated replacement belief', ['item:phase1-user-edit'])],
+        questions: [],
+        guidance: [],
+      }],
+    }));
+
+    await expect(run).resolves.toBe('published');
+    expect(timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')?.content.text)
+      .toBe('User authoritative edit');
+    expect(store.generatedNodes().find((entry) => entry.nodeId === 'belief:1')?.userAuthoritative).toBe(true);
+    expect(timeline.graph().nodes.some((entry) => (
+      entry.category === 'belief' && entry.node.content.text === 'Generated replacement belief'
+    ))).toBe(true);
+  });
+
+  test('records exact per-statement evidence lineage instead of same-day Cartesian support', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
+    const first = userTurn('remember the architecture', undefined, { kind: 'user' }, 'turn:lineage:a', 'item:lineage:a');
+    const second = userTurn('remember the review rule', undefined, { kind: 'user' }, 'turn:lineage:b', 'item:lineage:b');
+    const thread = rootThread([first, second]);
+    store.writeAdmission(admissionSnapshot(first));
+    store.writeAdmission(admissionSnapshot(second));
+    const phase = new Phase1(store, timeline, {
+      run: async () => JSON.stringify({
+        dates: [{
+          sourceDate: '2026-07-24',
+          headline: statement('Durable project choices', ['item:lineage:a', 'item:lineage:b']),
+          episode: statement('The user established project constraints.', ['item:lineage:a', 'item:lineage:b']),
+          beliefs: [statement('The project uses the selected architecture.', ['item:lineage:a'])],
+          questions: [],
+          guidance: [statement('Apply the review rule.', ['item:lineage:b'])],
+        }],
+      }),
+    }, () => true);
+
+    await expect(phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal))
+      .resolves.toBe('published');
+    const belief = timeline.graph().nodes.find((entry) => entry.node.content.text === 'The project uses the selected architecture.');
+    const guidance = timeline.graph().nodes.find((entry) => entry.node.content.text === 'Apply the review rule.');
+    expect(store.lineageForNode(belief!.node.id).map((edge) => edge.originItemId)).toEqual(['item:lineage:a']);
+    expect(store.lineageForNode(guidance!.node.id).map((edge) => edge.originItemId)).toEqual(['item:lineage:b']);
+  });
+
+  test('rebuilds Phase 1 targets after waiting for the write gate', async () => {
+    const store = memoryStore();
+    const timelineState = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(timelineState.host);
+    seedGeneratedGraph(store, timeline);
+    const thread = rootThread([userTurn(
+      'remember the selected architecture',
+      undefined,
+      { kind: 'user' },
+      'turn:phase1-gate-race',
+      'item:phase1-gate-race',
+    )]);
+    store.writeAdmission(admissionSnapshot(thread.turns![0]!));
+    let releaseGate!: () => void;
+    let gateEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { gateEntered = resolve; });
+    const gate = timeline.withWriteGate(async () => {
+      gateEntered();
+      await new Promise<void>((resolve) => { releaseGate = resolve; });
+    });
+    await entered;
+    let modelStarted!: () => void;
+    const started = new Promise<void>((resolve) => { modelStarted = resolve; });
+    const phase = new Phase1(store, timeline, {
+      run: async () => {
+        modelStarted();
+        return JSON.stringify({
+          dates: [{
+            sourceDate: '2026-07-24',
+            headline: statement('Architecture decision', ['item:phase1-gate-race']),
+            episode: statement('The user selected the clean architecture.', ['item:phase1-gate-race']),
+            beliefs: [statement('Generated replacement belief', ['item:phase1-gate-race'])],
+            questions: [],
+            guidance: [],
+          }],
+        });
+      },
+    }, () => true);
+    const run = phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal);
+    await started;
+    timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')!.content = {
+      text: 'Concurrent edit before preparation',
+      spans: [],
+    };
+    releaseGate();
+    await gate;
+
+    await expect(run).resolves.toBe('published');
+    expect(timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')?.content.text)
+      .toBe('Concurrent edit before preparation');
+    expect(store.generatedNodes().find((entry) => entry.nodeId === 'belief:1')?.userAuthoritative).toBe(true);
+    expect(timeline.graph().nodes.some((entry) => (
+      entry.category === 'belief' && entry.node.content.text === 'Generated replacement belief'
+    ))).toBe(true);
+  });
+
+  test('rechecks a Phase 2 deletion subtree after waiting for the write gate', async () => {
+    const store = memoryStore();
+    const timelineState = mutableTimelineHost(memoryProjection());
+    const timeline = new TimelineMemoryStore(timelineState.host);
+    seedGeneratedGraph(store, timeline);
+    let releaseGate!: () => void;
+    let gateEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { gateEntered = resolve; });
+    const gate = timeline.withWriteGate(async () => {
+      gateEntered();
+      await new Promise<void>((resolve) => { releaseGate = resolve; });
+    });
+    await entered;
+    let modelStarted!: () => void;
+    const started = new Promise<void>((resolve) => { modelStarted = resolve; });
+    const phase = new Phase2(store, timeline, {
+      run: async () => {
+        modelStarted();
+        return JSON.stringify({
+          changes: [
+            { nodeId: MEMORY_NODE_ID, action: 'delete' },
+            { nodeId: EPISODE_NODE_ID, action: 'delete' },
+            { nodeId: 'belief:1', action: 'delete' },
+          ],
+        });
+      },
+    }, () => rootThread([]));
+    const run = phase.run(new AbortController().signal);
+    await started;
+    const projection = timelineState.projection();
+    projection.nodes.push(node('ordinary:late-child', 'belief:1', [], [], 'Late user note'));
+    projection.nodes.find((entry) => entry.id === 'belief:1')!.children.push('ordinary:late-child');
+    releaseGate();
+    await gate;
+
+    await expect(run).rejects.toThrow('retained descendants');
+    expect(store.preparedPublications()).toEqual([]);
+    expect(timelineState.deletedNodeIds).toEqual([]);
+    expect(timelineState.projection().nodes.some((entry) => entry.id === 'ordinary:late-child')).toBe(true);
+  });
+
+  test('linearizes Thread Memory disable with the publication write gate', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(memoryProjection()));
+    const thread = rootThread([]);
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost(memoryThreadHost(thread));
+    let releaseGate!: () => void;
+    let gateEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { gateEntered = resolve; });
+    const gate = timeline.withWriteGate(async () => {
+      gateEntered();
+      await new Promise<void>((resolve) => { releaseGate = resolve; });
+    });
+    await entered;
+    let completed = false;
+    const disabling = extension.setThreadMode(thread.id, 'disabled').then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(store.threadMode(thread.id)).toBe('enabled');
+    releaseGate();
+    await gate;
+    await disabling;
+    expect(store.threadMode(thread.id)).toBe('disabled');
   });
 
   test('suspends an in-flight Memory worker when the global feature is disabled', async () => {
@@ -890,7 +1169,6 @@ describe('Codex Memory contracts', () => {
     const timeline = new TimelineMemoryStore(timelineState.host);
     const resetPublication = publication('reset', {
       epoch: 1,
-      cutoffs: { [THREAD_ID]: 4 },
       excludedTurnIds: [TURN_ID],
       containerIds: [MEMORY_NODE_ID],
     });
@@ -907,7 +1185,7 @@ describe('Codex Memory contracts', () => {
           expect(receiptMatches).toBe(false);
           const payload = record.payload as typeof resetPublication.payload;
           await timeline.reset(record.id, record.generation, record.digest, payload.containerIds);
-          store.finalizeReset(record.id, payload.epoch, payload.cutoffs, payload.excludedTurnIds);
+          store.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
         },
       },
     );
@@ -926,7 +1204,6 @@ describe('Codex Memory contracts', () => {
     const timeline = new TimelineMemoryStore(timelineState.host);
     const resetPublication = publication('reset', {
       epoch: 1,
-      cutoffs: { [THREAD_ID]: 4 },
       excludedTurnIds: [TURN_ID],
       containerIds: [MEMORY_NODE_ID],
     });
@@ -949,7 +1226,7 @@ describe('Codex Memory contracts', () => {
         recoverResetPublication: async (record, receiptMatches) => {
           expect(receiptMatches).toBe(true);
           const payload = record.payload as typeof resetPublication.payload;
-          store.finalizeReset(record.id, payload.epoch, payload.cutoffs, payload.excludedTurnIds);
+          store.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
         },
       },
     );
@@ -981,6 +1258,32 @@ function publication(kind: 'reset', payload: unknown) {
     payload,
     createdAt: 1,
   };
+}
+
+function statement(text: string, originItemIds: readonly string[] = [ITEM_ID]) {
+  return { text, originItemIds };
+}
+
+function admissionSnapshot(turn: Turn) {
+  return {
+    threadId: THREAD_ID,
+    turnId: turn.id,
+    featureModeAtAdmission: 'enabled' as const,
+    threadModeAtAdmission: 'enabled' as const,
+    eligibleAtAdmission: true,
+    featureModeGeneration: 0,
+    resetEpoch: 0,
+    memoryVisibilityGeneration: 0,
+    admittedAt: turn.startedAt,
+  };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Timed out waiting for test condition');
 }
 
 function generatedNode(): MemoryGeneratedNodeRecord {
@@ -1164,6 +1467,7 @@ function mutableTimelineHost(initial: DocumentProjection) {
     getProjection: () => projection,
     transaction: async (_context, operation) => operation({
       executeDocumentCommand: async (command, args) => {
+        if (command === 'ensure_date_node') return { focus: { nodeId: 'day' } };
         const nodeId = String(args.nodeId ?? args.id ?? '');
         if (command === 'create_node') {
           const parentId = String(args.parentId);
@@ -1233,8 +1537,8 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
     persistentRootThreads: () => [thread],
     activeRootUserTurns: () => [],
     interruptRootTurns: async () => undefined,
-    terminalItemPosition: () => 0,
     readThread: () => ({ thread }),
+    isThreadNavigable: (threadId) => threadId === thread.id,
     historyRollbackMarker: () => null,
     runInternalMemoryTurn: async () => '',
     tryStartTurnIfIdle: async () => null,

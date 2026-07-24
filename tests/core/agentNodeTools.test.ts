@@ -2533,6 +2533,21 @@ describe('agent node tools', () => {
     expect(core.state().nodes[nodeId]!.parentId).toBe(TRASH_ID);
   });
 
+  test('outline_undo_stack marks history mutations as Agent tool operations', async () => {
+    const core = Core.new();
+    core.withOrigin('agent', () => core.createNode(core.projection().todayId, null, 'Undo metadata'));
+    let capturedMeta: Parameters<NonNullable<OutlinerToolHost['operationHistory']>>[1];
+
+    await executeTool(core, 'outline_undo_stack', { action: 'undo' }, undefined, {
+      operationHistory: (query, meta) => {
+        capturedMeta = meta;
+        return core.operationHistory(query);
+      },
+    });
+
+    expect(capturedMeta).toMatchObject({ origin: 'agent', tool: 'outline_undo_stack' });
+  });
+
   test('outline_undo_stack list returns stored tool metadata', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

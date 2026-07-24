@@ -34,7 +34,6 @@ import { MemoryPipeline, type MemoryPipelineSourceHost, phase1Source } from './M
 import {
   Phase1,
   collectMemoryEvidence,
-  memoryEvidenceFingerprint,
   type MemoryModelRunner,
 } from './Phase1';
 import { Phase2 } from './Phase2';
@@ -51,7 +50,6 @@ const EXPLICIT_MEMORY_INTENT = /\b(?:remember|forget)\b|\b(?:save|store|add|upda
 
 interface ResetPublicationPayload {
   readonly epoch: number;
-  readonly cutoffs: Readonly<Record<ThreadId, number>>;
   readonly excludedTurnIds: readonly TurnId[];
   readonly containerIds: readonly string[];
 }
@@ -60,8 +58,8 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   persistentRootThreads(): readonly Thread[];
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[];
   interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void>;
-  terminalItemPosition(threadId: ThreadId): number;
   readThread(input: { threadId: ThreadId; includeTurns: true }): { thread: Thread };
+  isThreadNavigable(threadId: ThreadId): boolean;
   historyRollbackMarker(rollbackId: string): {
     readonly threadId: ThreadId;
     readonly omittedTurnIds: readonly TurnId[];
@@ -125,7 +123,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
       const current = host.readThread({ threadId, includeTurns: true }).thread;
       if (current.status.type !== 'idle') return false;
       const evidence = collectMemoryEvidence(phase1Source(current, current.turns ?? []), this.control);
-      return !evidence.polluted && memoryEvidenceFingerprint(evidence.items) === sourceVersion;
+      return !evidence.polluted && evidence.sourceVersion === sourceVersion;
     });
     const phase2 = new Phase2(
       this.control,
@@ -215,11 +213,13 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   async setThreadMode(threadId: ThreadId, mode: ThreadMemoryMode): Promise<MemorySettingsView> {
     const host = this.requireHost();
     await host.withThreadAdmissionBarrier(threadId, async () => {
-      const thread = host.readThread({ threadId, includeTurns: true }).thread;
-      if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
-        throw new Error('Memory mode is available only for persistent root user Threads');
-      }
-      this.control.setThreadMode(threadId, mode);
+      await this.timeline.withWriteGate(async () => {
+        const thread = host.readThread({ threadId, includeTurns: true }).thread;
+        if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
+          throw new Error('Memory mode is available only for persistent root user Threads');
+        }
+        this.control.setThreadMode(threadId, mode);
+      });
     });
     if (mode === 'enabled') {
       this.requirePipeline().wakeThread(host.readThread({ threadId, includeTurns: true }).thread);
@@ -235,15 +235,11 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
           const status = this.control.status();
           const epoch = status.resetEpoch + 1;
           const active = host.activeRootUserTurns();
-          const cutoffs = Object.fromEntries(host.persistentRootThreads().map((thread) => [
-            thread.id,
-            host.terminalItemPosition(thread.id),
-          ]));
           const excludedTurnIds = active.map((entry) => entry.turnId);
           const containerIds = this.timeline.graph().containers.map((entry) => entry.node.id);
           const operationId = `memory:reset:${uuidV7()}`;
           const generation = this.control.allocatePublicationGeneration();
-          const payload: ResetPublicationPayload = { epoch, cutoffs, excludedTurnIds, containerIds };
+          const payload: ResetPublicationPayload = { epoch, excludedTurnIds, containerIds };
           const digest = timelineDigest({ operationId, generation, payload });
           const publication: MemoryPublicationRecord<ResetPublicationPayload> = {
             id: operationId,
@@ -258,7 +254,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
           };
           this.control.prepareReset(publication);
           await this.timeline.resetWithinWriteGate(operationId, generation, digest, containerIds);
-          this.control.finalizeReset(operationId, epoch, cutoffs, excludedTurnIds);
+          this.control.finalizeReset(operationId, epoch, excludedTurnIds);
         });
       });
     } catch (error) {
@@ -348,11 +344,10 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     if (lines.length > 0) {
       contextParts.push(`Relevant durable Memory from the user's Daily Notes:\n${lines.join('\n')}`);
     }
-    const existingThreadIds = new Set(this.requireHost().persistentRootThreads().map((entry) => entry.id));
     const threadIds = new Set<ThreadId>();
     for (const entry of cited) {
       for (const edge of this.control.lineageForNode(entry.node.id)) {
-        if (this.control.isOriginClaimed(edge.originItemId) && existingThreadIds.has(edge.threadId)) {
+        if (this.control.isOriginClaimed(edge.originItemId) && this.requireHost().isThreadNavigable(edge.threadId)) {
           threadIds.add(edge.threadId);
         }
       }
@@ -573,7 +568,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
           payload.containerIds,
         );
       }
-      this.control.finalizeReset(record.id, payload.epoch, payload.cutoffs, payload.excludedTurnIds);
+      this.control.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
     });
   }
 
@@ -604,75 +599,202 @@ function memoryGraphMayChange(
   projection: DocumentProjection,
   timeline: TimelineMemoryStore,
 ): boolean {
-  if (command === 'get_projection' || command === 'search_nodes' || command === 'backlinks') return false;
   const reservedTagIds = new Set<string>(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
   const argumentStrings = deepStrings(args);
   if (argumentStrings.some((value) => reservedTagIds.has(value))) return true;
   const index = new Map(projection.nodes.map((node) => [node.id, node]));
   const reservedTaggedNodes = projection.nodes.filter((node) => node.tags.some((tagId) => reservedTagIds.has(tagId)));
-  if ((command === 'undo' || command === 'redo') && reservedTaggedNodes.length > 0) return true;
-
   const reservedTaggedIds = new Set(reservedTaggedNodes.map((node) => node.id));
-  const reservedTaggedAncestors = new Set<string>();
+  const protectedAncestors = new Set<string>();
   for (const tagged of reservedTaggedNodes) {
     let current = tagged.parentId ? index.get(tagged.parentId) : undefined;
-    while (current && !reservedTaggedAncestors.has(current.id)) {
-      reservedTaggedAncestors.add(current.id);
+    while (current && !protectedAncestors.has(current.id)) {
+      protectedAncestors.add(current.id);
       current = current.parentId ? index.get(current.parentId) : undefined;
     }
   }
-  if (
-    STRAY_IDENTITY_COMMANDS.has(command)
-    && argumentStrings.some((value) => reservedTaggedAncestors.has(value))
-  ) return true;
-  if (
-    STRAY_STRUCTURE_COMMANDS.has(command)
-    && argumentStrings.some((value) => reservedTaggedIds.has(value) || reservedTaggedAncestors.has(value))
-  ) return true;
-
   const graph = timeline.graph(projection);
-  if (graph.containers.length === 0) return false;
-  if (command === 'undo' || command === 'redo') return true;
   const owned = new Set<string>();
-  const containing = new Set<string>();
   for (const container of graph.containers) {
     addDescendants(container.node.id, index, owned);
-    let current: NodeProjection | undefined = container.node;
+    let current: NodeProjection | undefined = container.node.parentId
+      ? index.get(container.node.parentId)
+      : undefined;
     while (current) {
-      containing.add(current.id);
+      protectedAncestors.add(current.id);
       current = current.parentId ? index.get(current.parentId) : undefined;
     }
   }
-  return argumentStrings.some((value) => owned.has(value) || containing.has(value));
+  const direct = (key: string) => typeof args[key] === 'string' ? args[key] as string : null;
+  const directArray = (key: string) => Array.isArray(args[key])
+    ? (args[key] as unknown[]).filter((value): value is string => typeof value === 'string')
+    : [];
+  const changesOwned = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
+    nodeId !== null && owned.has(nodeId)
+  ));
+  const changesIdentity = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
+    nodeId !== null && (owned.has(nodeId) || protectedAncestors.has(nodeId))
+  ));
+  const changesStructure = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
+    nodeId !== null && (owned.has(nodeId) || reservedTaggedIds.has(nodeId) || protectedAncestors.has(nodeId))
+  ));
+  const createsInsideMemory = (parentId: string | null) => parentId !== null && owned.has(parentId);
+  const changesOwnedArray = (key: string) => directArray(key).some((nodeId) => changesOwned(nodeId));
+  const changesStructureArray = (key: string) => directArray(key).some((nodeId) => changesStructure(nodeId));
+
+  switch (command) {
+    case 'get_projection':
+    case 'search_nodes':
+    case 'backlinks':
+    case 'create_tag':
+    case 'create_field_definition':
+    case 'ensure_date_node':
+    case 'ensure_tag_search':
+      return false;
+    case 'init_workspace':
+      return owned.size > 0 || reservedTaggedIds.size > 0;
+    case 'create_node':
+      return changesOwned(direct('id')) || createsInsideMemory(direct('parentId'));
+    case 'create_rich_text_node':
+    case 'create_tagged_node':
+    case 'create_tag_and_tagged_node':
+    case 'create_nodes_from_tree':
+    case 'create_image_node':
+    case 'create_attachment_node':
+    case 'create_search_node':
+      return createsInsideMemory(direct('parentId'));
+    case 'create_capture': {
+      const input = args.input && typeof args.input === 'object' && !Array.isArray(args.input)
+        ? args.input as Record<string, unknown>
+        : {};
+      return createsInsideMemory(typeof input.destinationParentId === 'string' ? input.destinationParentId : null);
+    }
+    case 'paste_nodes_into_node':
+    case 'update_node_description':
+    case 'set_node_checkbox_visible':
+    case 'set_code_block':
+    case 'set_code_language':
+    case 'set_node_image':
+    case 'set_view_toolbar_visible':
+    case 'set_view_mode':
+    case 'clear_sort_rules':
+    case 'clear_filter_rules':
+    case 'set_group_field':
+    case 'add_display_field':
+    case 'set_node_icon':
+    case 'set_node_banner':
+    case 'toggle_done':
+    case 'cycle_done_state':
+    case 'set_search_node':
+    case 'set_search_query_outline':
+    case 'refresh_search_node_results':
+      return changesOwned(direct('nodeId'));
+    case 'apply_node_text_patch':
+      return changesIdentity(direct('nodeId'));
+    case 'split_node':
+      return changesStructure(direct('nodeId')) || createsInsideMemory(direct('targetParentId'));
+    case 'add_sort_rule':
+    case 'add_filter_rule':
+      return changesOwned(direct('nodeId'), direct('field'));
+    case 'update_sort_rule':
+    case 'update_filter_rule':
+    case 'remove_sort_rule':
+    case 'remove_filter_rule':
+      return changesOwned(direct('ruleId'), direct('field'));
+    case 'update_display_field':
+    case 'remove_display_field':
+      return changesOwned(direct('displayFieldId'), direct('field'));
+    case 'merge_node_into':
+      return changesStructure(direct('nodeId'), direct('targetId'));
+    case 'move_node':
+      return changesStructure(direct('nodeId')) || createsInsideMemory(direct('parentId'));
+    case 'batch_move_nodes':
+      return Array.isArray(args.moves) && args.moves.some((move) => {
+        if (!move || typeof move !== 'object' || Array.isArray(move)) return true;
+        const entry = move as Record<string, unknown>;
+        return changesStructure(typeof entry.nodeId === 'string' ? entry.nodeId : null)
+          || createsInsideMemory(typeof entry.parentId === 'string' ? entry.parentId : null);
+      });
+    case 'indent_node': {
+      const nodeId = direct('nodeId');
+      const node = nodeId ? index.get(nodeId) : undefined;
+      const siblings = node?.parentId ? index.get(node.parentId)?.children ?? [] : [];
+      const position = node ? siblings.indexOf(node.id) : -1;
+      const previousSiblingId = position > 0 ? siblings[position - 1] ?? null : null;
+      return changesStructure(nodeId) || createsInsideMemory(previousSiblingId);
+    }
+    case 'outdent_node':
+    case 'trash_node':
+    case 'restore_node':
+    case 'delete_node':
+      return changesStructure(direct('nodeId'));
+    case 'batch_trash_nodes':
+    case 'batch_outdent_nodes':
+    case 'batch_duplicate_nodes':
+      return changesStructureArray('nodeIds');
+    case 'batch_indent_nodes':
+      return directArray('nodeIds').some((nodeId) => {
+        const node = index.get(nodeId);
+        const siblings = node?.parentId ? index.get(node.parentId)?.children ?? [] : [];
+        const position = node ? siblings.indexOf(node.id) : -1;
+        return changesStructure(nodeId) || createsInsideMemory(position > 0 ? siblings[position - 1] ?? null : null);
+      });
+    case 'batch_toggle_done':
+    case 'batch_cycle_done_state':
+    case 'batch_move_nodes_up':
+    case 'batch_move_nodes_down':
+    case 'batch_apply_tag':
+      return changesOwnedArray('nodeIds');
+    case 'apply_tag':
+    case 'remove_tag':
+      return changesOwned(direct('nodeId'));
+    case 'set_tag_config':
+      return changesOwned(direct('tagId'));
+    case 'set_field_config':
+      return changesOwned(direct('fieldId'));
+    case 'create_field_def':
+      return changesOwned(direct('tagId'));
+    case 'create_inline_field_after_node':
+      return changesOwned(direct('afterNodeId'));
+    case 'create_inline_field':
+      return createsInsideMemory(direct('parentId')) || changesOwned(direct('targetDefId'));
+    case 'reuse_field_definition':
+      return changesOwned(direct('entryId'), direct('targetDefId'));
+    case 'merge_definitions':
+      return changesOwned(direct('targetId')) || changesOwnedArray('sourceIds');
+    case 'register_collected_option':
+      return changesOwned(direct('fieldDefId'));
+    case 'create_collected_field_option':
+      return changesOwned(direct('fieldEntryId'), direct('id'));
+    case 'select_field_option':
+      return changesOwned(direct('fieldEntryId'), direct('id'));
+    case 'set_field_free_text_value':
+      return changesOwned(direct('fieldEntryId'), direct('id'));
+    case 'clear_field_value':
+      return changesOwned(direct('fieldEntryId'));
+    case 'remove_field_value':
+      return changesOwned(direct('valueId'));
+    case 'add_reference':
+    case 'add_reference_conversion':
+      return createsInsideMemory(direct('parentId'));
+    case 'set_reference_target':
+      return changesOwned(direct('referenceId'));
+    case 'replace_node_with_reference':
+    case 'replace_node_with_reference_conversion':
+    case 'replace_node_with_inline_reference':
+    case 'restore_inline_reference_node_to_reference':
+      return changesStructure(direct('nodeId'));
+    case 'convert_reference_to_inline_node':
+      return changesStructure(direct('referenceId'));
+    case 'undo':
+    case 'redo':
+      // History entries can restore or remove Memory that is absent from the
+      // current projection, so an Agent history mutation always fails closed.
+      return true;
+    default:
+      return true;
+  }
 }
-
-const STRAY_IDENTITY_COMMANDS: ReadonlySet<DocumentCommand> = new Set([
-  'apply_node_text_patch',
-  'apply_tag',
-  'remove_tag',
-  'batch_apply_tag',
-]);
-
-const STRAY_STRUCTURE_COMMANDS: ReadonlySet<DocumentCommand> = new Set([
-  'split_node',
-  'merge_node_into',
-  'move_node',
-  'batch_move_nodes',
-  'indent_node',
-  'outdent_node',
-  'trash_node',
-  'batch_trash_nodes',
-  'batch_indent_nodes',
-  'batch_outdent_nodes',
-  'batch_duplicate_nodes',
-  'restore_node',
-  'delete_node',
-  'replace_node_with_reference',
-  'replace_node_with_reference_conversion',
-  'replace_node_with_inline_reference',
-  'convert_reference_to_inline_node',
-  'restore_inline_reference_node_to_reference',
-]);
 
 function deepStrings(value: unknown): string[] {
   if (typeof value === 'string') return [value];
@@ -749,20 +871,9 @@ function resetPublicationPayload(value: unknown): ResetPublicationPayload {
   }
   const record = value as Record<string, unknown>;
   const epoch = record.epoch;
-  const cutoffs = record.cutoffs;
   const excludedTurnIds = record.excludedTurnIds;
   const containerIds = record.containerIds;
   if (!Number.isSafeInteger(epoch) || Number(epoch) < 1) throw new Error('Memory Reset epoch is invalid');
-  if (!cutoffs || typeof cutoffs !== 'object' || Array.isArray(cutoffs)) {
-    throw new Error('Memory Reset cutoffs are invalid');
-  }
-  const decodedCutoffs: Record<ThreadId, number> = {};
-  for (const [threadId, position] of Object.entries(cutoffs)) {
-    if (!threadId || !Number.isSafeInteger(position) || Number(position) < 0) {
-      throw new Error('Memory Reset cutoff is invalid');
-    }
-    decodedCutoffs[threadId] = Number(position);
-  }
   if (!Array.isArray(excludedTurnIds) || excludedTurnIds.some((turnId) => typeof turnId !== 'string' || !turnId)) {
     throw new Error('Memory Reset exclusions are invalid');
   }
@@ -771,7 +882,6 @@ function resetPublicationPayload(value: unknown): ResetPublicationPayload {
   }
   return {
     epoch: Number(epoch),
-    cutoffs: Object.freeze(decodedCutoffs),
     excludedTurnIds: Object.freeze([...new Set(excludedTurnIds as string[])]),
     containerIds: Object.freeze([...new Set(containerIds as string[])]),
   };

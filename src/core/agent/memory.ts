@@ -59,16 +59,21 @@ export interface MemoryStage1EvidenceItem {
   readonly contentHash: string;
 }
 
+export interface MemoryStage1Statement {
+  readonly text: string;
+  readonly originItemIds: readonly ThreadItemId[];
+}
+
 export interface MemoryStage1CategoryOutput {
-  readonly beliefs: readonly string[];
-  readonly questions: readonly string[];
-  readonly guidance: readonly string[];
+  readonly beliefs: readonly MemoryStage1Statement[];
+  readonly questions: readonly MemoryStage1Statement[];
+  readonly guidance: readonly MemoryStage1Statement[];
 }
 
 export interface MemoryStage1DateOutput extends MemoryStage1CategoryOutput {
   readonly sourceDate: string;
-  readonly headline: string;
-  readonly episode: string;
+  readonly headline: MemoryStage1Statement;
+  readonly episode: MemoryStage1Statement;
 }
 
 export interface MemoryStage1Output {
@@ -154,11 +159,11 @@ export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) throw new Error(`Invalid Memory source date: ${sourceDate}`);
     return Object.freeze({
       sourceDate,
-      headline: boundedString(item.headline, 'headline', 160),
-      episode: boundedString(item.episode, 'episode', 2_000),
-      beliefs: stringList(item.beliefs, 'beliefs', 12, 800),
-      questions: stringList(item.questions, 'questions', 8, 800),
-      guidance: stringList(item.guidance, 'guidance', 12, 800),
+      headline: stage1Statement(item.headline, 'headline', 160),
+      episode: stage1Statement(item.episode, 'episode', 2_000),
+      beliefs: stage1StatementList(item.beliefs, 'beliefs', 12, 800),
+      questions: stage1StatementList(item.questions, 'questions', 8, 800),
+      guidance: stage1StatementList(item.guidance, 'guidance', 12, 800),
     });
   });
   if (dates.length > 14) throw new Error('Memory Stage 1 output exceeds the date limit');
@@ -166,6 +171,29 @@ export function decodeMemoryStage1Output(value: unknown): MemoryStage1Output {
     throw new Error('Memory Stage 1 output contains duplicate source dates');
   }
   return Object.freeze({ dates: Object.freeze(dates) });
+}
+
+function stage1Statement(value: unknown, field: string, charLimit: number): MemoryStage1Statement {
+  const record = exactRecord(value, ['text', 'originItemIds'], `Memory Stage 1 ${field}`);
+  const originItemIds = stringList(record.originItemIds, `${field}.originItemIds`, 64, 200);
+  if (originItemIds.length === 0 || new Set(originItemIds).size !== originItemIds.length) {
+    throw new Error(`${field}.originItemIds must contain distinct evidence IDs`);
+  }
+  return Object.freeze({
+    text: boundedString(record.text, `${field}.text`, charLimit),
+    originItemIds: originItemIds as readonly ThreadItemId[],
+  });
+}
+
+function stage1StatementList(
+  value: unknown,
+  field: string,
+  limit: number,
+  charLimit: number,
+): readonly MemoryStage1Statement[] {
+  const values = array(value, field);
+  if (values.length > limit) throw new Error(`${field} exceeds its item limit`);
+  return Object.freeze(values.map((entry) => stage1Statement(entry, field, charLimit)));
 }
 
 export function decodeMemoryConsolidationOutput(value: unknown): MemoryConsolidationOutput {

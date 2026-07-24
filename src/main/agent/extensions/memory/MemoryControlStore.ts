@@ -173,11 +173,6 @@ export class MemoryControlStore {
         created_at INTEGER NOT NULL,
         PRIMARY KEY(turn_id, reason)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS reset_cutoffs (
-        thread_id TEXT PRIMARY KEY,
-        terminal_item_position INTEGER NOT NULL,
-        reset_epoch INTEGER NOT NULL
-      ) STRICT;
       CREATE TABLE IF NOT EXISTS source_records (
         thread_id TEXT PRIMARY KEY,
         source_version TEXT NOT NULL,
@@ -351,13 +346,6 @@ export class MemoryControlStore {
 
   isTurnExcluded(turnId: TurnId): boolean {
     return Boolean(this.db.prepare('SELECT 1 AS present FROM turn_exclusions WHERE turn_id = ? LIMIT 1').get(turnId));
-  }
-
-  resetCutoff(threadId: ThreadId): number {
-    const row = this.db.prepare('SELECT terminal_item_position FROM reset_cutoffs WHERE thread_id = ?').get(threadId) as
-      | { terminal_item_position: number }
-      | undefined;
-    return row?.terminal_item_position ?? 0;
   }
 
   source(threadId: ThreadId): MemorySourceRecord | null {
@@ -815,18 +803,9 @@ export class MemoryControlStore {
   finalizeReset(
     publicationId: string,
     epoch: number,
-    cutoffs: Readonly<Record<ThreadId, number>>,
     excludedTurnIds: readonly TurnId[],
   ): void {
     this.transaction(() => {
-      for (const [threadId, position] of Object.entries(cutoffs)) {
-        this.db.prepare(`
-          INSERT INTO reset_cutoffs(thread_id, terminal_item_position, reset_epoch) VALUES (?, ?, ?)
-          ON CONFLICT(thread_id) DO UPDATE SET
-            terminal_item_position = MAX(reset_cutoffs.terminal_item_position, excluded.terminal_item_position),
-            reset_epoch = excluded.reset_epoch
-        `).run(threadId, position, epoch);
-      }
       for (const turnId of new Set(excludedTurnIds)) {
         this.db.prepare(`
           INSERT OR IGNORE INTO turn_exclusions(turn_id, reason, epoch, created_at) VALUES (?, 'reset', ?, ?)

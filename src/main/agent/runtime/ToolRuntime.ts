@@ -462,7 +462,9 @@ function outlinerWithCausation(
           options,
         )
       : undefined,
-    operationHistory: host.operationHistory ? (query) => host.operationHistory!(query) : undefined,
+    operationHistory: host.operationHistory
+      ? (query, meta) => host.operationHistory!(query, mutationMeta(meta))
+      : undefined,
   };
 }
 

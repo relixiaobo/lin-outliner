@@ -196,7 +196,7 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
     // operationHistory's `origin` is a READ FILTER, not a commit gate: the query's
     // value (often undefined = list all origins) must win, so it spreads LAST.
     operationHistory: host.operationHistory
-      ? (query) => host.operationHistory!({ origin: 'agent', ...query })
+      ? (query, meta = {}) => host.operationHistory!({ origin: 'agent', ...query }, { ...meta, origin: 'agent' })
       : undefined,
   };
 }
@@ -233,7 +233,7 @@ function createOutlineUndoStackTool(host: OutlinerToolHost): AgentTool<any, Tool
         }));
       }
 
-      const data = await host.operationHistory(params);
+      const data = await host.operationHistory(params, { origin: 'agent', tool: 'outline_undo_stack' });
       return agentToolResult(successEnvelope('outline_undo_stack', data, {
         status: params.action === 'list' || data.count > 0 ? 'success' : 'unchanged',
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },

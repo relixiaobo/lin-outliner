@@ -1409,11 +1409,11 @@ function formatProcessDuration(durationMs: number): string {
   ].filter(Boolean).join(' ');
 }
 
-type ThreadContentBlock =
+export type ThreadContentBlock =
   | { readonly kind: 'item'; readonly item: ThreadItem }
   | { readonly kind: 'process'; readonly items: readonly ThreadItem[] };
 
-function groupTurnContent(turn: Turn): ThreadContentBlock[] {
+export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
   const processItems = turn.items.filter(isThreadProcessItem);
   const itemBlocks = turn.items
     .filter((item) => !isThreadProcessItem(item))
@@ -1438,9 +1438,9 @@ function groupTurnContent(turn: Turn): ThreadContentBlock[] {
   return blocks;
 }
 
-function isThreadProcessItem(item: ThreadItem): boolean {
+export function isThreadProcessItem(item: ThreadItem): boolean {
   if (isThreadToolItem(item)) return true;
-  if (item.type === 'agentMessage') return item.phase === 'commentary';
+  if (item.type === 'agentMessage') return item.phase === 'commentary' && item.memoryCitation === null;
   return item.type === 'plan'
     || item.type === 'reasoning'
     || item.type === 'subAgentActivity'

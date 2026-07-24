@@ -269,8 +269,10 @@ create a debug projection, execution ledger, or alternative view model.
 
 Projection-neutral system receipts and deterministic protected tag definitions
 use `DocumentSystemHost`. One trusted transaction may atomically commit document
-commands plus a receipt. System-only commits persist without emitting a Node
-projection update and are excluded from user undo.
+commands plus a receipt. It resolves only after the workspace bytes containing
+that commit are durably flushed, so a sidecar journal cannot finalize ahead of
+the receipt. System-only commits persist without emitting a Node projection
+update and are excluded from user undo.
 
 Internal projection-change delivery retains the originating operation ID, while
 the public renderer event remains the canonical projection event. This lets a

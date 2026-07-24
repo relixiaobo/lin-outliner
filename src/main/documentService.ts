@@ -274,23 +274,43 @@ export class DocumentService implements DocumentSystemHost {
     };
   }
 
-  async operationHistory(query: OperationHistoryQuery = {}) {
+  async operationHistory(query: OperationHistoryQuery = {}, meta: DocumentMutationMeta = {}) {
     const mutatesHistory = query.action === 'undo' || query.action === 'redo';
-    if (!mutatesHistory && !this.textEditGroup) {
-      return this.mutationQueue.then(() => this.core.operationHistory(query));
+    const mutationAction = mutatesHistory ? query.action as 'undo' | 'redo' : null;
+    if (!mutationAction) {
+      if (!this.textEditGroup) return this.mutationQueue.then(() => this.core.operationHistory(query));
+      const task = this.mutationQueue.then(async () => {
+        await this.flushTextEditGroupNow();
+        return this.core.operationHistory(query);
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
     }
-    const task = this.mutationQueue.then(async () => {
-      await this.flushTextEditGroupNow();
-      const result = this.core.operationHistory(query);
-      if (mutatesHistory && result.count > 0) {
-        this.refreshTextSearchIndexFromCoreDelta();
-        this.scheduleCoreSave();
-        this.emitProjectionChanged(historyChangeOrigin(query.origin));
-      }
-      return result;
+    const effectiveMeta: DocumentMutationMeta = {
+      ...meta,
+      origin: meta.origin ?? 'user',
+      command: meta.command ?? query.action,
+      summary: meta.summary ?? `${query.action === 'redo' ? 'Redid' : 'Undid'} outline history.`,
+    };
+    return this.coordinateMutation(effectiveMeta, async () => {
+      const task = this.mutationQueue.then(async () => {
+        await this.flushTextEditGroupNow();
+        this.mutationGuard?.(mutationAction, {
+          historyOrigin: query.origin,
+          steps: query.steps,
+          operationId: query.operationId,
+        }, effectiveMeta, this.core.projection());
+        const result = this.core.operationHistory(query);
+        if (mutatesHistory && result.count > 0) {
+          this.refreshTextSearchIndexFromCoreDelta();
+          this.scheduleCoreSave();
+          this.emitProjectionChanged(effectiveMeta.origin ?? historyChangeOrigin(query.origin));
+        }
+        return result;
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
     });
-    this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
   }
 
   async flushPendingChanges() {
@@ -331,7 +351,10 @@ export class DocumentService implements DocumentSystemHost {
           this.transactionContext.run(true, () => trustedTransaction
             ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
             : (operation as () => Promise<T>)()), transactionMetadata(meta));
-        if (this.core.persistenceRevision() !== persistenceRevisionBefore) this.scheduleCoreSave();
+        if (this.core.persistenceRevision() !== persistenceRevisionBefore) {
+          if (systemContext) await this.saveCore();
+          else this.scheduleCoreSave();
+        }
         if (this.core.revision() !== revisionBefore) {
           this.refreshTextSearchIndexFromCoreDelta();
           this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId, meta.operationId);

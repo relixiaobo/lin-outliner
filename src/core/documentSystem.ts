@@ -39,8 +39,9 @@ export interface DocumentSystemTransactionContext {
 
 /**
  * A trusted transaction commits every document and system command as one Loro
- * change. Implementations exclude the transaction from user undo, expose only
- * Node deltas, and emit no projection event for a system-only commit.
+ * change and resolves only after that change is durably persisted. Implementations
+ * exclude the transaction from user undo, expose only Node deltas, and emit no
+ * projection event for a system-only commit.
  */
 export interface DocumentSystemTransaction {
   /** Executes a document mutation and enforces protected system-tag ownership. */

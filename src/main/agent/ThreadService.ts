@@ -449,10 +449,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return result;
   }
 
-  terminalItemPosition(threadId: ThreadId): number {
-    return this.allTurns(threadId)
-      .filter((turn) => turn.status !== 'inProgress')
-      .reduce((count, turn) => count + turn.items.length, 0);
+  isThreadNavigable(threadId: ThreadId): boolean {
+    const ephemeral = this.ephemeral.get(threadId);
+    if (ephemeral) return !ephemeral.record.archived;
+    const persisted = this.metadata.read(threadId);
+    return Boolean(persisted && !persisted.archived);
   }
 
   async interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void> {
