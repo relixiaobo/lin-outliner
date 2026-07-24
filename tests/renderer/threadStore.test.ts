@@ -182,6 +182,41 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().threads[0]).toMatchObject({ id: unloaded.id, updatedAt: 110 });
   });
 
+  test('removes a transient fork notification when Continue in new chat fails', async () => {
+    const owner = thread('thread-1', 1);
+    const ghost = { ...thread('thread-ghost', 2), forkedFromId: owner.id };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    let listCalls = 0;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') {
+          listCalls += 1;
+          return { data: [owner], nextCursor: null };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/fork') {
+          notify({ type: 'thread/started', threadId: ghost.id, thread: ghost });
+          throw new Error('Fork payload copy failed');
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    await expect(store.continueInNewChat(owner.id, 'turn-1')).rejects.toThrow('Fork payload copy failed');
+
+    expect(listCalls).toBe(2);
+    expect(store.getSnapshot().threads.map((candidate) => candidate.id)).toEqual([owner.id]);
+    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
+  });
+
   test('updates an untitled Thread preview and activity time from Turn notifications', async () => {
     const owner = { ...thread('thread-1', 1), name: null };
     let notify: (notification: AgentCoreNotification) => void = () => undefined;

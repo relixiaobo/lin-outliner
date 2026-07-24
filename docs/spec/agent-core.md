@@ -205,6 +205,9 @@ remain memory-only except for temporary payload files, which follow the same
 Thread deletion lifecycle and are removed when the service closes.
 Forks copy only payloads referenced by inherited Items into their own directory,
 so provenance remains shared while payload deletion remains Thread-local.
+If fork preparation fails after a transient `thread/started` notification, the
+renderer reloads the authoritative Thread catalog before surfacing the error, so
+the rolled-back fork does not remain visible.
 
 Startup reconciles catalog and history projections from rollouts. A Turn left
 `inProgress` by host restart is completed as `interrupted`; every unfinished

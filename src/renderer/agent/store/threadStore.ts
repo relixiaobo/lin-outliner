@@ -7,6 +7,7 @@ import type {
   RequestUserInputRequest,
   Thread,
   ThreadConfigurationSummary,
+  ThreadForkResponse,
   ThreadId,
   ThreadItem,
   ThreadItemDelta,
@@ -204,10 +205,16 @@ export class ThreadStore {
   }
 
   async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
-    const response = await this.client.agentCoreRequest('thread/fork', {
-      threadId,
-      boundary: { kind: 'afterTurn', turnId },
-    });
+    let response: ThreadForkResponse;
+    try {
+      response = await this.client.agentCoreRequest('thread/fork', {
+        threadId,
+        boundary: { kind: 'afterTurn', turnId },
+      });
+    } catch (error) {
+      await this.reloadThreads();
+      throw error;
+    }
     this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
     await this.selectThread(response.thread.id);
     return response.thread;
