@@ -51,7 +51,13 @@
 }
 
 .thread-dock-surface-action {
+  display: inline-flex;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   margin-left: auto;
 }

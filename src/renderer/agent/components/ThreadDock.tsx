@@ -251,6 +251,7 @@ export function ThreadDock({
                 setListOpen(false);
                 setSurface('automations');
               }}
+              strokeWidth={1.7}
               variant="chrome"
             />
           ) : null}
