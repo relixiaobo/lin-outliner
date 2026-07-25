@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -15,6 +15,13 @@ import { ExtensionRegistry } from './agent/ExtensionRegistry';
 import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension } from './agent/extensions/memory/MemoryExtension';
 import { TimelineMemoryStore } from './agent/extensions/memory/TimelineMemoryStore';
+import { AutomationDispatcher } from './agent/automations/AutomationDispatcher';
+import { AutomationScheduler } from './agent/automations/AutomationScheduler';
+import { AutomationService } from './agent/automations/AutomationService';
+import { AutomationStore } from './agent/automations/AutomationStore';
+import { createAutomationTool } from './agent/automations/AutomationTool';
+import { AutomationWorktree } from './agent/automations/AutomationWorktree';
+import { validateAutomationDependencies } from './agent/automations/AutomationDependencies';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
@@ -27,6 +34,12 @@ import {
   decodeThreadMemoryMode,
   memoryTagId,
 } from '../core/agent/memory';
+import {
+  AUTOMATION_NOTIFICATION_CHANNEL,
+  AUTOMATION_REQUEST_CHANNEL,
+  AUTOMATION_METHODS,
+  type AutomationMethod,
+} from '../core/agent/automation';
 import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
@@ -50,6 +63,7 @@ import {
   REASONING_EFFORTS,
   type ReasoningEffort,
 } from '../core/agent/configuration';
+import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import {
   AGENT_CORE_NOTIFICATION_CHANNEL,
   AGENT_CORE_REQUEST_CHANNEL,
@@ -586,6 +600,54 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
   );
 }
 
+const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
+const automationWorktree = new AutomationWorktree(resolvedUserDataDir);
+let automationService!: AutomationService;
+const automationDispatcher = new AutomationDispatcher({
+  store: automationStore,
+  threads: threadService,
+  worktrees: automationWorktree,
+  defaultCwd: agentLocalFileRoot,
+  resolveConfiguration: async (selection, cwd) => {
+    const configuration = agentConfigurationLoader.resolveProfile(selection.profileName ?? undefined, cwd);
+    const effectiveConfiguration = Object.freeze({
+      ...configuration,
+      ...(selection.model === null ? {} : { model: selection.model }),
+      ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
+      ...(selection.tools === null ? {} : { tools: Object.freeze([...selection.tools]) }),
+      ...(selection.skills === null ? {} : { skills: Object.freeze([...selection.skills]) }),
+      ...(selection.plugins === null ? {} : { plugins: Object.freeze([...selection.plugins]) }),
+      ...(selection.mcpServers === null ? {} : { mcpServers: Object.freeze([...selection.mcpServers]) }),
+    });
+    const provider = selection.modelProvider
+      ? await getProviderRuntimeConfig(selection.modelProvider)
+      : await getActiveProviderRuntimeConfig();
+    if (!provider) throw new Error('Configure the Automation model provider before its next occurrence.');
+    validateAgentModelSelection(effectiveConfiguration.model, effectiveConfiguration.reasoningEffort, provider);
+    validateAutomationDependencies(effectiveConfiguration, {
+      tools: new Set(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
+      skills: new Set((await skillRuntime.listAllSkills()).map((skill) => skill.name)),
+      plugins: new Set(extensionRegistry.all().map((extension) => extension.id)),
+      mcpServers: new Set(),
+    });
+    return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
+  },
+  onRunChanged: (run) => automationService.runChanged(run),
+});
+const automationScheduler = new AutomationScheduler({
+  store: automationStore,
+  dispatcher: automationDispatcher,
+  onAutomationChanged: (automation) => automationService.automationChanged(automation),
+  onRunChanged: (run) => automationService.runChanged(run),
+});
+automationService = new AutomationService({
+  store: automationStore,
+  scheduler: automationScheduler,
+  dispatcher: automationDispatcher,
+  threads: threadService,
+});
+const wakeAutomationsOnResume = () => automationService.wake();
+
 toolRuntime = new ToolRuntime(threadService, {
   outliner: documentService,
   filterOutlinerProjection: (projection, causation) => memoryExtension.filterProjection(projection, causation),
@@ -595,10 +657,17 @@ toolRuntime = new ToolRuntime(threadService, {
     context.turn.id,
     localWorkspaceForTurn(context),
   ),
+  dynamicTools: () => [createAutomationTool(automationService)],
 });
 threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed') turnSkillRuntimes.delete(notification.turnId);
+  if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
+    automationService.wake();
+  }
   liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
+});
+automationService.subscribe((notification) => {
+  liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });
 
 function createThreadImageGenerationRuntime(
@@ -1754,6 +1823,15 @@ function trustedLocalFileReferenceOptions() {
 }
 
 function registerIpc() {
+  ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Automations are available only to the main application window.');
+    }
+    if (typeof method !== 'string' || !(AUTOMATION_METHODS as readonly string[]).includes(method)) {
+      throw new Error(`Unknown Automation method: ${String(method)}`);
+    }
+    return automationService.request(method as AutomationMethod, input);
+  });
   ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('Agent Core is available only to the main application window.');
@@ -3131,6 +3209,8 @@ if (!app.requestSingleInstanceLock()) {
     await documentService.initWorkspace();
     await threadService.initialize();
     await memoryExtension.startWorker();
+    await automationService.start();
+    powerMonitor.on('resume', wakeAutomationsOnResume);
     await nodeAccessStore.load().catch((error) => {
       reportError({
         domain: 'node-access',
@@ -3226,6 +3306,7 @@ if (!app.requestSingleInstanceLock()) {
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
     // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
+    powerMonitor.removeListener('resume', wakeAutomationsOnResume);
     pageTranslationService.dispose();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
@@ -3240,7 +3321,7 @@ if (!app.requestSingleInstanceLock()) {
         nodeAccessStore.flushNow(),
         previewTranslationCache.flushNow(),
         importApiServer.stop(),
-        closeAgentServices(memoryExtension, threadService),
+        closeAgentServices(memoryExtension, threadService, automationService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),

@@ -6,6 +6,16 @@ import {
   type RequestUserInputQuestion,
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
+import {
+  AUTOMATION_CAPABILITY_LIST_MAX_COUNT,
+  AUTOMATION_IDENTIFIER_MAX_LENGTH,
+  AUTOMATION_NAME_MAX_LENGTH,
+  AUTOMATION_PATH_MAX_LENGTH,
+  AUTOMATION_PROJECT_BINDINGS_MAX_COUNT,
+  AUTOMATION_PROMPT_MAX_LENGTH,
+  AUTOMATION_RRULE_MAX_LENGTH,
+  AUTOMATION_TIMEZONE_MAX_LENGTH,
+} from './automation';
 
 export {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -113,6 +123,7 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'agent.goal.read',
   'agent.goal.create',
   'agent.goal.update',
+  'agent.automation.manage',
   'agent.subagent.spawn',
   'agent.subagent.read',
   'agent.subagent.send',
@@ -179,6 +190,17 @@ const arraySchema = (items: JsonSchema, description?: string): JsonSchema => ({
   ...(description ? { description } : {}),
 });
 
+const boundedStringSchema = (maximum: number, description?: string): JsonSchema => ({
+  ...stringSchema(description),
+  minLength: 1,
+  maxLength: maximum,
+});
+
+const boundedArraySchema = (items: JsonSchema, maximum: number): JsonSchema => ({
+  ...arraySchema(items),
+  maxItems: maximum,
+});
+
 const enumSchema = (values: readonly string[], description?: string): JsonSchema => ({
   type: 'string',
   enum: values,
@@ -207,6 +229,89 @@ const updatePlanSchema = objectSchema({
     status: enumSchema(['pending', 'in_progress', 'completed']),
   }, ['step', 'status'])),
 }, ['plan']);
+
+const automationScheduleSchema = objectSchema({
+  rrule: boundedStringSchema(AUTOMATION_RRULE_MAX_LENGTH, 'RFC 5545 DTSTART and RRULE lines.'),
+  timezone: boundedStringSchema(AUTOMATION_TIMEZONE_MAX_LENGTH, 'IANA timezone identifier.'),
+}, ['rrule', 'timezone']);
+
+const automationDestinationSchema: JsonSchema = {
+  oneOf: [
+    objectSchema({ kind: enumSchema(['standalone']) }, ['kind']),
+    objectSchema({
+      kind: enumSchema(['existingThread']),
+      threadId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Persistent destination Thread UUIDv7.'),
+    }, ['kind', 'threadId']),
+  ],
+};
+
+const automationProjectBindingSchema = objectSchema({
+  id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Stable project binding identity.'),
+  cwd: boundedStringSchema(AUTOMATION_PATH_MAX_LENGTH, 'Absolute local project path.'),
+  executionMode: enumSchema(['local', 'worktree']),
+}, ['id', 'cwd', 'executionMode']);
+
+const nullableStringSchema: JsonSchema = {
+  oneOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
+};
+const nullableStringArraySchema: JsonSchema = {
+  oneOf: [
+    boundedArraySchema(
+      boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
+      AUTOMATION_CAPABILITY_LIST_MAX_COUNT,
+    ),
+    { type: 'null' },
+  ],
+};
+const automationConfigurationSchema = objectSchema({
+  profileName: nullableStringSchema,
+  modelProvider: nullableStringSchema,
+  model: nullableStringSchema,
+  reasoningEffort: { oneOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
+  tools: nullableStringArraySchema,
+  skills: nullableStringArraySchema,
+  plugins: nullableStringArraySchema,
+  mcpServers: nullableStringArraySchema,
+});
+
+const automationDefinitionProperties = {
+  name: boundedStringSchema(AUTOMATION_NAME_MAX_LENGTH, 'User-visible Automation name.'),
+  prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH, 'Durable prompt for each occurrence.'),
+  schedule: automationScheduleSchema,
+  destination: automationDestinationSchema,
+  projectBindings: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_PROJECT_BINDINGS_MAX_COUNT),
+  configuration: automationConfigurationSchema,
+};
+const automationMutableProperties = {
+  ...automationDefinitionProperties,
+  status: enumSchema(['active', 'paused']),
+};
+
+const automationUpdateToolSchema: JsonSchema = {
+  oneOf: [
+    objectSchema({
+      mode: enumSchema(['create']),
+      definition: objectSchema({
+        ...automationMutableProperties,
+      }, ['name', 'prompt', 'schedule', 'destination']),
+    }, ['mode', 'definition']),
+    objectSchema({
+      mode: enumSchema(['update']),
+      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
+      expected_revision: { type: 'integer', minimum: 1 },
+      patch: { ...objectSchema(automationMutableProperties), minProperties: 1 },
+    }, ['mode', 'automation_id', 'expected_revision', 'patch']),
+    objectSchema({
+      mode: enumSchema(['view']),
+      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
+    }, ['mode']),
+    objectSchema({
+      mode: enumSchema(['delete']),
+      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
+      expected_revision: { type: 'integer', minimum: 1 },
+    }, ['mode', 'automation_id']),
+  ],
+};
 
 const spawnAgentSchema = objectSchema({
   task_name: stringSchema('Lowercase task name using letters, digits, and underscores.'),
@@ -287,6 +392,14 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
 ];
 
 const coreControlToolContracts: readonly ModelToolContract[] = [
+  {
+    identity: { namespace: 'codex_app', name: 'automation_update' },
+    description: 'Create, update, view, or delete a host-owned Automation for scheduled agent work.',
+    scope: 'rootThread',
+    schemaOwner: 'core',
+    inputSchema: automationUpdateToolSchema,
+    actionKinds: ['agent.automation.manage'],
+  },
   {
     identity: { namespace: null, name: 'request_user_input' },
     description: 'Request one to three short product questions from the user. This never requests authorization.',

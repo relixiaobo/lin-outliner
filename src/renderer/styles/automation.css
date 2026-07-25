@@ -1,0 +1,360 @@
+.thread-list-header-actions,
+.automations-toolbar,
+.automation-detail-actions,
+.automation-run-actions,
+.automation-editor-actions,
+.automation-subview-header {
+  display: flex;
+  align-items: center;
+}
+
+.thread-list-header-actions {
+  gap: var(--space-1);
+}
+
+.automations-view,
+.automation-subview,
+.automation-editor {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.automations-toolbar {
+  flex: 0 0 auto;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--agent-content-x) var(--space-3);
+}
+
+.automations-filter {
+  min-width: 0;
+  flex: 1;
+}
+
+.automations-filter .segmented-control-option {
+  min-width: 0;
+  padding-right: var(--space-2);
+  padding-left: var(--space-2);
+  font-size: var(--font-ui-2xs);
+}
+
+.automations-list,
+.automation-detail-scroll,
+.automation-editor-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.automations-list {
+  padding: var(--space-2) var(--space-4) var(--space-6);
+}
+
+.automation-list-row {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+}
+
+.automation-list-row:hover,
+.automation-list-row:focus-visible {
+  background: var(--fill-2);
+}
+
+.automation-list-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.automation-list-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.automation-list-copy strong,
+.automation-list-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-list-copy strong {
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  line-height: var(--line-ui-sm);
+}
+
+.automation-list-copy small,
+.automation-status,
+.automation-run-heading,
+.automation-run p,
+.automation-empty-copy {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs-relaxed);
+}
+
+.automation-status,
+.automation-run-state {
+  white-space: nowrap;
+}
+
+.automation-status.is-paused,
+.automation-status.is-completed {
+  color: var(--text-faint);
+}
+
+.automation-unread {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.automation-empty-copy {
+  margin: 0;
+  padding: var(--space-lg) var(--space-5);
+  text-align: center;
+}
+
+.automation-subview-header {
+  min-height: 36px;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--separator);
+  padding: 0 var(--space-4);
+}
+
+.automation-subview-header h2,
+.automation-editor-section h3,
+.automation-runs-section h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-detail-scroll,
+.automation-editor-scroll {
+  padding: var(--space-5) var(--agent-content-x) var(--space-8);
+}
+
+.automation-detail-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.automation-detail-actions .button,
+.automation-run-actions .button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.automation-detail-metadata {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-6) 0 0;
+}
+
+.automation-detail-prompt {
+  margin: var(--space-5) 0 0;
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.automation-detail-metadata > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: var(--space-4);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs-relaxed);
+}
+
+.automation-detail-metadata dt {
+  color: var(--text-faint);
+}
+
+.automation-detail-metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.automation-detail-projects {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.automation-runs-section {
+  margin-top: var(--space-8);
+}
+
+.automation-runs-section > h3 {
+  margin-bottom: var(--space-3);
+}
+
+.automation-runs {
+  display: grid;
+}
+
+.automation-run {
+  position: relative;
+  min-width: 0;
+  border-top: 1px solid var(--separator);
+  padding: var(--space-4) 0;
+}
+
+.automation-run.is-unread::before {
+  position: absolute;
+  top: var(--space-5);
+  left: calc(-1 * var(--space-4));
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  content: "";
+}
+
+.automation-run-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.automation-run-state.is-failed,
+.automation-run-error,
+.automation-error {
+  color: var(--status-danger);
+}
+
+.automation-run p {
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.automation-run-actions {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.automation-editor-scroll {
+  display: grid;
+  align-content: start;
+  gap: var(--space-6);
+}
+
+.automation-editor-scroll > .field-control,
+.automation-editor-section > .field-control,
+.automation-configuration > .field-control {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.automation-editor-section {
+  display: grid;
+  gap: var(--space-4);
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-5);
+}
+
+.automation-editor-segments {
+  display: flex;
+  width: 100%;
+}
+
+.automation-editor-segments .segmented-control-option {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-right: var(--space-2);
+  padding-left: var(--space-2);
+  font-size: var(--font-ui-xs);
+}
+
+.automation-project-binding {
+  display: grid;
+  min-width: 0;
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.automation-project-binding > .input-select-shell {
+  grid-column: 1 / -1;
+}
+
+.automation-project-binding.is-primary > .field-control {
+  grid-column: 1 / -1;
+}
+
+.automation-prompt-input {
+  min-height: 108px;
+  resize: vertical;
+}
+
+.automation-rrule-input {
+  min-height: 68px;
+  resize: vertical;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-code-block);
+}
+
+.automation-configuration {
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-4);
+}
+
+.automation-configuration > summary {
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  user-select: none;
+}
+
+.automation-configuration[open] {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.automation-editor-actions {
+  min-height: 48px;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  border-top: 1px solid var(--separator);
+  padding: var(--space-3) var(--agent-content-x);
+}
+
+.automation-error {
+  margin: var(--space-3) var(--agent-content-x);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs-relaxed);
+}

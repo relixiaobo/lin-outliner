@@ -14,6 +14,16 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
+  AUTOMATION_NOTIFICATION_CHANNEL,
+  AUTOMATION_REQUEST_CHANNEL,
+  decodeAutomationNotification,
+  decodeAutomationResponse,
+  type AutomationMethod,
+  type AutomationNotification,
+  type AutomationRequestByMethod,
+  type AutomationResponseByMethod,
+} from '../core/agent/automation';
+import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
   type AgentProviderStoredApiKey,
@@ -240,6 +250,18 @@ const api = {
     );
     ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
     return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
+  },
+  automationRequest: <Method extends AutomationMethod>(
+    method: Method,
+    input: AutomationRequestByMethod[Method],
+  ) => ipcRenderer.invoke(AUTOMATION_REQUEST_CHANNEL, method, input)
+    .then((response) => decodeAutomationResponse(method, response)) as Promise<AutomationResponseByMethod[Method]>,
+  onAutomationNotification: (listener: (notification: AutomationNotification) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) => (
+      listener(decodeAutomationNotification(notification))
+    );
+    ipcRenderer.on(AUTOMATION_NOTIFICATION_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(AUTOMATION_NOTIFICATION_CHANNEL, handler);
   },
   showThreadMessageContextMenu: (request: ThreadMessageContextMenuRequest) =>
     ipcRenderer.invoke(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, request) as Promise<ThreadMessageContextMenuAction | null>,

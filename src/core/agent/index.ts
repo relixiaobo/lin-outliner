@@ -1,4 +1,5 @@
 export * from './codec';
+export * from './automation';
 export * from './configuration';
 export * from './extensions';
 export * from './goal';

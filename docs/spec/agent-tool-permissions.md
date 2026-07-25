@@ -14,6 +14,11 @@ Tenon does not add an agent filesystem sandbox, permission mode, approval policy
 or pause/resume authorization flow. `request_user_input` gathers missing product
 input only and must never be used as a risk confirmation prompt.
 
+Creating or resuming an Automation is standing authorization for its future
+occurrences under this same Full Access boundary. It introduces no separate
+approval mode; schedule and dispatch behavior is owned by
+[`agent-automations.md`](agent-automations.md).
+
 Electron renderer security remains unchanged: context isolation, renderer
 sandboxing, no Node integration, preload-only IPC, navigation denial, and the
 permission allow-list protect the application boundary. Those controls are not

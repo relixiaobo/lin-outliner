@@ -52,32 +52,32 @@ describe('Codex Agent Core model-tool contract', () => {
         owner: contract.schemaOwner as 'capability' | 'configuration',
         inputSchema: { type: 'object', additionalProperties: false },
       }));
-    const automation = {
-      identity: { namespace: 'codex_app', name: 'automation_update' },
-      description: 'Create or update one Automation.',
+    const extensionTool = {
+      identity: { namespace: 'project_ext', name: 'knowledge_lookup' },
+      description: 'Look up project knowledge.',
       scope: 'rootThread',
       schemaOwner: 'extension',
       inputSchema: { type: 'object', additionalProperties: false },
       actionKinds: ['agent.plan.update'],
     } as const;
-    const registry = assembleModelToolRegistry(contributions, [automation]);
+    const registry = assembleModelToolRegistry(contributions, [extensionTool]);
     expect(registry.every((contract) => contract.inputSchema !== null)).toBe(true);
-    expect(encodeProviderToolName(automation.identity, 'flat', registry)).toBe('codex_app__automation_update');
-    expect(decodeProviderToolName('codex_app__automation_update', 'flat', registry)).toEqual(automation.identity);
+    expect(encodeProviderToolName(extensionTool.identity, 'flat', registry)).toBe('project_ext__knowledge_lookup');
+    expect(decodeProviderToolName('project_ext__knowledge_lookup', 'flat', registry)).toEqual(extensionTool.identity);
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'collaboration', name: 'automation_update' },
     }])).toThrow('namespace is reserved');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       schemaOwner: 'core',
     }])).toThrow('must be owned by extension');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'foo__bar', name: 'baz' },
     }])).toThrow('reserved flat-provider separator');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'foo', name: 'bar__baz' },
     }])).toThrow('reserved flat-provider separator');
   });

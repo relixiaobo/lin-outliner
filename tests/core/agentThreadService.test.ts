@@ -1951,17 +1951,17 @@ describe('ThreadService', () => {
       capabilityTools: runtimeSchemaTools,
       assembleRegistry: true,
       dynamicTools: () => [{
-        name: 'codex_app__automation_update',
-        label: 'Update Automation',
-        description: AUTOMATION_TOOL_CONTRACT.description,
-        parameters: AUTOMATION_TOOL_CONTRACT.inputSchema!,
+        name: 'automation_probe__run',
+        label: 'Run Automation Probe',
+        description: EXTENSION_PROBE_CONTRACT.description,
+        parameters: EXTENSION_PROBE_CONTRACT.inputSchema!,
         executionMode: 'sequential',
         execute: async () => ({ content: [{ type: 'text', text: 'updated' }], details: { updated: true } }),
       }],
     });
     const tools = await runtime.createTools(context);
     expect(tools.map((tool) => tool.name)).toContain('generate_image');
-    expect(tools.map((tool) => tool.name)).toContain('codex_app__automation_update');
+    expect(tools.map((tool) => tool.name)).toContain('automation_probe__run');
 
     const missingImplementation = new ToolRuntime(fixture.service, {
       capabilityTools: runtimeSchemaTools,
@@ -2084,9 +2084,9 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
   };
 }
 
-const AUTOMATION_TOOL_CONTRACT = {
-  identity: { namespace: 'codex_app', name: 'automation_update' },
-  description: 'Create or update one Automation.',
+const EXTENSION_PROBE_CONTRACT = {
+  identity: { namespace: 'automation_probe', name: 'run' },
+  description: 'Run the Automation extension probe.',
   scope: 'rootThread',
   schemaOwner: 'extension',
   inputSchema: {
@@ -2102,7 +2102,7 @@ class ToolContributionProbe implements AgentCoreExtension {
   readonly id = 'automation-probe';
 
   contributeTools() {
-    return { extensionId: this.id, tools: [AUTOMATION_TOOL_CONTRACT] };
+    return { extensionId: this.id, tools: [EXTENSION_PROBE_CONTRACT] };
   }
 }
 

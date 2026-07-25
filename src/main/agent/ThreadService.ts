@@ -52,6 +52,7 @@ import type {
   ThreadConfigurationSetRequest,
   ThreadConfigurationSummary,
   ThreadForkRequest,
+  ThreadFeatureSource,
   ThreadRollbackRequest,
   ThreadId,
   ThreadItem,
@@ -162,6 +163,21 @@ export interface RendererThreadStartDefaults {
 export interface ThreadUserContentResolutionContext {
   readonly threadId: ThreadId;
   readonly cwd: string;
+}
+
+export interface FeatureRootThreadInput {
+  readonly id: ThreadId;
+  readonly name: string;
+  readonly source: string;
+  readonly threadSource: ThreadFeatureSource;
+  readonly modelProvider: string;
+  readonly cwd: string;
+  readonly configuration: EffectiveThreadConfiguration;
+}
+
+export interface PersistentThreadExecutionContext {
+  readonly thread: Thread;
+  readonly configuration: EffectiveThreadConfiguration;
 }
 
 export interface SpawnChildThreadInput {
@@ -436,6 +452,56 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     }
     return threads;
+  }
+
+  persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext {
+    const record = this.requireThread(threadId);
+    if (record.thread.ephemeral || record.archived || record.thread.parentThreadId !== null) {
+      throw new Error(`Automation destination must be a persistent, active root Thread: ${threadId}`);
+    }
+    return { thread: record.thread, configuration: record.configuration };
+  }
+
+  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null {
+    return this.readTurn(threadId, turnId);
+  }
+
+  async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
+    return this.hostRootMutex.run(async () => {
+      const existing = this.metadata.read(input.id);
+      if (existing) {
+        const thread = existing.thread;
+        if (
+          existing.archived
+          || thread.ephemeral
+          || thread.parentThreadId !== null
+          || thread.threadSource !== input.threadSource
+          || thread.cwd !== input.cwd
+          || thread.modelProvider !== input.modelProvider
+          || JSON.stringify(existing.configuration) !== JSON.stringify(input.configuration)
+        ) {
+          throw new Error(`Existing Thread does not match the feature claim: ${input.id}`);
+        }
+        return thread;
+      }
+      return this.createThread({
+        id: input.id,
+        name: input.name,
+        ephemeral: false,
+        source: input.source,
+        threadSource: input.threadSource,
+        modelProvider: input.modelProvider,
+        cwd: input.cwd,
+      }, {
+        sessionId: input.id,
+        parentThreadId: null,
+        forkedFromId: null,
+        agentRole: null,
+        agentNickname: null,
+        configuration: input.configuration,
+        nameOrigin: 'derived',
+      });
+    });
   }
 
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[] {

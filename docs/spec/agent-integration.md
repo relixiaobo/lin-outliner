@@ -11,6 +11,8 @@ Agent Core. It is a contract checklist, not project status.
 - Give every completed fact immutable provenance.
 - Keep one active Turn per Thread and require exact identity preconditions.
 - Preserve history-only fork semantics.
+- Route scheduled work through Automation claims and canonical feature Turn
+  provenance; do not add another execution scheduler.
 
 ## Tool Contract
 
@@ -46,6 +48,8 @@ Agent Core. It is a contract checklist, not project status.
 - Add no alternate history ledger.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
+- Serialize Automation claims with pause, delete, Start now, and dispatch; keep
+  Memory eligibility based on immutable Turn provenance.
 - Test crash recovery and idempotent reconciliation.
 - Verify a fresh userData tree contains only declared current artifacts.
 

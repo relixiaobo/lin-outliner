@@ -87,6 +87,8 @@ The write carries the executing Item's causation.
 - `get_goal`: read the current Thread Goal
 - `create_goal`: create a Goal only when explicitly requested
 - `update_goal`: mark that Goal `complete` or genuinely `blocked`
+- `codex_app.automation_update`: create, update, view, or delete a host-owned
+  Automation on a root Thread
 
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
@@ -95,6 +97,12 @@ exclusive options.
 
 At most one plan step is `in_progress`. Plans are Items within a Turn and do not
 create durable work entities.
+
+`codex_app.automation_update` uses one bounded exact schema and the same
+revisioned host service as renderer commands. It never writes scheduler tables
+from model code or introduces a permission profile. Scheduled execution and
+standing authorization are specified in
+[`agent-automations.md`](agent-automations.md).
 
 ### Collaboration
 

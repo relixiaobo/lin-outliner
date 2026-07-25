@@ -90,15 +90,15 @@ src/renderer/agent/automations/
 - `schedule` with canonical RFC 5545 RRULE plus IANA `timezone`
 - `destination`: `standalone` or `existingThread`
 - optional destination `threadId` for existing-Thread delivery
-- zero or more local project bindings, each with `cwd` and
+- zero or more local project bindings, each with a canonical real `cwd` and
   `executionMode: local | worktree`
 - optional model, reasoning effort, tool, skill, and plugin selections
 - status `active | paused | completed`
 - created/updated timestamps and derived next occurrence
 
 Interval, daily, weekly, and custom controls all compile to the same RRULE;
-there are no parallel schedule formats. A one-shot schedule becomes `completed`
-after its occurrence is durably claimed. Plugin `ScheduledTaskSummary` values are
+there are no parallel schedule formats. Any finite schedule becomes `completed`
+after its final occurrence is durably claimed for every binding. Plugin `ScheduledTaskSummary` values are
 configuration templates that create an Automation through the same service; they
 are not another persisted task type.
 
@@ -153,8 +153,10 @@ until the current one is terminal; stale waits are coalesced to the latest due
 occurrence with the same aggregate omission rule.
 
 Definition edits are revision-checked. A scheduler claim stores the definition
-revision and effective configuration used for that occurrence, so changing the
-prompt or cadence cannot mutate an already started Turn.
+revision and complete saved selection snapshot for that occurrence, so changing
+the prompt, cadence, or selections cannot mutate an already claimed run. Main
+resolves that snapshot against the current provider and capability environment
+at dispatch and fails closed if it is no longer available.
 
 Ordinary edits affect only unclaimed occurrences; an already pending claim keeps
 its captured revision. Pause and delete atomically convert undispatched pending
@@ -208,23 +210,27 @@ Turn normally. Schedule status and Goal status remain independent.
 
 ### 4. Projects and worktrees
 
-An Automation with no local project runs without a filesystem workspace. A
-non-Git project runs in its configured local directory. A Git project may run in
-that local checkout or in a dedicated worktree created for the AutomationRun.
+An Automation with no local project uses the agent local-file root without a
+project binding. A non-Git project runs in its configured local directory. A Git
+project may run in that local checkout or in a dedicated worktree created for
+the AutomationRun.
 
 Worktree creation, detached-HEAD base, containment, snapshots, pinning, and
-cleanup are host-owned and recorded before the Turn starts. A worktree survives
+cleanup are host-owned; creation metadata is recorded before the Turn starts. A worktree survives
 while its AutomationRun is active or pinned. Unpinned completed worktrees follow
 a bounded recent-worktree retention limit; before removal the host records a
 restorable snapshot and clears only a worktree it created under its managed root.
 Cleanup never deletes the source checkout, an unrecognized worktree, or a
-user-authored branch.
+user-authored branch. It durably records a base-relative snapshot before removal
+and records removal completion afterward, so both crash boundaries resume
+idempotently.
 
 Multiple project bindings create one AutomationRun and Thread per binding for a
-standalone Automation. Existing-Thread Automations accept at most one project
-binding because one Thread has one sticky working context. Creation/update
-rejects a binding whose workspace does not match the destination Thread's
-effective environment; dispatch never silently retargets an existing Thread.
+standalone Automation. Existing-Thread Automations accept at most one local
+project binding because one Thread has one sticky working context; worktree mode
+is invalid for this destination. Creation/update rejects a binding whose
+workspace does not match the destination Thread's effective environment;
+dispatch never silently retargets an existing Thread.
 
 ### 5. Standing authorization and unattended execution
 
@@ -270,7 +276,8 @@ destination logic.
 Deleting an Automation stops future claims and omits undispatched pending claims,
 but does not delete dispatched Threads, Turns, or retained AutomationRun history.
 Pausing applies the same pending-claim rule and prevents new claims. Completing a
-one-shot definition prevents new claims while preserving history.
+finite definition prevents new claims while preserving history; changing its
+schedule reactivates it against a fresh evaluated-through cursor.
 
 ### 7. User surface
 

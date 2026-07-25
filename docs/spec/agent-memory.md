@@ -74,6 +74,10 @@ ephemeral Threads, and external-context-polluted Threads are excluded by their
 canonical provenance. One ultimate `originItemId` can belong to only one
 extraction source.
 
+[`agent-automations.md`](agent-automations.md) owns the immutable Automation
+trigger and reciprocal run binding that this exclusion consumes. Memory never
+infers scheduled origin from prompt text, Thread destination, or display labels.
+
 Global disable is a linearized privacy boundary. It acquires the host Turn
 admission barrier and Memory document gate, atomically persists the new feature
 generation plus exclusions for active root Turns, suspends and aborts the

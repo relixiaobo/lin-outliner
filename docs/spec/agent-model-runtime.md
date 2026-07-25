@@ -9,6 +9,12 @@ Provider state is never a second product history.
 Thread, accepted Turn, prior history, effective configuration, additional
 context, cancellation signal, and `ItemRecorder`.
 
+Trusted application entries in `additionalContext` are authored only by main.
+In particular, scheduled Turns receive `automation_info` from the canonical
+Automation dispatcher; renderer input cannot create or replace it. Its schedule,
+routing, and provenance semantics are owned by
+[`agent-automations.md`](agent-automations.md).
+
 Before the first provider request it resolves the configured model, builds
 system context, restores prior model messages from canonical Items, and assembles
 the final model-tool registry. Provider messages remain in memory only for the
