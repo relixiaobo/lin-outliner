@@ -16,6 +16,12 @@ test.describe('Automation surface', () => {
     await expect(createDrawer).toBeVisible();
     await page.getByRole('textbox', { name: 'Name' }).fill('Daily repository review');
     await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize important changes.');
+    const repeat = createDrawer.getByRole('combobox', { name: 'Repeat' });
+    await repeat.selectOption('weekly');
+    await expect(createDrawer.getByRole('combobox', { name: 'On', exact: true }))
+      .toHaveValue(/^(MO|TU|WE|TH|FR|SA|SU)$/);
+    await createDrawer.getByRole('combobox', { name: 'On', exact: true }).selectOption('MO');
+    await expect(createDrawer.getByLabel('At', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Create Automation' }).click();
 
     const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
@@ -88,6 +94,34 @@ test.describe('Automation surface', () => {
         model: 'openai/gpt-5.4',
         tools: [],
       });
+    expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
+      .toMatch(/RRULE:FREQ=WEEKLY;BYDAY=MO$/);
+  });
+
+  test('shows complete controls for each schedule preset', async ({ page }) => {
+    await page.locator('.automations-toolbar').getByRole('button', { name: 'New Automation' }).click();
+    const drawer = page.getByRole('dialog', { name: 'New Automation' });
+    const repeat = drawer.getByRole('combobox', { name: 'Repeat' });
+
+    await repeat.selectOption('once');
+    await expect(drawer.getByLabel('Date', { exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
+    await drawer.getByLabel('Date', { exact: true }).fill('2026-07-27');
+
+    await repeat.selectOption('hourly');
+    await expect(drawer.getByLabel('Starts', { exact: true })).toBeVisible();
+    await expect(drawer.getByRole('combobox', { name: 'On', exact: true })).toHaveCount(0);
+
+    await repeat.selectOption('daily');
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
+
+    await repeat.selectOption('weekly');
+    await expect(drawer.getByRole('combobox', { name: 'On', exact: true })).toHaveValue('MO');
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
+
+    await repeat.selectOption('custom');
+    await expect(drawer.getByRole('textbox', { name: 'RRULE' })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
   });
 
   test('confirms before closing a dirty drawer and remembers keyboard resizing', async ({ page }) => {

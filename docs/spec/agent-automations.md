@@ -216,8 +216,10 @@ The drawer is the sole create/detail/edit surface. Existing fields are directly
 editable as one local draft, with an atomic Save/Cancel footer and discard
 confirmation before a dirty draft closes. Its reading order follows the task
 rather than the storage schema: name and prompt; a grouped Details table for
-destination, project, model, and reasoning; a grouped Frequency table for repeat,
-time, and timezone; previous runs; then advanced Profile and capability fields.
+destination, project, model, and reasoning; a grouped Frequency table whose
+conditional rows expose the complete preset (date and time for once, start for
+hourly, time for daily, weekday and time for weekly), followed by timezone;
+previous runs; then advanced Profile and capability fields.
 Model choices come from the currently usable provider catalog and atomically set
 the provider-qualified model selection; timezone choices come from the runtime's
 supported IANA timezone catalog. Raw RRULE is visible only for a custom schedule. Capability controls preserve

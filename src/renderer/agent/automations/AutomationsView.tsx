@@ -222,7 +222,7 @@ export function AutomationsView(props: AutomationsViewProps) {
                   : t.next({ value: formatRelative(automation.nextOccurrenceAt) })}</small>
               </span>
               <span className={`automation-status is-${automation.status}`}>{t.filters[automation.status]}</span>
-              {unread ? <span className="automation-unread" aria-hidden="true" /> : null}
+              <span className={`automation-unread${unread ? ' is-visible' : ''}`} aria-hidden="true" />
             </button>
           );
         })}

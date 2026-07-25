@@ -988,6 +988,13 @@ commandPalette: {
       frequency: 'Frequency',
       repeat: 'Repeat',
       frequencies: { once: 'Once', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', custom: 'Custom' },
+      date: 'Date',
+      startsAt: 'Starts',
+      weekday: 'On',
+      weekdays: {
+        MO: 'Monday', TU: 'Tuesday', WE: 'Wednesday', TH: 'Thursday',
+        FR: 'Friday', SA: 'Saturday', SU: 'Sunday',
+      },
       startAt: 'At',
       timezone: 'Timezone',
       rrule: 'RRULE',

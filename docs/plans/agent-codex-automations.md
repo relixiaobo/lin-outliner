@@ -322,8 +322,9 @@ schema as a flat form. Its information order is:
 2. name and prompt
 3. Details: destination and optional Thread, project/worktree mode, model, and
    reasoning effort
-4. Frequency: repeat rule, execution time, timezone, and custom RRULE only when
-   needed
+4. Frequency: repeat rule, all preset-specific fields (once date/time, hourly
+   start, daily time, or weekly weekday/time), timezone, and custom RRULE only
+   when needed
 5. previous Automation runs
 6. advanced Profile and capability overrides for Tools, Skills, Plugins, and MCP
    servers
@@ -337,7 +338,7 @@ The Automation editor supports:
 
 - prompt and name
 - standalone versus existing-Thread destination
-- interval, daily, weekly, and custom RRULE schedule controls
+- once, hourly, daily, weekly, and custom RRULE schedule controls
 - timezone
 - no project, local project, or isolated worktree
 - model and reasoning effort

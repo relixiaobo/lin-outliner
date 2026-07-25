@@ -244,11 +244,14 @@ describe('renderer Automation store', () => {
     expect(scheduleRrule('2026-07-24T09:05', 'weekly')).toBe(
       'DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=FR',
     );
+    expect(scheduleRrule('2026-07-24T09:05', 'weekly', 'MO')).toBe(
+      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO',
+    );
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=DAILY')).toBe('daily');
     expect(frequencyFromRrule('DTSTART:20260724T090530\nRRULE:FREQ=DAILY')).toBe('custom');
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=DAILY;COUNT=3')).toBe('custom');
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=HOURLY;INTERVAL=2')).toBe('custom');
-    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO')).toBe('custom');
+    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO')).toBe('weekly');
   });
 
   test('preserves inherited, explicitly empty, and explicit capability lists', () => {

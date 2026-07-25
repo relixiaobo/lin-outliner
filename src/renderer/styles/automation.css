@@ -81,12 +81,11 @@
 }
 
 .automation-list-row {
-  position: relative;
   display: grid;
   width: 100%;
   min-height: 56px;
-  align-items: center;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  grid-template-columns: 20px minmax(0, 1fr) auto 5px;
   gap: var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -101,8 +100,8 @@
 
 .automation-list-icon {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: var(--line-ui-sm);
   place-items: center;
   color: var(--text-tertiary);
 }
@@ -138,8 +137,10 @@
 }
 
 .automation-status {
+  align-self: start;
   max-width: 72px;
   overflow: hidden;
+  line-height: var(--line-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -150,15 +151,17 @@
 }
 
 .automation-unread {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  align-self: start;
   width: 5px;
   height: 5px;
-  overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  color: transparent;
+  margin-top: calc((var(--line-ui-sm) - 5px) / 2);
+  opacity: 0;
+}
+
+.automation-unread.is-visible {
+  opacity: 1;
 }
 
 .automation-empty-copy {
