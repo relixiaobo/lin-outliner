@@ -22,7 +22,8 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TimeInputControl } from '../primitives/TimeInputControl';
+import { isDialogNestedOverlayTarget } from '../primitives/dialogNestedOverlay';
+import { TimePickerControl } from '../primitives/TimePickerControl';
 import { useAnchoredOverlay, type OverlayPlacement } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
@@ -153,6 +154,7 @@ export function DateValuePicker({
       const target = event.target;
       if (target instanceof Node && anchorRef.current?.contains(target)) return;
       if (target instanceof Node && popoverRef.current?.contains(target)) return;
+      if (isDialogNestedOverlayTarget(target)) return;
       onOpenChange(false);
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
@@ -576,7 +578,7 @@ function DateSummaryRow({
         />
       </label>
       {includeTime && (
-        <TimeInputControl
+        <TimePickerControl
           label={timeAriaLabel}
           onValueChange={onTimeChange}
           value={dateFieldEndpointTime(value) || time}

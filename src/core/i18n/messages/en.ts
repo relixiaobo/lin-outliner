@@ -951,6 +951,12 @@ commandPalette: {
     confirm: 'Confirm',
     cancel: 'Cancel',
   },
+  timePicker: {
+    title: 'Time picker',
+    open: 'Choose time',
+    hour: 'Hour',
+    minute: 'Minute',
+  },
   // The month-grid date picker primitive (CalendarMonthGrid): nav arrows, the
   // weekday header initials, and the per-day cell accessible name.
   calendar: {

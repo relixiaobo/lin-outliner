@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
+import { DIALOG_NESTED_OVERLAY_SELECTOR, isDialogNestedOverlayTarget } from './dialogNestedOverlay';
 import { focusableElements } from './focusable';
 
 interface DialogProps {
@@ -72,7 +73,7 @@ export function Dialog({
       if (
         event.defaultPrevented
         || event.nativeEvent.defaultPrevented
-        || document.querySelector('[data-dialog-nested-overlay="true"]')
+        || document.querySelector(DIALOG_NESTED_OVERLAY_SELECTOR)
         || (event.target instanceof Node && !surfaceRef.current?.contains(event.target))
       ) return;
       event.stopPropagation();
@@ -109,7 +110,7 @@ export function Dialog({
         const target = event.target as Node;
         if (
           surfaceRef.current?.contains(target)
-          || isNestedDialogOverlayTarget(target)
+          || isDialogNestedOverlayTarget(target)
         ) return;
         onBackdropMouseDown?.();
       }}
@@ -128,10 +129,4 @@ export function Dialog({
       </section>
     </div>
   );
-}
-
-function isNestedDialogOverlayTarget(target: EventTarget | null): boolean {
-  const closest = (target as { closest?: (selector: string) => Element | null } | null)?.closest;
-  return typeof closest === 'function'
-    && Boolean(closest.call(target, '[data-dialog-nested-overlay="true"]'));
 }

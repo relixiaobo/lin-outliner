@@ -233,7 +233,8 @@ Model choices come from the currently usable provider catalog and atomically set
 the provider-qualified model selection; timezone choices come from the runtime's
 supported IANA timezone catalog. Once reuses the Outliner calendar popover for
 date selection, including its month navigation, keyboard model, and Today action.
-Every schedule time field reuses the Outliner minute-precision time input;
+Every schedule time field reuses the shared tokenized Time Picker, which supports
+direct `HH:mm` entry and complete hour/minute selection with keyboard navigation;
 weekday and month-day selectors are multi-select menus that cannot be emptied.
 Capability controls preserve inherit (`null`), explicitly none (`[]`), and exact
 allowlist states. Start now,

@@ -28,7 +28,10 @@ test.describe('Automation surface', () => {
       const option = weekdayMenu.getByRole('menuitemcheckbox', { name });
       if ((await option.getAttribute('aria-checked')) !== String(selected)) await option.click();
     }
-    await expect(weekdayMenu.getByRole('menuitemcheckbox', { name: 'Saturday' })).toBeFocused();
+    const saturday = weekdayMenu.getByRole('menuitemcheckbox', { name: 'Saturday' });
+    await saturday.click();
+    await saturday.click();
+    await expect(saturday).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(weekdayMenu).toHaveCount(0);
     const time = createDrawer.getByLabel('At', { exact: true });
@@ -132,7 +135,18 @@ test.describe('Automation surface', () => {
     await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
 
     await repeat.selectOption('daily');
-    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
+    const dailyTime = drawer.getByLabel('At', { exact: true });
+    await expect(dailyTime).toBeVisible();
+    await drawer.getByRole('button', { name: 'Choose time' }).click();
+    const timePicker = page.getByRole('dialog', { name: 'Time picker' });
+    await expect(timePicker).toBeVisible();
+    await timePicker.getByRole('listbox', { name: 'Hour' }).getByRole('option', { name: '10', exact: true }).click();
+    await timePicker.getByRole('listbox', { name: 'Minute' }).getByRole('option', { name: '17', exact: true }).click();
+    await expect(timePicker).toHaveCount(0);
+    await expect(dailyTime).toHaveValue('10:17');
+    await dailyTime.fill('25:75');
+    await dailyTime.blur();
+    await expect(dailyTime).toHaveValue('10:17');
 
     await repeat.selectOption('weekdays');
     await expect(drawer.getByRole('button', { name: 'On', exact: true })).toHaveCount(0);

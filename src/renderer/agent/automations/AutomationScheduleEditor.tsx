@@ -10,7 +10,7 @@ import { MenuItem } from '../../ui/primitives/MenuItem';
 import { MenuSurface } from '../../ui/primitives/MenuSurface';
 import { NumberInputControl } from '../../ui/primitives/NumberInputControl';
 import { SelectControl } from '../../ui/primitives/SelectControl';
-import { TimeInputControl } from '../../ui/primitives/TimeInputControl';
+import { TimePickerControl } from '../../ui/primitives/TimePickerControl';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 import {
@@ -109,7 +109,7 @@ export function AutomationScheduleEditor({
 
       {usesTime && !custom ? (
         <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
-          <TimeInputControl
+          <TimePickerControl
             className="automation-time-input"
             disabled={disabled}
             label={t.startAt}
@@ -210,7 +210,7 @@ export function AutomationScheduleEditor({
             </Field>
           ) : (
             <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
-              <TimeInputControl
+              <TimePickerControl
                 className="automation-time-input"
                 disabled={disabled}
                 label={t.startAt}

@@ -595,7 +595,7 @@
 }
 
 .automation-time-input {
-  min-width: 78px;
+  width: 96px;
   justify-self: end;
   font-size: var(--font-ui-sm);
   font-weight: 500;

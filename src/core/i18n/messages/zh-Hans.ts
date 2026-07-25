@@ -892,6 +892,12 @@ commandPalette: {
     confirm: '确认',
     cancel: '取消',
   },
+  timePicker: {
+    title: '时间选择器',
+    open: '选择时间',
+    hour: '小时',
+    minute: '分钟',
+  },
   // The month-grid date picker primitive (CalendarMonthGrid): nav arrows, the
   // weekday header initials, and the per-day cell accessible name.
   calendar: {
