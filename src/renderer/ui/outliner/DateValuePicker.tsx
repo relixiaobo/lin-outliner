@@ -22,6 +22,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
+import { TimeInputControl } from '../primitives/TimeInputControl';
 import { useAnchoredOverlay, type OverlayPlacement } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
@@ -575,12 +576,10 @@ function DateSummaryRow({
         />
       </label>
       {includeTime && (
-        <input
-          aria-label={timeAriaLabel}
-          className="typed-field-date-time-input"
-          type="time"
+        <TimeInputControl
+          label={timeAriaLabel}
+          onValueChange={onTimeChange}
           value={dateFieldEndpointTime(value) || time}
-          onInput={(event) => onTimeChange(event.currentTarget.value)}
         />
       )}
     </div>

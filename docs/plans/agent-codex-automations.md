@@ -335,8 +335,8 @@ timezone options come from the runtime-supported IANA catalog. Custom exposes
 hourly, daily, weekly, monthly, and yearly recurrence with an interval, plus
 frequency-specific weekday, month, month-day, minute, and time fields. Weekday
 and month-day fields are non-empty multi-select menus. Once reuses the Outliner
-calendar popover for date selection; schedule-only time values use a finite
-15-minute selector. The editor parses and serializes one canonical Schedule Draft;
+calendar popover for date selection; every schedule time field reuses the
+Outliner minute-precision time input. The editor parses and serializes one canonical Schedule Draft;
 it never exposes RRULE protocol text in the primary flow. A valid rule outside
 the structured subset remains byte-for-byte authoritative until the first explicit
 schedule-field edit, preventing unrelated form edits from discarding advanced

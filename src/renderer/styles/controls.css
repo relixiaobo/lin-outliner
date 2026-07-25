@@ -171,3 +171,32 @@
   color: var(--text-secondary);
   pointer-events: none;
 }
+
+.time-input-control {
+  width: 78px;
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: var(--outline-faint);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+  padding: 0 var(--space-2);
+}
+
+.time-input-control:hover,
+.time-input-control:focus {
+  background: var(--control-hover);
+  box-shadow: var(--outline-muted);
+  outline: none;
+}
+
+:root[data-input-modality="keyboard"] .time-input-control:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.time-input-control:disabled {
+  opacity: 0.45;
+}

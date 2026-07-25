@@ -31,7 +31,9 @@ test.describe('Automation surface', () => {
     await expect(weekdayMenu.getByRole('menuitemcheckbox', { name: 'Saturday' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(weekdayMenu).toHaveCount(0);
-    await expect(createDrawer.getByRole('combobox', { name: 'At', exact: true })).toBeVisible();
+    const time = createDrawer.getByLabel('At', { exact: true });
+    await expect(time).toBeVisible();
+    await time.fill('09:05');
     await page.getByRole('button', { name: 'Create Automation' }).click();
 
     const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
@@ -106,6 +108,8 @@ test.describe('Automation surface', () => {
       });
     expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
       .toMatch(/RRULE:FREQ=WEEKLY;BYDAY=MO,WE$/);
+    expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
+      .toMatch(/^DTSTART:\d{8}T090500/m);
   });
 
   test('shows complete controls for each schedule preset', async ({ page }) => {
@@ -125,25 +129,25 @@ test.describe('Automation surface', () => {
 
     await repeat.selectOption('hourly');
     await expect(drawer.getByRole('button', { name: 'On', exact: true })).toHaveCount(0);
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toHaveCount(0);
+    await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
 
     await repeat.selectOption('daily');
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
 
     await repeat.selectOption('weekdays');
     await expect(drawer.getByRole('button', { name: 'On', exact: true })).toHaveCount(0);
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
 
     await repeat.selectOption('weekly');
     await expect(drawer.getByRole('button', { name: 'On', exact: true })).toBeVisible();
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
 
     await repeat.selectOption('custom');
     const repeats = drawer.getByRole('combobox', { name: 'Repeats' });
     await expect(drawer.getByRole('spinbutton', { name: 'Every' })).toBeVisible();
     await repeats.selectOption('weekly');
     await expect(drawer.getByRole('button', { name: 'On', exact: true })).toBeVisible();
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toBeVisible();
+    await expect(drawer.getByLabel('At', { exact: true })).toBeVisible();
     await repeats.selectOption('monthly');
     await expect(drawer.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
     await repeats.selectOption('yearly');
@@ -151,7 +155,7 @@ test.describe('Automation surface', () => {
     await expect(drawer.getByRole('button', { name: 'On days', exact: true })).toBeVisible();
     await repeats.selectOption('hourly');
     await expect(drawer.getByRole('spinbutton', { name: 'At minute' })).toBeVisible();
-    await expect(drawer.getByRole('combobox', { name: 'At', exact: true })).toHaveCount(0);
+    await expect(drawer.getByLabel('At', { exact: true })).toHaveCount(0);
   });
 
   test('confirms before closing a dirty drawer and remembers keyboard resizing', async ({ page }) => {

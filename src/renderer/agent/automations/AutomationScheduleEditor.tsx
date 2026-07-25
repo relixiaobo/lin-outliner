@@ -10,6 +10,7 @@ import { MenuItem } from '../../ui/primitives/MenuItem';
 import { MenuSurface } from '../../ui/primitives/MenuSurface';
 import { NumberInputControl } from '../../ui/primitives/NumberInputControl';
 import { SelectControl } from '../../ui/primitives/SelectControl';
+import { TimeInputControl } from '../../ui/primitives/TimeInputControl';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 import {
@@ -28,12 +29,6 @@ import {
 } from './AutomationScheduleDraft';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
-const TIME_OPTIONS = Array.from({ length: 96 }, (_, index) => {
-  const minutes = index * 15;
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-});
-const TIME_FORMATTER = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-
 interface AutomationScheduleEditorProps {
   readonly disabled: boolean;
   readonly schedule: AutomationScheduleDraft;
@@ -114,10 +109,11 @@ export function AutomationScheduleEditor({
 
       {usesTime && !custom ? (
         <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
-          <TimeSelect
+          <TimeInputControl
+            className="automation-time-input"
             disabled={disabled}
             label={t.startAt}
-            onChange={(time) => onChange(updateAutomationScheduleTime(schedule, time))}
+            onValueChange={(time) => onChange(updateAutomationScheduleTime(schedule, time))}
             value={startAtTime(schedule.startAt)}
           />
         </Field>
@@ -214,10 +210,11 @@ export function AutomationScheduleEditor({
             </Field>
           ) : (
             <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
-              <TimeSelect
+              <TimeInputControl
+                className="automation-time-input"
                 disabled={disabled}
                 label={t.startAt}
-                onChange={(time) => onChange(updateAutomationScheduleTime(schedule, time))}
+                onValueChange={(time) => onChange(updateAutomationScheduleTime(schedule, time))}
                 value={startAtTime(schedule.startAt)}
               />
             </Field>
@@ -404,35 +401,6 @@ function AutomationMultiSelect<Value extends string | number>(props: AutomationM
       ) : null}
     </>
   );
-}
-
-interface TimeSelectProps {
-  readonly disabled: boolean;
-  readonly label: string;
-  readonly onChange: (value: string) => void;
-  readonly value: string;
-}
-
-function TimeSelect({ disabled, label, onChange, value }: TimeSelectProps) {
-  const values = TIME_OPTIONS.includes(value) ? TIME_OPTIONS : [value, ...TIME_OPTIONS];
-  return (
-    <SelectControl
-      className="automation-setting-value automation-time-select"
-      disabled={disabled}
-      label={label}
-      onChange={(event) => onChange(event.target.value)}
-      value={value}
-      variant="popup"
-    >
-      {values.map((time) => <option key={time} value={time}>{timeLabel(time)}</option>)}
-    </SelectControl>
-  );
-}
-
-function timeLabel(value: string): string {
-  const [hour, minute] = value.split(':').map(Number);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return value;
-  return TIME_FORMATTER.format(new Date(2024, 0, 1, hour, minute));
 }
 
 function scheduleDateLabel(value: string, locale: string): string {

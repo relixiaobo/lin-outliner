@@ -2206,27 +2206,6 @@ button.outliner-table-column-kind:focus-visible {
   color: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
-.typed-field-date-time-input {
-  width: 78px;
-  min-height: 32px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: var(--outline-faint);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-ui-md);
-  line-height: var(--line-ui-md);
-  padding: 0 var(--space-2);
-}
-
-.typed-field-date-time-input:hover,
-.typed-field-date-time-input:focus {
-  background: var(--control-hover);
-  box-shadow: var(--outline-muted);
-  outline: none;
-}
-
 .typed-field-date-settings {
   display: grid;
   gap: var(--space-1);
