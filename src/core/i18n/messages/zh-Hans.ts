@@ -943,7 +943,6 @@ commandPalette: {
       executionDetails: '详细信息',
       advancedCapabilities: '高级能力',
       profile: '配置档案',
-      modelProvider: '模型提供商',
       model: '模型',
       reasoning: '推理强度',
       tools: '工具',

@@ -22,6 +22,11 @@ test.describe('Automation surface', () => {
     await expect(detailDrawer).toBeVisible();
     await expect(page.locator('.automation-list-row', { hasText: 'Daily repository review' })).toBeVisible();
     await expect(detailDrawer.getByRole('combobox', { name: 'Runs in' })).toHaveValue('standalone');
+    const model = detailDrawer.getByRole('combobox', { name: 'Model' });
+    await expect(model).toHaveValue('');
+    await model.selectOption('openai/gpt-5.4');
+    const timezone = detailDrawer.getByRole('combobox', { name: 'Timezone' });
+    await timezone.selectOption('Asia/Shanghai');
     await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes.');
     await expect(page.getByRole('button', { name: 'Start now' })).toBeDisabled();
     await page.getByText('Advanced capabilities', { exact: true }).click();
@@ -78,7 +83,11 @@ test.describe('Automation surface', () => {
       'automation/delete',
     ]));
     expect(calls.find((call) => call.cmd === 'automation/update')?.args.configuration)
-      .toMatchObject({ tools: [] });
+      .toMatchObject({
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.4',
+        tools: [],
+      });
   });
 
   test('confirms before closing a dirty drawer and remembers keyboard resizing', async ({ page }) => {

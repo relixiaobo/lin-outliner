@@ -325,8 +325,13 @@ schema as a flat form. Its information order is:
 4. Frequency: repeat rule, execution time, timezone, and custom RRULE only when
    needed
 5. previous Automation runs
-6. advanced Profile, provider, and capability overrides for Tools, Skills,
-   Plugins, and MCP servers
+6. advanced Profile and capability overrides for Tools, Skills, Plugins, and MCP
+   servers
+
+Model and timezone use finite native selectors. Model options come from usable
+provider catalogs and save provider plus provider-qualified model together;
+timezone options come from the runtime-supported IANA catalog. Only custom RRULE
+remains a raw expert input in the primary details flow.
 
 The Automation editor supports:
 

@@ -318,6 +318,7 @@ export function ThreadDock({
                 await threadStore.openThreadById(threadId);
                 setSurface('thread');
               }}
+              providerSettings={providerSettings}
               threads={snapshot.threads}
             />
           </Suspense>

@@ -1005,7 +1005,6 @@ commandPalette: {
       executionDetails: 'Details',
       advancedCapabilities: 'Advanced capabilities',
       profile: 'Profile',
-      modelProvider: 'Model provider',
       model: 'Model',
       reasoning: 'Reasoning',
       tools: 'Tools',

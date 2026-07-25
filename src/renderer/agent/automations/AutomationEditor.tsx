@@ -4,10 +4,13 @@ import type {
   AutomationCreateInput,
   AutomationUpdateInput,
 } from '../../../core/agent/automation';
+import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
 import type { Thread } from '../../../core/agent/protocol';
+import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, TrashIcon } from '../../ui/icons';
+import { isProviderUsable } from '../../ui/agent/providerUsability';
 import { Button } from '../../ui/primitives/Button';
 import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
@@ -37,6 +40,7 @@ interface AutomationEditorProps {
   readonly onCreate: (input: AutomationCreateInput) => Promise<Automation>;
   readonly onDirtyChange: (dirty: boolean) => void;
   readonly onUpdate: (input: AutomationUpdateInput) => Promise<Automation>;
+  readonly providerSettings: AgentProviderSettingsView | null;
   readonly runHistory?: ReactNode;
   readonly threads: readonly Thread[];
 }
@@ -76,6 +80,16 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const destinationThreads = props.threads.filter((thread) => (
     !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user'
   ));
+  const modelGroups = useMemo(
+    () => automationModelGroups(props.providerSettings, state.modelProvider),
+    [props.providerSettings, state.modelProvider],
+  );
+  const selectedModel = automationModelValue(state.modelProvider, state.model, modelGroups);
+  const knownModelValues = useMemo(
+    () => new Set(modelGroups.flatMap((group) => group.models.map((model) => model.value))),
+    [modelGroups],
+  );
+  const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -238,16 +252,35 @@ export function AutomationEditor(props: AutomationEditorProps) {
               </SelectControl>
             </Field>
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
-              <Input
-                className="automation-setting-input"
+              <SelectControl
+                className="automation-setting-value"
                 disabled={props.busy}
                 label={t.model}
-                onChange={(event) => setState({ ...state, model: event.target.value })}
-                placeholder={t.inherited}
-                size="sm"
-                value={state.model}
-                variant="bare"
-              />
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (!value) {
+                    setState({ ...state, modelProvider: '', model: '' });
+                    return;
+                  }
+                  const parsed = parseProviderQualifiedModel(value, () => true);
+                  if (!parsed) return;
+                  setState({ ...state, modelProvider: parsed.providerId, model: value });
+                }}
+                value={selectedModel}
+                variant="popup"
+              >
+                <option value="">{t.inherited}</option>
+                {selectedModel && !knownModelValues.has(selectedModel) ? (
+                  <option value={selectedModel}>{state.model}</option>
+                ) : null}
+                {modelGroups.map((group) => (
+                  <optgroup key={group.providerId} label={group.providerId}>
+                    {group.models.map((model) => (
+                      <option key={model.value} value={model.value}>{model.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </SelectControl>
             </Field>
             <Field className="automation-setting-row" label={t.reasoning} labelClassName="automation-setting-label">
               <SelectControl
@@ -369,15 +402,16 @@ export function AutomationEditor(props: AutomationEditorProps) {
               </Field>
             ) : null}
             <Field className="automation-setting-row" label={t.timezone} labelClassName="automation-setting-label">
-              <Input
-                className="automation-setting-input"
+              <SelectControl
+                className="automation-setting-value"
                 disabled={props.busy}
                 label={t.timezone}
                 onChange={(event) => setState({ ...state, timezone: event.target.value })}
-                size="sm"
                 value={state.timezone}
-                variant="bare"
-              />
+                variant="popup"
+              >
+                {timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
+              </SelectControl>
             </Field>
           </div>
           {state.frequency === 'custom' ? (
@@ -407,9 +441,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
             <div className="automation-editor-field-grid">
               <Field label={t.profile}>
                 <Input disabled={props.busy} label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
-              </Field>
-              <Field label={t.modelProvider}>
-                <Input disabled={props.busy} label={t.modelProvider} onChange={(event) => setState({ ...state, modelProvider: event.target.value })} placeholder={t.inherited} value={state.modelProvider} />
               </Field>
             </div>
             {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
@@ -477,6 +508,62 @@ interface EditorState {
   readonly skills: CapabilityListDraft;
   readonly plugins: CapabilityListDraft;
   readonly mcpServers: CapabilityListDraft;
+}
+
+interface AutomationModelChoice {
+  readonly value: string;
+  readonly name: string;
+}
+
+interface AutomationModelGroup {
+  readonly providerId: string;
+  readonly models: readonly AutomationModelChoice[];
+}
+
+function automationModelGroups(
+  settings: AgentProviderSettingsView | null,
+  selectedProviderId: string,
+): readonly AutomationModelGroup[] {
+  if (!settings) return [];
+  const usableProviderIds = settings.providers
+    .filter((provider) => isProviderUsable(settings, provider))
+    .map((provider) => provider.providerId);
+  const providerIds = [...new Set([selectedProviderId, ...usableProviderIds].filter(Boolean))];
+  return providerIds.flatMap((providerId) => {
+    const models = settings.availableProviders.find((provider) => provider.providerId === providerId)?.models ?? [];
+    return models.length === 0 ? [] : [{
+      providerId,
+      models: models.map((option) => ({
+        value: composeProviderQualifiedModel(providerId, option.id),
+        name: option.name || option.id,
+      })),
+    }];
+  });
+}
+
+function automationModelValue(
+  providerId: string,
+  model: string,
+  groups: readonly AutomationModelGroup[],
+): string {
+  if (!model.trim()) return '';
+  const knownProviderIds = new Set(groups.map((group) => group.providerId));
+  const parsed = parseProviderQualifiedModel(model, (candidate) => knownProviderIds.has(candidate));
+  return composeProviderQualifiedModel(parsed?.providerId ?? providerId, parsed?.modelId ?? model);
+}
+
+const SYSTEM_TIMEZONES = (() => {
+  try {
+    return Intl.supportedValuesOf('timeZone');
+  } catch {
+    return [];
+  }
+})();
+
+function automationTimezones(current: string): readonly string[] {
+  const system = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return [...new Set([current, system, 'UTC', ...SYSTEM_TIMEZONES].filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function editorState(automation: Automation | null): EditorState {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Automation, AutomationRun } from '../../../core/agent/automation';
 import type { Thread } from '../../../core/agent/protocol';
+import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import {
   AddIcon,
@@ -29,6 +30,7 @@ import { automationStore, useAutomationStore } from './automationStore';
 interface AutomationsViewProps {
   readonly threads: readonly Thread[];
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly providerSettings: AgentProviderSettingsView | null;
 }
 
 type DrawerState = { readonly kind: 'create' } | { readonly kind: 'automation'; readonly id: string };
@@ -295,6 +297,7 @@ export function AutomationsView(props: AutomationsViewProps) {
               }}
               onDirtyChange={setDirty}
               onUpdate={(input) => perform(() => automationStore.update(input))}
+              providerSettings={props.providerSettings}
               runHistory={selected ? (
                 <AutomationRunsView
                   automationName={selected.name}
