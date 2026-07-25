@@ -136,8 +136,11 @@ The claim allocates and stores the standalone `threadId` before Thread creation;
 ThreadService creation with that UUIDv7 is idempotent. Existing-Thread claims
 store their destination ID. Both destinations start input with
 `clientUserMessageId=AutomationRun.id`, so a retry after Turn acceptance returns
-the existing binding instead of appending a second Turn. Startup dispatches or
-reconciles pending claims before calculating new occurrences.
+the existing binding instead of appending a second Turn. Recovery checks that
+binding before any path, worktree, or configuration preparation and again before
+any pre-Turn failure transition. Pause and delete perform the same recovery under
+the scheduler mutex before omitting genuinely undispatched runs. Startup
+dispatches or reconciles pending claims before calculating new occurrences.
 
 The Electron main process starts one scheduler after stores and the Thread
 service are ready, stops it during quit, and wakes it on a bounded timer and
@@ -159,7 +162,8 @@ resolves that snapshot against the current provider and capability environment
 at dispatch and fails closed if it is no longer available.
 
 Ordinary edits affect only unclaimed occurrences; an already pending claim keeps
-its captured revision. Pause and delete atomically convert undispatched pending
+its captured revision. Pause and delete first recover any accepted Turn through
+the run's client-input binding, then atomically convert only undispatched pending
 claims to `omitted` with a reason, while a dispatched Thread/Turn continues as
 canonical history. Delete is a scheduler tombstone, not a hard row removal, so
 AutomationRun history retains its name/configuration snapshot and foreign-key
@@ -251,7 +255,10 @@ grant authorization. The Automations view links to the canonical Thread input
 request instead of copying it or inventing an Automation execution status.
 
 Skills and plugins are resolved at each occurrence from the saved selections.
-Missing or disabled dependencies fail visibly before model execution. A skill or
+`null`, `[]`, and non-empty capability selections respectively mean inherit,
+explicitly none, and an exact allowlist. The effective Skill allowlist constrains
+both model-visible listing and invocation, and missing, disabled, or
+non-model-invocable dependencies fail visibly before model execution. A skill or
 foreground Thread can request an Automation create/update only through the
 host-owned `codex_app.automation_update` tool; model input never writes scheduler
 tables.
@@ -285,6 +292,8 @@ The user-visible entity name is "Automation", and the top-level view is
 "Automations". "Scheduled" may describe timing but is not a second object name.
 The view provides active, paused, and completed filters; unread findings; next
 occurrence; and recent Automation runs joined to their canonical Threads/Turns.
+Unread state and recent history are queried per Automation rather than filtered
+from one globally capped run page.
 
 The Automation editor supports:
 

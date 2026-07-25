@@ -23,8 +23,10 @@ The accepted schedule form contains exactly one floating local `DTSTART` and one
 RRULE. Hourly, daily, weekly, monthly, and yearly frequencies are supported.
 Local wall time remains stable across timezone offset changes. A nonexistent
 spring-forward wall time is skipped; an ambiguous fall-back wall time runs once
-at its first matching instant. The renderer's Once, Hourly, Daily, Weekly, and
-Custom controls all produce this same representation.
+at its first matching instant. A UTC `UNTIL` remains an absolute instant and is
+checked after converting each wall occurrence; a local `UNTIL` remains a wall
+boundary. The renderer's Once, Hourly, Daily, Weekly, and Custom controls all
+produce this same representation.
 
 An `AutomationRun` is a narrow scheduling and routing record. It captures the
 Automation revision, scheduled instant, one project binding, complete saved
@@ -75,10 +77,13 @@ and restart.
 
 Create, update, pause, resume, delete, Start now, worktree pinning, scheduled
 admission, and worktree cleanup share the scheduler mutex. Revision preconditions
-reject stale edits. Pause and delete atomically convert undispatched claims to
-omissions; an already dispatched Turn continues as canonical history, and a
-paused or completed definition cannot Start now. Delete tombstones the definition so run snapshot
-and foreign-key history remain intact. Any finite RRULE definition becomes
+reject stale edits. Before pause or delete classifies a pending claim, the host
+looks up its `clientUserMessageId` binding and durably restores any already
+accepted Turn as `dispatched`. Pause and delete then atomically convert only
+genuinely undispatched claims to omissions; an already dispatched Turn continues
+as canonical history, and a paused or completed definition cannot Start now.
+Delete tombstones the definition so run snapshot and foreign-key history remain
+intact. Any finite RRULE definition becomes
 completed after every project binding has durably claimed its final occurrence.
 Changing a completed definition's schedule reactivates it from the edit time;
 other edits preserve its completed state.
@@ -103,7 +108,10 @@ coordinator becomes idle.
 
 Both destinations call the privileged `ThreadService` feature admission with
 `clientUserMessageId=AutomationRun.id`. Retrying after a crash therefore returns
-the already accepted Turn instead of appending another. Before model execution,
+the already accepted Turn instead of appending another. Every dispatch attempt
+performs this lookup before project/worktree preparation and configuration
+resolution; failure finalization repeats it and leaves the claim pending if the
+reciprocal run binding cannot yet be committed. Before model execution,
 the Turn durably records:
 
 ```ts
@@ -143,7 +151,11 @@ persistence; dispatch repeats the resolution because catalogs and credentials
 may change before a future occurrence. Missing or disabled selected dependencies
 fail before Turn admission. An existing-Thread destination rejects explicit
 choices that differ from its effective persisted configuration both when saved
-and when dispatched.
+and when dispatched. Capability selections retain three distinct values:
+`null` inherits the Profile, `[]` explicitly disables the capability class, and
+a non-empty list is the exact allowlist. For Automation Turns, the effective
+Skill allowlist filters both model-visible Skill listings and runtime invocation;
+disabled or non-model-invocable Skills are absent from dispatch validation.
 
 Creating or resuming an Automation is standing authorization for future
 occurrences under Tenon's Full Access model. Automation introduces no sandbox,
@@ -164,7 +176,9 @@ model tool.
 
 No-project runs use the agent local-file root. Create and update resolve each
 project directory through `realpath` and persist that canonical path; dispatch
-revalidates it before use. Worktree mode requires a Git root and creates a
+requires a fresh `realpath` to equal the stored path exactly, preventing a saved
+location from being redirected through a later symlink. Worktree mode also
+requires the fresh Git top-level to equal that same stored root and creates a
 detached worktree at the captured source `HEAD` under the app-owned
 `<userData>/agent/automation-worktrees/` tree.
 
@@ -198,7 +212,9 @@ Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including
 delete tombstones, so an old response cannot undo a pause, completion, run
 transition, or delete. The surface never renders a copied transcript or Issue
-activity model.
+activity model. List unread state is queried per Automation rather than inferred
+from a globally capped run page, and opening details loads that Automation's own
+recent run page.
 
 ## Replacement Boundary
 

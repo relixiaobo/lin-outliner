@@ -14,6 +14,7 @@ export type AutomationStoreClient = Pick<typeof api, 'automationRequest' | 'onAu
 export interface AutomationStoreSnapshot {
   readonly automations: readonly Automation[];
   readonly runs: readonly AutomationRun[];
+  readonly unreadAutomationIds: readonly string[];
   readonly selectedAutomationId: string | null;
   readonly statusFilter: AutomationStatus | 'all';
   readonly loading: boolean;
@@ -23,6 +24,7 @@ export interface AutomationStoreSnapshot {
 const EMPTY_SNAPSHOT: AutomationStoreSnapshot = {
   automations: [],
   runs: [],
+  unreadAutomationIds: [],
   selectedAutomationId: null,
   statusFilter: 'all',
   loading: true,
@@ -39,6 +41,8 @@ export class AutomationRendererStore {
   private readonly automationMutationVersions = new Map<string, number>();
   private readonly runMutationVersions = new Map<string, number>();
   private readonly automationDeletionVersions = new Map<string, number>();
+  private readonly unreadMutationVersions = new Map<string, number>();
+  private readonly runLoadGenerations = new Map<string, number>();
 
   constructor(private readonly client: AutomationStoreClient = api) {}
 
@@ -62,6 +66,7 @@ export class AutomationRendererStore {
     this.unsubscribe = null;
     this.initializePromise = null;
     this.reloadGeneration += 1;
+    this.runLoadGenerations.clear();
   }
 
   async reload(): Promise<void> {
@@ -69,20 +74,29 @@ export class AutomationRendererStore {
     const baselineMutationVersion = this.mutationVersion;
     this.patch({ loading: true, error: null });
     try {
-      const [automations, runs] = await Promise.all([
-        this.client.automationRequest('list', {}),
-        this.client.automationRequest('runs', { limit: 200 }),
-      ]);
+      const automations = await this.client.automationRequest('list', {});
+      if (generation !== this.reloadGeneration) return;
+      const unread = await Promise.all(automations.data.map(async (automation) => ({
+        automationId: automation.id,
+        response: await this.client.automationRequest('runs', {
+          automationId: automation.id,
+          unreadOnly: true,
+          limit: 1,
+        }),
+      })));
       if (generation !== this.reloadGeneration) return;
       const mergedAutomations = this.mergeAutomationReload(automations.data, baselineMutationVersion);
-      const mergedRuns = this.mergeRunReload(runs.data, baselineMutationVersion);
+      const unreadAutomationIds = this.mergeUnreadReload(
+        unread.filter((entry) => entry.response.data.length > 0).map((entry) => entry.automationId),
+        baselineMutationVersion,
+      );
       const selectedAutomationId = this.snapshot.selectedAutomationId
         && mergedAutomations.some((automation) => automation.id === this.snapshot.selectedAutomationId)
         ? this.snapshot.selectedAutomationId
         : mergedAutomations[0]?.id ?? null;
       this.patch({
         automations: mergedAutomations,
-        runs: mergedRuns,
+        unreadAutomationIds,
         selectedAutomationId,
         loading: false,
         error: null,
@@ -96,6 +110,21 @@ export class AutomationRendererStore {
 
   select(id: string | null): void {
     this.patch({ selectedAutomationId: id });
+  }
+
+  async loadRunsForAutomation(automationId: string): Promise<void> {
+    const generation = (this.runLoadGenerations.get(automationId) ?? 0) + 1;
+    this.runLoadGenerations.set(automationId, generation);
+    const baselineMutationVersion = this.mutationVersion;
+    const response = await this.client.automationRequest('runs', { automationId, limit: 200 });
+    if (this.runLoadGenerations.get(automationId) !== generation) return;
+    const loaded = this.mergeRunReload(response.data, baselineMutationVersion);
+    this.patch({
+      runs: sortBySchedule([
+        ...this.snapshot.runs.filter((run) => run.automationId !== automationId),
+        ...loaded.filter((run) => run.automationId === automationId),
+      ]),
+    });
   }
 
   setStatusFilter(statusFilter: AutomationStoreSnapshot['statusFilter']): void {
@@ -148,6 +177,7 @@ export class AutomationRendererStore {
   async markRunRead(run: AutomationRun): Promise<AutomationRun> {
     const response = await this.client.automationRequest('runMarkRead', { id: run.id });
     this.upsertRun(response.run);
+    await this.refreshUnreadForAutomation(run.automationId);
     return response.run;
   }
 
@@ -174,15 +204,20 @@ export class AutomationRendererStore {
   }
 
   private upsertRun(run: AutomationRun): void {
-    this.runMutationVersions.set(run.id, this.recordMutation());
+    const version = this.recordMutation();
+    this.runMutationVersions.set(run.id, version);
+    if (isUnread(run)) this.setUnread(run.automationId, true, version);
     this.patch({ runs: sortBySchedule(upsert(this.snapshot.runs, run)) });
   }
 
   private removeAutomation(id: string): void {
-    this.automationDeletionVersions.set(id, this.recordMutation());
+    const version = this.recordMutation();
+    this.automationDeletionVersions.set(id, version);
+    this.unreadMutationVersions.set(id, version);
     const automations = this.snapshot.automations.filter((item) => item.id !== id);
     this.patch({
       automations,
+      unreadAutomationIds: this.snapshot.unreadAutomationIds.filter((candidate) => candidate !== id),
       selectedAutomationId: this.snapshot.selectedAutomationId === id
         ? automations[0]?.id ?? null
         : this.snapshot.selectedAutomationId,
@@ -218,6 +253,41 @@ export class AutomationRendererStore {
     return sortBySchedule(merged);
   }
 
+  private mergeUnreadReload(
+    loaded: readonly string[],
+    baselineMutationVersion: number,
+  ): readonly string[] {
+    const current = new Set(this.snapshot.unreadAutomationIds);
+    const loadedSet = new Set(loaded);
+    const ids = new Set([...current, ...loadedSet, ...this.unreadMutationVersions.keys()]);
+    return [...ids]
+      .filter((id) => (
+        (this.unreadMutationVersions.get(id) ?? 0) > baselineMutationVersion
+          ? current.has(id)
+          : loadedSet.has(id)
+      ))
+      .sort();
+  }
+
+  private async refreshUnreadForAutomation(automationId: string): Promise<void> {
+    const baselineMutationVersion = this.mutationVersion;
+    const response = await this.client.automationRequest('runs', {
+      automationId,
+      unreadOnly: true,
+      limit: 1,
+    });
+    if ((this.unreadMutationVersions.get(automationId) ?? 0) > baselineMutationVersion) return;
+    this.setUnread(automationId, response.data.length > 0, this.recordMutation());
+  }
+
+  private setUnread(automationId: string, unread: boolean, version: number): void {
+    const ids = new Set(this.snapshot.unreadAutomationIds);
+    if (unread) ids.add(automationId);
+    else ids.delete(automationId);
+    this.unreadMutationVersions.set(automationId, version);
+    this.patch({ unreadAutomationIds: [...ids].sort() });
+  }
+
   private recordMutation(): number {
     this.mutationVersion += 1;
     return this.mutationVersion;
@@ -249,6 +319,10 @@ function sortByUpdated(items: readonly Automation[]): Automation[] {
 
 function sortBySchedule(items: readonly AutomationRun[]): AutomationRun[] {
   return [...items].sort((left, right) => right.scheduledFor - left.scheduledFor || right.id.localeCompare(left.id));
+}
+
+function isUnread(run: AutomationRun): boolean {
+  return run.readAt === null && (run.state === 'dispatched' || run.state === 'failed');
 }
 
 function errorMessage(error: unknown): string {

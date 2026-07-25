@@ -130,6 +130,36 @@ describe('Automation protocol and schedule', () => {
     ]);
   });
 
+  test('applies UTC UNTIL as an instant in negative and positive offset timezones', () => {
+    const newYork = normalizeAutomationSchedule({
+      rrule: 'DTSTART:20260724T090000\nRRULE:FREQ=DAILY;UNTIL=20260725T120000Z',
+      timezone: 'America/New_York',
+    });
+    expect(newYork.rrule).toContain('UNTIL=20260725T120000Z');
+    expect(automationOccurrencesBetween(
+      newYork,
+      Date.parse('2026-07-24T00:00:00Z'),
+      Date.parse('2026-07-26T00:00:00Z'),
+    ).occurrences).toEqual([Date.parse('2026-07-24T13:00:00Z')]);
+    expect(nextAutomationOccurrence(newYork, Date.parse('2026-07-24T13:00:00Z'))).toBeNull();
+
+    const shanghai = normalizeAutomationSchedule({
+      rrule: 'DTSTART:20260725T190000\nRRULE:FREQ=DAILY;UNTIL=20260725T120000Z',
+      timezone: 'Asia/Shanghai',
+    });
+    expect(nextAutomationOccurrence(shanghai, Date.parse('2026-07-25T00:00:00Z')))
+      .toBe(Date.parse('2026-07-25T11:00:00Z'));
+
+    const local = normalizeAutomationSchedule({
+      rrule: 'DTSTART:20260724T090000\nRRULE:FREQ=DAILY;UNTIL=20260725T090000',
+      timezone: 'America/New_York',
+    });
+    expect(local.rrule).toContain('UNTIL=20260725T090000');
+    expect(local.rrule).not.toContain('UNTIL=20260725T090000Z');
+    expect(nextAutomationOccurrence(local, Date.parse('2026-07-24T13:00:00Z')))
+      .toBe(Date.parse('2026-07-25T13:00:00Z'));
+  });
+
   test('accepts one canonical RRULE form and exhausts finite occurrence math', () => {
     expect(() => normalizeAutomationSchedule({
       timezone: 'UTC',
@@ -503,6 +533,53 @@ describe('Automation service serialization', () => {
     }
   });
 
+  test('recovers an accepted Turn before pause or delete can omit its run', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    for (const action of ['pause', 'delete'] as const) {
+      const store = automationStore();
+      const automation = store.create(definition('20260724T100000'), now);
+      const claimed = store.claimNow(automation, null, now + 1);
+      const host = threadHost();
+      const dispatcher = dispatcherFor(store, host, now + 2);
+      const original = store.markDispatched.bind(store);
+      let failuresRemaining = 2;
+      store.markDispatched = ((...args: Parameters<AutomationStore['markDispatched']>) => {
+        if (failuresRemaining > 0) {
+          failuresRemaining -= 1;
+          throw new Error('simulated durable write failure');
+        }
+        return original(...args);
+      }) as AutomationStore['markDispatched'];
+      expect(await dispatcher.dispatch(claimed)).toMatchObject({ state: 'pending' });
+
+      const scheduler = new AutomationScheduler({
+        store,
+        dispatcher,
+        now: () => now + 3,
+        setTimer: () => 1,
+        clearTimer: () => undefined,
+      });
+      const service = new AutomationService({
+        store,
+        scheduler,
+        dispatcher,
+        threads: host as unknown as ThreadService,
+        now: () => now + 3,
+      });
+      if (action === 'pause') {
+        await service.request('pause', { id: automation.id, expectedRevision: automation.revision });
+      } else {
+        await service.request('delete', { id: automation.id, expectedRevision: automation.revision });
+      }
+
+      expect(store.readRun(claimed.id)).toMatchObject({
+        state: 'dispatched',
+        omission: null,
+      });
+      expect(host.turnCalls).toHaveLength(1);
+    }
+  });
+
   test('publishes pending omissions and prevents overlapping Start now runs', async () => {
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
@@ -765,12 +842,19 @@ describe('Automation Thread dispatch', () => {
     const automation = store.create(definition('20260724T100000'), now);
     const run = store.claimNow(automation, null, now + 1);
     const host = threadHost();
-    const dispatcher = dispatcherFor(store, host, now + 2);
+    let prepareCalls = 0;
+    const dispatcher = dispatcherFor(store, host, now + 2, undefined, {
+      prepare: async () => {
+        prepareCalls += 1;
+        if (prepareCalls > 1) throw new Error('project path changed before retry');
+        return { cwd: '', worktree: null };
+      },
+    });
     const original = store.markDispatched.bind(store);
-    let failOnce = true;
+    let failuresRemaining = 2;
     store.markDispatched = ((...args: Parameters<AutomationStore['markDispatched']>) => {
-      if (failOnce) {
-        failOnce = false;
+      if (failuresRemaining > 0) {
+        failuresRemaining -= 1;
         throw new Error('simulated durable write failure');
       }
       return original(...args);
@@ -783,9 +867,9 @@ describe('Automation Thread dispatch', () => {
     });
     const recovered = await dispatcher.dispatch(retryable);
     expect(recovered.state).toBe('dispatched');
-    expect(host.turnCalls).toHaveLength(2);
-    expect(host.turnCalls.map((call) => call.clientUserMessageId)).toEqual([run.id, run.id]);
-    expect(new Set(host.turnCalls.map((call) => call.returnedTurnId))).toHaveLength(1);
+    expect(prepareCalls).toBe(1);
+    expect(host.turnCalls).toHaveLength(1);
+    expect(host.turnCalls[0]?.clientUserMessageId).toBe(run.id);
   });
 
   test('fails before model execution when saved configuration cannot resolve', async () => {
@@ -803,6 +887,27 @@ describe('Automation Thread dispatch', () => {
       state: 'failed',
       threadId: null,
       error: 'Automation Skills are unavailable: missing-skill',
+    });
+    expect(host.turnCalls).toHaveLength(0);
+  });
+
+  test('validates current existing-Thread dependencies before Turn admission', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const store = automationStore();
+    const destination = userThread(uuidV7(), '/tmp/existing');
+    const automation = store.create({
+      ...definition('20260724T100000'),
+      destination: { kind: 'existingThread', threadId: destination.id },
+    }, now);
+    const run = store.claimNow(automation, null, now + 1);
+    const host = threadHost(destination);
+    const dispatcher = dispatcherFor(store, host, now + 2, undefined, undefined, async () => {
+      throw new Error('Automation model provider is unavailable: openai');
+    });
+
+    expect(await dispatcher.dispatch(run)).toMatchObject({
+      state: 'failed',
+      error: 'Automation model provider is unavailable: openai',
     });
     expect(host.turnCalls).toHaveLength(0);
   });
@@ -827,6 +932,30 @@ describe('Automation Thread dispatch', () => {
 });
 
 describe('Automation worktrees', () => {
+  test('rejects a saved project path redirected through a symlink', async () => {
+    const root = await tempRoot('automation-project-redirection-');
+    const source = join(root, 'source');
+    const replacement = join(root, 'replacement');
+    await mkdir(source);
+    await mkdir(replacement);
+    const canonicalSource = await realpath(source);
+    const store = automationStore();
+    const automation = store.create({
+      ...definition('20260724T100000'),
+      projectBindings: [{ id: 'project', cwd: canonicalSource, executionMode: 'local' }],
+    }, Date.parse('2026-07-24T09:00:00Z'));
+    const run = store.claimNow(
+      automation,
+      automation.projectBindings[0]!,
+      Date.parse('2026-07-24T09:01:00Z'),
+    );
+    await rm(canonicalSource, { recursive: true });
+    await symlink(replacement, canonicalSource);
+
+    await expect(new AutomationWorktree(root).prepare(run))
+      .rejects.toThrow('project path changed before dispatch');
+  });
+
   test('creates only contained worktrees and snapshots changes before removal', async () => {
     const root = await tempRoot('automation-worktree-');
     const source = join(root, 'source');
@@ -836,11 +965,12 @@ describe('Automation worktrees', () => {
     await writeFile(join(source, 'tracked.txt'), 'before\n');
     await execFileAsync('git', ['-C', source, 'add', 'tracked.txt']);
     await execFileAsync('git', ['-C', source, 'commit', '-m', 'Initial']);
+    const canonicalSource = await realpath(source);
 
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'worktree' }],
+      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
     const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const worktrees = new AutomationWorktree(root);
@@ -877,10 +1007,11 @@ describe('Automation worktrees', () => {
     const root = await tempRoot('automation-worktree-guard-');
     const source = join(root, 'source');
     await initializeGitRepository(source);
+    const canonicalSource = await realpath(source);
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'worktree' }],
+      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
     const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const managedPath = join(root, 'agent', 'automation-worktrees', automation.id, run.id);
@@ -902,10 +1033,11 @@ describe('Automation worktrees', () => {
     const root = await tempRoot('automation-worktree-omitted-');
     const source = join(root, 'source');
     await initializeGitRepository(source);
+    const canonicalSource = await realpath(source);
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'worktree' }],
+      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
     const claimed = store.claimNow(
       automation,
@@ -927,6 +1059,7 @@ describe('Automation worktrees', () => {
         modelProvider: 'openai',
         configuration: defaultEffectiveThreadConfiguration(),
       }),
+      validateEffectiveConfiguration: async () => undefined,
     });
     await dispatcher.cleanupRetainedWorktrees(0);
 
@@ -1014,6 +1147,8 @@ function automationServiceFor(
     isRunActive: overrides.isRunActive ?? ((run: AutomationRun) => run.state === 'pending'),
     cleanupRetainedWorktrees: async () => undefined,
     validateConfiguration: overrides.validateConfiguration ?? (async () => undefined),
+    validateResolvedConfiguration: overrides.validateConfiguration ?? (async () => undefined),
+    recoverPendingRuns: async () => undefined,
   } as unknown as AutomationDispatcher;
   const scheduler = new AutomationScheduler({
     store,
@@ -1056,6 +1191,7 @@ interface ThreadHostProbe {
   }): Promise<Thread>;
   tryStartTurnIfIdle(input: Omit<TurnCall, 'returnedTurnId'>): Promise<Turn | null>;
   readTurnForHost(threadId: string, turnId: string): Turn | null;
+  readTurnByClientUserMessageIdForHost(threadId: string, clientId: string): Turn | null;
   deleteThread(threadId: string): Promise<void>;
 }
 
@@ -1102,6 +1238,13 @@ function threadHost(existing?: Thread): ThreadHostProbe {
     readTurnForHost(_threadId, turnId) {
       return turns.get(turnId) ?? null;
     },
+    readTurnByClientUserMessageIdForHost(threadId, clientId) {
+      return [...turns.values()].find((turn) => (
+        turn.provenance.originThreadId === threadId
+        && turn.provenance.trigger.kind === 'feature'
+        && turn.provenance.trigger.ref === clientId
+      )) ?? null;
+    },
     async deleteThread(threadId) {
       deleted.push(threadId);
       threads.delete(threadId);
@@ -1116,20 +1259,24 @@ function dispatcherFor(
   store: AutomationStore,
   host: ThreadHostProbe,
   now: number,
-  resolveConfiguration: () => Promise<{
+  resolveConfiguration: (() => Promise<{
     modelProvider: string;
     configuration: ReturnType<typeof defaultEffectiveThreadConfiguration>;
-  }> = async () => ({
+  }>) | undefined = undefined,
+  worktrees: Pick<AutomationWorktree, 'prepare'> | undefined = undefined,
+  validateEffectiveConfiguration: (() => Promise<void>) | undefined = undefined,
+): AutomationDispatcher {
+  const resolve = resolveConfiguration ?? (async () => ({
     modelProvider: 'openai',
     configuration: defaultEffectiveThreadConfiguration(),
-  }),
-): AutomationDispatcher {
+  }));
   return new AutomationDispatcher({
     store,
     threads: host as unknown as ThreadService,
-    worktrees: { prepare: async () => ({ cwd: '', worktree: null }) } as unknown as AutomationWorktree,
+    worktrees: (worktrees ?? { prepare: async () => ({ cwd: '', worktree: null }) }) as AutomationWorktree,
     defaultCwd: '/tmp/default',
-    resolveConfiguration,
+    resolveConfiguration: resolve,
+    validateEffectiveConfiguration: validateEffectiveConfiguration ?? (async () => undefined),
     now: () => now,
   });
 }

@@ -105,6 +105,7 @@ export class AutomationService {
       case 'delete': {
         const value = decoded as AutomationRequestByMethod['delete'];
         await this.options.scheduler.runExclusive(async () => {
+          await this.options.dispatcher.recoverPendingRuns(value.id);
           const pending = this.options.store.pendingRuns(value.id);
           this.options.store.delete(value.id, value.expectedRevision, this.now());
           for (const run of pending) await this.runChanged(this.options.store.readRun(run.id)!);
@@ -175,6 +176,9 @@ export class AutomationService {
       ? { ...normalized, projectBindings: validated.projectBindings }
       : normalized;
     return this.options.scheduler.runExclusive(async () => {
+      if (canonicalUpdate.status === 'paused') {
+        await this.options.dispatcher.recoverPendingRuns(input.id);
+      }
       const pending = canonicalUpdate.status === 'paused' ? this.options.store.pendingRuns(input.id) : [];
       const automation = this.options.store.update(canonicalUpdate, this.now());
       for (const run of pending) await this.runChanged(this.options.store.readRun(run.id)!);
@@ -198,6 +202,7 @@ export class AutomationService {
     expectedRevision: number | undefined,
   ): Promise<Automation> {
     return this.options.scheduler.runExclusive(async () => {
+      if (status === 'paused') await this.options.dispatcher.recoverPendingRuns(id);
       const pending = status === 'paused' ? this.options.store.pendingRuns(id) : [];
       const automation = this.options.store.setStatus(id, status, expectedRevision, this.now());
       for (const run of pending) await this.runChanged(this.options.store.readRun(run.id)!);
@@ -254,6 +259,10 @@ export class AutomationService {
       }
       assertAutomationConfigurationMatchesThread(
         configuration,
+        context.thread.modelProvider,
+        context.configuration,
+      );
+      await this.options.dispatcher.validateResolvedConfiguration(
         context.thread.modelProvider,
         context.configuration,
       );

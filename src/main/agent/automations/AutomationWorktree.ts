@@ -24,9 +24,15 @@ export class AutomationWorktree {
     const binding = run.snapshot.projectBinding;
     if (!binding) return { cwd: '', worktree: null };
     const cwd = await directoryRealpath(binding.cwd);
+    if (cwd !== binding.cwd) {
+      throw new Error(`Automation project path changed before dispatch: ${binding.cwd}`);
+    }
     if (binding.executionMode === 'local') return { cwd, worktree: null };
 
     const sourceCwd = await directoryRealpath(await gitOutput(['-C', cwd, 'rev-parse', '--show-toplevel']));
+    if (sourceCwd !== binding.cwd) {
+      throw new Error(`Automation Git root changed before dispatch: ${binding.cwd}`);
+    }
     await mkdir(this.managedRoot, { recursive: true });
     const managedRoot = await realpath(this.managedRoot);
     const worktreePath = resolve(managedRoot, run.automationId, run.id);

@@ -466,6 +466,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.readTurn(threadId, turnId);
   }
 
+  readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null {
+    const binding = this.readClientBinding(threadId, clientId);
+    return binding ? this.readTurn(threadId, binding.turnId) : null;
+  }
+
   async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
     return this.hostRootMutex.run(async () => {
       const existing = this.metadata.read(input.id);

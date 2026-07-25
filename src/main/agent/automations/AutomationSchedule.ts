@@ -13,16 +13,29 @@ export interface AutomationOccurrenceBatch {
 export function normalizeAutomationSchedule(schedule: AutomationSchedule): AutomationSchedule {
   assertTimeZone(schedule.timezone);
   const source = normalizeRruleSource(schedule.rrule, schedule.timezone);
-  const parsed = parseRule(source);
+  const prepared = prepareRruleSource(source, schedule.timezone);
+  const parsed = parseRule(prepared.source);
   if (!SUPPORTED_FREQUENCIES.has(parsed.options.freq)) {
     throw new Error('Automation RRULE frequency must be HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY');
   }
   const dtstart = parsed.options.dtstart;
   if (!dtstart) throw new Error('Automation RRULE requires DTSTART');
-  return Object.freeze({
-    rrule: parsed.toString()
+  let normalizedRule = parsed.toString()
       .replace(/DTSTART;TZID=[^:]+:/, 'DTSTART:')
-      .replace(/^(DTSTART:\d{8}T\d{6})Z$/m, '$1'),
+      .replace(/^(DTSTART:\d{8}T\d{6})Z$/m, '$1');
+  if (prepared.utcUntilStamp) {
+    normalizedRule = normalizedRule.replace(
+      /\bUNTIL=\d{8}T\d{6}Z\b/,
+      `UNTIL=${prepared.utcUntilStamp}Z`,
+    );
+  } else if (prepared.localUntilStamp) {
+    normalizedRule = normalizedRule.replace(
+      /\bUNTIL=\d{8}T\d{6}Z\b/,
+      `UNTIL=${prepared.localUntilStamp}`,
+    );
+  }
+  return Object.freeze({
+    rrule: normalizedRule,
     timezone: schedule.timezone,
   });
 }
@@ -32,10 +45,12 @@ export function nextAutomationOccurrence(
   afterExclusive: number,
 ): number | null {
   const normalized = normalizeAutomationSchedule(schedule);
-  const rule = parseRule(normalized.rrule);
+  const prepared = prepareRruleSource(normalized.rrule, normalized.timezone);
+  const rule = parseRule(prepared.source);
   let wall = rule.after(instantToWallDate(afterExclusive, normalized.timezone), false);
   for (let attempts = 0; wall && attempts < 8; attempts += 1) {
     const instant = wallDateToInstant(wall, normalized.timezone);
+    if (instant !== null && prepared.utcUntil !== null && instant > prepared.utcUntil) return null;
     if (instant !== null && instant > afterExclusive) return instant;
     wall = rule.after(wall, false);
   }
@@ -55,7 +70,8 @@ export function automationOccurrencesBetween(
     return { occurrences: Object.freeze([]), truncated: false, evaluatedThrough: throughInclusive };
   }
   const normalized = normalizeAutomationSchedule(schedule);
-  const rule = parseRule(normalized.rrule);
+  const prepared = prepareRruleSource(normalized.rrule, normalized.timezone);
+  const rule = parseRule(prepared.source);
   const wallStart = instantToWallDate(afterExclusive - 36 * 60 * 60 * 1_000, normalized.timezone);
   const wallEnd = instantToWallDate(throughInclusive + 36 * 60 * 60 * 1_000, normalized.timezone);
   const occurrences: number[] = [];
@@ -63,7 +79,12 @@ export function automationOccurrencesBetween(
   let evaluatedThrough = throughInclusive;
   rule.between(wallStart, wallEnd, true, (wall, index) => {
     const instant = wallDateToInstant(wall, normalized.timezone);
-    if (instant === null || instant <= afterExclusive || instant > throughInclusive) return true;
+    if (
+      instant === null
+      || instant <= afterExclusive
+      || instant > throughInclusive
+      || (prepared.utcUntil !== null && instant > prepared.utcUntil)
+    ) return true;
     if (occurrences.length >= limit) {
       truncated = true;
       evaluatedThrough = occurrences.at(-1)!;
@@ -117,6 +138,52 @@ function normalizeRruleSource(source: string, timezone: string): string {
     throw new Error('Automation DTSTART TZID must match schedule.timezone');
   }
   return `DTSTART:${match[2]}\n${rules[0]!.toUpperCase()}`;
+}
+
+function prepareRruleSource(
+  source: string,
+  timezone: string,
+): {
+  readonly source: string;
+  readonly utcUntil: number | null;
+  readonly utcUntilStamp: string | null;
+  readonly localUntilStamp: string | null;
+} {
+  const match = /\bUNTIL=(\d{8}T\d{6})Z\b/.exec(source);
+  if (!match) {
+    return {
+      source,
+      utcUntil: null,
+      utcUntilStamp: null,
+      localUntilStamp: /\bUNTIL=(\d{8}T\d{6})(?!Z)\b/.exec(source)?.[1] ?? null,
+    };
+  }
+  const stamp = match[1]!;
+  const utcUntil = utcStampToInstant(stamp);
+  const wallUntil = wallStamp(instantToWallDate(utcUntil, timezone));
+  return {
+    source: source.replace(`UNTIL=${stamp}Z`, `UNTIL=${wallUntil}`),
+    utcUntil,
+    utcUntilStamp: stamp,
+    localUntilStamp: null,
+  };
+}
+
+function utcStampToInstant(stamp: string): number {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(stamp);
+  if (!match) throw new Error(`Invalid Automation UTC UNTIL: ${stamp}Z`);
+  const instant = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  );
+  if (wallStamp(new Date(instant)) !== stamp) {
+    throw new Error(`Invalid Automation UTC UNTIL: ${stamp}Z`);
+  }
+  return instant;
 }
 
 function parseRule(source: string): RRule {

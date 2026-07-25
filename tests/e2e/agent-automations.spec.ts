@@ -23,6 +23,12 @@ test.describe('Automation surface', () => {
     await expect(page.locator('.automation-detail-metadata')).toContainText('New Thread');
     await page.getByRole('button', { name: 'Edit' }).click();
     await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes.');
+    await page.getByText('Configuration', { exact: true }).click();
+    const toolsMode = page.getByRole('radiogroup', { name: 'Tools' });
+    await expect(toolsMode.getByRole('radio', { name: 'Inherit' })).toBeChecked();
+    await toolsMode.getByRole('radio', { name: 'Specific' }).click();
+    await expect(page.getByRole('textbox', { name: 'Tools' })).toBeEnabled();
+    await expect(page.getByRole('textbox', { name: 'Tools' })).toHaveValue('');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('.automation-subview-header')).toContainText('Daily repository review');
     await page.getByRole('button', { name: 'Pause' }).click();
@@ -51,7 +57,8 @@ test.describe('Automation surface', () => {
     await dialog.getByRole('button', { name: 'Delete Automation' }).click();
     await expect(page.getByText('No Automations yet.')).toBeVisible();
 
-    expect((await commandCalls(page)).map((call) => call.cmd)).toEqual(expect.arrayContaining([
+    const calls = await commandCalls(page);
+    expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'automation/list',
       'automation/runs',
       'automation/create',
@@ -62,5 +69,7 @@ test.describe('Automation surface', () => {
       'automation/runMarkRead',
       'automation/delete',
     ]));
+    expect(calls.find((call) => call.cmd === 'automation/update')?.args.configuration)
+      .toMatchObject({ tools: [] });
   });
 });

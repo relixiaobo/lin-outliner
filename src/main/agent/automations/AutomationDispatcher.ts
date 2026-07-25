@@ -25,6 +25,10 @@ export interface AutomationDispatcherOptions {
     selection: AutomationConfiguration,
     cwd: string,
   ) => Promise<ResolvedAutomationConfiguration>;
+  readonly validateEffectiveConfiguration: (
+    modelProvider: string,
+    configuration: EffectiveThreadConfiguration,
+  ) => Promise<void>;
   readonly onRunChanged?: (run: AutomationRun) => void | Promise<void>;
   readonly now?: () => number;
 }
@@ -48,9 +52,24 @@ export class AutomationDispatcher {
     return this.options.resolveConfiguration(selection, cwd);
   }
 
+  validateResolvedConfiguration(
+    modelProvider: string,
+    configuration: EffectiveThreadConfiguration,
+  ): Promise<void> {
+    return this.options.validateEffectiveConfiguration(modelProvider, configuration);
+  }
+
+  async recoverPendingRuns(automationId: string): Promise<void> {
+    for (const run of this.options.store.pendingRuns(automationId)) {
+      await this.recoverAcceptedTurn(run);
+    }
+  }
+
   async dispatch(run: AutomationRun): Promise<AutomationRun> {
     const current = this.options.store.readRun(run.id);
     if (!current || current.state !== 'pending') return current ?? run;
+    const recovered = await this.recoverAcceptedTurn(current);
+    if (recovered) return recovered;
     let featureThreadCreated = false;
     let acceptedTurn = false;
     try {
@@ -73,6 +92,10 @@ export class AutomationDispatcher {
         }
         assertAutomationConfigurationMatchesThread(
           snapshot.configuration,
+          context.thread.modelProvider,
+          context.configuration,
+        );
+        await this.options.validateEffectiveConfiguration(
           context.thread.modelProvider,
           context.configuration,
         );
@@ -110,17 +133,14 @@ export class AutomationDispatcher {
       await this.changed(dispatched);
       return dispatched;
     } catch (error) {
-      if (acceptedTurn) {
-        const latest = this.options.store.readRun(current.id);
-        if (!latest) throw error;
-        if (latest.state === 'pending') {
-          const retryable = this.options.store.recordPendingError(current.id, errorMessage(error), this.now());
-          await this.changed(retryable);
-          return retryable;
-        }
-        if (latest.state === 'dispatched') return latest;
-        throw error;
+      let recoveredAfterFailure: AutomationRun | null;
+      try {
+        recoveredAfterFailure = await this.recoverAcceptedTurn(current);
+      } catch (recoveryError) {
+        return this.retainPending(current.id, recoveryError);
       }
+      if (recoveredAfterFailure) return recoveredAfterFailure;
+      if (acceptedTurn) return this.retainPending(current.id, error);
       if (featureThreadCreated && current.snapshot.destination.kind === 'standalone' && current.threadId) {
         await this.options.threads.deleteThread(current.threadId).catch(() => undefined);
       }
@@ -184,6 +204,32 @@ export class AutomationDispatcher {
       ) continue;
       throw new Error(`AutomationRun provenance binding is invalid: ${run.id}`);
     }
+  }
+
+  private async recoverAcceptedTurn(run: AutomationRun): Promise<AutomationRun | null> {
+    if (run.state !== 'pending' || !run.threadId) return null;
+    const turn = this.options.threads.readTurnByClientUserMessageIdForHost(run.threadId, run.id);
+    if (!turn) return null;
+    if (
+      turn.provenance.trigger.kind !== 'feature'
+      || turn.provenance.trigger.feature !== 'automation'
+      || turn.provenance.trigger.ref !== run.id
+    ) {
+      throw new Error(`Accepted AutomationRun Turn provenance is invalid: ${run.id}`);
+    }
+    const dispatched = this.options.store.markDispatched(run.id, run.threadId, turn.id, this.now());
+    await this.changed(dispatched);
+    return dispatched;
+  }
+
+  private async retainPending(id: string, error: unknown): Promise<AutomationRun> {
+    const latest = this.options.store.readRun(id);
+    if (!latest) throw error;
+    if (latest.state === 'dispatched') return latest;
+    if (latest.state !== 'pending') throw error;
+    const retryable = this.options.store.recordPendingError(id, errorMessage(error), this.now());
+    await this.changed(retryable);
+    return retryable;
   }
 
   private async changed(run: AutomationRun): Promise<void> {

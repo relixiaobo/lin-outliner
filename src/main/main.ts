@@ -61,6 +61,7 @@ import type {
 } from '../core/agent/protocol';
 import {
   REASONING_EFFORTS,
+  type EffectiveThreadConfiguration,
   type ReasoningEffort,
 } from '../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
@@ -532,6 +533,10 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       managedSkillService.assertInvocable(skillId, expectedContentHash)
     ),
+    ...(context.turn.provenance.trigger.kind === 'feature'
+      && context.turn.provenance.trigger.feature === 'automation'
+      ? { allowedSkills: context.configuration.skills }
+      : {}),
     executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
       command,
       localRoot: agentLocalFileRoot,
@@ -603,6 +608,22 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
 const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
 const automationWorktree = new AutomationWorktree(resolvedUserDataDir);
 let automationService!: AutomationService;
+async function validateAutomationEffectiveConfiguration(
+  modelProvider: string,
+  configuration: EffectiveThreadConfiguration,
+): Promise<void> {
+  const provider = await getProviderRuntimeConfig(modelProvider);
+  if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
+  validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
+  const settings = await getAgentRuntimeSettings();
+  skillRuntime.updateDisabledSkills(settings.disabledSkills ?? []);
+  validateAutomationDependencies(configuration, {
+    tools: new Set(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
+    skills: new Set((await skillRuntime.listAvailableModelInvocableSkills()).map((skill) => skill.name)),
+    plugins: new Set(extensionRegistry.all().map((extension) => extension.id)),
+    mcpServers: new Set(),
+  });
+}
 const automationDispatcher = new AutomationDispatcher({
   store: automationStore,
   threads: threadService,
@@ -623,15 +644,10 @@ const automationDispatcher = new AutomationDispatcher({
       ? await getProviderRuntimeConfig(selection.modelProvider)
       : await getActiveProviderRuntimeConfig();
     if (!provider) throw new Error('Configure the Automation model provider before its next occurrence.');
-    validateAgentModelSelection(effectiveConfiguration.model, effectiveConfiguration.reasoningEffort, provider);
-    validateAutomationDependencies(effectiveConfiguration, {
-      tools: new Set(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
-      skills: new Set((await skillRuntime.listAllSkills()).map((skill) => skill.name)),
-      plugins: new Set(extensionRegistry.all().map((extension) => extension.id)),
-      mcpServers: new Set(),
-    });
+    await validateAutomationEffectiveConfiguration(provider.providerId, effectiveConfiguration);
     return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
   },
+  validateEffectiveConfiguration: validateAutomationEffectiveConfiguration,
   onRunChanged: (run) => automationService.runChanged(run),
 });
 const automationScheduler = new AutomationScheduler({

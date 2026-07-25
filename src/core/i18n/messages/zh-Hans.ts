@@ -943,6 +943,7 @@ commandPalette: {
       plugins: '插件',
       mcpServers: 'MCP 服务器',
       inherited: '继承',
+      explicit: '指定',
       create: '创建自动化',
       save: '保存',
       cancel: '取消',

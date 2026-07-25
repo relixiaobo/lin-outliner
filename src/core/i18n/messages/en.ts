@@ -1005,6 +1005,7 @@ commandPalette: {
       plugins: 'Plugins',
       mcpServers: 'MCP servers',
       inherited: 'Inherit',
+      explicit: 'Specific',
       create: 'Create Automation',
       save: 'Save',
       cancel: 'Cancel',

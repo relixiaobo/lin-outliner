@@ -38,6 +38,11 @@ export function AutomationsView(props: AutomationsViewProps) {
     return () => automationStore.dispose();
   }, []);
 
+  useEffect(() => {
+    if (surface !== 'detail' || !selected) return;
+    void automationStore.loadRunsForAutomation(selected.id).catch(() => undefined);
+  }, [surface, selected?.id]);
+
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -157,11 +162,7 @@ export function AutomationsView(props: AutomationsViewProps) {
         {snapshot.loading ? <p className="automation-empty-copy">{t.loading}</p> : null}
         {!snapshot.loading && filtered.length === 0 ? <p className="automation-empty-copy">{t.empty}</p> : null}
         {filtered.map((automation) => {
-          const unread = snapshot.runs.some((runItem) => (
-            runItem.automationId === automation.id
-            && runItem.readAt === null
-            && (runItem.state === 'dispatched' || runItem.state === 'failed')
-          ));
+          const unread = snapshot.unreadAutomationIds.includes(automation.id);
           return (
             <button
               className="automation-list-row"

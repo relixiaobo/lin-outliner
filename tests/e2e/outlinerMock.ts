@@ -1575,7 +1575,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
         if (method === 'list') return clone({ data: mockAutomations }) as T;
-        if (method === 'runs') return clone({ data: mockAutomationRuns }) as T;
+        if (method === 'runs') {
+          let runs = mockAutomationRuns.filter((run) => (
+            input.automationId === undefined || run.automationId === input.automationId
+          ));
+          if (input.unreadOnly === true) {
+            runs = runs.filter((run) => (
+              run.readAt === null && (run.state === 'dispatched' || run.state === 'failed')
+            ));
+          }
+          const limit = typeof input.limit === 'number' ? input.limit : 100;
+          return clone({ data: runs.slice(0, limit) }) as T;
+        }
         if (method === 'read') {
           return clone({ automation: mockAutomations.find((item) => item.id === input.id) ?? null }) as T;
         }

@@ -6,6 +6,8 @@ import type {
   AutomationRun,
 } from '../../src/core/agent/automation';
 import {
+  capabilityListDraft,
+  capabilityListValue,
   frequencyFromRrule,
   scheduleRrule,
 } from '../../src/renderer/agent/automations/AutomationEditor';
@@ -18,7 +20,11 @@ describe('renderer Automation store', () => {
   test('loads the catalog and applies canonical realtime notifications', async () => {
     const first = automation('01920000-0000-7000-8000-000000000001', 10);
     const second = automation('01920000-0000-7000-8000-000000000002', 20);
-    const firstRun = run(first, '01920000-0000-7000-8000-000000000101', 30);
+    const firstRun: AutomationRun = {
+      ...run(first, '01920000-0000-7000-8000-000000000101', 30),
+      state: 'dispatched',
+      turnId: '01920000-0000-7000-8000-000000000301',
+    };
     let notify: (notification: AutomationNotification) => void = () => undefined;
     let unsubscribed = false;
     const client = {
@@ -37,10 +43,13 @@ describe('renderer Automation store', () => {
 
     expect(store.getSnapshot()).toMatchObject({
       automations: [first],
-      runs: [firstRun],
+      runs: [],
+      unreadAutomationIds: [first.id],
       selectedAutomationId: first.id,
       loading: false,
     });
+    await store.loadRunsForAutomation(first.id);
+    expect(store.getSnapshot().runs).toEqual([firstRun]);
 
     notify({ type: 'automation/changed', automationId: second.id, automation: second });
     expect(store.getSnapshot().automations.map((item) => item.id)).toEqual([second.id, first.id]);
@@ -54,11 +63,51 @@ describe('renderer Automation store', () => {
     expect(unsubscribed).toBe(true);
   });
 
+  test('loads unread state and recent runs per Automation instead of from a global cap', async () => {
+    const first = automation('01920000-0000-7000-8000-000000000001', 10);
+    const second = automation('01920000-0000-7000-8000-000000000002', 20);
+    const secondRun: AutomationRun = {
+      ...run(second, '01920000-0000-7000-8000-000000000102', 30),
+      state: 'failed',
+      error: 'provider unavailable',
+    };
+    const runInputs: unknown[] = [];
+    const client = {
+      onAutomationNotification: () => () => undefined,
+      async automationRequest(method: string, input: unknown) {
+        if (method === 'list') return { data: [first, second] };
+        if (method === 'runs') {
+          runInputs.push(input);
+          const request = input as { automationId: string; unreadOnly?: boolean };
+          return {
+            data: request.automationId === second.id ? [secondRun] : [],
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as AutomationStoreClient;
+    const store = new AutomationRendererStore(client);
+
+    await store.initialize();
+    expect(store.getSnapshot().unreadAutomationIds).toEqual([second.id]);
+    await store.loadRunsForAutomation(second.id);
+    expect(store.getSnapshot().runs).toEqual([secondRun]);
+    expect(runInputs).toEqual([
+      { automationId: first.id, unreadOnly: true, limit: 1 },
+      { automationId: second.id, unreadOnly: true, limit: 1 },
+      { automationId: second.id, limit: 200 },
+    ]);
+  });
+
   test('routes CRUD, Start now, read, and pin operations through one transport', async () => {
     const base = automation('01920000-0000-7000-8000-000000000001', 10);
     const calls: Array<{ method: string; input: unknown }> = [];
     const created = { ...base, id: '01920000-0000-7000-8000-000000000002', updatedAt: 20 };
-    const started = run(created, '01920000-0000-7000-8000-000000000102', 30);
+    const started: AutomationRun = {
+      ...run(created, '01920000-0000-7000-8000-000000000102', 30),
+      state: 'dispatched',
+      turnId: '01920000-0000-7000-8000-000000000302',
+    };
     const client = {
       onAutomationNotification: () => () => undefined,
       async automationRequest(method: string, input: unknown) {
@@ -84,13 +133,15 @@ describe('renderer Automation store', () => {
     await store.pause(created);
     await store.resume({ ...created, status: 'paused', revision: 2 });
     await store.startNow(created);
+    expect(store.getSnapshot().unreadAutomationIds).toContain(created.id);
     await store.markRunRead(started);
+    expect(store.getSnapshot().unreadAutomationIds).not.toContain(created.id);
     await store.pinRun(started, true);
     await store.delete(created);
 
     expect(calls.map((call) => call.method)).toEqual([
       'list', 'runs', 'create', 'update', 'pause', 'resume', 'startNow',
-      'runMarkRead', 'runPin', 'delete',
+      'runMarkRead', 'runs', 'runPin', 'delete',
     ]);
     expect(calls.find((call) => call.method === 'pause')?.input).toEqual({
       id: created.id,
@@ -114,11 +165,15 @@ describe('renderer Automation store', () => {
       turnId: '01920000-0000-7000-8000-000000000301',
       updatedAt: 31,
     };
+    const deletedRun: AutomationRun = {
+      ...run(deleted, '01920000-0000-7000-8000-000000000102', 21),
+      state: 'failed',
+      error: 'unavailable',
+    };
     let notify: (notification: AutomationNotification) => void = () => undefined;
     let resolveList!: (value: { data: readonly Automation[] }) => void;
-    let resolveRuns!: (value: { data: readonly AutomationRun[] }) => void;
+    const runResolvers: Array<(value: { data: readonly AutomationRun[] }) => void> = [];
     const list = new Promise<{ data: readonly Automation[] }>((resolve) => { resolveList = resolve; });
-    const runs = new Promise<{ data: readonly AutomationRun[] }>((resolve) => { resolveRuns = resolve; });
     const client = {
       onAutomationNotification(listener: (notification: AutomationNotification) => void) {
         notify = listener;
@@ -126,7 +181,11 @@ describe('renderer Automation store', () => {
       },
       automationRequest(method: string) {
         if (method === 'list') return list;
-        if (method === 'runs') return runs;
+        if (method === 'runs') {
+          return new Promise((resolve) => {
+            runResolvers.push(resolve as (value: { data: readonly AutomationRun[] }) => void);
+          });
+        }
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as AutomationStoreClient;
@@ -137,11 +196,14 @@ describe('renderer Automation store', () => {
     notify({ type: 'automation/changed', automationId: deleted.id, automation: null });
     notify({ type: 'automationRun/changed', run: completedRun });
     resolveList({ data: [first, deleted] });
-    resolveRuns({ data: [initialRun] });
+    await Promise.resolve();
+    runResolvers[0]!({ data: [] });
+    runResolvers[1]!({ data: [deletedRun] });
     await initializing;
 
     expect(store.getSnapshot().automations).toEqual([updated]);
     expect(store.getSnapshot().runs).toEqual([completedRun]);
+    expect(store.getSnapshot().unreadAutomationIds).toEqual([first.id]);
   });
 
   test('ignores a prior mount reload that resolves after a reopened surface', async () => {
@@ -165,10 +227,10 @@ describe('renderer Automation store', () => {
     const second = store.initialize();
 
     listResolvers[1]!({ data: [currentAutomation] });
-    runResolvers[1]!({ data: [] });
+    await Promise.resolve();
+    runResolvers[0]!({ data: [] });
     await second;
     listResolvers[0]!({ data: [oldAutomation] });
-    runResolvers[0]!({ data: [] });
     await first;
 
     expect(store.getSnapshot().automations).toEqual([currentAutomation]);
@@ -186,6 +248,15 @@ describe('renderer Automation store', () => {
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=DAILY;COUNT=3')).toBe('custom');
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=HOURLY;INTERVAL=2')).toBe('custom');
     expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO')).toBe('custom');
+  });
+
+  test('preserves inherited, explicitly empty, and explicit capability lists', () => {
+    expect(capabilityListDraft(null)).toEqual({ mode: 'inherit', value: '' });
+    expect(capabilityListDraft([])).toEqual({ mode: 'explicit', value: '' });
+    expect(capabilityListValue({ mode: 'inherit', value: 'skill-a' })).toBeNull();
+    expect(capabilityListValue({ mode: 'explicit', value: '' })).toEqual([]);
+    expect(capabilityListValue({ mode: 'explicit', value: 'skill-a, skill-a, skill-b' }))
+      .toEqual(['skill-a', 'skill-b']);
   });
 });
 

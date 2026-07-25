@@ -19,6 +19,10 @@ type ProjectBindingDraft = {
   readonly cwd: string;
   readonly executionMode: Exclude<ProjectMode, 'none'>;
 };
+export interface CapabilityListDraft {
+  readonly mode: 'inherit' | 'explicit';
+  readonly value: string;
+}
 
 interface AutomationEditorProps {
   readonly automation: Automation | null;
@@ -76,10 +80,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
           modelProvider: nullable(state.modelProvider),
           model: nullable(state.model),
           reasoningEffort: state.reasoningEffort || null,
-          tools: nullableList(state.tools),
-          skills: nullableList(state.skills),
-          plugins: nullableList(state.plugins),
-          mcpServers: nullableList(state.mcpServers),
+          tools: capabilityListValue(state.tools),
+          skills: capabilityListValue(state.skills),
+          plugins: capabilityListValue(state.plugins),
+          mcpServers: capabilityListValue(state.mcpServers),
         },
       };
       if (props.automation) {
@@ -316,8 +320,28 @@ export function AutomationEditor(props: AutomationEditorProps) {
             </SelectControl>
           </Field>
           {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
-            <Field key={key} label={t[key]}>
-              <Input label={t[key]} onChange={(event) => setState({ ...state, [key]: event.target.value })} placeholder={t.inherited} value={state[key]} />
+            <Field as="div" key={key} label={t[key]}>
+              <div className="automation-capability-list">
+                <SegmentedControl
+                  className="automation-capability-mode"
+                  label={t[key]}
+                  onChange={(mode) => setState({ ...state, [key]: { ...state[key], mode } })}
+                  options={[
+                    { value: 'inherit', label: t.inherited },
+                    { value: 'explicit', label: t.explicit },
+                  ]}
+                  value={state[key].mode}
+                />
+                <Input
+                  disabled={props.busy || state[key].mode === 'inherit'}
+                  label={t[key]}
+                  onChange={(event) => setState({
+                    ...state,
+                    [key]: { ...state[key], value: event.target.value },
+                  })}
+                  value={state[key].value}
+                />
+              </div>
             </Field>
           ))}
         </details>
@@ -347,10 +371,10 @@ interface EditorState {
   readonly modelProvider: string;
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort | '';
-  readonly tools: string;
-  readonly skills: string;
-  readonly plugins: string;
-  readonly mcpServers: string;
+  readonly tools: CapabilityListDraft;
+  readonly skills: CapabilityListDraft;
+  readonly plugins: CapabilityListDraft;
+  readonly mcpServers: CapabilityListDraft;
 }
 
 function editorState(automation: Automation | null): EditorState {
@@ -369,10 +393,10 @@ function editorState(automation: Automation | null): EditorState {
     modelProvider: automation?.configuration.modelProvider ?? '',
     model: automation?.configuration.model ?? '',
     reasoningEffort: automation?.configuration.reasoningEffort ?? '',
-    tools: automation?.configuration.tools?.join(', ') ?? '',
-    skills: automation?.configuration.skills?.join(', ') ?? '',
-    plugins: automation?.configuration.plugins?.join(', ') ?? '',
-    mcpServers: automation?.configuration.mcpServers?.join(', ') ?? '',
+    tools: capabilityListDraft(automation?.configuration.tools ?? null),
+    skills: capabilityListDraft(automation?.configuration.skills ?? null),
+    plugins: capabilityListDraft(automation?.configuration.plugins ?? null),
+    mcpServers: capabilityListDraft(automation?.configuration.mcpServers ?? null),
   };
 }
 
@@ -429,9 +453,15 @@ function nullable(value: string): string | null {
   return value.trim() || null;
 }
 
-function nullableList(value: string): readonly string[] | null {
-  const values = [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
-  return values.length > 0 ? values : null;
+export function capabilityListDraft(value: readonly string[] | null): CapabilityListDraft {
+  return value === null
+    ? { mode: 'inherit', value: '' }
+    : { mode: 'explicit', value: value.join(', ') };
+}
+
+export function capabilityListValue(draft: CapabilityListDraft): readonly string[] | null {
+  if (draft.mode === 'inherit') return null;
+  return Object.freeze([...new Set(draft.value.split(',').map((item) => item.trim()).filter(Boolean))]);
 }
 
 function required(value: string, field: string): string {
