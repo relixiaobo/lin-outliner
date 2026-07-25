@@ -215,7 +215,8 @@ const requestUserInputSchema = objectSchema({
     options: arraySchema(objectSchema({
       label: stringSchema('User-facing label of one to five words.'),
       description: stringSchema('One sentence explaining the trade-off.'),
-    }, ['label', 'description'])),
+    }, ['label', 'description']),
+    'Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option in this list; the client will add a free-form "Other" option automatically.'),
   }, ['id', 'header', 'question', 'options'])),
   autoResolutionMs: numberSchema(
     `Optional non-blocking timeout from ${REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS} to ${REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS} milliseconds.`,

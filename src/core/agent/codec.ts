@@ -1212,9 +1212,6 @@ export function decodeRequestUserInputQuestions(value: unknown): readonly Reques
         const label = stringValue(item.label, `questions[${index}].options[${optionIndex}].label`);
         if (label.trim().toLowerCase() === 'other') fail('questions', 'Other is supplied by the host');
         if (label.trim().split(/\s+/).length > 5) fail('questions', 'option labels must not exceed five words');
-        if (optionIndex === 0 && !label.endsWith('(Recommended)')) {
-          fail('questions', 'the first option must mark the recommended choice');
-        }
         if (labels.has(label)) fail('questions', 'option labels must be unique');
         labels.add(label);
         return {

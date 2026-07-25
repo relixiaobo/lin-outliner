@@ -93,7 +93,10 @@ The write carries the executing Item's causation.
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
 question has a stable ID, short header, one sentence, and two or three mutually
-exclusive options.
+exclusive options. The model-facing schema asks for the recommended option first
+and an English `(Recommended)` suffix, matching Codex. This is presentation
+guidance rather than a wire invariant: the host accepts localized or omitted
+suffixes and preserves labels verbatim for answer round-tripping.
 
 At most one plan step is `in_progress`. Plans are Items within a Turn and do not
 create durable work entities.
