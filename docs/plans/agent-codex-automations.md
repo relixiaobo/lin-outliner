@@ -290,10 +290,37 @@ schedule reactivates it against a fresh evaluated-through cursor.
 
 The user-visible entity name is "Automation", and the top-level view is
 "Automations". "Scheduled" may describe timing but is not a second object name.
-The view provides active, paused, and completed filters; unread findings; next
-occurrence; and recent Automation runs joined to their canonical Threads/Turns.
-Unread state and recent history are queried per Automation rather than filtered
-from one globally capped run page.
+The main surface remains a compact, searchable Automation list with active,
+paused, and completed filters, unread findings, and next-occurrence summaries.
+Selecting a row opens a modal bottom drawer over the list instead of replacing
+the list with a nested detail route. Closing the drawer therefore restores the
+same filtered list and scroll context.
+
+The drawer reuses the proven Issue-detail interaction without retaining any
+Issue naming or CSS surface: it is bottom-aligned with a transparent backdrop,
+defaults to 80% of the available height, leaves a 52px top gap, has a 360px
+minimum height where space permits, and supports pointer dragging plus 48px
+Arrow Up/Down keyboard steps. The normalized height is a best-effort renderer
+preference in local storage and is reapplied after resize. The drawer traps
+focus, closes by Escape, backdrop, or its Close control, and restores focus to
+the originating row or New Automation control.
+
+Create and detail/edit use this one drawer and one form. Existing values are
+directly editable; there is no separate read-only detail screen or Edit command.
+Changes remain a local draft until an atomic Save, with a fixed Save/Cancel
+footer. Closing or cancelling a dirty draft requires explicit discard
+confirmation. Saving never collapses `null`, `[]`, and non-empty capability
+selections: they remain inherit, explicitly none, and an exact allowlist.
+
+The drawer information order is:
+
+1. status and actions, including Start now, pause/resume, delete, and Close
+2. name and prompt
+3. execution details: destination, Thread, project/worktree, Profile, provider,
+   model, and reasoning
+4. frequency, local start time, timezone, and custom RRULE
+5. advanced tool, Skill, Plugin, and MCP server capability selections
+6. previous Automation runs
 
 The Automation editor supports:
 
@@ -308,9 +335,13 @@ The Automation editor supports:
 - pause/resume, Start now, and delete commands
 - pin/unpin for worktree retention
 
-Opening a recent Automation run navigates to its Thread and Turn. The detail view
-may show scheduler claim/dispatch failures, but it never renders a copied
-transcript or an Issue Activity timeline.
+Previous runs are compact status rows with occurrence time and unread state.
+Opening a dispatched run closes the drawer and navigates to its canonical Thread
+and Turn; it never copies or embeds a transcript. The drawer may show scheduler
+claim/dispatch failures and worktree retention controls, but it never renders an
+Issue Activity timeline. Tenon does not add ChatGPT cloud Suggestions or
+Automation-level notification settings because neither has a local product
+contract.
 
 ### 8. Destructive replacement and documentation
 

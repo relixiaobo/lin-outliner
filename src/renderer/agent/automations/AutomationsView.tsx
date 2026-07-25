@@ -1,37 +1,69 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Automation, AutomationRun } from '../../../core/agent/automation';
 import type { Thread } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, BackIcon, ClockIcon, PencilIcon, PlayIcon, TrashIcon } from '../../ui/icons';
+import {
+  AddIcon,
+  ClockIcon,
+  CloseIcon,
+  MoreIcon,
+  PlayIcon,
+  SearchIcon,
+  ScheduledIcon,
+} from '../../ui/icons';
+import { AnchoredActionMenu } from '../../ui/primitives/AnchoredActionMenu';
 import { Button } from '../../ui/primitives/Button';
 import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
+import { Dialog } from '../../ui/primitives/Dialog';
 import { IconButton } from '../../ui/primitives/IconButton';
+import { Input } from '../../ui/primitives/Input';
 import { SegmentedControl } from '../../ui/primitives/SegmentedControl';
-import { automationStore, useAutomationStore } from './automationStore';
+import {
+  AutomationDrawerResizeHandle,
+  useAutomationDrawerHeight,
+} from './AutomationDrawerResize';
 import { AutomationEditor } from './AutomationEditor';
 import { AutomationRunsView } from './AutomationRunsView';
+import { automationStore, useAutomationStore } from './automationStore';
 
 interface AutomationsViewProps {
   readonly threads: readonly Thread[];
   readonly onOpenThread: (threadId: string) => Promise<void>;
 }
 
-type Surface = 'list' | 'detail' | 'create' | 'edit';
+type DrawerState = { readonly kind: 'create' } | { readonly kind: 'automation'; readonly id: string };
 
 export function AutomationsView(props: AutomationsViewProps) {
   const t = useT().agent.automations;
   const snapshot = useAutomationStore();
-  const [surface, setSurface] = useState<Surface>('list');
+  const [drawer, setDrawer] = useState<DrawerState | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Automation | null>(null);
-  const selected = snapshot.automations.find((automation) => automation.id === snapshot.selectedAutomationId) ?? null;
-  const filtered = snapshot.statusFilter === 'all'
-    ? snapshot.automations
-    : snapshot.automations.filter((automation) => automation.status === snapshot.statusFilter);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const busyRef = useRef(false);
+  const drawerRestoreTargetRef = useRef<HTMLElement | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const selected = drawer?.kind === 'automation'
+    ? snapshot.automations.find((automation) => automation.id === drawer.id) ?? null
+    : null;
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filtered = snapshot.automations.filter((automation) => (
+    (snapshot.statusFilter === 'all' || automation.status === snapshot.statusFilter)
+    && (
+      !normalizedSearch
+      || automation.name.toLocaleLowerCase().includes(normalizedSearch)
+      || automation.prompt.toLocaleLowerCase().includes(normalizedSearch)
+    )
+  ));
   const runs = selected
     ? snapshot.runs.filter((run) => run.automationId === selected.id)
     : [];
+
+  useAutomationDrawerHeight(drawer !== null);
 
   useEffect(() => {
     void automationStore.initialize().catch(() => undefined);
@@ -39,139 +71,145 @@ export function AutomationsView(props: AutomationsViewProps) {
   }, []);
 
   useEffect(() => {
-    if (surface !== 'detail' || !selected) return;
+    if (!selected) return;
     void automationStore.loadRunsForAutomation(selected.id).catch(() => undefined);
-  }, [surface, selected?.id]);
+  }, [selected?.id]);
 
-  async function run(action: () => Promise<void>) {
-    if (busy) return;
+  const closeDrawer = useCallback(() => {
+    setDrawer(null);
+    setDirty(false);
+    setError(null);
+    setMenuOpen(false);
+    setDiscardOpen(false);
+    setDeleteTarget(null);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    setMenuOpen(false);
+    if (dirty) setDiscardOpen(true);
+    else closeDrawer();
+  }, [closeDrawer, dirty]);
+
+  useEffect(() => {
+    if (drawer?.kind === 'automation' && !snapshot.loading && !selected) closeDrawer();
+  }, [closeDrawer, drawer, selected, snapshot.loading]);
+
+  async function perform<T>(action: () => Promise<T>): Promise<T> {
+    if (busyRef.current) throw new Error(t.busy);
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      await action();
+      return await action();
     } catch (actionError) {
       setError(errorMessage(actionError));
+      throw actionError;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
-  if (surface === 'create' || surface === 'edit') {
-    return (
-      <AutomationsSurfaceHeader backLabel={t.back} title={surface === 'create' ? t.new : selected?.name ?? t.edit} onBack={() => setSurface(surface === 'edit' ? 'detail' : 'list')}>
-        <AutomationEditor
-          automation={surface === 'edit' ? selected : null}
-          busy={busy}
-          onCancel={() => setSurface(surface === 'edit' ? 'detail' : 'list')}
-          onCreate={(input) => run(async () => {
-            await automationStore.create(input);
-            setSurface('detail');
-          })}
-          onUpdate={(input) => run(async () => {
-            await automationStore.update(input);
-            setSurface('detail');
-          })}
-          threads={props.threads}
-        />
-      </AutomationsSurfaceHeader>
-    );
+  function openCreate(origin: HTMLElement): void {
+    drawerRestoreTargetRef.current = origin;
+    setDirty(false);
+    setError(null);
+    setDrawer({ kind: 'create' });
   }
 
-  if (surface === 'detail' && selected) {
-    return (
-      <AutomationsSurfaceHeader backLabel={t.back} title={selected.name} onBack={() => setSurface('list')}>
-        <div className="automation-detail-scroll">
-          <div className="automation-detail-actions">
-            {selected.status !== 'completed' ? (
-              <>
-                {selected.status === 'active' ? (
-                  <Button disabled={busy} onClick={() => void run(async () => { await automationStore.startNow(selected); })} size="sm" variant="primary">
-                    <PlayIcon size={12} />{t.startNow}
-                  </Button>
-                ) : null}
-                <Button disabled={busy} onClick={() => void run(async () => {
-                  if (selected.status === 'paused') await automationStore.resume(selected);
-                  else await automationStore.pause(selected);
-                })} size="sm" variant="secondary">
-                  {selected.status === 'paused' ? t.resume : t.pause}
-                </Button>
-              </>
-            ) : null}
-            <IconButton disabled={busy} icon={PencilIcon} label={t.edit} onClick={() => setSurface('edit')} variant="message" />
-            <IconButton disabled={busy} icon={TrashIcon} label={t.delete} onClick={() => setDeleteTarget(selected)} variant="message" />
-          </div>
-          <p className="automation-detail-prompt">{selected.prompt}</p>
-          <dl className="automation-detail-metadata">
-            <div><dt>{t.schedule}</dt><dd>{selected.nextOccurrenceAt === null ? t.noNext : `${formatDate(selected.nextOccurrenceAt)} · ${selected.schedule.timezone}`}</dd></div>
-            <div><dt>{t.destination}</dt><dd>{selected.destination.kind === 'standalone' ? t.destinations.standalone : t.destinations.existingThread}</dd></div>
-            <div>
-              <dt>{t.project}</dt>
-              <dd className="automation-detail-projects">
-                {selected.projectBindings.length === 0 ? t.projects.none : selected.projectBindings.map((binding) => (
-                  <span key={binding.id}>{binding.cwd} · {t.projects[binding.executionMode]}</span>
-                ))}
-              </dd>
-            </div>
-          </dl>
-          <section className="automation-runs-section">
-            <h3>{t.recentRuns}</h3>
-            <AutomationRunsView
-              onMarkRead={(runItem) => run(async () => { await automationStore.markRunRead(runItem); })}
-              onOpenThread={(runItem) => run(async () => openRunThread(runItem, props.onOpenThread))}
-              onPin={(runItem, pinned) => run(async () => { await automationStore.pinRun(runItem, pinned); })}
-              runs={runs}
-            />
-          </section>
-          {error ? <p className="automation-error" role="alert">{error}</p> : null}
-        </div>
-        {deleteTarget ? (
-          <ConfirmDialog
-            cancelLabel={t.cancel}
-            confirmLabel={t.delete}
-            danger
-            message={t.deleteConfirm({ name: deleteTarget.name })}
-            onCancel={() => setDeleteTarget(null)}
-            onConfirm={() => void run(async () => {
-              await automationStore.delete(deleteTarget);
-              setDeleteTarget(null);
-              setSurface('list');
-            })}
-            title={t.delete}
-          />
-        ) : null}
-      </AutomationsSurfaceHeader>
-    );
+  function openAutomation(automation: Automation, origin: HTMLElement): void {
+    drawerRestoreTargetRef.current = origin;
+    automationStore.select(automation.id);
+    setDirty(false);
+    setError(null);
+    setDrawer({ kind: 'automation', id: automation.id });
   }
+
+  const menuActions = selected ? [
+    ...(selected.status !== 'completed' ? [{
+      id: selected.status === 'paused' ? 'resume' : 'pause',
+      label: selected.status === 'paused' ? t.resume : t.pause,
+      disabled: busy || dirty,
+      onSelect: () => {
+        void perform(async () => {
+          if (selected.status === 'paused') await automationStore.resume(selected);
+          else await automationStore.pause(selected);
+        }).catch(() => undefined);
+      },
+    }] : []),
+    {
+      id: 'delete',
+      label: t.delete,
+      disabled: busy,
+      danger: true,
+      onSelect: () => setDeleteTarget(selected),
+    },
+  ] : [];
 
   return (
     <div className="automations-view">
-      <div className="automations-toolbar">
-        <SegmentedControl
-          className="automations-filter"
-          label={t.title}
-          onChange={(value) => automationStore.setStatusFilter(value)}
-          options={(['all', 'active', 'paused', 'completed'] as const).map((value) => ({
-            value,
-            label: t.filters[value],
-          }))}
-          value={snapshot.statusFilter}
-        />
-        <IconButton icon={AddIcon} label={t.new} onClick={() => setSurface('create')} variant="message" />
+      <div className="automations-controls">
+        <label className="automations-search">
+          <SearchIcon aria-hidden size={14} />
+          <Input
+            autoComplete="off"
+            label={t.search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t.searchPlaceholder}
+            size="sm"
+            type="search"
+            value={search}
+            variant="bare"
+          />
+        </label>
+        <div className="automations-toolbar">
+          <SegmentedControl
+            className="automations-filter"
+            label={t.statusFilter}
+            onChange={(value) => automationStore.setStatusFilter(value)}
+            options={(['all', 'active', 'paused', 'completed'] as const).map((value) => ({
+              value,
+              label: t.filters[value],
+            }))}
+            value={snapshot.statusFilter}
+          />
+          <IconButton
+            icon={AddIcon}
+            label={t.new}
+            onClick={(event) => openCreate(event.currentTarget)}
+            variant="message"
+          />
+        </div>
       </div>
-      <div className="automations-list" role="list">
+
+      <div className="automations-list">
         {snapshot.loading ? <p className="automation-empty-copy">{t.loading}</p> : null}
-        {!snapshot.loading && filtered.length === 0 ? <p className="automation-empty-copy">{t.empty}</p> : null}
+        {!snapshot.loading && filtered.length === 0 ? (
+          normalizedSearch || snapshot.statusFilter !== 'all' ? (
+            <div className="automation-empty-state">
+              <SearchIcon aria-hidden size={20} />
+              <strong>{t.noMatches}</strong>
+              <p>{t.noMatchesDescription}</p>
+            </div>
+          ) : (
+            <div className="automation-empty-state">
+              <ScheduledIcon aria-hidden size={22} />
+              <strong>{t.empty}</strong>
+              <p>{t.emptyDescription}</p>
+              <Button onClick={(event) => openCreate(event.currentTarget)} size="sm" variant="primary">
+                <AddIcon size={12} />{t.new}
+              </Button>
+            </div>
+          )
+        ) : null}
         {filtered.map((automation) => {
           const unread = snapshot.unreadAutomationIds.includes(automation.id);
           return (
             <button
+              aria-label={unread ? `${automation.name}, ${t.unread}` : undefined}
               className="automation-list-row"
               key={automation.id}
-              onClick={() => {
-                automationStore.select(automation.id);
-                setSurface('detail');
-              }}
-              role="listitem"
+              onClick={(event) => openAutomation(automation, event.currentTarget)}
               type="button"
             >
               <span className="automation-list-icon"><ClockIcon size={14} /></span>
@@ -182,29 +220,136 @@ export function AutomationsView(props: AutomationsViewProps) {
                   : t.next({ value: formatRelative(automation.nextOccurrenceAt) })}</small>
               </span>
               <span className={`automation-status is-${automation.status}`}>{t.filters[automation.status]}</span>
-              {unread ? <span className="automation-unread" aria-hidden /> : null}
+              {unread ? <span className="automation-unread" aria-hidden="true" /> : null}
             </button>
           );
         })}
       </div>
-      {snapshot.error || error ? <p className="automation-error" role="alert">{snapshot.error ?? error}</p> : null}
-    </div>
-  );
-}
+      {snapshot.error || (error && !drawer) ? (
+        <p className="automation-error automation-list-error" role="alert">{snapshot.error ?? error}</p>
+      ) : null}
 
-function AutomationsSurfaceHeader(props: {
-  readonly backLabel: string;
-  readonly title: string;
-  readonly onBack: () => void;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <div className="automation-subview">
-      <header className="automation-subview-header">
-        <IconButton icon={BackIcon} label={props.backLabel} onClick={props.onBack} variant="message" />
-        <h2>{props.title}</h2>
-      </header>
-      {props.children}
+      {drawer ? (
+        <Dialog
+          backdropClassName="automation-drawer-backdrop"
+          focusKey={drawer.kind === 'create' ? 'create' : drawer.id}
+          label={drawer.kind === 'create' ? t.new : selected?.name ?? t.details}
+          onBackdropMouseDown={requestClose}
+          onEscapeKeyDown={requestClose}
+          restoreFocus={() => drawerRestoreTargetRef.current}
+          surfaceClassName="automation-drawer"
+        >
+          <AutomationDrawerResizeHandle />
+          <header className="automation-drawer-header">
+            <div className="automation-drawer-heading">
+              <h2>{drawer.kind === 'create' ? t.new : selected?.name ?? t.details}</h2>
+              {selected ? (
+                <span className={`automation-drawer-status is-${selected.status}`}>
+                  <span aria-hidden="true" />
+                  {t.filters[selected.status]}
+                </span>
+              ) : null}
+            </div>
+            <div className="automation-drawer-actions">
+              {selected?.status === 'active' ? (
+                <Button
+                  disabled={busy || dirty}
+                  onClick={() => void perform(async () => {
+                    await automationStore.startNow(selected);
+                    await automationStore.loadRunsForAutomation(selected.id);
+                  }).catch(() => undefined)}
+                  size="sm"
+                  variant="primary"
+                >
+                  <PlayIcon size={12} />{t.startNow}
+                </Button>
+              ) : null}
+              {selected ? (
+                <IconButton
+                  aria-expanded={menuOpen}
+                  disabled={busy}
+                  icon={MoreIcon}
+                  label={t.moreActions}
+                  onClick={() => setMenuOpen((open) => !open)}
+                  ref={moreButtonRef}
+                  variant="message"
+                />
+              ) : null}
+              <IconButton icon={CloseIcon} label={t.close} onClick={requestClose} variant="message" />
+            </div>
+          </header>
+          {drawer.kind === 'create' || selected ? (
+            <AutomationEditor
+              actionError={error}
+              automation={selected}
+              busy={busy}
+              key={drawer.kind === 'create' ? 'create' : drawer.id}
+              onCancel={requestClose}
+              onCreate={async (input) => {
+                const created = await perform(() => automationStore.create(input));
+                setDirty(false);
+                setDrawer({ kind: 'automation', id: created.id });
+                return created;
+              }}
+              onDirtyChange={setDirty}
+              onUpdate={(input) => perform(() => automationStore.update(input))}
+              runHistory={selected ? (
+                <AutomationRunsView
+                  automationName={selected.name}
+                  onMarkRead={(run) => perform(() => automationStore.markRunRead(run)).then(() => undefined)}
+                  onOpenThread={async (run) => {
+                    await perform(() => openRunThread(run, props.onOpenThread));
+                    closeDrawer();
+                  }}
+                  onPin={(run, pinned) => perform(() => automationStore.pinRun(run, pinned)).then(() => undefined)}
+                  runs={runs}
+                />
+              ) : undefined}
+              threads={props.threads}
+            />
+          ) : (
+            <p className="automation-empty-copy">{t.loading}</p>
+          )}
+        </Dialog>
+      ) : null}
+
+      {menuOpen && selected ? (
+        <AnchoredActionMenu
+          actions={menuActions}
+          anchorRef={moreButtonRef}
+          ariaLabel={t.moreActions}
+          className="automation-action-menu"
+          onClose={() => setMenuOpen(false)}
+          width={180}
+        />
+      ) : null}
+
+      {discardOpen ? (
+        <ConfirmDialog
+          cancelLabel={t.keepEditing}
+          confirmLabel={t.discard}
+          danger
+          message={t.discardConfirm}
+          onCancel={() => setDiscardOpen(false)}
+          onConfirm={closeDrawer}
+          title={t.discardTitle}
+        />
+      ) : null}
+
+      {deleteTarget ? (
+        <ConfirmDialog
+          cancelLabel={t.cancel}
+          confirmLabel={t.delete}
+          danger
+          message={t.deleteConfirm({ name: deleteTarget.name })}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void perform(async () => {
+            await automationStore.delete(deleteTarget);
+            closeDrawer();
+          }).catch(() => undefined)}
+          title={t.delete}
+        />
+      ) : null}
     </div>
   );
 }
@@ -222,10 +367,6 @@ function formatRelative(timestamp: number): string {
   const hours = Math.round(minutes / 60);
   if (Math.abs(hours) < 48) return formatter.format(hours, 'hour');
   return formatter.format(Math.round(hours / 24), 'day');
-}
-
-function formatDate(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
 }
 
 function errorMessage(error: unknown): string {

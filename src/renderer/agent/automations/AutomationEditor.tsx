@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { Automation, AutomationCreateInput, AutomationUpdateInput } from '../../../core/agent/automation';
-import type { Thread } from '../../../core/agent/protocol';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type {
+  Automation,
+  AutomationCreateInput,
+  AutomationUpdateInput,
+} from '../../../core/agent/automation';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
+import type { Thread } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, TrashIcon } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
 import { Field } from '../../ui/primitives/Field';
+import { IconButton } from '../../ui/primitives/IconButton';
 import { Input } from '../../ui/primitives/Input';
 import { SegmentedControl } from '../../ui/primitives/SegmentedControl';
 import { SelectControl } from '../../ui/primitives/SelectControl';
 import { Textarea } from '../../ui/primitives/Textarea';
-import { IconButton } from '../../ui/primitives/IconButton';
 
 type Frequency = 'once' | 'hourly' | 'daily' | 'weekly' | 'custom';
 type ProjectMode = 'none' | 'local' | 'worktree';
@@ -19,29 +23,55 @@ type ProjectBindingDraft = {
   readonly cwd: string;
   readonly executionMode: Exclude<ProjectMode, 'none'>;
 };
+
 export interface CapabilityListDraft {
-  readonly mode: 'inherit' | 'explicit';
+  readonly mode: 'inherit' | 'none' | 'allowlist';
   readonly value: string;
 }
 
 interface AutomationEditorProps {
+  readonly actionError: string | null;
   readonly automation: Automation | null;
-  readonly threads: readonly Thread[];
   readonly busy: boolean;
   readonly onCancel: () => void;
-  readonly onCreate: (input: AutomationCreateInput) => Promise<void>;
-  readonly onUpdate: (input: AutomationUpdateInput) => Promise<void>;
+  readonly onCreate: (input: AutomationCreateInput) => Promise<Automation>;
+  readonly onDirtyChange: (dirty: boolean) => void;
+  readonly onUpdate: (input: AutomationUpdateInput) => Promise<Automation>;
+  readonly runHistory?: ReactNode;
+  readonly threads: readonly Thread[];
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
   const t = useT().agent.automations;
-  const initial = useMemo(() => editorState(props.automation), [props.automation]);
+  const automationKey = props.automation?.id ?? 'create';
+  const initial = useMemo(() => editorState(props.automation), [automationKey]);
   const [state, setState] = useState(initial);
+  const [baselineSignature, setBaselineSignature] = useState(() => stateSignature(initial));
   const [error, setError] = useState<string | null>(null);
+  const revisionRef = useRef(props.automation?.revision ?? null);
+  const dirty = stateSignature(state) !== baselineSignature;
+
   useEffect(() => {
     setState(initial);
+    setBaselineSignature(stateSignature(initial));
     setError(null);
-  }, [initial]);
+    revisionRef.current = props.automation?.revision ?? null;
+  }, [automationKey, initial]);
+
+  useEffect(() => {
+    props.onDirtyChange(dirty);
+  }, [dirty, props.onDirtyChange]);
+
+  useEffect(() => {
+    if (!props.automation || props.automation.id !== automationKey || dirty) return;
+    const incoming = editorState(props.automation);
+    const incomingSignature = stateSignature(incoming);
+    if (incomingSignature !== baselineSignature) {
+      setState(incoming);
+      setBaselineSignature(incomingSignature);
+    }
+    revisionRef.current = props.automation.revision;
+  }, [automationKey, baselineSignature, dirty, props.automation]);
 
   const destinationThreads = props.threads.filter((thread) => (
     !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user'
@@ -58,20 +88,20 @@ export function AutomationEditor(props: AutomationEditorProps) {
       ) throw new Error(t.required);
       const destination = state.destination === 'standalone'
         ? { kind: 'standalone' as const }
-        : { kind: 'existingThread' as const, threadId: required(state.threadId, t.thread) };
+        : { kind: 'existingThread' as const, threadId: required(state.threadId, t.fieldRequired({ field: t.thread })) };
       const projectBindings = state.projectBindings.map((binding) => ({
         ...binding,
         id: binding.id || crypto.randomUUID(),
-        cwd: required(binding.cwd, t.cwd),
+        cwd: required(binding.cwd, t.fieldRequired({ field: t.cwd })),
       }));
       const definition: AutomationCreateInput = {
         name: state.name.trim(),
         prompt: state.prompt.trim(),
         schedule: {
           rrule: state.frequency === 'custom'
-            ? required(state.rrule, t.rrule)
+            ? required(state.rrule, t.fieldRequired({ field: t.rrule }))
             : scheduleRrule(state.startAt, state.frequency),
-          timezone: required(state.timezone, t.timezone),
+          timezone: required(state.timezone, t.fieldRequired({ field: t.timezone })),
         },
         destination,
         projectBindings,
@@ -86,15 +116,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
           mcpServers: capabilityListValue(state.mcpServers),
         },
       };
+      let saved: Automation;
       if (props.automation) {
-        await props.onUpdate({
+        saved = await props.onUpdate({
           id: props.automation.id,
-          expectedRevision: props.automation.revision,
+          expectedRevision: revisionRef.current ?? props.automation.revision,
           ...definition,
         });
       } else {
-        await props.onCreate(definition);
+        saved = await props.onCreate(definition);
       }
+      revisionRef.current = saved.revision;
+      setBaselineSignature(stateSignature(state));
+      props.onDirtyChange(false);
     } catch (submitError) {
       setError(errorMessage(submitError));
     }
@@ -103,105 +137,62 @@ export function AutomationEditor(props: AutomationEditorProps) {
   return (
     <form className="automation-editor" onSubmit={(event) => void submit(event)}>
       <div className="automation-editor-scroll">
-        <Field label={t.name}>
-          <Input
-            disabled={props.busy}
-            label={t.name}
-            onChange={(event) => setState({ ...state, name: event.target.value })}
-            value={state.name}
-          />
-        </Field>
-        <Field label={t.prompt}>
-          <Textarea
-            className="automation-prompt-input"
-            disabled={props.busy}
-            label={t.prompt}
-            onChange={(event) => setState({ ...state, prompt: event.target.value })}
-            rows={5}
-            value={state.prompt}
-          />
-        </Field>
-
-        <section className="automation-editor-section">
-          <h3>{t.schedule}</h3>
-          <Field as="div" label={t.frequency}>
-            <SegmentedControl
-              className="automation-editor-segments"
-              label={t.frequency}
-              onChange={(frequency) => setState({ ...state, frequency })}
-              options={([
-                ['once', t.frequencies.once],
-                ['hourly', t.frequencies.hourly],
-                ['daily', t.frequencies.daily],
-                ['weekly', t.frequencies.weekly],
-                ['custom', t.frequencies.custom],
-              ] as const).map(([value, label]) => ({ value, label }))}
-              value={state.frequency}
-            />
-          </Field>
-          {state.frequency !== 'custom' ? (
-            <Field label={t.startAt}>
-              <Input
-                disabled={props.busy}
-                label={t.startAt}
-                onChange={(event) => setState({ ...state, startAt: event.target.value })}
-                type="datetime-local"
-                value={state.startAt}
-              />
-            </Field>
-          ) : null}
-          <Field label={t.timezone}>
+        <section className="automation-editor-intro">
+          <Field label={t.name}>
             <Input
+              autoComplete="off"
               disabled={props.busy}
-              label={t.timezone}
-              onChange={(event) => setState({ ...state, timezone: event.target.value })}
-              value={state.timezone}
+              label={t.name}
+              onChange={(event) => setState({ ...state, name: event.target.value })}
+              value={state.name}
             />
           </Field>
-          {state.frequency === 'custom' ? (
-            <Field label={t.rrule}>
-              <Textarea
-                className="automation-rrule-input"
-                disabled={props.busy}
-                label={t.rrule}
-                onChange={(event) => setState({ ...state, rrule: event.target.value })}
-                rows={3}
-                value={state.rrule}
-              />
-            </Field>
-          ) : null}
+          <Field label={t.prompt}>
+            <Textarea
+              className="automation-prompt-input"
+              disabled={props.busy}
+              label={t.prompt}
+              onChange={(event) => setState({ ...state, prompt: event.target.value })}
+              rows={5}
+              value={state.prompt}
+            />
+          </Field>
         </section>
 
         <section className="automation-editor-section">
-          <h3>{t.destination}</h3>
-          <SegmentedControl
-            className="automation-editor-segments"
-            label={t.destination}
-            onChange={(destination) => setState({
-              ...state,
-              destination,
-              projectBindings: destination === 'existingThread'
-                ? state.projectBindings.slice(0, 1).map((binding) => ({
-                    ...binding,
-                    executionMode: 'local' as const,
-                  }))
-                : state.projectBindings,
-            })}
-            options={[
-              { value: 'standalone', label: t.destinations.standalone },
-              { value: 'existingThread', label: t.destinations.existingThread },
-            ]}
-            value={state.destination}
-          />
+          <h3>{t.executionDetails}</h3>
+          <Field as="div" label={t.destination}>
+            <SegmentedControl
+              className="automation-editor-segments"
+              disabled={props.busy}
+              label={t.destination}
+              onChange={(destination) => setState({
+                ...state,
+                destination,
+                projectBindings: destination === 'existingThread'
+                  ? state.projectBindings.slice(0, 1).map((binding) => ({
+                      ...binding,
+                      executionMode: 'local' as const,
+                    }))
+                  : state.projectBindings,
+              })}
+              options={[
+                { value: 'standalone', label: t.destinations.standalone },
+                { value: 'existingThread', label: t.destinations.existingThread },
+              ]}
+              value={state.destination}
+            />
+          </Field>
           {state.destination === 'existingThread' ? (
             <Field label={t.thread}>
               <SelectControl
+                disabled={props.busy}
                 label={t.thread}
                 onChange={(event) => setState({ ...state, threadId: event.target.value })}
                 value={state.threadId}
                 variant="boxed"
               >
-                <option value="">{t.thread}</option>
+                <option value="">{t.selectThread}</option>
                 {destinationThreads.map((thread) => (
                   <option key={thread.id} value={thread.id}>
                     {thread.name || thread.preview || thread.id}
@@ -210,36 +201,37 @@ export function AutomationEditor(props: AutomationEditorProps) {
               </SelectControl>
             </Field>
           ) : null}
-        </section>
 
-        <section className="automation-editor-section">
-          <h3>{t.project}</h3>
-          <SegmentedControl
-            className="automation-editor-segments"
-            label={t.project}
-            onChange={(projectMode) => setState({
-              ...state,
-              projectBindings: projectMode === 'none'
-                ? []
-                : state.projectBindings.length === 0
-                  ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
-                  : state.projectBindings.map((binding, index) => (
-                      index === 0 ? { ...binding, executionMode: projectMode } : binding
-                    )),
-            })}
-            options={[
-              { value: 'none', label: t.projects.none },
-              { value: 'local', label: t.projects.local },
-              ...(state.destination === 'standalone'
-                ? [{ value: 'worktree' as const, label: t.projects.worktree }]
-                : []),
-            ]}
-            value={state.projectBindings[0]?.executionMode ?? 'none'}
-          />
+          <Field as="div" label={t.project}>
+            <SegmentedControl
+              className="automation-editor-segments"
+              disabled={props.busy}
+              label={t.project}
+              onChange={(projectMode) => setState({
+                ...state,
+                projectBindings: projectMode === 'none'
+                  ? []
+                  : state.projectBindings.length === 0
+                    ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
+                    : state.projectBindings.map((binding, index) => (
+                        index === 0 ? { ...binding, executionMode: projectMode } : binding
+                      )),
+              })}
+              options={[
+                { value: 'none', label: t.projects.none },
+                { value: 'local', label: t.projects.local },
+                ...(state.destination === 'standalone'
+                  ? [{ value: 'worktree' as const, label: t.projects.worktree }]
+                  : []),
+              ]}
+              value={state.projectBindings[0]?.executionMode ?? 'none'}
+            />
+          </Field>
           {state.projectBindings.map((binding, index) => (
             <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
               {index > 0 ? (
                 <SelectControl
+                  disabled={props.busy}
                   label={t.projectMode({ index: index + 1 })}
                   onChange={(event) => setState({
                     ...state,
@@ -300,56 +292,129 @@ export function AutomationEditor(props: AutomationEditorProps) {
               <AddIcon size={12} />{t.addProject}
             </Button>
           ) : null}
+
+          <div className="automation-editor-field-grid">
+            <Field label={t.profile}>
+              <Input disabled={props.busy} label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
+            </Field>
+            <Field label={t.modelProvider}>
+              <Input disabled={props.busy} label={t.modelProvider} onChange={(event) => setState({ ...state, modelProvider: event.target.value })} placeholder={t.inherited} value={state.modelProvider} />
+            </Field>
+            <Field label={t.model}>
+              <Input disabled={props.busy} label={t.model} onChange={(event) => setState({ ...state, model: event.target.value })} placeholder={t.inherited} value={state.model} />
+            </Field>
+            <Field label={t.reasoning}>
+              <SelectControl disabled={props.busy} label={t.reasoning} onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })} value={state.reasoningEffort} variant="boxed">
+                <option value="">{t.inherited}</option>
+                {REASONING_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+              </SelectControl>
+            </Field>
+          </div>
+        </section>
+
+        <section className="automation-editor-section">
+          <h3>{t.frequency}</h3>
+          <Field as="div" label={t.frequency}>
+            <SegmentedControl
+              className="automation-editor-segments automation-frequency-segments"
+              disabled={props.busy}
+              label={t.frequency}
+              onChange={(frequency) => setState({ ...state, frequency })}
+              options={([
+                ['once', t.frequencies.once],
+                ['hourly', t.frequencies.hourly],
+                ['daily', t.frequencies.daily],
+                ['weekly', t.frequencies.weekly],
+                ['custom', t.frequencies.custom],
+              ] as const).map(([value, label]) => ({ value, label }))}
+              value={state.frequency}
+            />
+          </Field>
+          <div className="automation-editor-field-grid">
+            {state.frequency !== 'custom' ? (
+              <Field label={t.startAt}>
+                <Input
+                  disabled={props.busy}
+                  label={t.startAt}
+                  onChange={(event) => setState({ ...state, startAt: event.target.value })}
+                  type="datetime-local"
+                  value={state.startAt}
+                />
+              </Field>
+            ) : null}
+            <Field label={t.timezone}>
+              <Input
+                disabled={props.busy}
+                label={t.timezone}
+                onChange={(event) => setState({ ...state, timezone: event.target.value })}
+                value={state.timezone}
+              />
+            </Field>
+          </div>
+          {state.frequency === 'custom' ? (
+            <Field label={t.rrule}>
+              <Textarea
+                className="automation-rrule-input"
+                disabled={props.busy}
+                label={t.rrule}
+                onChange={(event) => setState({ ...state, rrule: event.target.value })}
+                rows={3}
+                value={state.rrule}
+              />
+            </Field>
+          ) : null}
         </section>
 
         <details className="automation-configuration">
-          <summary>{t.configuration}</summary>
-          <Field label={t.profile}>
-            <Input label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
-          </Field>
-          <Field label={t.modelProvider}>
-            <Input label={t.modelProvider} onChange={(event) => setState({ ...state, modelProvider: event.target.value })} placeholder={t.inherited} value={state.modelProvider} />
-          </Field>
-          <Field label={t.model}>
-            <Input label={t.model} onChange={(event) => setState({ ...state, model: event.target.value })} placeholder={t.inherited} value={state.model} />
-          </Field>
-          <Field label={t.reasoning}>
-            <SelectControl label={t.reasoning} onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })} value={state.reasoningEffort} variant="boxed">
-              <option value="">{t.inherited}</option>
-              {REASONING_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-            </SelectControl>
-          </Field>
-          {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
-            <Field as="div" key={key} label={t[key]}>
-              <div className="automation-capability-list">
-                <SegmentedControl
-                  className="automation-capability-mode"
-                  label={t[key]}
-                  onChange={(mode) => setState({ ...state, [key]: { ...state[key], mode } })}
-                  options={[
-                    { value: 'inherit', label: t.inherited },
-                    { value: 'explicit', label: t.explicit },
-                  ]}
-                  value={state[key].mode}
-                />
-                <Input
-                  disabled={props.busy || state[key].mode === 'inherit'}
-                  label={t[key]}
-                  onChange={(event) => setState({
-                    ...state,
-                    [key]: { ...state[key], value: event.target.value },
-                  })}
-                  value={state[key].value}
-                />
-              </div>
-            </Field>
-          ))}
+          <summary>{t.advancedCapabilities}</summary>
+          <div className="automation-configuration-fields">
+            {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
+              <Field as="div" key={key} label={t[key]}>
+                <div className="automation-capability-list">
+                  <SegmentedControl
+                    className="automation-capability-mode"
+                    disabled={props.busy}
+                    label={t[key]}
+                    onChange={(mode) => setState({ ...state, [key]: { ...state[key], mode } })}
+                    options={[
+                      { value: 'inherit', label: t.capabilityModes.inherit },
+                      { value: 'none', label: t.capabilityModes.none },
+                      { value: 'allowlist', label: t.capabilityModes.allowlist },
+                    ]}
+                    value={state[key].mode}
+                  />
+                  {state[key].mode === 'allowlist' ? (
+                    <Input
+                      disabled={props.busy}
+                      label={t[key]}
+                      onChange={(event) => setState({
+                        ...state,
+                        [key]: { ...state[key], value: event.target.value },
+                      })}
+                      placeholder={t.capabilityListPlaceholder}
+                      value={state[key].value}
+                    />
+                  ) : null}
+                </div>
+              </Field>
+            ))}
+          </div>
         </details>
-        {error ? <p className="automation-error" role="alert">{error}</p> : null}
+
+        {props.automation ? (
+          <section className="automation-editor-section automation-runs-section">
+            <h3>{t.previousRuns}</h3>
+            {props.runHistory}
+          </section>
+        ) : null}
+
+        {error || props.actionError ? (
+          <p className="automation-error" role="alert">{error ?? props.actionError}</p>
+        ) : null}
       </div>
       <footer className="automation-editor-actions">
         <Button disabled={props.busy} onClick={props.onCancel} variant="ghost">{t.cancel}</Button>
-        <Button disabled={props.busy} type="submit" variant="primary">
+        <Button disabled={props.busy || (Boolean(props.automation) && !dirty)} type="submit" variant="primary">
           {props.automation ? t.save : t.create}
         </Button>
       </footer>
@@ -398,6 +463,10 @@ function editorState(automation: Automation | null): EditorState {
     plugins: capabilityListDraft(automation?.configuration.plugins ?? null),
     mcpServers: capabilityListDraft(automation?.configuration.mcpServers ?? null),
   };
+}
+
+function stateSignature(state: EditorState): string {
+  return JSON.stringify(state);
 }
 
 export function scheduleRrule(startAt: string, frequency: Exclude<Frequency, 'custom'>): string {
@@ -454,18 +523,19 @@ function nullable(value: string): string | null {
 }
 
 export function capabilityListDraft(value: readonly string[] | null): CapabilityListDraft {
-  return value === null
-    ? { mode: 'inherit', value: '' }
-    : { mode: 'explicit', value: value.join(', ') };
+  if (value === null) return { mode: 'inherit', value: '' };
+  if (value.length === 0) return { mode: 'none', value: '' };
+  return { mode: 'allowlist', value: value.join(', ') };
 }
 
 export function capabilityListValue(draft: CapabilityListDraft): readonly string[] | null {
   if (draft.mode === 'inherit') return null;
+  if (draft.mode === 'none') return [];
   return Object.freeze([...new Set(draft.value.split(',').map((item) => item.trim()).filter(Boolean))]);
 }
 
-function required(value: string, field: string): string {
-  if (!value.trim()) throw new Error(`${field} is required.`);
+function required(value: string, message: string): string {
+  if (!value.trim()) throw new Error(message);
   return value.trim();
 }
 

@@ -202,19 +202,33 @@ response and notification before renderer state changes.
 
 The Automations surface is opened from the anchored Thread list. It is loaded as
 a separate React chunk so the default Thread composer does not pay its editor and
-schedule cost. The surface provides status filters, next occurrence, unread
-runs, editor, pause/resume, Start now, delete confirmation, and recent-run links
-to canonical Threads. `pending` and `dispatched` are presented as Pending and
-Started rather than exposing scheduler jargon. A pending reserved standalone
-Thread is not navigable until its Turn is dispatched.
+schedule cost. Its main surface is a compact searchable list with status filters,
+next occurrence, and unread state. Selecting an Automation, or creating one,
+opens the same modal bottom drawer over the list. The drawer is bottom-aligned,
+defaults to 80% height with a 52px top gap, keeps a 360px minimum where the
+viewport permits, supports pointer and Arrow Up/Down resizing, and persists its
+normalized height as a best-effort renderer preference.
+
+The drawer is the sole create/detail/edit surface. Existing fields are directly
+editable as one local draft, with an atomic Save/Cancel footer and discard
+confirmation before a dirty draft closes. Its information order is status and
+actions; name and prompt; execution details; frequency; advanced capabilities;
+then previous runs. Capability controls preserve inherit (`null`), explicitly
+none (`[]`), and exact allowlist states. Start now, pause/resume, delete, and
+worktree pinning operate through their canonical commands rather than form
+mutation. `pending` and `dispatched` are presented as Pending and Started rather
+than exposing scheduler jargon. A pending reserved standalone Thread is not
+navigable until its Turn is dispatched.
 
 Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including
 delete tombstones, so an old response cannot undo a pause, completion, run
 transition, or delete. The surface never renders a copied transcript or Issue
 activity model. List unread state is queried per Automation rather than inferred
-from a globally capped run page, and opening details loads that Automation's own
-recent run page.
+from a globally capped run page, and opening the drawer loads that Automation's
+own recent run page. Selecting a dispatched run closes the drawer and opens its
+canonical Thread/Turn. There are no local substitutes for ChatGPT cloud
+Suggestions or Automation-level notification settings.
 
 ## Replacement Boundary
 

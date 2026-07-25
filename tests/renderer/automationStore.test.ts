@@ -11,6 +11,7 @@ import {
   frequencyFromRrule,
   scheduleRrule,
 } from '../../src/renderer/agent/automations/AutomationEditor';
+import { clampAutomationDrawerHeight } from '../../src/renderer/agent/automations/AutomationDrawerResize';
 import {
   AutomationRendererStore,
   type AutomationStoreClient,
@@ -252,11 +253,18 @@ describe('renderer Automation store', () => {
 
   test('preserves inherited, explicitly empty, and explicit capability lists', () => {
     expect(capabilityListDraft(null)).toEqual({ mode: 'inherit', value: '' });
-    expect(capabilityListDraft([])).toEqual({ mode: 'explicit', value: '' });
+    expect(capabilityListDraft([])).toEqual({ mode: 'none', value: '' });
+    expect(capabilityListDraft(['skill-a'])).toEqual({ mode: 'allowlist', value: 'skill-a' });
     expect(capabilityListValue({ mode: 'inherit', value: 'skill-a' })).toBeNull();
-    expect(capabilityListValue({ mode: 'explicit', value: '' })).toEqual([]);
-    expect(capabilityListValue({ mode: 'explicit', value: 'skill-a, skill-a, skill-b' }))
+    expect(capabilityListValue({ mode: 'none', value: 'skill-a' })).toEqual([]);
+    expect(capabilityListValue({ mode: 'allowlist', value: 'skill-a, skill-a, skill-b' }))
       .toEqual(['skill-a', 'skill-b']);
+  });
+
+  test('clamps the Automation drawer to its available height', () => {
+    expect(clampAutomationDrawerHeight(200, 800)).toBe(360);
+    expect(clampAutomationDrawerHeight(900, 800)).toBe(800);
+    expect(clampAutomationDrawerHeight(300, 280)).toBe(280);
   });
 });
 
