@@ -446,23 +446,7 @@
   text-overflow: ellipsis;
 }
 
-.automation-setting-input {
-  width: 100%;
-  padding-right: var(--space-2);
-  padding-left: var(--space-2);
-  color: var(--text-primary);
-  font-size: var(--font-ui-sm);
-  font-weight: 500;
-  text-align: right;
-}
-
-.automation-setting-input:focus-visible {
-  border-radius: var(--radius-sm);
-  box-shadow: var(--focus-ring-shadow);
-}
-
-.automation-project-details,
-.automation-schedule-detail {
+.automation-project-details {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
@@ -490,11 +474,147 @@
   grid-column: 1 / -1;
 }
 
-.automation-rrule-input {
-  min-height: 76px;
-  resize: vertical;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-code-block);
+.automation-date-trigger,
+.automation-multi-select-trigger,
+.automation-number-setting,
+.automation-number-input {
+  min-width: 0;
+  justify-self: end;
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+}
+
+.automation-date-trigger {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  text-align: right;
+}
+
+.automation-date-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.automation-date-trigger:hover:not(:disabled),
+.automation-date-trigger[aria-expanded="true"] {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.automation-date-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.automation-date-trigger:disabled {
+  opacity: 0.45;
+}
+
+.automation-multi-select-trigger {
+  display: flex;
+  max-width: 100%;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  text-align: right;
+}
+
+.automation-multi-select-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-multi-select-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.automation-multi-select-trigger:hover:not(:disabled),
+.automation-multi-select-trigger[aria-expanded="true"] {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.automation-multi-select-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.automation-multi-select-trigger:disabled {
+  opacity: 0.45;
+}
+
+.automation-multi-select-menu {
+  z-index: var(--z-popover);
+  display: grid;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+}
+
+.automation-multi-select-option {
+  display: grid;
+  min-height: 30px;
+  align-items: center;
+  grid-template-columns: var(--checkbox-mark-size) minmax(0, 1fr);
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  padding: 0 var(--space-3);
+  text-align: left;
+}
+
+.automation-multi-select-option:hover,
+.automation-multi-select-option:focus-visible,
+.automation-multi-select-option.active {
+  background: var(--fill-2);
+}
+
+.automation-multi-select-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.automation-number-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.automation-number-setting input,
+.automation-number-input {
+  width: 52px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  padding: var(--space-2);
+  text-align: right;
+}
+
+.automation-number-setting input:hover,
+.automation-number-input:hover {
+  background: var(--fill-2);
+}
+
+.automation-number-setting input:focus-visible,
+.automation-number-input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .automation-configuration > summary {

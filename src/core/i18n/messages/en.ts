@@ -987,17 +987,38 @@ commandPalette: {
       prompt: 'Prompt',
       frequency: 'Frequency',
       repeat: 'Repeat',
-      frequencies: { once: 'Once', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', custom: 'Custom' },
+      frequencies: {
+        once: 'Once', hourly: 'Hourly', daily: 'Daily', weekdays: 'Weekdays', weekly: 'Weekly', custom: 'Custom',
+      },
       date: 'Date',
-      startsAt: 'Starts',
       weekday: 'On',
       weekdays: {
         MO: 'Monday', TU: 'Tuesday', WE: 'Wednesday', TH: 'Thursday',
         FR: 'Friday', SA: 'Saturday', SU: 'Sunday',
       },
+      weekdayShort: { MO: 'Mo', TU: 'Tu', WE: 'We', TH: 'Th', FR: 'Fr', SA: 'Sa', SU: 'Su' },
+      repeats: 'Repeats',
+      every: 'Every',
+      customFrequencies: {
+        hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly',
+      },
+      intervalUnit: ({ frequency, count }: {
+        frequency: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+        count: number;
+      }) => {
+        const singular = { hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year' }[frequency];
+        return count === 1 ? singular : `${singular}s`;
+      },
+      inMonth: 'In',
+      onDays: 'On days',
+      atMinute: 'At minute',
+      daysSelected: ({ count }: { count: number }) => `${count} days`,
+      months: [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ],
       startAt: 'At',
       timezone: 'Timezone',
-      rrule: 'RRULE',
       destination: 'Runs in',
       destinations: { standalone: 'New Thread', existingThread: 'Existing Thread' },
       thread: 'Thread',

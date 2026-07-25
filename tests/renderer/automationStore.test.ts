@@ -8,9 +8,13 @@ import type {
 import {
   capabilityListDraft,
   capabilityListValue,
-  frequencyFromRrule,
-  scheduleRrule,
 } from '../../src/renderer/agent/automations/AutomationEditor';
+import {
+  automationScheduleRrule,
+  createAutomationScheduleDraft,
+  isAutomationScheduleDraftValid,
+  scheduleModeFromRrule,
+} from '../../src/renderer/agent/automations/AutomationScheduleDraft';
 import { clampAutomationDrawerHeight } from '../../src/renderer/agent/automations/AutomationDrawerResize';
 import {
   AutomationRendererStore,
@@ -237,21 +241,70 @@ describe('renderer Automation store', () => {
     expect(store.getSnapshot().automations).toEqual([currentAutomation]);
   });
 
-  test('generates six-digit floating DTSTART values for editor presets', () => {
-    expect(scheduleRrule('2026-07-24T09:05', 'once')).toBe(
+  test('round-trips every structured Automation schedule mode', () => {
+    const sources = [
       'DTSTART:20260724T090500\nRRULE:FREQ=DAILY;COUNT=1',
+      'DTSTART:20260724T090000\nRRULE:FREQ=HOURLY',
+      'DTSTART:20260724T090500\nRRULE:FREQ=DAILY',
+      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR',
+      'DTSTART:20260724T090500\nRRULE:FREQ=HOURLY;INTERVAL=2;BYMINUTE=5',
+      'DTSTART:20260724T090500\nRRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=5',
+      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;BYHOUR=9;BYMINUTE=5',
+      'DTSTART:20260724T090500\nRRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1,15;BYHOUR=9;BYMINUTE=5',
+      'DTSTART:20260724T090500\nRRULE:FREQ=YEARLY;INTERVAL=1;BYMONTH=7;BYMONTHDAY=24;BYHOUR=9;BYMINUTE=5',
+    ];
+    for (const source of sources) {
+      expect(automationScheduleRrule(createAutomationScheduleDraft(source))).toBe(source);
+    }
+    expect(scheduleModeFromRrule(sources[0]!)).toBe('once');
+    expect(scheduleModeFromRrule(sources[1]!)).toBe('hourly');
+    expect(scheduleModeFromRrule(sources[2]!)).toBe('daily');
+    expect(scheduleModeFromRrule(sources[3]!)).toBe('weekdays');
+    expect(scheduleModeFromRrule(sources[4]!)).toBe('weekly');
+    expect(scheduleModeFromRrule(sources[5]!)).toBe('custom');
+  });
+
+  test('requires at least one weekday or month day for structured schedules', () => {
+    const draft = createAutomationScheduleDraft(
+      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE',
     );
-    expect(scheduleRrule('2026-07-24T09:05', 'weekly')).toBe(
-      'DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=FR',
+    expect(isAutomationScheduleDraftValid({ ...draft, weekdays: [] })).toBe(false);
+    expect(isAutomationScheduleDraftValid({ ...draft, weekdays: ['MO', 'MO'] })).toBe(false);
+    expect(isAutomationScheduleDraftValid({
+      ...draft,
+      mode: 'custom',
+      customFrequency: 'monthly',
+      monthDays: [],
+    })).toBe(false);
+    expect(isAutomationScheduleDraftValid({
+      ...draft,
+      mode: 'custom',
+      customFrequency: 'monthly',
+      monthDays: [1, 1],
+    })).toBe(false);
+  });
+
+  test('preserves an untouched advanced RRULE until a structured field changes', () => {
+    const source = 'DTSTART:20260724T090530\nRRULE:FREQ=DAILY;COUNT=3';
+    const draft = createAutomationScheduleDraft(source);
+    expect(draft.sourceRrule).toBe(source);
+    expect(automationScheduleRrule(draft)).toBe(source);
+    expect(automationScheduleRrule({ ...draft, sourceRrule: null })).toBe(
+      'DTSTART:20260724T090500\nRRULE:FREQ=DAILY;INTERVAL=1;BYHOUR=9;BYMINUTE=5',
     );
-    expect(scheduleRrule('2026-07-24T09:05', 'weekly', 'MO')).toBe(
-      'DTSTART:20260727T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO',
-    );
-    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=DAILY')).toBe('daily');
-    expect(frequencyFromRrule('DTSTART:20260724T090530\nRRULE:FREQ=DAILY')).toBe('custom');
-    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=DAILY;COUNT=3')).toBe('custom');
-    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=HOURLY;INTERVAL=2')).toBe('custom');
-    expect(frequencyFromRrule('DTSTART:20260724T090500\nRRULE:FREQ=WEEKLY;BYDAY=MO')).toBe('weekly');
+  });
+
+  test('preserves RRULE values outside the structured scalar and list subset', () => {
+    const sources = [
+      'DTSTART:20260724T090000\nRRULE:FREQ=DAILY;INTERVAL=1;BYHOUR=9,10;BYMINUTE=0',
+      'DTSTART:20260724T090000\nRRULE:FREQ=HOURLY;INTERVAL=1;BYMINUTE=0,30',
+      'DTSTART:20260727T090000\nRRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,MO;BYHOUR=9;BYMINUTE=0',
+      'DTSTART:20260724T090000\nRRULE:FREQ=YEARLY;INTERVAL=1;BYMONTH=7,8;BYMONTHDAY=24;BYHOUR=9;BYMINUTE=0',
+    ];
+    for (const source of sources) {
+      expect(automationScheduleRrule(createAutomationScheduleDraft(source))).toBe(source);
+    }
   });
 
   test('preserves inherited, explicitly empty, and explicit capability lists', () => {

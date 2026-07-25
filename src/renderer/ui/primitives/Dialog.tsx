@@ -66,6 +66,15 @@ export function Dialog({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
+      // React events from a portaled child overlay still bubble through the
+      // component tree. The child owns Escape while it is mounted, even when it
+      // restored focus to a trigger inside the dialog before this handler runs.
+      if (
+        event.defaultPrevented
+        || event.nativeEvent.defaultPrevented
+        || document.querySelector('[data-dialog-nested-overlay="true"]')
+        || (event.target instanceof Node && !surfaceRef.current?.contains(event.target))
+      ) return;
       event.stopPropagation();
       onEscapeKeyDown?.();
       return;
@@ -98,7 +107,10 @@ export function Dialog({
       className={backdropClassName}
       onMouseDown={(event) => {
         const target = event.target as Node;
-        if (surfaceRef.current?.contains(target)) return;
+        if (
+          surfaceRef.current?.contains(target)
+          || isNestedDialogOverlayTarget(target)
+        ) return;
         onBackdropMouseDown?.();
       }}
     >
@@ -116,4 +128,10 @@ export function Dialog({
       </section>
     </div>
   );
+}
+
+function isNestedDialogOverlayTarget(target: EventTarget | null): boolean {
+  const closest = (target as { closest?: (selector: string) => Element | null } | null)?.closest;
+  return typeof closest === 'function'
+    && Boolean(closest.call(target, '[data-dialog-nested-overlay="true"]'));
 }

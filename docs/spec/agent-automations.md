@@ -25,8 +25,8 @@ Local wall time remains stable across timezone offset changes. A nonexistent
 spring-forward wall time is skipped; an ambiguous fall-back wall time runs once
 at its first matching instant. A UTC `UNTIL` remains an absolute instant and is
 checked after converting each wall occurrence; a local `UNTIL` remains a wall
-boundary. The renderer's Once, Hourly, Daily, Weekly, and Custom controls all
-produce this same representation.
+boundary. The renderer's Once, Hourly, Daily, Weekdays, Weekly, and Custom
+controls all produce this same representation.
 
 An `AutomationRun` is a narrow scheduling and routing record. It captures the
 Automation revision, scheduled instant, one project binding, complete saved
@@ -217,13 +217,26 @@ editable as one local draft, with an atomic Save/Cancel footer and discard
 confirmation before a dirty draft closes. Its reading order follows the task
 rather than the storage schema: name and prompt; a grouped Details table for
 destination, project, model, and reasoning; a grouped Frequency table whose
-conditional rows expose the complete preset (date and time for once, start for
-hourly, time for daily, weekday and time for weekly), followed by timezone;
-previous runs; then advanced Profile and capability fields.
+conditional rows expose the complete preset (date and time for once, no
+additional value for hourly, time for daily and weekdays, or multiple weekdays
+and time for weekly), followed by timezone; previous runs; then advanced Profile
+and capability fields. Custom is a structured rule builder rather than a protocol
+text field: it supports hourly, daily, weekly, monthly, and yearly frequency,
+interval, multi-select weekdays, month, multi-select month days, minute past the
+hour, and time as applicable. Every renderer schedule is compiled to and opened
+from the same canonical RRULE.
+An existing canonical rule outside the structured subset remains the unchanged
+schedule source while the user edits non-schedule fields. The first schedule-field
+edit deliberately replaces it with the visible structured definition, so editing
+an Automation never rewrites hidden recurrence semantics accidentally.
 Model choices come from the currently usable provider catalog and atomically set
 the provider-qualified model selection; timezone choices come from the runtime's
-supported IANA timezone catalog. Raw RRULE is visible only for a custom schedule. Capability controls preserve
-inherit (`null`), explicitly none (`[]`), and exact allowlist states. Start now,
+supported IANA timezone catalog. Once reuses the Outliner calendar popover for
+date selection, including its month navigation, keyboard model, and Today action.
+Schedule-only time values use a finite 15-minute selector; weekday and month-day
+selectors are multi-select menus that cannot be emptied.
+Capability controls preserve inherit (`null`), explicitly none (`[]`), and exact
+allowlist states. Start now,
 pause/resume, delete, and worktree pinning operate through their canonical
 commands rather than form mutation. `pending` and `dispatched` are presented as
 Pending and Started rather than exposing scheduler jargon. A pending reserved

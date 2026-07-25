@@ -18,11 +18,14 @@ import { Input } from '../../ui/primitives/Input';
 import { SegmentedControl } from '../../ui/primitives/SegmentedControl';
 import { SelectControl } from '../../ui/primitives/SelectControl';
 import { Textarea } from '../../ui/primitives/Textarea';
+import { AutomationScheduleEditor } from './AutomationScheduleEditor';
+import {
+  automationScheduleRrule,
+  createAutomationScheduleDraft,
+  isAutomationScheduleDraftValid,
+  type AutomationScheduleDraft,
+} from './AutomationScheduleDraft';
 
-type Frequency = 'once' | 'hourly' | 'daily' | 'weekly' | 'custom';
-const WEEKDAY_TOKENS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'] as const;
-type WeekdayToken = typeof WEEKDAY_TOKENS[number];
-const WEEKDAY_TOKENS_BY_DAY: readonly WeekdayToken[] = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 type ProjectMode = 'none' | 'local' | 'worktree';
 type ProjectBindingDraft = {
   readonly id: string;
@@ -101,7 +104,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
       if (
         !state.name.trim()
         || !state.prompt.trim()
-        || (state.frequency !== 'custom' && !validStartAt(state.startAt))
+        || !isAutomationScheduleDraftValid(state.schedule)
       ) throw new Error(t.required);
       const destination = state.destination === 'standalone'
         ? { kind: 'standalone' as const }
@@ -115,9 +118,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
         name: state.name.trim(),
         prompt: state.prompt.trim(),
         schedule: {
-          rrule: state.frequency === 'custom'
-            ? required(state.rrule, t.fieldRequired({ field: t.rrule }))
-            : scheduleRrule(state.startAt, state.frequency, state.weekday),
+          rrule: automationScheduleRrule(state.schedule),
           timezone: required(state.timezone, t.fieldRequired({ field: t.timezone })),
         },
         destination,
@@ -373,119 +374,14 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
         <section className="automation-editor-section">
           <h3>{t.frequency}</h3>
-          <div className="automation-settings-group">
-            <Field className="automation-setting-row" label={t.repeat} labelClassName="automation-setting-label">
-              <SelectControl
-                className="automation-setting-value"
-                disabled={props.busy}
-                label={t.repeat}
-                onChange={(event) => setState({
-                  ...state,
-                  frequency: event.target.value as Frequency,
-                })}
-                value={state.frequency}
-                variant="popup"
-              >
-                <option value="once">{t.frequencies.once}</option>
-                <option value="hourly">{t.frequencies.hourly}</option>
-                <option value="daily">{t.frequencies.daily}</option>
-                <option value="weekly">{t.frequencies.weekly}</option>
-                <option value="custom">{t.frequencies.custom}</option>
-              </SelectControl>
-            </Field>
-            {state.frequency === 'once' ? (
-              <Field className="automation-setting-row" label={t.date} labelClassName="automation-setting-label">
-                <Input
-                  className="automation-setting-input"
-                  disabled={props.busy}
-                  label={t.date}
-                  onChange={(event) => {
-                    const startAt = replaceStartAtPart(state.startAt, 'date', event.target.value);
-                    setState({ ...state, startAt, weekday: weekdayFromStartAt(startAt) });
-                  }}
-                  size="sm"
-                  type="date"
-                  value={startAtDate(state.startAt)}
-                  variant="bare"
-                />
-              </Field>
-            ) : null}
-            {state.frequency === 'hourly' ? (
-              <Field className="automation-setting-row" label={t.startsAt} labelClassName="automation-setting-label">
-                <Input
-                  className="automation-setting-input"
-                  disabled={props.busy}
-                  label={t.startsAt}
-                  onChange={(event) => setState({
-                    ...state,
-                    startAt: event.target.value,
-                    weekday: weekdayFromStartAt(event.target.value),
-                  })}
-                  size="sm"
-                  type="datetime-local"
-                  value={state.startAt}
-                  variant="bare"
-                />
-              </Field>
-            ) : null}
-            {state.frequency === 'weekly' ? (
-              <Field className="automation-setting-row" label={t.weekday} labelClassName="automation-setting-label">
-                <SelectControl
-                  className="automation-setting-value"
-                  disabled={props.busy}
-                  label={t.weekday}
-                  onChange={(event) => setState({ ...state, weekday: event.target.value as WeekdayToken })}
-                  value={state.weekday}
-                  variant="popup"
-                >
-                  {WEEKDAY_TOKENS.map((weekday) => (
-                    <option key={weekday} value={weekday}>{t.weekdays[weekday]}</option>
-                  ))}
-                </SelectControl>
-              </Field>
-            ) : null}
-            {state.frequency === 'once' || state.frequency === 'daily' || state.frequency === 'weekly' ? (
-              <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
-                <Input
-                  className="automation-setting-input"
-                  disabled={props.busy}
-                  label={t.startAt}
-                  onChange={(event) => setState({
-                    ...state,
-                    startAt: replaceStartAtPart(state.startAt, 'time', event.target.value),
-                  })}
-                  size="sm"
-                  type="time"
-                  value={startAtTime(state.startAt)}
-                  variant="bare"
-                />
-              </Field>
-            ) : null}
-            <Field className="automation-setting-row" label={t.timezone} labelClassName="automation-setting-label">
-              <SelectControl
-                className="automation-setting-value"
-                disabled={props.busy}
-                label={t.timezone}
-                onChange={(event) => setState({ ...state, timezone: event.target.value })}
-                value={state.timezone}
-                variant="popup"
-              >
-                {timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
-              </SelectControl>
-            </Field>
-          </div>
-          {state.frequency === 'custom' ? (
-            <Field className="automation-schedule-detail" label={t.rrule}>
-              <Textarea
-                className="automation-rrule-input"
-                disabled={props.busy}
-                label={t.rrule}
-                onChange={(event) => setState({ ...state, rrule: event.target.value })}
-                rows={3}
-                value={state.rrule}
-              />
-            </Field>
-          ) : null}
+          <AutomationScheduleEditor
+            disabled={props.busy}
+            onChange={(schedule) => setState({ ...state, schedule })}
+            onTimezoneChange={(timezone) => setState({ ...state, timezone })}
+            schedule={state.schedule}
+            timezone={state.timezone}
+            timezones={timezones}
+          />
         </section>
 
         {props.automation ? (
@@ -553,11 +449,8 @@ export function AutomationEditor(props: AutomationEditorProps) {
 interface EditorState {
   readonly name: string;
   readonly prompt: string;
-  readonly frequency: Frequency;
-  readonly startAt: string;
-  readonly weekday: WeekdayToken;
+  readonly schedule: AutomationScheduleDraft;
   readonly timezone: string;
-  readonly rrule: string;
   readonly destination: 'standalone' | 'existingThread';
   readonly threadId: string;
   readonly projectBindings: readonly ProjectBindingDraft[];
@@ -628,16 +521,11 @@ function automationTimezones(current: string): readonly string[] {
 }
 
 function editorState(automation: Automation | null): EditorState {
-  const frequency = automation ? frequencyFromRrule(automation.schedule.rrule) : 'daily';
-  const startAt = automation ? startAtFromRrule(automation.schedule.rrule) : defaultStartAt();
   return {
     name: automation?.name ?? '',
     prompt: automation?.prompt ?? '',
-    frequency,
-    startAt,
-    weekday: weekdayFromRrule(automation?.schedule.rrule ?? '') ?? weekdayFromStartAt(startAt),
+    schedule: createAutomationScheduleDraft(automation?.schedule.rrule),
     timezone: automation?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-    rrule: automation?.schedule.rrule ?? '',
     destination: automation?.destination.kind ?? 'standalone',
     threadId: automation?.destination.kind === 'existingThread' ? automation.destination.threadId : '',
     projectBindings: automation?.projectBindings.map((binding) => ({ ...binding })) ?? [],
@@ -656,98 +544,12 @@ function stateSignature(state: EditorState): string {
   return JSON.stringify(state);
 }
 
-export function scheduleRrule(
-  startAt: string,
-  frequency: Exclude<Frequency, 'custom'>,
-  weekday: WeekdayToken = weekdayFromStartAt(startAt),
-): string {
-  const alignedStartAt = frequency === 'weekly' ? alignStartAtToWeekday(startAt, weekday) : startAt;
-  const stamp = alignedStartAt.replace(/[-:]/g, '');
-  const rule = frequency === 'once'
-    ? 'FREQ=DAILY;COUNT=1'
-    : frequency === 'hourly'
-      ? 'FREQ=HOURLY'
-      : frequency === 'daily'
-        ? 'FREQ=DAILY'
-        : `FREQ=WEEKLY;BYDAY=${weekday}`;
-  return `DTSTART:${stamp.length === 13 ? `${stamp}00` : stamp}\nRRULE:${rule}`;
-}
-
 function replaceBinding(
   bindings: readonly ProjectBindingDraft[],
   index: number,
   value: ProjectBindingDraft,
 ): readonly ProjectBindingDraft[] {
   return bindings.map((binding, candidate) => candidate === index ? value : binding);
-}
-
-export function frequencyFromRrule(rrule: string): Frequency {
-  const start = /^DTSTART:(\d{4})(\d{2})(\d{2})T\d{4}(\d{2})$/m.exec(rrule);
-  const rule = /^RRULE:(.+)$/m.exec(rrule)?.[1]?.trim().toUpperCase();
-  if (!start || start[4] !== '00' || !rule) return 'custom';
-  if (rule === 'FREQ=DAILY;COUNT=1') return 'once';
-  if (rule === 'FREQ=HOURLY') return 'hourly';
-  if (rule === 'FREQ=DAILY') return 'daily';
-  const weekly = /^FREQ=WEEKLY;BYDAY=(SU|MO|TU|WE|TH|FR|SA)$/.exec(rule);
-  if (weekly) return 'weekly';
-  return 'custom';
-}
-
-function weekdayFromRrule(rrule: string): WeekdayToken | null {
-  const match = /^RRULE:FREQ=WEEKLY;BYDAY=(SU|MO|TU|WE|TH|FR|SA)$/m.exec(rrule.toUpperCase());
-  return match?.[1] ? match[1] as WeekdayToken : null;
-}
-
-function weekdayFromStartAt(startAt: string): WeekdayToken {
-  const date = parseStartAtDate(startAt);
-  return WEEKDAY_TOKENS_BY_DAY[date.getUTCDay()] ?? 'MO';
-}
-
-function alignStartAtToWeekday(startAt: string, weekday: WeekdayToken): string {
-  const date = parseStartAtDate(startAt);
-  const targetDay = WEEKDAY_TOKENS_BY_DAY.indexOf(weekday);
-  const offset = (targetDay - date.getUTCDay() + 7) % 7;
-  date.setUTCDate(date.getUTCDate() + offset);
-  const year = String(date.getUTCFullYear()).padStart(4, '0');
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}T${startAtTime(startAt)}`;
-}
-
-function parseStartAtDate(startAt: string): Date {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}$/.exec(startAt);
-  if (!match) return new Date(Date.UTC(1970, 0, 5));
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-}
-
-function startAtDate(startAt: string): string {
-  return startAt.slice(0, 10);
-}
-
-function startAtTime(startAt: string): string {
-  return startAt.slice(11, 16);
-}
-
-function replaceStartAtPart(startAt: string, part: 'date' | 'time', value: string): string {
-  return part === 'date'
-    ? `${value}T${startAtTime(startAt)}`
-    : `${startAtDate(startAt)}T${value}`;
-}
-
-function validStartAt(startAt: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(startAt);
-}
-
-function startAtFromRrule(rrule: string): string {
-  const match = /DTSTART:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(rrule);
-  return match ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}` : defaultStartAt();
-}
-
-function defaultStartAt(): string {
-  const date = new Date(Date.now() + 60 * 60 * 1_000);
-  date.setMinutes(0, 0, 0);
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
 }
 
 function nullable(value: string): string | null {

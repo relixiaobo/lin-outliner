@@ -96,8 +96,8 @@ src/renderer/agent/automations/
 - status `active | paused | completed`
 - created/updated timestamps and derived next occurrence
 
-Interval, daily, weekly, and custom controls all compile to the same RRULE;
-there are no parallel schedule formats. Any finite schedule becomes `completed`
+Once, hourly, daily, weekdays, weekly, and structured custom controls all compile
+to the same RRULE; there are no parallel schedule formats. Any finite schedule becomes `completed`
 after its final occurrence is durably claimed for every binding. Plugin `ScheduledTaskSummary` values are
 configuration templates that create an Automation through the same service; they
 are not another persisted task type.
@@ -322,23 +322,31 @@ schema as a flat form. Its information order is:
 2. name and prompt
 3. Details: destination and optional Thread, project/worktree mode, model, and
    reasoning effort
-4. Frequency: repeat rule, all preset-specific fields (once date/time, hourly
-   start, daily time, or weekly weekday/time), timezone, and custom RRULE only
-   when needed
+4. Frequency: repeat rule, all preset-specific fields (once date/time, hourly,
+   daily or weekdays time, or weekly multi-select weekdays/time), timezone, and
+   the structured custom rule fields when needed
 5. previous Automation runs
 6. advanced Profile and capability overrides for Tools, Skills, Plugins, and MCP
    servers
 
 Model and timezone use finite native selectors. Model options come from usable
 provider catalogs and save provider plus provider-qualified model together;
-timezone options come from the runtime-supported IANA catalog. Only custom RRULE
-remains a raw expert input in the primary details flow.
+timezone options come from the runtime-supported IANA catalog. Custom exposes
+hourly, daily, weekly, monthly, and yearly recurrence with an interval, plus
+frequency-specific weekday, month, month-day, minute, and time fields. Weekday
+and month-day fields are non-empty multi-select menus. Once reuses the Outliner
+calendar popover for date selection; schedule-only time values use a finite
+15-minute selector. The editor parses and serializes one canonical Schedule Draft;
+it never exposes RRULE protocol text in the primary flow. A valid rule outside
+the structured subset remains byte-for-byte authoritative until the first explicit
+schedule-field edit, preventing unrelated form edits from discarding advanced
+recurrence semantics.
 
 The Automation editor supports:
 
 - prompt and name
 - standalone versus existing-Thread destination
-- once, hourly, daily, weekly, and custom RRULE schedule controls
+- once, hourly, daily, weekdays, multi-day weekly, and structured custom schedule controls
 - timezone
 - no project, local project, or isolated worktree
 - model and reasoning effort

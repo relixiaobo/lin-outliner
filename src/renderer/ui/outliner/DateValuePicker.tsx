@@ -46,6 +46,9 @@ interface DateValuePickerProps {
   // Whether the recurrence selector is offered for single dates. Recurring
   // workflows need it; plain date pickers do not.
   allowRecurrence?: boolean;
+  // Required-value callers (for example an Automation schedule) can keep the
+  // shared calendar interaction without offering a destructive clear action.
+  allowClear?: boolean;
   // Optional upper bound for selectable dates, encoded as YYYY-MM-DD.
   maxDate?: string;
   // Composer-like callers near the viewport bottom can force the calendar above
@@ -73,6 +76,7 @@ export function DateValuePicker({
   allowRange = true,
   allowTime = true,
   allowRecurrence = true,
+  allowClear = true,
   maxDate,
   popoverPlacement = 'bottom-start',
   popoverGap,
@@ -395,6 +399,7 @@ export function DateValuePicker({
     <div
       ref={popoverRef}
       className="typed-field-date-popover"
+      data-dialog-nested-overlay="true"
       role="dialog"
       aria-label={td.title}
       onKeyDown={onPopoverKeyDown}
@@ -491,7 +496,7 @@ export function DateValuePicker({
       )}
       <div className="typed-field-date-actions">
         <ButtonControl onClick={pickToday}>{td.today}</ButtonControl>
-        <ButtonControl onClick={clearDate}>{td.clear}</ButtonControl>
+        {allowClear ? <ButtonControl onClick={clearDate}>{td.clear}</ButtonControl> : null}
       </div>
     </div>,
     document.body,
