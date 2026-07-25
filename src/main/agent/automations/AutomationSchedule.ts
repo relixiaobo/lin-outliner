@@ -1,5 +1,8 @@
-import { RRule, rrulestr } from 'rrule';
+import rrulePackage from 'rrule';
+import type { RRule as RRuleInstance } from 'rrule';
 import type { AutomationSchedule } from '../../../core/agent/automation';
+
+const { RRule, rrulestr } = rrulePackage as typeof import('rrule');
 
 const MAX_OCCURRENCES_PER_EVALUATION = 1_000;
 const SUPPORTED_FREQUENCIES = new Set([RRule.HOURLY, RRule.DAILY, RRule.WEEKLY, RRule.MONTHLY, RRule.YEARLY]);
@@ -186,7 +189,7 @@ function utcStampToInstant(stamp: string): number {
   return instant;
 }
 
-function parseRule(source: string): RRule {
+function parseRule(source: string): RRuleInstance {
   let parsed: ReturnType<typeof rrulestr>;
   try {
     parsed = rrulestr(source, { forceset: false, compatible: false });
