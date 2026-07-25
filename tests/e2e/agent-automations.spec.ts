@@ -4,10 +4,7 @@ import { commandCalls, openMockedApp } from './outlinerMock';
 test.describe('Automation surface', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
-    await page.getByRole('button', { name: 'Show Threads' }).click();
-    await page.getByRole('dialog', { name: 'Threads' })
-      .getByRole('button', { name: 'Open Automations' })
-      .click();
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
   });
 
   test('creates, pauses, resumes, starts, opens, and deletes an Automation', async ({ page }) => {
@@ -24,7 +21,7 @@ test.describe('Automation surface', () => {
     const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
     await expect(detailDrawer).toBeVisible();
     await expect(page.locator('.automation-list-row', { hasText: 'Daily repository review' })).toBeVisible();
-    await expect(detailDrawer.getByRole('radio', { name: 'New Thread' })).toBeChecked();
+    await expect(detailDrawer.getByRole('combobox', { name: 'Runs in' })).toHaveValue('standalone');
     await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes.');
     await expect(page.getByRole('button', { name: 'Start now' })).toBeDisabled();
     await page.getByText('Advanced capabilities', { exact: true }).click();
@@ -56,9 +53,10 @@ test.describe('Automation surface', () => {
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Show Threads' }).click();
-    await page.getByRole('dialog', { name: 'Threads' })
-      .getByRole('button', { name: 'Open Automations' })
-      .click();
+    await expect(page.getByRole('dialog', { name: 'Threads' })
+      .getByRole('button', { name: 'Open Automations' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
     await page.locator('.automation-list-row', { hasText: 'Daily repository review' }).click();
     await page.getByRole('button', { name: 'Automation actions' }).click();
     await page.getByRole('menu', { name: 'Automation actions' }).getByRole('menuitem', { name: 'Delete Automation' }).click();

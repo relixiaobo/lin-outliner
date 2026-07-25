@@ -60,8 +60,7 @@
   flex: 1;
 }
 
-.automations-filter .segmented-control-option,
-.automation-frequency-segments .segmented-control-option {
+.automations-filter .segmented-control-option {
   min-width: 0;
   padding-right: var(--space-2);
   padding-left: var(--space-2);
@@ -296,6 +295,15 @@
   white-space: nowrap;
 }
 
+.automation-drawer-heading .automation-drawer-title-accessible {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .automation-drawer-status {
   display: inline-flex;
   width: fit-content;
@@ -342,19 +350,121 @@
   gap: var(--space-4);
 }
 
-.automation-editor-section,
-.automation-configuration {
-  border-top: 1px solid var(--separator);
-  padding-top: var(--space-5);
+.automation-editor-intro {
+  gap: var(--space-3);
 }
 
 .automation-editor-section h3 {
   min-width: 0;
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-ui-sm);
-  font-weight: 600;
+  font-size: var(--font-ui-md);
+  font-weight: 500;
   line-height: var(--line-ui-sm);
+}
+
+.automation-field-label {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.automation-name-field,
+.automation-prompt-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.automation-name-input {
+  width: 100%;
+  min-height: 30px;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: var(--font-ui-md);
+  font-weight: 600;
+  line-height: var(--line-ui-md);
+}
+
+.automation-name-input:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.automation-prompt-input {
+  min-height: 112px;
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--space-4);
+  resize: vertical;
+}
+
+.automation-settings-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+}
+
+.automation-setting-row {
+  display: grid;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  grid-template-columns: minmax(76px, 0.8fr) minmax(0, 1.2fr);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+}
+
+.automation-setting-row + .automation-setting-row {
+  border-top: 1px solid var(--separator);
+}
+
+.automation-setting-label {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.automation-setting-value {
+  min-width: 0;
+  max-width: 100%;
+  justify-self: end;
+}
+
+.automation-setting-value .select-popup-input {
+  max-width: 100%;
+  padding-left: var(--space-3);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.automation-setting-input {
+  width: 100%;
+  padding-right: var(--space-2);
+  padding-left: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  text-align: right;
+}
+
+.automation-setting-input:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.automation-project-details,
+.automation-schedule-detail {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  border-left: 2px solid var(--separator);
+  padding-left: var(--space-4);
 }
 
 .automation-editor-field-grid {
@@ -362,24 +472,6 @@
   min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   gap: var(--space-4);
-}
-
-.automation-editor-segments {
-  display: flex;
-  width: 100%;
-}
-
-.automation-editor-segments .segmented-control-option {
-  min-width: 0;
-  flex: 1 1 auto;
-  padding-right: var(--space-2);
-  padding-left: var(--space-2);
-  font-size: var(--font-ui-xs);
-  white-space: normal;
-}
-
-.automation-frequency-segments .segmented-control-option {
-  font-size: var(--font-ui-2xs);
 }
 
 .automation-project-binding {
@@ -395,11 +487,6 @@
   grid-column: 1 / -1;
 }
 
-.automation-prompt-input {
-  min-height: 112px;
-  resize: vertical;
-}
-
 .automation-rrule-input {
   min-height: 76px;
   resize: vertical;
@@ -413,6 +500,11 @@
   font-weight: 500;
   line-height: var(--line-ui-sm);
   user-select: none;
+}
+
+.automation-configuration {
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-5);
 }
 
 .automation-configuration[open] > summary {

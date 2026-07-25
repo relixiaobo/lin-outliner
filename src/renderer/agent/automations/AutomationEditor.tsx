@@ -138,16 +138,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
     <form className="automation-editor" onSubmit={(event) => void submit(event)}>
       <div className="automation-editor-scroll">
         <section className="automation-editor-intro">
-          <Field label={t.name}>
+          <Field className="automation-name-field" label={t.name} labelClassName="automation-field-label">
             <Input
               autoComplete="off"
+              className="automation-name-input"
               disabled={props.busy}
               label={t.name}
               onChange={(event) => setState({ ...state, name: event.target.value })}
+              placeholder={t.name}
+              variant="bare"
               value={state.name}
             />
           </Field>
-          <Field label={t.prompt}>
+          <Field className="automation-prompt-field" label={t.prompt} labelClassName="automation-field-label">
             <Textarea
               className="automation-prompt-input"
               disabled={props.busy}
@@ -161,198 +164,224 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
         <section className="automation-editor-section">
           <h3>{t.executionDetails}</h3>
-          <Field as="div" label={t.destination}>
-            <SegmentedControl
-              className="automation-editor-segments"
-              disabled={props.busy}
-              label={t.destination}
-              onChange={(destination) => setState({
-                ...state,
-                destination,
-                projectBindings: destination === 'existingThread'
-                  ? state.projectBindings.slice(0, 1).map((binding) => ({
-                      ...binding,
-                      executionMode: 'local' as const,
-                    }))
-                  : state.projectBindings,
-              })}
-              options={[
-                { value: 'standalone', label: t.destinations.standalone },
-                { value: 'existingThread', label: t.destinations.existingThread },
-              ]}
-              value={state.destination}
-            />
-          </Field>
-          {state.destination === 'existingThread' ? (
-            <Field label={t.thread}>
+          <div className="automation-settings-group">
+            <Field className="automation-setting-row" label={t.destination} labelClassName="automation-setting-label">
               <SelectControl
+                className="automation-setting-value"
                 disabled={props.busy}
-                label={t.thread}
-                onChange={(event) => setState({ ...state, threadId: event.target.value })}
-                value={state.threadId}
-                variant="boxed"
+                label={t.destination}
+                onChange={(event) => {
+                  const destination = event.target.value as EditorState['destination'];
+                  setState({
+                    ...state,
+                    destination,
+                    projectBindings: destination === 'existingThread'
+                      ? state.projectBindings.slice(0, 1).map((binding) => ({
+                          ...binding,
+                          executionMode: 'local' as const,
+                        }))
+                      : state.projectBindings,
+                  });
+                }}
+                value={state.destination}
+                variant="popup"
               >
-                <option value="">{t.selectThread}</option>
-                {destinationThreads.map((thread) => (
-                  <option key={thread.id} value={thread.id}>
-                    {thread.name || thread.preview || thread.id}
-                  </option>
-                ))}
+                <option value="standalone">{t.destinations.standalone}</option>
+                <option value="existingThread">{t.destinations.existingThread}</option>
               </SelectControl>
             </Field>
-          ) : null}
-
-          <Field as="div" label={t.project}>
-            <SegmentedControl
-              className="automation-editor-segments"
-              disabled={props.busy}
-              label={t.project}
-              onChange={(projectMode) => setState({
-                ...state,
-                projectBindings: projectMode === 'none'
-                  ? []
-                  : state.projectBindings.length === 0
-                    ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
-                    : state.projectBindings.map((binding, index) => (
-                        index === 0 ? { ...binding, executionMode: projectMode } : binding
-                      )),
-              })}
-              options={[
-                { value: 'none', label: t.projects.none },
-                { value: 'local', label: t.projects.local },
-                ...(state.destination === 'standalone'
-                  ? [{ value: 'worktree' as const, label: t.projects.worktree }]
-                  : []),
-              ]}
-              value={state.projectBindings[0]?.executionMode ?? 'none'}
-            />
-          </Field>
-          {state.projectBindings.map((binding, index) => (
-            <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
-              {index > 0 ? (
+            {state.destination === 'existingThread' ? (
+              <Field className="automation-setting-row" label={t.thread} labelClassName="automation-setting-label">
                 <SelectControl
+                  className="automation-setting-value"
                   disabled={props.busy}
-                  label={t.projectMode({ index: index + 1 })}
-                  onChange={(event) => setState({
-                    ...state,
-                    projectBindings: replaceBinding(state.projectBindings, index, {
-                      ...binding,
-                      executionMode: event.target.value as ProjectBindingDraft['executionMode'],
-                    }),
-                  })}
-                  value={binding.executionMode}
-                  variant="boxed"
+                  label={t.thread}
+                  onChange={(event) => setState({ ...state, threadId: event.target.value })}
+                  value={state.threadId}
+                  variant="popup"
                 >
-                  <option value="local">{t.projects.local}</option>
-                  <option value="worktree">{t.projects.worktree}</option>
+                  <option value="">{t.selectThread}</option>
+                  {destinationThreads.map((thread) => (
+                    <option key={thread.id} value={thread.id}>
+                      {thread.name || thread.preview || thread.id}
+                    </option>
+                  ))}
                 </SelectControl>
-              ) : null}
-              <Field label={t.projectPath({ index: index + 1 })}>
-                <Input
-                  disabled={props.busy}
-                  label={t.projectPath({ index: index + 1 })}
-                  onChange={(event) => setState({
-                    ...state,
-                    projectBindings: replaceBinding(state.projectBindings, index, {
-                      ...binding,
-                      cwd: event.target.value,
-                    }),
-                  })}
-                  value={binding.cwd}
-                />
               </Field>
-              {index > 0 ? (
-                <IconButton
-                  disabled={props.busy}
-                  icon={TrashIcon}
-                  label={t.removeProject({ index: index + 1 })}
-                  onClick={() => setState({
+            ) : null}
+            <Field className="automation-setting-row" label={t.project} labelClassName="automation-setting-label">
+              <SelectControl
+                className="automation-setting-value"
+                disabled={props.busy}
+                label={t.project}
+                onChange={(event) => {
+                  const projectMode = event.target.value as ProjectMode;
+                  setState({
                     ...state,
-                    projectBindings: state.projectBindings.filter((_, candidate) => candidate !== index),
-                  })}
-                  variant="message"
-                />
-              ) : null}
-            </div>
-          ))}
-          {state.destination === 'standalone' && state.projectBindings.length > 0 ? (
-            <Button
-              disabled={props.busy}
-              onClick={() => setState({
-                ...state,
-                projectBindings: [...state.projectBindings, {
-                  id: crypto.randomUUID(),
-                  cwd: '',
-                  executionMode: 'local',
-                }],
-              })}
-              size="sm"
-              variant="ghost"
-            >
-              <AddIcon size={12} />{t.addProject}
-            </Button>
-          ) : null}
-
-          <div className="automation-editor-field-grid">
-            <Field label={t.profile}>
-              <Input disabled={props.busy} label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
+                    projectBindings: projectMode === 'none'
+                      ? []
+                      : state.projectBindings.length === 0
+                        ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
+                        : state.projectBindings.map((binding, index) => (
+                            index === 0 ? { ...binding, executionMode: projectMode } : binding
+                          )),
+                  });
+                }}
+                value={state.projectBindings[0]?.executionMode ?? 'none'}
+                variant="popup"
+              >
+                <option value="none">{t.projects.none}</option>
+                <option value="local">{t.projects.local}</option>
+                {state.destination === 'standalone' ? (
+                  <option value="worktree">{t.projects.worktree}</option>
+                ) : null}
+              </SelectControl>
             </Field>
-            <Field label={t.modelProvider}>
-              <Input disabled={props.busy} label={t.modelProvider} onChange={(event) => setState({ ...state, modelProvider: event.target.value })} placeholder={t.inherited} value={state.modelProvider} />
+            <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
+              <Input
+                className="automation-setting-input"
+                disabled={props.busy}
+                label={t.model}
+                onChange={(event) => setState({ ...state, model: event.target.value })}
+                placeholder={t.inherited}
+                size="sm"
+                value={state.model}
+                variant="bare"
+              />
             </Field>
-            <Field label={t.model}>
-              <Input disabled={props.busy} label={t.model} onChange={(event) => setState({ ...state, model: event.target.value })} placeholder={t.inherited} value={state.model} />
-            </Field>
-            <Field label={t.reasoning}>
-              <SelectControl disabled={props.busy} label={t.reasoning} onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })} value={state.reasoningEffort} variant="boxed">
+            <Field className="automation-setting-row" label={t.reasoning} labelClassName="automation-setting-label">
+              <SelectControl
+                className="automation-setting-value"
+                disabled={props.busy}
+                label={t.reasoning}
+                onChange={(event) => setState({ ...state, reasoningEffort: event.target.value as ReasoningEffort | '' })}
+                value={state.reasoningEffort}
+                variant="popup"
+              >
                 <option value="">{t.inherited}</option>
                 {REASONING_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
               </SelectControl>
             </Field>
           </div>
+
+          {state.projectBindings.length > 0 ? (
+            <div className="automation-project-details">
+              {state.projectBindings.map((binding, index) => (
+                <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
+                  {index > 0 ? (
+                    <SelectControl
+                      disabled={props.busy}
+                      label={t.projectMode({ index: index + 1 })}
+                      onChange={(event) => setState({
+                        ...state,
+                        projectBindings: replaceBinding(state.projectBindings, index, {
+                          ...binding,
+                          executionMode: event.target.value as ProjectBindingDraft['executionMode'],
+                        }),
+                      })}
+                      value={binding.executionMode}
+                      variant="boxed"
+                    >
+                      <option value="local">{t.projects.local}</option>
+                      <option value="worktree">{t.projects.worktree}</option>
+                    </SelectControl>
+                  ) : null}
+                  <Field label={t.projectPath({ index: index + 1 })}>
+                    <Input
+                      disabled={props.busy}
+                      label={t.projectPath({ index: index + 1 })}
+                      onChange={(event) => setState({
+                        ...state,
+                        projectBindings: replaceBinding(state.projectBindings, index, {
+                          ...binding,
+                          cwd: event.target.value,
+                        }),
+                      })}
+                      value={binding.cwd}
+                    />
+                  </Field>
+                  {index > 0 ? (
+                    <IconButton
+                      disabled={props.busy}
+                      icon={TrashIcon}
+                      label={t.removeProject({ index: index + 1 })}
+                      onClick={() => setState({
+                        ...state,
+                        projectBindings: state.projectBindings.filter((_, candidate) => candidate !== index),
+                      })}
+                      variant="message"
+                    />
+                  ) : null}
+                </div>
+              ))}
+              {state.destination === 'standalone' ? (
+                <Button
+                  disabled={props.busy}
+                  onClick={() => setState({
+                    ...state,
+                    projectBindings: [...state.projectBindings, {
+                      id: crypto.randomUUID(),
+                      cwd: '',
+                      executionMode: 'local',
+                    }],
+                  })}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <AddIcon size={12} />{t.addProject}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section className="automation-editor-section">
           <h3>{t.frequency}</h3>
-          <Field as="div" label={t.frequency}>
-            <SegmentedControl
-              className="automation-editor-segments automation-frequency-segments"
-              disabled={props.busy}
-              label={t.frequency}
-              onChange={(frequency) => setState({ ...state, frequency })}
-              options={([
-                ['once', t.frequencies.once],
-                ['hourly', t.frequencies.hourly],
-                ['daily', t.frequencies.daily],
-                ['weekly', t.frequencies.weekly],
-                ['custom', t.frequencies.custom],
-              ] as const).map(([value, label]) => ({ value, label }))}
-              value={state.frequency}
-            />
-          </Field>
-          <div className="automation-editor-field-grid">
+          <div className="automation-settings-group">
+            <Field className="automation-setting-row" label={t.repeat} labelClassName="automation-setting-label">
+              <SelectControl
+                className="automation-setting-value"
+                disabled={props.busy}
+                label={t.repeat}
+                onChange={(event) => setState({ ...state, frequency: event.target.value as Frequency })}
+                value={state.frequency}
+                variant="popup"
+              >
+                <option value="once">{t.frequencies.once}</option>
+                <option value="hourly">{t.frequencies.hourly}</option>
+                <option value="daily">{t.frequencies.daily}</option>
+                <option value="weekly">{t.frequencies.weekly}</option>
+                <option value="custom">{t.frequencies.custom}</option>
+              </SelectControl>
+            </Field>
             {state.frequency !== 'custom' ? (
-              <Field label={t.startAt}>
+              <Field className="automation-setting-row" label={t.startAt} labelClassName="automation-setting-label">
                 <Input
+                  className="automation-setting-input"
                   disabled={props.busy}
                   label={t.startAt}
                   onChange={(event) => setState({ ...state, startAt: event.target.value })}
+                  size="sm"
                   type="datetime-local"
                   value={state.startAt}
+                  variant="bare"
                 />
               </Field>
             ) : null}
-            <Field label={t.timezone}>
+            <Field className="automation-setting-row" label={t.timezone} labelClassName="automation-setting-label">
               <Input
+                className="automation-setting-input"
                 disabled={props.busy}
                 label={t.timezone}
                 onChange={(event) => setState({ ...state, timezone: event.target.value })}
+                size="sm"
                 value={state.timezone}
+                variant="bare"
               />
             </Field>
           </div>
           {state.frequency === 'custom' ? (
-            <Field label={t.rrule}>
+            <Field className="automation-schedule-detail" label={t.rrule}>
               <Textarea
                 className="automation-rrule-input"
                 disabled={props.busy}
@@ -365,9 +394,24 @@ export function AutomationEditor(props: AutomationEditorProps) {
           ) : null}
         </section>
 
+        {props.automation ? (
+          <section className="automation-editor-section automation-runs-section">
+            <h3>{t.previousRuns}</h3>
+            {props.runHistory}
+          </section>
+        ) : null}
+
         <details className="automation-configuration">
           <summary>{t.advancedCapabilities}</summary>
           <div className="automation-configuration-fields">
+            <div className="automation-editor-field-grid">
+              <Field label={t.profile}>
+                <Input disabled={props.busy} label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
+              </Field>
+              <Field label={t.modelProvider}>
+                <Input disabled={props.busy} label={t.modelProvider} onChange={(event) => setState({ ...state, modelProvider: event.target.value })} placeholder={t.inherited} value={state.modelProvider} />
+              </Field>
+            </div>
             {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
               <Field as="div" key={key} label={t[key]}>
                 <div className="automation-capability-list">
@@ -400,13 +444,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
             ))}
           </div>
         </details>
-
-        {props.automation ? (
-          <section className="automation-editor-section automation-runs-section">
-            <h3>{t.previousRuns}</h3>
-            {props.runHistory}
-          </section>
-        ) : null}
 
         {error || props.actionError ? (
           <p className="automation-error" role="alert">{error ?? props.actionError}</p>

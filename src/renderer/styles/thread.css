@@ -50,6 +50,16 @@
   transition: color var(--motion-fast);
 }
 
+.thread-dock-surface-action {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.thread-dock-surface-action:hover,
+.thread-dock-surface-action:focus-visible {
+  color: var(--text-strong);
+}
+
 .thread-dock-title-button:hover,
 .thread-dock-title-button:focus-visible,
 .thread-dock-title-button[aria-expanded='true'] {

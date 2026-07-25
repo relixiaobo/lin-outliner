@@ -11,6 +11,7 @@ import {
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
+  ScheduledIcon,
   SettingsIcon,
   WarningIcon,
 } from '../../ui/icons';
@@ -18,6 +19,7 @@ import { Button } from '../../ui/primitives/Button';
 import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { Dialog } from '../../ui/primitives/Dialog';
 import { Input } from '../../ui/primitives/Input';
+import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
@@ -240,6 +242,18 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
+          {surface === 'thread' ? (
+            <IconButton
+              className="thread-dock-surface-action"
+              icon={ScheduledIcon}
+              label={t.agent.automations.open}
+              onClick={() => {
+                setListOpen(false);
+                setSurface('automations');
+              }}
+              variant="chrome"
+            />
+          ) : null}
         </header>
         {actionError || providerError || snapshot.error ? (
           <div className="thread-dock-error" role="alert">
@@ -316,7 +330,6 @@ export function ThreadDock({
             onCreate={() => void createThread()}
             onDelete={setDeleteTarget}
             onDetails={(target) => void openDetails(target)}
-            onOpenAutomations={() => setSurface('automations')}
             onRename={beginRename}
             onSelect={(threadId) => {
               void runAction(() => threadStore.selectThread(threadId));

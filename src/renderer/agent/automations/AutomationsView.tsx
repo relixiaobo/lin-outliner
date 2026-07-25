@@ -242,7 +242,9 @@ export function AutomationsView(props: AutomationsViewProps) {
           <AutomationDrawerResizeHandle />
           <header className="automation-drawer-header">
             <div className="automation-drawer-heading">
-              <h2>{drawer.kind === 'create' ? t.new : selected?.name ?? t.details}</h2>
+              <h2 className={selected ? 'automation-drawer-title-accessible' : undefined}>
+                {drawer.kind === 'create' ? t.new : selected?.name ?? t.details}
+              </h2>
               {selected ? (
                 <span className={`automation-drawer-status is-${selected.status}`}>
                   <span aria-hidden="true" />

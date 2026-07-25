@@ -200,25 +200,30 @@ Core entities. Methods cover list/read/create/update/pause/resume/delete,
 Start now, run list/read, read state, and worktree pin state. Preload decodes every
 response and notification before renderer state changes.
 
-The Automations surface is opened from the anchored Thread list. It is loaded as
-a separate React chunk so the default Thread composer does not pay its editor and
-schedule cost. Its main surface is a compact searchable list with status filters,
-next occurrence, and unread state. Selecting an Automation, or creating one,
-opens the same modal bottom drawer over the list. The drawer is bottom-aligned,
+The Automations surface is a peer of the Thread surface and is opened from the
+Agent Dock header. The anchored Thread list contains only Thread navigation and
+management, so Automation is never presented as a Thread-list action. The
+surface is loaded as a separate React chunk so the default Thread composer does
+not pay its editor and schedule cost. Its main surface is a compact searchable
+list with status filters, next occurrence, and unread state. Selecting an
+Automation, or creating one, opens the same modal bottom drawer over the list.
+The drawer is bottom-aligned,
 defaults to 80% height with a 52px top gap, keeps a 360px minimum where the
 viewport permits, supports pointer and Arrow Up/Down resizing, and persists its
 normalized height as a best-effort renderer preference.
 
 The drawer is the sole create/detail/edit surface. Existing fields are directly
 editable as one local draft, with an atomic Save/Cancel footer and discard
-confirmation before a dirty draft closes. Its information order is status and
-actions; name and prompt; execution details; frequency; advanced capabilities;
-then previous runs. Capability controls preserve inherit (`null`), explicitly
-none (`[]`), and exact allowlist states. Start now, pause/resume, delete, and
-worktree pinning operate through their canonical commands rather than form
-mutation. `pending` and `dispatched` are presented as Pending and Started rather
-than exposing scheduler jargon. A pending reserved standalone Thread is not
-navigable until its Turn is dispatched.
+confirmation before a dirty draft closes. Its reading order follows the task
+rather than the storage schema: name and prompt; a grouped Details table for
+destination, project, model, and reasoning; a grouped Frequency table for repeat,
+time, and timezone; previous runs; then advanced provider and capability fields.
+Raw RRULE is visible only for a custom schedule. Capability controls preserve
+inherit (`null`), explicitly none (`[]`), and exact allowlist states. Start now,
+pause/resume, delete, and worktree pinning operate through their canonical
+commands rather than form mutation. `pending` and `dispatched` are presented as
+Pending and Started rather than exposing scheduler jargon. A pending reserved
+standalone Thread is not navigable until its Turn is dispatched.
 
 Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including

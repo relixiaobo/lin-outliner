@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 
 import { createPortal } from 'react-dom';
 import type { Thread, ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, ScheduledIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, TrashIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
@@ -17,7 +17,6 @@ interface ThreadListProps {
   readonly onCreate: () => void;
   readonly onDelete: (thread: Thread) => void;
   readonly onDetails: (thread: Thread) => void;
-  readonly onOpenAutomations: () => void;
   readonly onRename: (thread: Thread) => void;
   readonly onSelect: (threadId: ThreadId) => void;
 }
@@ -32,7 +31,6 @@ export function ThreadList({
   onCreate,
   onDelete,
   onDetails,
-  onOpenAutomations,
   onRename,
   onSelect,
 }: ThreadListProps) {
@@ -106,15 +104,6 @@ export function ThreadList({
       <header>
         <h2>{t.agent.thread.title}</h2>
         <span className="thread-list-header-actions">
-          <IconButton
-            icon={ScheduledIcon}
-            label={t.agent.automations.open}
-            onClick={() => {
-              onClose();
-              onOpenAutomations();
-            }}
-            variant="message"
-          />
           <IconButton
             disabled={createDisabled}
             icon={AddIcon}

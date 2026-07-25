@@ -290,8 +290,11 @@ schedule reactivates it against a fresh evaluated-through cursor.
 
 The user-visible entity name is "Automation", and the top-level view is
 "Automations". "Scheduled" may describe timing but is not a second object name.
-The main surface remains a compact, searchable Automation list with active,
-paused, and completed filters, unread findings, and next-occurrence summaries.
+Automations is a peer of Threads in the Agent Dock and opens from the Dock
+header; it is not nested inside the anchored Thread list, which remains scoped
+to Thread navigation and management. The main surface remains a compact,
+searchable Automation list with active, paused, and completed filters, unread
+findings, and next-occurrence summaries.
 Selecting a row opens a modal bottom drawer over the list instead of replacing
 the list with a nested detail route. Closing the drawer therefore restores the
 same filtered list and scroll context.
@@ -312,15 +315,18 @@ footer. Closing or cancelling a dirty draft requires explicit discard
 confirmation. Saving never collapses `null`, `[]`, and non-empty capability
 selections: they remain inherit, explicitly none, and an exact allowlist.
 
-The drawer information order is:
+The drawer uses task-oriented grouped rows instead of exposing the storage
+schema as a flat form. Its information order is:
 
 1. status and actions, including Start now, pause/resume, delete, and Close
 2. name and prompt
-3. execution details: destination, Thread, project/worktree, Profile, provider,
-   model, and reasoning
-4. frequency, local start time, timezone, and custom RRULE
-5. advanced tool, Skill, Plugin, and MCP server capability selections
-6. previous Automation runs
+3. Details: destination and optional Thread, project/worktree mode, model, and
+   reasoning effort
+4. Frequency: repeat rule, execution time, timezone, and custom RRULE only when
+   needed
+5. previous Automation runs
+6. advanced Profile, provider, and capability overrides for Tools, Skills,
+   Plugins, and MCP servers
 
 The Automation editor supports:
 
