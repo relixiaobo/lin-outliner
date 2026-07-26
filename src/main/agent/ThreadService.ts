@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Stats } from 'node:fs';
 import {
@@ -84,6 +84,10 @@ import type {
   TurnSteerResponse,
 } from '../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../core/agent/threadPreview';
+import {
+  createManagedAttachmentObservation,
+  type ManagedAttachmentObservation,
+} from './capabilities/agentAttachmentMaterialization';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
@@ -102,7 +106,10 @@ import {
   type ThreadCatalogRecord,
   type ThreadNameOrigin,
 } from './persistence/ThreadMetadataStore';
-import { ToolPayloadStore } from './persistence/ToolPayloadStore';
+import {
+  referencesSameResourceFile,
+  ToolPayloadStore,
+} from './persistence/ToolPayloadStore';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
@@ -140,6 +147,7 @@ export interface ThreadServiceStores {
 export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
+  readonly attachmentScratchRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
   readonly extensions?: ExtensionRegistry;
   readonly resolveConfiguration?: (
@@ -293,6 +301,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly history: ThreadHistoryProjectionStore;
   private readonly rollout: RolloutStore;
   private readonly payloads: ToolPayloadStore;
+  private readonly attachmentScratchRoot: string;
   private readonly executor: TurnExecutor;
   private readonly nameGenerator: ThreadNameGenerator | null;
   private readonly extensions: ExtensionRegistry;
@@ -325,6 +334,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     createdAt: number;
   }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
+  private readonly detachedResourceObservations = new Map<string, {
+    readonly observation: ManagedAttachmentObservation;
+    readonly path: Promise<string | null>;
+  }>();
   private readonly hiddenEphemeralThreads = new Set<ThreadId>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
   private readonly stoppingThreads = new Set<ThreadId>();
@@ -344,6 +357,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.history = options.stores.history;
     this.rollout = options.stores.rollout;
     this.payloads = options.stores.payloads;
+    this.attachmentScratchRoot = options.attachmentScratchRoot;
     this.executor = options.executor;
     this.nameGenerator = options.nameGenerator ?? null;
     this.extensions = options.extensions ?? new ExtensionRegistry();
@@ -363,7 +377,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   static open(
     userDataPath: string,
     executor: TurnExecutor,
-    options: Omit<ThreadServiceOptions, 'stores' | 'executor'> = {},
+    options: Omit<ThreadServiceOptions, 'stores' | 'executor'>,
   ): ThreadService {
     const paths = agentCorePaths(userDataPath);
     return new ThreadService({
@@ -793,12 +807,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.payloads.writeResourceWithStatus(threadId, bytes, mimeType, fileName);
   }
 
-  async resolveThreadResourcePath(
+  async useThreadResourcePath<T>(
     threadId: ThreadId,
     ref: ThreadResourceReference,
-  ): Promise<string | null> {
+    use: (path: string) => Promise<T>,
+  ): Promise<T | null> {
     this.requireThread(threadId);
-    return this.payloads.resourcePath(threadId, ref);
+    return this.payloads.useResourcePath(threadId, ref, use);
   }
 
   async readThreadResource(
@@ -815,7 +830,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<boolean> {
     return this.threadMutex.run(threadId, async () => {
       this.requireThread(threadId);
-      if (this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+      if (this.threadResourceReferences(threadId).some((candidate) => referencesSameResourceFile(candidate, ref))) {
         return false;
       }
       return this.payloads.deleteResource(threadId, ref);
@@ -839,15 +854,96 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (matches.some((candidate) => !attachmentSourcesEqual(candidate, attachment))) return null;
     const storedPath = attachment.source.kind === 'localFile'
       ? attachment.source.path
-      : await this.payloads.resourcePath(threadId, attachment.source.ref);
+      : await this.detachedResourceObservationPath(
+          threadId,
+          attachmentId,
+          attachment.source.ref,
+        );
     if (!storedPath) return null;
+    if (attachment.source.kind === 'threadPayload') {
+      const storedStats = await lstat(storedPath).catch(() => null);
+      if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
+        await this.discardDetachedResourceObservation(threadId, attachmentId);
+        return null;
+      }
+    }
     const canonicalPath = await realpath(storedPath).catch(() => null);
-    if (!canonicalPath) return null;
+    if (!canonicalPath) {
+      if (attachment.source.kind === 'threadPayload') {
+        await this.discardDetachedResourceObservation(threadId, attachmentId);
+      }
+      return null;
+    }
+    if (attachment.source.kind === 'threadPayload' && canonicalPath !== storedPath) {
+      await this.discardDetachedResourceObservation(threadId, attachmentId);
+      return null;
+    }
     if (attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) return null;
     const fileStats = await stat(canonicalPath).catch(() => null);
     const entryKind = fileStats?.isFile() ? 'file' : fileStats?.isDirectory() ? 'directory' : null;
-    if (!fileStats || !entryKind) return null;
+    if (!fileStats || !entryKind) {
+      if (attachment.source.kind === 'threadPayload') {
+        await this.discardDetachedResourceObservation(threadId, attachmentId);
+      }
+      return null;
+    }
+    // Managed copies remain available to Preview/Open/Reveal until scratch TTL cleanup.
     return { attachment, entryKind, path: canonicalPath, stats: fileStats };
+  }
+
+  private async detachedResourceObservationPath(
+    threadId: ThreadId,
+    attachmentId: string,
+    ref: ThreadResourceReference,
+  ): Promise<string | null> {
+    const available = await this.payloads.useResourcePath(threadId, ref, async () => true);
+    if (!available) {
+      await this.discardDetachedResourceObservation(threadId, attachmentId);
+      return null;
+    }
+    const key = `${threadId}\0${attachmentId}`;
+    let entry = this.detachedResourceObservations.get(key);
+    if (!entry) {
+      const observation = this.createResourceObservation(threadId);
+      entry = { observation, path: observation.resolvePath(ref) };
+      this.detachedResourceObservations.set(key, entry);
+    }
+    try {
+      const path = await entry.path;
+      if (!path && this.detachedResourceObservations.get(key) === entry) {
+        this.detachedResourceObservations.delete(key);
+        await entry.observation.dispose();
+      }
+      return path;
+    } catch (error) {
+      if (this.detachedResourceObservations.get(key) === entry) {
+        this.detachedResourceObservations.delete(key);
+        await entry.observation.dispose();
+      }
+      throw error;
+    }
+  }
+
+  private async discardDetachedResourceObservation(
+    threadId: ThreadId,
+    attachmentId: string,
+  ): Promise<void> {
+    const key = `${threadId}\0${attachmentId}`;
+    const entry = this.detachedResourceObservations.get(key);
+    if (!entry) return;
+    this.detachedResourceObservations.delete(key);
+    await entry.observation.dispose();
+  }
+
+  private createResourceObservation(threadId: ThreadId): ManagedAttachmentObservation {
+    return createManagedAttachmentObservation(
+      this.attachmentScratchRoot,
+      (ref, targetDirectory) => this.payloads.copyResourceForObservation(
+        threadId,
+        ref,
+        targetDirectory,
+      ),
+    );
   }
 
   private threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
@@ -890,8 +986,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<void> {
     const referenced = this.threadResourceReferences(threadId);
     const unique = resources.filter((ref, index) => (
-      resources.findIndex((candidate) => resourceReferencesEqual(candidate, ref)) === index
-      && !referenced.some((candidate) => resourceReferencesEqual(candidate, ref))
+      resources.findIndex((candidate) => referencesSameResourceFile(candidate, ref)) === index
+      && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
     ));
     await Promise.all(unique.map((ref) => this.payloads.deleteResource(threadId, ref)));
   }
@@ -1963,6 +2059,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
     const thread = this.requireThread(active.threadId).thread;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
+    const resourceObservation = this.createResourceObservation(active.threadId);
     try {
       const extensionContext = (hidden ? [] : await this.extensions.threadContext(thread))
         .map((contribution) => Object.entries(contribution.additionalContext)
@@ -1981,7 +2078,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         systemContext,
         signal: active.controller.signal,
         recorder: active.recorder,
-        resolveResourcePath: (ref) => this.payloads.resourcePath(active.threadId, ref),
+        resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
         readResource: (ref) => this.payloads.readResource(active.threadId, ref),
         persistOutputImage: (itemId, index, dataBase64, mimeType) => this.payloads.writeImage(
           active.threadId,
@@ -2014,6 +2111,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       });
     } catch (error) {
       thrown = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      await resourceObservation.dispose().catch(() => undefined);
     }
 
     this.takePendingCollaborationActivity(active.threadId);

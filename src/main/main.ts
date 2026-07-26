@@ -452,8 +452,8 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
 });
-// Scratch holds only ephemeral, app-owned data (web-fetch binaries, bash overflow logs, and PDF
-// page images). Reclaim anything past the TTL once per launch; failures
+// Scratch holds only ephemeral, app-owned data (attachment observations, web-fetch binaries, bash
+// overflow logs, and PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
@@ -484,7 +484,7 @@ const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDi
 let threadService!: ThreadService;
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
-  resolveResourcePath: (threadId, ref) => threadService.resolveThreadResourcePath(threadId, ref),
+  useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
   prepareImageSnapshot: async ({ threadId, attachment, sourcePath }) => {
     const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
     return threadService.writeThreadResourceWithStatus(
@@ -504,6 +504,7 @@ threadService = ThreadService.open(
   resolvedUserDataDir,
   turnExecutor,
   {
+    attachmentScratchRoot: agentScratchRoot,
     nameGenerator: turnExecutor,
     resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
       request.configurationProfile,

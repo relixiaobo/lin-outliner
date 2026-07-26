@@ -13,10 +13,11 @@ import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
 import type { ThreadUserContentResolutionContext } from '../ThreadService';
 
 export interface AttachmentResolverOptions {
-  readonly resolveResourcePath: (
+  readonly useResourcePath: <T>(
     threadId: string,
     ref: ThreadResourceReference,
-  ) => Promise<string | null>;
+    use: (path: string) => Promise<T>,
+  ) => Promise<T | null>;
   readonly prepareImageSnapshot: (input: {
     readonly threadId: string;
     readonly attachment: ThreadAttachmentContent;
@@ -53,9 +54,29 @@ export class AttachmentResolver {
       && attachment.source.kind === 'threadPayload'
       && attachment.source.ref.byteLength > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES
     ) throw new Error('Image attachment exceeds the image decode budget.');
-    const sourcePath = attachment.source.kind === 'localFile'
-      ? await canonicalAttachmentPath(context.cwd, attachment.source.path)
-      : await this.resolveManagedPath(context.threadId, attachment.source.ref);
+    if (attachment.source.kind === 'threadPayload') {
+      const resolved = await this.options.useResourcePath(
+        context.threadId,
+        attachment.source.ref,
+        (sourcePath) => this.resolveFromPath(attachment, sourcePath, context),
+      );
+      if (!resolved) {
+        throw new Error(`Managed attachment payload is unavailable or corrupt: ${attachment.source.ref.id}`);
+      }
+      return resolved;
+    }
+    const sourcePath = await canonicalAttachmentPath(context.cwd, attachment.source.path);
+    return this.resolveFromPath(attachment, sourcePath, context);
+  }
+
+  private async resolveFromPath(
+    attachment: ThreadAttachmentContent,
+    sourcePath: string,
+    context: ThreadUserContentResolutionContext,
+  ): Promise<ThreadAttachmentContent> {
+    const sourceMimeType = attachment.source.kind === 'threadPayload'
+      ? attachment.source.ref.mimeType
+      : attachment.mimeType;
     const sourceStat = await stat(sourcePath);
     const source = attachment.source.kind === 'localFile'
       ? { kind: 'localFile' as const, path: sourcePath }
@@ -83,17 +104,12 @@ export class AttachmentResolver {
     };
   }
 
-  private async resolveManagedPath(threadId: string, ref: ThreadResourceReference): Promise<string> {
-    const path = await this.options.resolveResourcePath(threadId, ref);
-    if (!path) throw new Error(`Managed attachment payload is unavailable or corrupt: ${ref.id}`);
-    return path;
-  }
-
   private async validatePromptImage(threadId: string, ref: ThreadResourceReference): Promise<void> {
     if (!ref.mimeType.startsWith('image/') || ref.byteLength > MAX_PROMPT_IMAGE_BYTES) {
       throw new Error('Attachment prompt image exceeds the model-input image budget.');
     }
-    await this.resolveManagedPath(threadId, ref);
+    const available = await this.options.useResourcePath(threadId, ref, async () => true);
+    if (!available) throw new Error(`Managed attachment payload is unavailable or corrupt: ${ref.id}`);
   }
 }
 

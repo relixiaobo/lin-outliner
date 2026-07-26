@@ -70,10 +70,14 @@ no shared source-size ceiling. A pathless browser `File` crosses preload in
 failure, cancellation, startup recovery, draft removal, and unreferenced-resource
 reconciliation reclaim incomplete or orphaned data.
 
-Non-image provider input describes the resolved readable path and directs the
-model to `file_read`. Images are decoded in main from a source of at most
-256 MiB, orientation-normalized by the native image pipeline, bounded to
-2,000 px, and persisted as an immutable prompt snapshot of at most 4.5 MiB.
+Non-image provider input describes a readable path and directs the model to
+`file_read`. A `localFile` uses its live canonical user path; a `threadPayload`
+uses an independent Turn-scoped copy under Agent scratch. The runtime removes
+that observation when execution ends, and model or tool writes to it cannot
+modify the private content-addressed payload. Images are decoded in main from a
+source of at most 256 MiB, orientation-normalized by the native image pipeline,
+bounded to 2,000 px, and persisted as an immutable prompt snapshot of at most
+4.5 MiB.
 All native image observations share one main-process queue, so attachment
 admission and parallel `file_read` calls cannot aggregate decode and resize work.
 The canonical attachment retains the original resource reference plus the
@@ -110,12 +114,13 @@ Thread-owned content-addressed payload store. The Item keeps only a bounded
 renderer/history projection plus an immutable `outputRef` containing digest,
 MIME type, byte length, and summary. `thread/item/output/read` validates the
 requested Thread/Turn/Item/ref tuple and byte length before returning text.
-Forked Items retain origin provenance while copying referenced payloads
-under the fork's own Thread directory. Payload reads resolve through the
-requested Thread, so deleting the source Thread cannot invalidate inherited
-text or image results. Payload reads never become provider history authority;
-prior model messages are rebuilt from canonical Items and their full output
-references.
+Forked Items retain origin provenance while copying referenced payloads under
+the fork's own Thread directory. Managed resource copies use copy-on-write when
+available but always receive a distinct inode. Payload reads resolve through the
+requested Thread, so deleting or corrupting the source Thread cannot invalidate
+inherited text or image results. Payload reads never become provider history
+authority; prior model messages are rebuilt from canonical Items and their full
+output references.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image

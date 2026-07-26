@@ -26,7 +26,7 @@ export interface TurnExecutionContext {
   readonly systemContext: readonly string[];
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
-  resolveResourcePath(ref: ThreadResourceReference): Promise<string | null>;
+  resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
     itemId: string,

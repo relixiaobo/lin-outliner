@@ -241,7 +241,41 @@ export class ToolPayloadStore {
     });
   }
 
-  async resourcePath(threadId: ThreadId, ref: ThreadResourceReference): Promise<string | null> {
+  async useResourcePath<T>(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+    use: (path: string) => Promise<T>,
+  ): Promise<T | null> {
+    const path = await this.resourcePath(threadId, ref);
+    return path ? use(path) : null;
+  }
+
+  async copyResourceForObservation(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+    targetDirectory: string,
+  ): Promise<string | null> {
+    const sourcePath = await this.resourcePath(threadId, ref);
+    if (!sourcePath) return null;
+    const directoryStat = await lstat(targetDirectory);
+    if (!isPlainDirectory(directoryStat)) {
+      throw new Error('Managed attachment observation target is not a safe directory.');
+    }
+    const targetPath = join(targetDirectory, ref.fileName);
+    await copyFile(
+      sourcePath,
+      targetPath,
+      constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+    );
+    const targetStat = await lstat(targetPath);
+    if (!isStoredResourceFile(targetStat, ref.byteLength)) {
+      await rm(targetPath, { force: true });
+      throw new Error('Managed attachment observation copy is invalid.');
+    }
+    return targetPath;
+  }
+
+  private async resourcePath(threadId: ThreadId, ref: ThreadResourceReference): Promise<string | null> {
     validateResourceReference(ref);
     const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR, ref.id);
     if (!directory) return null;
@@ -297,24 +331,19 @@ export class ToolPayloadStore {
       }
       await this.assertResourceCapacity(targetThreadId, ref.byteLength);
       try {
-        await link(sourcePath, targetPath);
+        await copyFile(
+          sourcePath,
+          targetPath,
+          constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+        );
         await this.rememberVerifiedResource(targetThreadId, ref, targetPath);
       } catch (error) {
         if (isAlreadyExists(error)) {
           await this.verifyAndRememberResource(targetThreadId, ref, targetPath);
           return true;
         }
-        try {
-          await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL);
-        } catch (copyError) {
-          if (isAlreadyExists(copyError)) {
-            await this.verifyAndRememberResource(targetThreadId, ref, targetPath);
-            return true;
-          }
-          if (isNotFound(copyError)) return false;
-          throw copyError;
-        }
-        await this.rememberVerifiedResource(targetThreadId, ref, targetPath);
+        if (isNotFound(error)) return false;
+        throw error;
       }
       return true;
     });
@@ -346,7 +375,7 @@ export class ToolPayloadStore {
   ): Promise<void> {
     const retained = new Set(references.map((ref) => {
       validateResourceReference(ref);
-      return `${ref.id}\0${ref.fileName}`;
+      return resourceStorageKey(ref);
     }));
     await this.withResourceLock(threadId, async () => {
       this.clearVerifiedResources(threadId);
@@ -369,7 +398,7 @@ export class ToolPayloadStore {
           throw error;
         });
         for (const fileName of files) {
-          if (!retained.has(`${digest}\0${fileName}`)) {
+          if (!retained.has(resourceStorageKey({ id: digest, fileName }))) {
             await rm(join(digestPath, fileName), { recursive: true, force: true });
           }
         }
@@ -757,7 +786,18 @@ function sameResourceFileIdentity(
 }
 
 function resourceFileKey(threadId: ThreadId, ref: ThreadResourceReference): string {
-  return `${threadId}\0${ref.id}\0${ref.fileName}`;
+  return `${threadId}\0${resourceStorageKey(ref)}`;
+}
+
+function resourceStorageKey(ref: Pick<ThreadResourceReference, 'id' | 'fileName'>): string {
+  return `${ref.id}\0${ref.fileName}`;
+}
+
+export function referencesSameResourceFile(
+  left: ThreadResourceReference,
+  right: ThreadResourceReference,
+): boolean {
+  return resourceStorageKey(left) === resourceStorageKey(right);
 }
 
 function validateResourceReference(ref: ThreadResourceReference): void {

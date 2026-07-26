@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -174,8 +174,31 @@ describe('Agent tool payload store', () => {
     const ref = await store.writeResource(sourceThreadId, Buffer.from('fork resource'), 'text/plain', 'fork.txt');
 
     expect(await store.copyResourceToThread(sourceThreadId, forkThreadId, ref)).toBe(true);
+    const sourcePath = join(root, sourceThreadId, 'resources', ref.id, ref.fileName);
+    const forkPath = join(root, forkThreadId, 'resources', ref.id, ref.fileName);
+    expect((await lstat(sourcePath)).ino).not.toBe((await lstat(forkPath)).ino);
+    await writeFile(sourcePath, 'source changed');
+    expect(await store.readResource(forkThreadId, ref)).toEqual(Buffer.from('fork resource'));
     await store.deleteThread(sourceThreadId);
     expect(await store.readResource(forkThreadId, ref)).toEqual(Buffer.from('fork resource'));
+  });
+
+  test('copies managed resources to disposable observations without exposing canonical files', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const ref = await store.writeResource(threadId, Buffer.from('canonical'), 'text/plain', 'resource.txt');
+    const targetDirectory = join(root, 'scratch', 'observation');
+    await mkdir(targetDirectory, { recursive: true });
+
+    const observedPath = await store.copyResourceForObservation(threadId, ref, targetDirectory);
+    const canonicalPath = join(root, threadId, 'resources', ref.id, ref.fileName);
+    expect(observedPath).not.toBe(canonicalPath);
+    expect((await lstat(observedPath!)).ino).not.toBe((await lstat(canonicalPath)).ino);
+    await writeFile(observedPath!, 'modified!');
+
+    expect(await store.readResource(threadId, ref)).toEqual(Buffer.from('canonical'));
   });
 
   test('applies the Thread quota to direct resource writes', async () => {
@@ -293,13 +316,13 @@ describe('Agent tool payload store', () => {
     const store = new ToolPayloadStore(root);
     const threadId = uuidV7(1_720_000_000_000);
     const ref = await store.writeResource(threadId, Buffer.from('secret'), 'text/plain', 'resource.txt');
-    const resourcePath = await store.resourcePath(threadId, ref);
+    const resourcePath = join(root, threadId, 'resources', ref.id, ref.fileName);
     const replacementPath = join(root, 'replacement.txt');
     await writeFile(replacementPath, 'secret');
-    await rm(resourcePath!);
-    await symlink(replacementPath, resourcePath!);
+    await rm(resourcePath);
+    await symlink(replacementPath, resourcePath);
 
-    expect(await store.resourcePath(threadId, ref)).toBeNull();
+    expect(await store.useResourcePath(threadId, ref, async (path) => path)).toBeNull();
     expect(await store.readResource(threadId, ref)).toBeNull();
   });
 
@@ -309,10 +332,10 @@ describe('Agent tool payload store', () => {
     const store = new ToolPayloadStore(root);
     const threadId = uuidV7(1_720_000_000_000);
     const ref = await store.writeResource(threadId, Buffer.from('original'), 'text/plain', 'resource.txt');
-    const resourcePath = await store.resourcePath(threadId, ref);
-    await writeFile(resourcePath!, 'modified');
+    const resourcePath = join(root, threadId, 'resources', ref.id, ref.fileName);
+    await writeFile(resourcePath, 'modified');
 
-    expect(await store.resourcePath(threadId, ref)).toBeNull();
+    expect(await store.useResourcePath(threadId, ref, async (path) => path)).toBeNull();
     expect(await store.readResource(threadId, ref)).toBeNull();
     await expect(store.writeResource(threadId, Buffer.from('original'), 'text/plain', 'resource.txt'))
       .rejects.toThrow('conflicts with an existing resource');

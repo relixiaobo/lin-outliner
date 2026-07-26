@@ -214,12 +214,18 @@ fails closed, including during quota scans, startup cleanup, and garbage
 collection. Successful writes cache file identity and digest in memory. A cold
 read or any inode, size, ctime, or mtime change streams SHA-256 again before the
 resource is returned, so same-length replacement cannot bypass integrity checks.
+Canonical managed-resource paths stay private to the payload store. Consumers
+that need a filesystem path receive an independent scratch observation: model
+execution owns a Turn-scoped copy, while Preview/Open/Reveal share a stable
+detached copy per attachment identity, reclaimed by scratch TTL. Resource garbage
+collection uses the physical key (content hash plus safe filename), independently
+of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which
 follow the same Thread deletion lifecycle and are removed when the service
 closes. Startup removes stale staging data and managed resources absent from
 reconciled canonical history. Forks copy only payloads referenced by inherited
-Items into their own directory, so provenance remains shared while payload
-deletion remains Thread-local.
+Items into their own directory with a distinct inode, so provenance remains
+shared while mutation and deletion remain Thread-local.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.

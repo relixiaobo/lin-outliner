@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -1000,6 +1000,59 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('exposes managed attachments only through disposable scratch observations', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const ref = await fixture.service.writeThreadResource(
+      thread.id,
+      Buffer.from('canonical attachment'),
+      'text/plain',
+      'attachment.txt',
+    );
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{
+        type: 'attachment',
+        id: 'managed-attachment',
+        name: ref.fileName,
+        mimeType: ref.mimeType,
+        sizeBytes: ref.byteLength,
+        source: { kind: 'threadPayload', ref },
+      }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const modelPath = await fixture.executor.contexts[0]!.resolveResourceObservationPath(ref);
+    expect(modelPath).toContain(join(fixture.root, 'agent-scratch'));
+    await writeFile(modelPath!, 'modified by model');
+    expect(await fixture.service.readThreadResource(thread.id, ref)).toEqual(Buffer.from('canonical attachment'));
+
+    const external = await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment');
+    expect(external?.path).toContain(join(fixture.root, 'agent-scratch'));
+    expect(external?.path).not.toBe(modelPath);
+    await writeFile(external!.path, 'modified by external app');
+    expect(await fixture.service.readThreadResource(thread.id, ref)).toEqual(Buffer.from('canonical attachment'));
+    expect((await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment'))?.path)
+      .toBe(external!.path);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await expect(readFile(modelPath!)).rejects.toThrow();
+    expect(await readFile(external!.path, 'utf8')).toBe('modified by external app');
+    const substituted = join(fixture.root, 'substituted.txt');
+    await writeFile(substituted, 'must not be exposed');
+    await rm(external!.path);
+    await symlink(substituted, external!.path);
+    expect(await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment')).toBeNull();
+    expect(await readFile(substituted, 'utf8')).toBe('must not be exposed');
+    await fixture.service.close();
+  });
+
   test('keeps exact attachment authorization stable across repeated canonical IDs', async () => {
     const fixture = await createFixture();
     const filePath = join(fixture.root, 'repeated.txt');
@@ -1072,6 +1125,11 @@ describe('ThreadService', () => {
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
     expect(await fixture.service.discardUnreferencedThreadResource(thread.id, retained)).toBe(false);
+    expect(await fixture.service.discardUnreferencedThreadResource(thread.id, {
+      ...retained,
+      mimeType: 'application/octet-stream',
+    })).toBe(false);
+    expect(await fixture.service.readThreadResource(thread.id, retained)).toEqual(Buffer.from('retained'));
 
     const crashLeftover = await fixture.service.writeThreadResource(
       thread.id,
@@ -1104,6 +1162,7 @@ describe('ThreadService', () => {
     const service = new ThreadService({
       stores,
       executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
       extensions,
       resolveUserContent: async (_content, context) => {
         const written = await stores.payloads.writeResourceWithStatus(
@@ -2362,7 +2421,14 @@ async function openFixture(
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);
   return {
-    service: new ThreadService({ stores, executor, now: clock, extensions, ...options }),
+    service: new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      now: clock,
+      extensions,
+      ...options,
+    }),
     stores,
   };
 }

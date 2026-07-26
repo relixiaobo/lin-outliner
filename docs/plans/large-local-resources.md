@@ -92,9 +92,20 @@ caller cannot confuse an output projection with an attachment resource.
 
 Payload references always carry digest, MIME type, and byte length. Reads verify
 identity and expected length. Thread deletion removes owned payloads; forks
-materialize any inherited managed resource under the fork's directory just as
-they already do for referenced tool output. External local paths remain external
-references and are never deleted by Thread cleanup.
+materialize any inherited managed resource under the fork's directory with a
+distinct inode, using copy-on-write where available and a real copy otherwise.
+External local paths remain external references and are never deleted by Thread
+cleanup.
+
+The content-addressed file is a private immutable storage object, never a model-
+visible or externally opened working file. A managed non-image attachment is
+copied into a Turn-scoped scratch observation before its path enters model
+context; the observation is removed when execution ends. Preview, Open, and
+Reveal share one stable detached scratch copy per attachment identity, reclaimed
+by the existing scratch TTL. Mutating either kind of copy cannot invalidate
+canonical history. Cleanup and rollback compare the physical resource key
+(`digest + safe filename`);
+metadata such as MIME type does not create a second physical owner.
 
 ### Bounded Image Observation
 
@@ -133,8 +144,9 @@ filesystem errors close the handle and remain native tool failures.
 An admitted external `localFile` does not become a trusted root. Preview, Open,
 Reveal, and resource reads that originate from the attachment UI resolve the
 canonical attachment ID through the owning Thread Item and authorize only the
-recorded canonical file. The operation re-resolves the current target and
-rejects mismatched IDs, non-file targets, and path substitution.
+recorded canonical file. A managed `threadPayload` resolves the same identity but
+serves a disposable scratch copy instead of exposing its canonical store path.
+The operation rejects mismatched IDs, non-file targets, and path substitution.
 
 Agent file tools continue to follow the Full Access capability contract. Exact
 attachment authorization exists for renderer-to-main host operations; it is not
@@ -185,13 +197,14 @@ and exact error copy are implementation details and will be recorded in the PR.
   local-file and Thread-payload references.
 - Admission tests cover very large sparse local files without copying, streamed
   pathless payload finalization, cancellation cleanup, quota failures, replay,
-  fork, and delete lifecycle.
+  independent-inode fork, metadata-alias cleanup, and delete lifecycle.
 - Image tests prove renderer/base64 removal, bounded normalization, deterministic
   replay after source mutation, corrupt input failure, and provider-boundary
   conversion.
 - Local-tool tests prove `file_read` does not buffer the complete source and
   stops after the requested bounded window for large files.
 - Authorization tests prove one attachment ID grants only its exact canonical
-  file and cannot widen a trusted root or substitute a symlink target.
+  file, managed observations cannot mutate canonical history, and neither source
+  can widen a trusted root or substitute a symlink target.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, relevant
   Agent E2E tests, `bun run docs:check`, and `git diff --check`.

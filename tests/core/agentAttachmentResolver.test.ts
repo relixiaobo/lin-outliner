@@ -48,11 +48,14 @@ describe('AttachmentResolver', () => {
     const promptRef = resourceRef('3', 'image/png', 8, 'prompt.png');
     const snapshots: string[] = [];
     const resolver = new AttachmentResolver({
-      resolveResourcePath: async (_threadId, ref) => new Map([
-        [documentRef.id, documentPath],
-        [imageRef.id, imagePath],
-        [promptRef.id, join(managedRoot, 'prompt.png')],
-      ]).get(ref.id) ?? null,
+      useResourcePath: async (_threadId, ref, use) => {
+        const resourcePath = new Map([
+          [documentRef.id, documentPath],
+          [imageRef.id, imagePath],
+          [promptRef.id, join(managedRoot, 'prompt.png')],
+        ]).get(ref.id);
+        return resourcePath ? use(resourcePath) : null;
+      },
       prepareImageSnapshot: async ({ sourcePath }) => {
         snapshots.push(sourcePath);
         return { ref: promptRef, created: true };
@@ -105,7 +108,7 @@ describe('AttachmentResolver', () => {
     const promptRef = resourceRef('c', 'image/png', 8, 'prompt.png');
     const createdResources: ThreadResourceReference[] = [];
     const resolver = new AttachmentResolver({
-      resolveResourcePath: async (_threadId, ref) => ref.id === imageRef.id ? imagePath : null,
+      useResourcePath: async (_threadId, ref, use) => ref.id === imageRef.id ? use(imagePath) : null,
       prepareImageSnapshot: async () => ({ ref: promptRef, created: true }),
     });
 
@@ -121,7 +124,7 @@ describe('AttachmentResolver', () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     let resolutions = 0;
     const resolver = new AttachmentResolver({
-      resolveResourcePath: async () => {
+      useResourcePath: async () => {
         resolutions += 1;
         return null;
       },
@@ -159,7 +162,10 @@ describe('AttachmentResolver', () => {
     let activePreparations = 0;
     let maximumPreparations = 0;
     const resolver = new AttachmentResolver({
-      resolveResourcePath: async (_threadId, ref) => resources.get(ref.id) ?? null,
+      useResourcePath: async (_threadId, ref, use) => {
+        const resourcePath = resources.get(ref.id);
+        return resourcePath ? use(resourcePath) : null;
+      },
       prepareImageSnapshot: async () => {
         activePreparations += 1;
         maximumPreparations = Math.max(maximumPreparations, activePreparations);
@@ -185,7 +191,10 @@ describe('AttachmentResolver', () => {
 
 function resolverWithResources(resources: ReadonlyMap<string, string>): AttachmentResolver {
   return new AttachmentResolver({
-    resolveResourcePath: async (_threadId, ref) => resources.get(ref.id) ?? null,
+    useResourcePath: async (_threadId, ref, use) => {
+      const resourcePath = resources.get(ref.id);
+      return resourcePath ? use(resourcePath) : null;
+    },
     prepareImageSnapshot: async () => ({
       ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
       created: true,

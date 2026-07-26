@@ -921,7 +921,7 @@ async function currentPrompt(context: TurnExecutionContext): Promise<UserMessage
 export async function modelUserMessage(
   content: readonly ThreadUserContent[],
   timestamp = Date.now(),
-  resources?: Pick<TurnExecutionContext, 'readResource' | 'resolveResourcePath'>,
+  resources?: Pick<TurnExecutionContext, 'readResource' | 'resolveResourceObservationPath'>,
 ): Promise<UserMessage> {
   const converted: Array<TextContent | ImageContent> = [];
   for (const part of content) {
@@ -942,7 +942,7 @@ export async function modelUserMessage(
           const location = part.source.kind === 'localFile'
             ? `\nReadable path: ${part.source.path}\nUse file_read with this path to inspect the attachment.`
             : resources
-              ? await resources.resolveResourcePath(part.source.ref).then((path) => {
+              ? await resources.resolveResourceObservationPath(part.source.ref).then((path) => {
                   if (!path) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
                   return `\nReadable path: ${path}\nUse file_read with this path to inspect the attachment.`;
                 })
