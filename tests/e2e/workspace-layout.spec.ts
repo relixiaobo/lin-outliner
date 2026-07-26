@@ -12,7 +12,7 @@ import {
   rowBody,
 } from './outlinerMock';
 
-const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v6';
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v7';
 const WORKSPACE_PINNED_NODES_STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
 const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 
@@ -792,7 +792,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 6,
+        version: 7,
         localDate,
         activePanelId: 'panel-root',
         panels: [{
@@ -832,7 +832,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 6,
+        version: 7,
         localDate,
         activePanelId: 'panel-daily',
         panels: [{
@@ -886,8 +886,8 @@ test.describe('workspace layout resizing', () => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await page.evaluate(() => {
-      window.localStorage.setItem('lin-outliner:workspace-layout:v6', JSON.stringify({
-        version: 6,
+      window.localStorage.setItem('lin-outliner:workspace-layout:v7', JSON.stringify({
+        version: 7,
         localDate: '1999-01-01',
         activePanelId: 'panel-stale',
         panels: [{

@@ -1927,6 +1927,8 @@ describe('ThreadService', () => {
 
   test('exposes canonical control tools and executes plan, Goal, and collaboration paths', async () => {
     const fixture = await createFixture();
+    const notifications: AgentCoreNotification[] = [];
+    fixture.service.subscribe((notification) => notifications.push(notification));
     const root = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
@@ -1958,7 +1960,18 @@ describe('ThreadService', () => {
       'collaboration__interrupt_agent',
     ]);
 
-    await executeTool(tools, 'update_plan', 'plan-item', {
+    const planUpdate = await executeTool(tools, 'update_plan', 'plan-item', {
+      explanation: 'Canonical execution plan',
+      plan: [{ step: 'Implement', status: 'in_progress' }],
+    });
+    expect(planUpdate.details).toMatchObject({
+      explanation: 'Canonical execution plan',
+      plan: [{ step: 'Implement', status: 'in_progress' }],
+    });
+    expect(notifications).toContainEqual({
+      type: 'turn/plan/updated',
+      threadId: root.id,
+      turnId: context.turn.id,
       explanation: 'Canonical execution plan',
       plan: [{ step: 'Implement', status: 'in_progress' }],
     });
@@ -1987,7 +2000,9 @@ describe('ThreadService', () => {
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
     const stored = fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread;
-    expect(stored.turns?.[0]?.items.some((item) => item.type === 'plan')).toBe(true);
+    expect(stored.turns?.[0]?.items.map((item) => item.type)).not.toContain('plan');
+    expect((await fixture.stores.rollout.read(root.id)).map((entry) => entry.event.type))
+      .not.toContain('turn/plan/updated');
     expect(stored.turns?.[0]?.items.filter((item) => item.type === 'subAgentActivity')).toMatchObject([
       { kind: 'started', agentThreadId: childId, agentPath: '/root/helper' },
       { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper' },

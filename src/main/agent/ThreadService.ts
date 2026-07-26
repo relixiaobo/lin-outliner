@@ -13,9 +13,10 @@ import {
   type ThreadHistoryRollbackContext,
 } from '../../core/agent/extensions';
 import {
-  decodeAgentCoreNotification,
+  decodeAgentCoreRecordedNotification,
   decodeAgentCoreRequest,
   decodeAgentCoreResponse,
+  decodeAgentCoreTransientNotification,
   decodePrivilegedTurnStartRequest,
   decodeThread,
   decodeThreadItem,
@@ -41,6 +42,8 @@ import type {
 import type {
   AgentCoreMethod,
   AgentCoreNotification,
+  AgentCoreRecordedNotification,
+  AgentCoreTransientNotification,
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
   AdditionalContext,
@@ -1592,18 +1595,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await this.resolveUserInput(response);
   }
 
-  async recordPlan(threadId: ThreadId, turnId: string, inputValue: unknown): Promise<{ text: string }> {
+  updateTurnPlan(threadId: ThreadId, turnId: string, inputValue: unknown): UpdatePlanToolInput {
     const input = normalizeUpdatePlanToolInput(inputValue);
-    const active = this.requireActiveTurn(threadId, turnId);
-    const id = active.recorder.createItemId();
-    const text = formatPlan(input);
-    await active.recorder.completedImmediately({
-      type: 'plan',
-      id,
-      provenance: active.recorder.localProvenance(id),
-      text,
-    }, this.now());
-    return { text };
+    this.requireActiveTurn(threadId, turnId);
+    this.emitTransientNotification({
+      type: 'turn/plan/updated',
+      threadId,
+      turnId,
+      ...input,
+    });
+    return input;
   }
 
   getGoalForTurn(threadId: ThreadId, turnId: string): GetGoalResponse {
@@ -2432,8 +2433,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.emitTransientNotification({ type: 'thread/name/updated', threadId });
   }
 
-  private async recordNotification(notification: AgentCoreNotification): Promise<void> {
-    const decoded = decodeAgentCoreNotification(notification);
+  private async recordNotification(notification: AgentCoreRecordedNotification): Promise<void> {
+    const decoded = decodeAgentCoreRecordedNotification(notification);
     const record = this.requireThread(decoded.threadId);
     if (record.thread.ephemeral) {
       this.applyEphemeralNotification(decoded);
@@ -2447,15 +2448,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
-  private emitTransientNotification(notification: AgentCoreNotification): void {
-    const decoded = decodeAgentCoreNotification(notification);
+  private emitTransientNotification(notification: AgentCoreTransientNotification): void {
+    const decoded = decodeAgentCoreTransientNotification(notification);
     this.requireThread(decoded.threadId);
     if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
       for (const listener of this.listeners) listener(decoded);
     }
   }
 
-  private applyEphemeralNotification(notification: AgentCoreNotification): void {
+  private applyEphemeralNotification(notification: AgentCoreRecordedNotification): void {
     const state = this.ephemeral.get(notification.threadId);
     if (!state) throw new Error(`Ephemeral Thread not found: ${notification.threadId}`);
     switch (notification.type) {
@@ -2887,14 +2888,6 @@ function defaultAgentRole(name: string): AgentRole {
   const role = BUILT_IN_AGENT_ROLE_DEFINITIONS[name];
   if (!role) throw new Error(`Unknown Agent Role: ${name}`);
   return role;
-}
-
-function formatPlan(input: UpdatePlanToolInput): string {
-  const lines = input.plan.map((entry) => {
-    const marker = entry.status === 'completed' ? '[x]' : entry.status === 'in_progress' ? '[>]' : '[ ]';
-    return `${marker} ${entry.step}`;
-  });
-  return [...(input.explanation ? [input.explanation, ''] : []), ...lines].join('\n');
 }
 
 function validateUserInputAnswers(request: RequestUserInputRequest, response: RequestUserInputResponse): void {

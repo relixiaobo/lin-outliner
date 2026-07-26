@@ -16,7 +16,7 @@ import {
   type ThreadMemoryMode,
 } from '../../../../core/agent/memory';
 import type {
-  AgentCoreNotification,
+  AgentCoreRecordedNotification,
   AgentMutationCausation,
   Thread,
   ThreadId,
@@ -364,7 +364,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     }
   }
 
-  onNotification(notification: AgentCoreNotification): void {
+  onNotification(notification: AgentCoreRecordedNotification): void {
     if (notification.type !== 'turn/completed') return;
     const usage = this.turnMemoryUsage.get(notification.turnId);
     this.turnMemoryUsage.delete(notification.turnId);

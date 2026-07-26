@@ -179,7 +179,7 @@ export class ToolRuntime {
         return this.service.requestUserInput(threadId, turnId, itemId, params, signal);
       }),
       coreTool('update_plan', 'Update Plan', async (_itemId, params) => {
-        return this.service.recordPlan(threadId, turnId, params);
+        return this.service.updateTurnPlan(threadId, turnId, params);
       }),
       coreTool('get_goal', 'Get Goal', async () => this.service.getGoalForTurn(threadId, turnId)),
       coreTool('create_goal', 'Create Goal', async (_itemId, params) => {

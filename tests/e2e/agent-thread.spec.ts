@@ -95,10 +95,14 @@ test.describe('canonical agent Thread surface', () => {
     await expect(usage).toContainText('Usage details');
     await expect(usage).toContainText('Cached: 21%');
     await expect(usage).toContainText('Input120');
+    const paneCountBeforeDetails = await page.locator('.outline-panel-surface').count();
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
+    await expect(usage).toHaveCount(0);
     const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
     await expect(runDetails).toBeVisible();
+    await expect(runDetails).toHaveClass(/active-panel/);
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
     await expect(runDetails).toContainText('Run Details');
     await expect(runDetails).toContainText('Summary');
     await expect(runDetails).toContainText('Model Input');
@@ -108,6 +112,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(runDetails).toContainText('Session ID');
     await runDetails.locator('.thread-run-details-execution-event').first().locator('.thread-run-details-message-head').click();
     await expect(runDetails.locator('.thread-run-details-execution-event').first()).toContainText('"type": "userMessage"');
+    await runDetails.getByRole('button', { name: 'Previous page' }).click();
+    await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 
     await userMessage.hover();
     expect(await userMessage.locator('.thread-message-actions').getByRole('button').evaluateAll((buttons) => (
@@ -1071,7 +1077,7 @@ test.describe('canonical agent Thread surface', () => {
             provenance: provenance(toolId),
             namespace: 'node',
             tool: 'read',
-            arguments: { node_id: 'node-alpha' },
+            arguments: { node_id: 'node-alpha', file_path: 'notes.md' },
             status: 'completed',
             contentItems: [{ type: 'json', value: { title: 'Alpha' } }],
             success: true,
@@ -1178,6 +1184,17 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('button', { name: 'Copy output' }).click();
     expect(await clipboardText(page)).toBe('/mock/workspace');
 
+    const commandPaths = command.locator('xpath=..').locator('.thread-tool-path-reference');
+    await expect(commandPaths).toHaveCount(1);
+    await expect(commandPaths).toHaveAttribute('data-inline-ref-path', '/mock/workspace');
+    const nodeTool = page.getByRole('button', { name: 'Used node.read' });
+    await nodeTool.click();
+    const relativePath = nodeTool.locator('xpath=..').locator('.thread-tool-path-reference');
+    await expect(relativePath).toHaveAttribute('data-inline-ref-path', '/mock/workspace/notes.md');
+    await relativePath.click();
+    await expect(page.locator('.outline-panel-surface.active-panel.is-file-preview'))
+      .toContainText('Mock preview text.');
+
     await page.getByRole('button', { name: 'Copy message' }).click();
     expect(await clipboardText(page)).toBe([
       '```tool bash',
@@ -1189,7 +1206,7 @@ test.describe('canonical agent Thread surface', () => {
       '```',
       '',
       '```tool node.read',
-      JSON.stringify({ node_id: 'node-alpha' }, null, 2),
+      JSON.stringify({ node_id: 'node-alpha', file_path: 'notes.md' }, null, 2),
       '```',
       '',
       '```tool-result',
@@ -1388,7 +1405,119 @@ test.describe('canonical agent Thread surface', () => {
     await expect(preview.locator('.file-preview-content')).toContainText('Mock preview text.');
   });
 
-  test('keeps loaded Skills compact while isolated Skill runs remain expandable', async ({ page }) => {
+  test('shows Turn-local Plan progress only while the Turn is active', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ae01';
+      const itemId = '01910000-0000-7000-8000-00000000ae02';
+      const turn = {
+        id: turnId,
+        items: [{
+          id: itemId,
+          type: 'userMessage',
+          provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+          clientId: null,
+          content: [{ type: 'text', text: 'Implement the interaction' }],
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        execution: {
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.4',
+          reasoningEffort: 'medium',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: null,
+          },
+        },
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn,
+      });
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId,
+        explanation: 'Working through the interaction contract',
+        plan: Array.from({ length: 24 }, (_, index) => ({
+          step: index === 0
+            ? 'Inspect the current behavior'
+            : index === 1
+              ? 'Implement the transient projection'
+              : `Verify interaction checkpoint ${index + 1}`,
+          status: index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending',
+        })),
+      });
+      return { threadId, turn };
+    });
+
+    const progress = page.locator('.thread-plan-progress-summary');
+    await expect(progress).toHaveText('Step 2 / 24');
+    await expect(progress).toHaveAttribute('aria-expanded', 'false');
+    await progress.hover();
+    const checklist = page.locator('.thread-plan-progress-popover');
+    await expect(checklist).toBeVisible();
+    await expect(checklist).toContainText('Working through the interaction contract');
+    await expect(checklist.locator('li')).toHaveCount(24);
+    await expect(checklist.locator('li').first()).toHaveText('Inspect the current behavior');
+    await expect(checklist.locator('li').last()).toHaveText('Verify interaction checkpoint 24');
+    expect(await checklist.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    await checklist.hover();
+    await page.mouse.wheel(0, 480);
+    await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await page.mouse.move(1, 1);
+    await expect(checklist).not.toBeVisible();
+    await progress.focus();
+    await progress.press('Enter');
+    await expect(progress).toHaveAttribute('aria-expanded', 'true');
+    await expect(checklist).toBeVisible();
+    await expect(checklist).toBeFocused();
+    await checklist.evaluate((element) => { element.scrollTop = 0; });
+    await checklist.press('PageDown');
+    await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await checklist.press('Escape');
+    await expect(progress).toHaveAttribute('aria-expanded', 'false');
+    await expect(progress).toBeFocused();
+    await expect(checklist).not.toBeVisible();
+
+    await page.evaluate(({ threadId, turn }) => {
+      const e2eWindow = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId: turn.id,
+        turn: { ...turn, status: 'completed', completedAt: 2, durationMs: 1 },
+      });
+    }, fixture);
+
+    await expect(page.locator('.thread-plan-progress')).toHaveCount(0);
+    await expect(page.getByText('Used update_plan')).toHaveCount(0);
+  });
+
+  test('shows loaded and isolated Skills through the same tool disclosure', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
@@ -1444,14 +1573,14 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     await expect(page.locator('.thread-process-title')).toHaveText('Used 2 skills');
-    const loaded = page.locator('.thread-loaded-skill');
-    await expect(loaded.locator('.thread-loaded-skill-name')).toHaveText('/review-pr');
-    await expect(loaded.locator('.thread-loaded-skill-args')).toHaveText('429 --focus rendering');
-    await expect(loaded.getByRole('button')).toHaveCount(0);
-
-    const isolated = page.locator('.thread-tool-toggle');
-    await expect(isolated).toHaveCount(1);
-    await isolated.click();
+    await page.getByRole('button', { name: 'Used 2 skills' }).click();
+    const skills = page.locator('.thread-tool-toggle');
+    await expect(skills).toHaveCount(2);
+    await skills.nth(0).click();
+    await expect(skills.nth(0).locator('xpath=..')).toContainText('review-pr');
+    await expect(skills.nth(0).locator('xpath=..')).toContainText('429 --focus rendering');
+    await expect(skills.nth(0).locator('xpath=..')).toContainText('Launching skill: review-pr');
+    await skills.nth(1).click();
     await expect(page.getByText('Isolated skill result.')).toBeVisible();
   });
 

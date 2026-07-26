@@ -1,17 +1,17 @@
 import { mkdir, open, readFile, rm, stat, truncate } from 'node:fs/promises';
 import { join } from 'node:path';
-import { decodeAgentCoreNotification } from '../../../core/agent/codec';
+import { decodeAgentCoreRecordedNotification } from '../../../core/agent/codec';
 import {
   createThreadHistoryRollbackContext,
   type ThreadHistoryRollbackContext,
 } from '../../../core/agent/extensions';
-import type { AgentCoreNotification, ThreadId } from '../../../core/agent/protocol';
+import type { AgentCoreRecordedNotification, ThreadId } from '../../../core/agent/protocol';
 
 export interface ThreadHistoryRollbackMarker extends ThreadHistoryRollbackContext {
   readonly type: 'history/rollback';
 }
 
-export type RolloutEvent = AgentCoreNotification | ThreadHistoryRollbackMarker;
+export type RolloutEvent = AgentCoreRecordedNotification | ThreadHistoryRollbackMarker;
 
 export interface RolloutRecord {
   readonly ordinal: number;
@@ -40,7 +40,7 @@ export class RolloutStore {
 
   async append(
     threadId: ThreadId,
-    notificationInput: AgentCoreNotification,
+    notificationInput: AgentCoreRecordedNotification,
     recordedAt = Date.now(),
   ): Promise<RolloutEntry> {
     return this.appendEvent(threadId, notificationInput, recordedAt);
@@ -194,7 +194,7 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
 
 function decodeRolloutEvent(value: unknown): RolloutEvent {
   if (!isRecord(value) || value.type !== 'history/rollback') {
-    return decodeAgentCoreNotification(value);
+    return decodeAgentCoreRecordedNotification(value);
   }
   const keys = Object.keys(value).sort();
   if (keys.join(',') !== 'afterProjectionVersion,beforeProjectionVersion,omittedTurnIds,rollbackId,threadId,type') {

@@ -6,6 +6,7 @@ import {
   decodeAgentCoreRequest,
   decodeAgentCoreResponse,
   decodeAgentCoreNotification,
+  decodeAgentCoreRecordedNotification,
   decodePrivilegedTurnStartRequest,
   decodeRendererTurnStartRequest,
   decodeThread,
@@ -66,12 +67,6 @@ const allItems: readonly ThreadItem[] = [
       entries: [{ nodeId: 'memory-node-1', note: 'User preference' }],
       threadIds: [THREAD_ID],
     },
-  },
-  {
-    type: 'plan',
-    id: 'item-3',
-    provenance: { ...itemProvenance, originItemId: 'item-3' },
-    text: '- [ ] Implement',
   },
   {
     type: 'reasoning',
@@ -424,6 +419,28 @@ describe('Codex Agent Core protocol codec', () => {
       turnId: TURN_ID,
       status: { kind: 'request', attempt: 5, maxRetries: 4 },
     })).toThrow('must not exceed maxRetries');
+
+    const planUpdate = {
+      type: 'turn/plan/updated' as const,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      explanation: 'Implement in dependency order',
+      plan: [
+        { step: 'Define the transient contract', status: 'completed' as const },
+        { step: 'Render current progress', status: 'in_progress' as const },
+        { step: 'Verify terminal cleanup', status: 'pending' as const },
+      ],
+    };
+    expect(decodeAgentCoreNotification(planUpdate)).toEqual(planUpdate);
+    expect(() => decodeAgentCoreNotification({
+      ...planUpdate,
+      plan: [
+        { step: 'First', status: 'in_progress' },
+        { step: 'Second', status: 'in_progress' },
+      ],
+    })).toThrow('at most one in_progress');
+    expect(() => decodeAgentCoreRecordedNotification(planUpdate))
+      .toThrow('cannot record transient notification turn/plan/updated');
   });
 
   test('validates canonical Thread name update notifications', () => {
@@ -473,12 +490,12 @@ describe('Codex Agent Core protocol codec', () => {
       },
     })).toThrow('must cover input, output, cache-read, and cache-write tokens');
     expect(() => decodeThreadItem({
-      ...allItems[4],
+      ...allItems[3],
       outputRef: { id: 'not-a-digest', mimeType: 'text/plain', byteLength: 2, summary: 'Output' },
     })).toThrow('lowercase SHA-256');
     expect(() => decodeAgentCoreResponse('thread/item/output/read', {
       output: {
-        ref: allItems[4]?.type === 'commandExecution' ? allItems[4].outputRef : null,
+        ref: allItems[3]?.type === 'commandExecution' ? allItems[3].outputRef : null,
         text: 'wrong length',
       },
     })).toThrow('byte length must match');
@@ -627,7 +644,7 @@ describe('Codex Agent Core protocol codec', () => {
       },
       'thread/item/output/read': {
         output: {
-          ref: allItems[4]?.type === 'commandExecution' ? allItems[4].outputRef : null,
+          ref: allItems[3]?.type === 'commandExecution' ? allItems[3].outputRef : null,
           text: 'ok',
         },
       },

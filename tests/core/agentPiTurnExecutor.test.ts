@@ -113,6 +113,28 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('keeps update_plan out of the recorded tool Item stream', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-plan-1',
+      toolName: 'update_plan',
+      args: { plan: [{ step: 'Implement', status: 'in_progress' }] },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-plan-1',
+      toolName: 'update_plan',
+      result: { content: [{ type: 'text', text: 'Plan updated' }] },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    expect(fixture.notifications).toEqual([]);
+    expect(fixture.recorder.orderedItems()).toEqual([]);
+  });
+
   test('keeps completed Items immutable in the authoritative recorder', async () => {
     const fixture = createContext();
     const itemId = fixture.recorder.createItemId();

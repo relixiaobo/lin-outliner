@@ -1141,6 +1141,7 @@ commandPalette: {
       goalUsage: ({ used, budget }: { used: string; budget: string }) => `${used} / ${budget} tokens`,
       goalUnboundedUsage: ({ used }: { used: string }) => `${used} tokens`,
       inputNeeded: 'Input needed',
+      planProgress: ({ current, total }: { current: number; total: number }) => `Step ${current} / ${total}`,
       inputProgress: ({ current, total }: { current: number; total: number }) => `${current} of ${total}`,
       inputBack: 'Previous question',
       inputNext: 'Next',

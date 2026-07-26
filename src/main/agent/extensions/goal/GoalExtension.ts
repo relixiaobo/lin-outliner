@@ -8,10 +8,10 @@ import type {
   UpdateGoalInput,
   UpdateGoalResponse,
 } from '../../../../core/agent/goal';
-import type { AgentCoreNotification, Thread, ThreadId, TurnId } from '../../../../core/agent/protocol';
+import type { AgentCoreRecordedNotification, Thread, ThreadId, TurnId } from '../../../../core/agent/protocol';
 import { GoalStore, type GoalRecord } from './GoalStore';
 
-type NotificationPublisher = (notification: AgentCoreNotification) => Promise<void>;
+type NotificationPublisher = (notification: AgentCoreRecordedNotification) => Promise<void>;
 type ThreadReader = (threadId: ThreadId) => Thread;
 
 export class GoalExtension implements AgentCoreExtension {

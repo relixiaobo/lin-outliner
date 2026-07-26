@@ -332,6 +332,7 @@ export class PiEventNormalizer {
   private activeMessageItem: Extract<ThreadItem, { type: 'agentMessage' }> | null = null;
   private activeReasoningItem: Extract<ThreadItem, { type: 'reasoning' }> | null = null;
   private readonly toolItems = new Map<string, { item: ThreadItem; startedAt: number }>();
+  private readonly transientToolCallIds = new Set<string>();
   private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: TurnExecutionContext) {}
@@ -443,11 +444,16 @@ export class PiEventNormalizer {
 
   private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
     const identity = canonicalIdentity(providerName);
+    if (identity.namespace === null && identity.name === 'update_plan') {
+      this.transientToolCallIds.add(callId);
+      return;
+    }
     const item = startedToolItem(this.context, callId, identity, args);
     this.toolItems.set(callId, { item: await this.context.recorder.started(item), startedAt: Date.now() });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
+    if (this.transientToolCallIds.delete(callId)) return;
     const active = this.toolItems.get(callId);
     if (!active) return;
     await this.context.recorder.completed(await completedToolItem(
@@ -882,9 +888,6 @@ export async function historyMessages(context: TurnExecutionContext, model: Mode
               text: `[Reasoning]\n${[...item.summary, ...item.content].join('\n')}`,
             });
           }
-          break;
-        case 'plan':
-          if (item.text) assistantContent.push({ type: 'text', text: `[Plan]\n${item.text}` });
           break;
         case 'subAgentActivity':
           assistantContent.push({

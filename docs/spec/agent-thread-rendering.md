@@ -16,8 +16,8 @@ Threads and expose their source lineage in details rather than masquerading as
 children.
 
 The selected Thread ID is renderer state. Thread catalog, loaded pages, root
-Thread execution selections, active input requests, and Goals live in
-`threadStore`; components do not maintain parallel copies.
+Thread execution selections, active input requests, Turn-local Plan snapshots,
+and Goals live in `threadStore`; components do not maintain parallel copies.
 
 The Thread list opens the separate Automations surface defined by
 [`agent-automations.md`](agent-automations.md). Its React chunk loads only when
@@ -31,7 +31,6 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 
 - user and agent messages render readable text at the same content register as
   the outliner
-- plans render their current step list without becoming a separate work object
 - reasoning uses the established `Thinking` / `Thought` disclosure with a
   one-line gist while collapsed and every provider-supplied summary/content
   part in the expanded body; every non-empty reasoning Item remains expandable,
@@ -52,9 +51,13 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   full text, while copied Turns use the same full result
 - file-change results reuse the shared local-file preview affordance and expose
   the established Add to Today action without introducing an artifact DTO
-- an ordinary loaded Skill remains the established compact `/skill args` row;
-  isolated Skill execution remains an expandable tool row, and loaded Skills do
-  not disappear inside a counted tool group
+- every ordinary tool, including a loaded or isolated Skill, uses the same
+  expandable row inside the counted activity group; tool-specific icons,
+  summaries, images, and child-Thread links remain supplemental affordances
+- local paths in tool arguments and results use the shared inline-file reference
+  affordance; absolute paths link directly, while relative values in path-bearing
+  JSON fields resolve against the Thread working directory. URL text is not
+  treated as a local path, and main-process preview checks remain authoritative
 - collaboration Items and Subagent activity link directly to their canonical
   child Thread
 - Memory used by an answer renders through the ordinary inline Node-reference
@@ -67,7 +70,7 @@ under the established `Worked for ...` disclosure while leaving the answer
 outside the fold. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
 before its first process Item arrives. Rendering builds one Turn-level process
-projection from every reasoning, commentary, plan, image-view, Subagent, and
+projection from every reasoning, commentary, image-view, Subagent, and
 tool Item. That block is placed before the first final response regardless of
 the Items' persisted arrival order, so a late reasoning Item cannot appear
 below the answer. The process disclosure contains the independent reasoning,
@@ -108,7 +111,7 @@ established quiet stopped row and the same three actions. Hover and keyboard
 focus reveal the row without changing geometry.
 
 Copy on a response copies the complete assistant side of that Turn in order:
-commentary and plan text, tool arguments, full tool results when available, and
+commentary, tool arguments, full tool results when available, and
 the final response. A partial failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
@@ -119,16 +122,18 @@ duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card containing timestamp, provider, model, reasoning effort,
 and the complete token/cost usage breakdown. The card is anchored in a portal
 and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens the workspace Run Details pane.
+Details from the native message menu, opens Run Details in the active workspace
+pane.
 
 Run Details preserves the established debug-page structure: Summary, Model
 Input disclosures, and an expandable Execution list with raw JSON for every
 canonical Item. It reads the canonical Thread and full Turn rollout directly;
 it does not recreate the removed debug-run, round, or event projection. The
 page adds canonical Thread, Turn, Session, provenance, and trigger identities
-alongside the existing model, timing, tool, token, and cost facts. Opening a
-different Turn reuses the existing Run Details pane, while opening the same Turn
-focuses it.
+alongside the existing model, timing, tool, token, and cost facts. Opening
+Details pushes the current view onto that pane's Back stack and never creates a
+split. Opening another Turn while Details is current replaces only the target,
+without adding history noise; Back or close returns to the prior view.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item
@@ -259,7 +264,7 @@ sources show a localized product label and never expose raw `threadSource` enum
 values.
 
 The transcript follows streaming output only while the reader remains near its
-bottom edge. Scrolling upward or opening a reasoning, tool, plan, or long-message
+bottom edge. Scrolling upward or opening a reasoning, tool, or long-message
 disclosure releases that lock, so later Item updates never pull the reader away
 from earlier evidence. A new explicit send restores bottom following.
 
@@ -274,7 +279,17 @@ Provider request and stream retries are transient execution state, not Items.
 The selected Thread shows the established live reconnecting row while retrying
 and removes it when the provider recovers or the Turn becomes terminal.
 
-Process, reasoning, plan, tool-group, and tool-detail disclosures keep per-Thread UI
+`turn/plan/updated` is also transient execution state, not an Item. The selected
+Thread keeps only the latest snapshot for its active Turn and shows compact
+`Step n / total` progress above the composer. Hover previews the complete
+checklist; activating the summary opens the same scrollable checklist and moves
+keyboard focus into it. Escape closes it and restores focus to the summary. A
+replacement snapshot overwrites the prior one;
+terminal completion, failure, interruption, Thread deletion, catalog reload,
+or application restart removes it. It never appears in transcript history, Run
+Details, response copy, or as `Used update_plan`.
+
+Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;
 switching Threads, streaming-to-terminal remounts, and application reloads do not
 discard an explicit user choice. A live reasoning Item is open while streaming.

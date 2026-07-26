@@ -12,12 +12,18 @@ import type {
   ThreadItem,
   ThreadItemDelta,
   ThreadListResponse,
+  TurnPlanSnapshot,
+  TurnId,
   ThreadUserContent,
   ThreadTurnsListResponse,
   Turn,
 } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { api } from '../../api/client';
+
+export interface ActiveTurnPlan extends TurnPlanSnapshot {
+  readonly turnId: TurnId;
+}
 
 export interface ThreadStoreSnapshot {
   readonly threads: readonly Thread[];
@@ -27,6 +33,7 @@ export interface ThreadStoreSnapshot {
   readonly goalsByThread: ReadonlyMap<ThreadId, ThreadGoal>;
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
   readonly providerRetryByThread: ReadonlyMap<ThreadId, { readonly turnId: string; readonly status: ProviderRetryStatus }>;
+  readonly planByThread: ReadonlyMap<ThreadId, ActiveTurnPlan>;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -39,6 +46,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   goalsByThread: new Map(),
   userInputByThread: new Map(),
   providerRetryByThread: new Map(),
+  planByThread: new Map(),
   loading: true,
   error: null,
 };
@@ -92,7 +100,13 @@ export class ThreadStore {
     const selected = this.snapshot.selectedThreadId && threads.some((thread) => thread.id === this.snapshot.selectedThreadId)
       ? this.snapshot.selectedThreadId
       : threads[0]?.id ?? null;
-    this.patch({ threads: sortThreads(threads), selectedThreadId: selected, loading: false, error: null });
+    this.patch({
+      threads: sortThreads(threads),
+      selectedThreadId: selected,
+      planByThread: new Map(),
+      loading: false,
+      error: null,
+    });
     if (selected) await this.loadTurns(selected);
   }
 
@@ -135,6 +149,7 @@ export class ThreadStore {
     const goalsByThread = new Map(this.snapshot.goalsByThread);
     const userInputByThread = new Map(this.snapshot.userInputByThread);
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+    const planByThread = new Map(this.snapshot.planByThread);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
@@ -142,6 +157,7 @@ export class ThreadStore {
       goalsByThread.delete(deletedId);
       userInputByThread.delete(deletedId);
       providerRetryByThread.delete(deletedId);
+      planByThread.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
@@ -156,6 +172,7 @@ export class ThreadStore {
       goalsByThread,
       userInputByThread,
       providerRetryByThread,
+      planByThread,
       selectedThreadId: replacementThreadId,
     });
     if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
@@ -390,26 +407,36 @@ export class ThreadStore {
         this.updateThread(notification.threadId, (thread) => ({ ...thread, status: notification.status }));
         return;
       case 'turn/started': {
+        const planByThread = new Map(this.snapshot.planByThread);
+        planByThread.delete(notification.threadId);
         const preview = threadPreviewFromTurn(notification.turn);
         this.updateThread(notification.threadId, (thread) => ({
           ...thread,
           preview: thread.preview.trim() ? thread.preview : preview,
           updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
         }));
-        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn);
+        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { planByThread });
+        else this.patch({ planByThread });
         return;
       }
       case 'turn/completed': {
         const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+        const planByThread = new Map(this.snapshot.planByThread);
         if (providerRetryByThread.get(notification.threadId)?.turnId === notification.turnId) {
           providerRetryByThread.delete(notification.threadId);
+        }
+        if (planByThread.get(notification.threadId)?.turnId === notification.turnId) {
+          planByThread.delete(notification.threadId);
         }
         this.updateThread(notification.threadId, (thread) => ({
           ...thread,
           updatedAt: Math.max(thread.updatedAt, notification.turn.completedAt ?? notification.turn.startedAt),
         }));
-        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { providerRetryByThread });
-        else this.patch({ providerRetryByThread });
+        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, {
+          planByThread,
+          providerRetryByThread,
+        });
+        else this.patch({ planByThread, providerRetryByThread });
         return;
       }
       case 'turn/providerRetry/changed': {
@@ -423,6 +450,16 @@ export class ThreadStore {
           providerRetryByThread.delete(notification.threadId);
         }
         this.patch({ providerRetryByThread });
+        return;
+      }
+      case 'turn/plan/updated': {
+        const planByThread = new Map(this.snapshot.planByThread);
+        planByThread.set(notification.threadId, {
+          turnId: notification.turnId,
+          ...(notification.explanation === undefined ? {} : { explanation: notification.explanation }),
+          plan: notification.plan,
+        });
+        this.patch({ planByThread });
         return;
       }
       case 'item/started':
@@ -631,8 +668,6 @@ function applyItemDelta(item: ThreadItem, delta: ThreadItemDelta): ThreadItem {
   switch (delta.type) {
     case 'agentMessageText':
       return item.type === 'agentMessage' ? { ...item, text: item.text + delta.delta } : item;
-    case 'planText':
-      return item.type === 'plan' ? { ...item, text: item.text + delta.delta } : item;
     case 'reasoningSummary':
       return item.type === 'reasoning' ? appendReasoningDelta(item, 'summary', delta.delta) : item;
     case 'reasoningContent':

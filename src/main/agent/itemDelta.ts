@@ -6,9 +6,6 @@ export function applyThreadItemDelta(item: ThreadItem, delta: ThreadItemDelta): 
     case 'agentMessageText':
       if (item.type !== 'agentMessage') throw mismatch(item, delta.type);
       return decodeThreadItem({ ...item, text: item.text + delta.delta });
-    case 'planText':
-      if (item.type !== 'plan') throw mismatch(item, delta.type);
-      return decodeThreadItem({ ...item, text: item.text + delta.delta });
     case 'reasoningSummary':
     case 'reasoningContent': {
       if (item.type !== 'reasoning') throw mismatch(item, delta.type);

@@ -4,6 +4,8 @@ import {
   type CollaborationToolName,
   type RequestUserInputOption,
   type RequestUserInputQuestion,
+  type TurnPlanSnapshot,
+  type TurnPlanStep,
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
 import {
@@ -153,15 +155,8 @@ export interface RequestUserInputToolInput {
   readonly autoResolutionMs?: number;
 }
 
-export interface UpdatePlanToolStep {
-  readonly step: string;
-  readonly status: 'pending' | 'in_progress' | 'completed';
-}
-
-export interface UpdatePlanToolInput {
-  readonly explanation?: string;
-  readonly plan: readonly UpdatePlanToolStep[];
-}
+export type UpdatePlanToolStep = TurnPlanStep;
+export type UpdatePlanToolInput = TurnPlanSnapshot;
 
 const stringSchema = (description?: string): JsonSchema => ({
   type: 'string',
@@ -401,7 +396,7 @@ const coreControlToolContracts: readonly ModelToolContract[] = [
   },
   {
     identity: { namespace: null, name: 'update_plan' },
-    description: 'Update the Turn-local execution checklist and record a plan ThreadItem.',
+    description: 'Update the transient execution checklist for the active Turn.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: updatePlanSchema,

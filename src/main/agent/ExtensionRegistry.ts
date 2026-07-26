@@ -11,7 +11,7 @@ import type {
   TurnAdmissionContext,
   TurnAdmissionContribution,
 } from '../../core/agent/extensions';
-import type { AgentCoreNotification, Thread, Turn } from '../../core/agent/protocol';
+import type { AgentCoreRecordedNotification, Thread, Turn } from '../../core/agent/protocol';
 
 export class ExtensionRegistry {
   private readonly extensions: AgentCoreExtension[] = [];
@@ -128,7 +128,7 @@ export class ExtensionRegistry {
     return values;
   }
 
-  async notification(notification: AgentCoreNotification): Promise<void> {
+  async notification(notification: AgentCoreRecordedNotification): Promise<void> {
     await this.invoke((extension) => extension.onNotification?.(notification));
   }
 

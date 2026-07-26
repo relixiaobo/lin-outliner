@@ -148,6 +148,18 @@ export interface TurnExecutionDetails {
   readonly usage: TurnTokenUsage;
 }
 
+export type TurnPlanStepStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface TurnPlanStep {
+  readonly step: string;
+  readonly status: TurnPlanStepStatus;
+}
+
+export interface TurnPlanSnapshot {
+  readonly explanation?: string;
+  readonly plan: readonly TurnPlanStep[];
+}
+
 export interface Turn {
   readonly id: TurnId;
   readonly items: readonly ThreadItem[];
@@ -237,11 +249,6 @@ export interface AgentMessageThreadItem extends ThreadItemBase {
   readonly text: string;
   readonly phase: MessagePhase | null;
   readonly memoryCitation: MemoryCitation | null;
-}
-
-export interface PlanThreadItem extends ThreadItemBase {
-  readonly type: 'plan';
-  readonly text: string;
 }
 
 export interface ReasoningThreadItem extends ThreadItemBase {
@@ -365,7 +372,6 @@ export interface ContextCompactionThreadItem extends ThreadItemBase {
 export type ThreadItem =
   | UserMessageThreadItem
   | AgentMessageThreadItem
-  | PlanThreadItem
   | ReasoningThreadItem
   | CommandExecutionThreadItem
   | FileChangeThreadItem
@@ -380,7 +386,6 @@ export type ThreadItem =
 export const THREAD_ITEM_TYPES = [
   'userMessage',
   'agentMessage',
-  'plan',
   'reasoning',
   'commandExecution',
   'fileChange',
@@ -723,7 +728,6 @@ export interface AgentCoreResponseByMethod {
 
 export type ThreadItemDelta =
   | { readonly type: 'agentMessageText'; readonly delta: string }
-  | { readonly type: 'planText'; readonly delta: string }
   | { readonly type: 'reasoningSummary'; readonly delta: string }
   | { readonly type: 'reasoningContent'; readonly delta: string }
   | { readonly type: 'commandOutput'; readonly delta: string }
@@ -777,6 +781,11 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly status: ProviderRetryStatus | null;
     }
+  | ({
+      readonly type: 'turn/plan/updated';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+    } & TurnPlanSnapshot)
   | {
       readonly type: 'userInput/requested';
       readonly threadId: ThreadId;
@@ -792,6 +801,12 @@ export type AgentCoreNotification =
       readonly response: RequestUserInputResponse;
     }
   | ThreadGoalNotification;
+
+export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
+  readonly type: 'thread/name/updated' | 'turn/providerRetry/changed' | 'turn/plan/updated';
+}>;
+
+export type AgentCoreRecordedNotification = Exclude<AgentCoreNotification, AgentCoreTransientNotification>;
 
 export interface AgentMutationCausation {
   readonly threadId: ThreadId;
