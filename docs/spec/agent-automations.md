@@ -202,6 +202,14 @@ Core entities. Methods cover list/read/create/update/pause/resume/delete,
 Start now, run list/read, read state, and worktree pin state. Preload decodes every
 response and notification before renderer state changes.
 
+The model-facing `codex_app.automation_update` tool manages definitions only.
+Creating, updating, or reading a definition never verifies an AutomationRun,
+and a completed finite definition means that its recurrence is exhausted rather
+than proving a Turn result. When a user asks to test the workflow, the model runs
+that workflow in the current Turn before scheduling it. It never waits for a
+future occurrence with shell sleep or polling. Start now and Run inspection are
+explicit Automations UI operations backed by the Run and Thread APIs.
+
 The Automations surface is a peer of the Thread surface and is opened from the
 Agent Dock header. The anchored Thread list contains only Thread navigation and
 management, so Automation is never presented as a Thread-list action. The

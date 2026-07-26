@@ -277,6 +277,12 @@ canonical Automation DTO or deletion receipt. Current explicit blocks remain
 dispatch-time policy and are not copied into the definition. No tool or renderer
 schema accepts a permission profile, sandbox, or approval policy.
 
+The tool manages definitions only. Definition status never verifies a Run, and
+the model does not wait for future occurrences with shell sleep or polling. A
+user-requested workflow test runs in the current Turn before scheduling. Start
+now and Run inspection remain explicit renderer/host operations backed by the
+canonical AutomationRun and Thread facts.
+
 Preload exposes canonical list/read/create/update/pause/resume/delete/start-now
 operations plus Automation/AutomationRun change notifications. `start-now`
 creates an immediate uniquely keyed AutomationRun through the same dispatcher;

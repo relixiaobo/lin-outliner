@@ -107,6 +107,7 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './runtime/types';
+import { runtimeEnvironmentContext } from './runtime/runtimeEnvironmentContext';
 import { uuidV7 } from './uuid';
 import {
   BUILT_IN_AGENT_ROLE_DEFINITIONS,
@@ -1746,11 +1747,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const thread = this.requireThread(active.threadId).thread;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     try {
-      const systemContext = (hidden ? [] : await this.extensions.threadContext(thread))
+      const extensionContext = (hidden ? [] : await this.extensions.threadContext(thread))
         .map((contribution) => Object.entries(contribution.additionalContext)
           .map(([key, entry]) => `${key}: ${entry.value}`)
           .join('\n'))
         .filter(Boolean);
+      const systemContext = hidden
+        ? []
+        : [runtimeEnvironmentContext(this.now()), ...extensionContext];
       result = await this.executor.execute({
         thread,
         turn: initialTurn,

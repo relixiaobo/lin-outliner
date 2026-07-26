@@ -380,7 +380,12 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
 const coreControlToolContracts: readonly ModelToolContract[] = [
   {
     identity: { namespace: 'codex_app', name: 'automation_update' },
-    description: 'Create, update, view, or delete a host-owned Automation for scheduled agent work.',
+    description: [
+      'Create, update, view, or delete a host-owned Automation definition for scheduled agent work.',
+      'This tool manages definitions only: Automation status is not Run verification.',
+      'When asked to test a workflow, run the workflow in the current Turn before scheduling it.',
+      'Never use shell sleep or polling to wait for an Automation occurrence; Start Now and Run results belong to the Automations UI.',
+    ].join(' '),
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: automationUpdateToolSchema,

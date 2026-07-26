@@ -32,6 +32,12 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(keys).toContain('create_goal');
     expect(keys).toContain('update_goal');
     expect(keys).toContain('skill');
+    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+      'This tool manages definitions only',
+    );
+    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+      'Never use shell sleep or polling',
+    );
   });
 
   test('round-trips canonical and flat provider encodings without aliases', () => {

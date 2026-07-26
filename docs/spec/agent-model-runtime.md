@@ -20,6 +20,12 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+For every ordinary Turn, main adds one trusted environment fragment containing
+the current local calendar date, the exact UTC instant at execution start, and
+the runtime-resolved IANA timezone. Relative schedules therefore never require
+shell commands to discover host time. Hidden internal Memory Turns remain
+isolated from this fragment together with other ordinary extension context.
+
 The same runtime also implements auxiliary Thread naming after the first user
 Turn becomes terminal. It resolves that Thread's current provider/model,
 requests the lowest supported reasoning level, disables prompt-cache retention,
