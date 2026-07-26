@@ -227,7 +227,10 @@ recorded as citation usage only when the completed final response also contains
 that exact Node as an inline `[[node:^id]]` reference which the Markdown surface
 materializes as a Node-link affordance. Literal markers in fenced code, inline
 code, image metadata, or an existing Markdown link do not count as citation
-usage. Core appends no Memory-specific commentary Item or citation disclosure.
+usage. Display and attribution share the same remark AST traversal, including
+Markdown escape and character-entity normalization, so every visible Node-link
+affordance has identical citation semantics. Core appends no Memory-specific
+commentary Item or citation disclosure.
 The `node_search` and `node_read` Items remain visible in the process disclosure
 and Run Details.
 Usage counts distinct current `originItemId` values, so copied fork history

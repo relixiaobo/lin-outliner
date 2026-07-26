@@ -21,14 +21,24 @@ describe('reference markup', () => {
   test('finds only node references rendered as Markdown affordances', () => {
     const markdown = [
       'Visible [[node:^visible-node]] and **[[node:^bold-node]]**.',
+      'Escaped opening bracket: \\[[node:^escaped-node]]',
+      'Entity opening bracket: &#91;[node:^entity-node]]',
       '`[[node:^inline-code-node]]`',
       '```text',
       '[[node:^fenced-code-node]]',
       '```',
       '[Existing link](https://example.test/[[node:^link-url-node]] "[[node:^link-title-node]]")',
+      '[Existing [[node:^link-label-node]]][reference-link]',
+      '![Image [[node:^image-alt-node]]](https://example.test/image.png "[[node:^image-title-node]]")',
+      '[reference-link]: https://example.test/[[node:^reference-url-node]]',
     ].join('\n\n');
 
-    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual(['visible-node', 'bold-node']);
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([
+      'visible-node',
+      'bold-node',
+      'escaped-node',
+      'entity-node',
+    ]);
   });
 
   test('formats prefixed node reference markers', () => {

@@ -1,43 +1,28 @@
-import { Lexer, type Token } from 'marked';
-import { parseNodeReferenceMarkers } from './referenceMarkup';
+import { unified } from 'unified';
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import {
+  transformMarkdownReferenceTextNodes,
+  type MarkdownReferenceAstNode,
+} from './markdownReferenceAst';
+import { splitReferenceMarkers } from './referenceMarkup';
 
-const NON_RENDERED_REFERENCE_TOKEN_TYPES = new Set([
-  'code',
-  'codespan',
-  'def',
-  'image',
-  'link',
-]);
+const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
 export function renderedMarkdownNodeReferenceIds(markdown: string): readonly string[] {
   const nodeIds: string[] = [];
   try {
-    collectNodeReferenceIds(Lexer.lex(markdown), nodeIds);
+    const tree = markdownParser.parse(markdown) as MarkdownReferenceAstNode;
+    transformMarkdownReferenceTextNodes(tree, (value) => {
+      for (const segment of splitReferenceMarkers(value)) {
+        if (segment.type === 'reference' && segment.target.kind === 'node') {
+          nodeIds.push(segment.target.nodeId);
+        }
+      }
+      return [{ type: 'text', value }];
+    });
   } catch {
     return Object.freeze([]);
   }
   return Object.freeze(nodeIds);
-}
-
-function collectNodeReferenceIds(tokens: readonly Token[], nodeIds: string[]): void {
-  for (const token of tokens) {
-    if (NON_RENDERED_REFERENCE_TOKEN_TYPES.has(token.type)) continue;
-    const nested = 'tokens' in token ? token.tokens : undefined;
-    if (Array.isArray(nested) && nested.length > 0) {
-      collectNodeReferenceIds(nested, nodeIds);
-      continue;
-    }
-    if (token.type === 'list' && Array.isArray(token.items)) {
-      for (const item of token.items) collectNodeReferenceIds(item.tokens, nodeIds);
-      continue;
-    }
-    if (token.type === 'table') {
-      for (const cell of [...token.header, ...token.rows.flat()]) {
-        collectNodeReferenceIds(cell.tokens, nodeIds);
-      }
-      continue;
-    }
-    if (token.type !== 'text') continue;
-    for (const marker of parseNodeReferenceMarkers(token.text)) nodeIds.push(marker.nodeId);
-  }
 }
