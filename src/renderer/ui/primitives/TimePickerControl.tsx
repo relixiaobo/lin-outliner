@@ -9,6 +9,7 @@ import {
   type InputHTMLAttributes,
   type KeyboardEvent,
   type RefObject,
+  type WheelEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
@@ -31,6 +32,7 @@ interface TimePickerControlProps extends Omit<
 
 const HOURS = numericOptions(24);
 const MINUTES = numericOptions(60);
+const WHEEL_STEP_PX = 28;
 
 export const TimePickerControl = forwardRef<HTMLInputElement, TimePickerControlProps>(function TimePickerControl({
   className,
@@ -79,8 +81,6 @@ export const TimePickerControl = forwardRef<HTMLInputElement, TimePickerControlP
     if (!open) return undefined;
     const frame = requestFrame(() => {
       hourListRef.current?.focus({ preventScroll: true });
-      popoverRef.current?.querySelectorAll<HTMLElement>('[aria-selected="true"]')
-        .forEach((option) => option.scrollIntoView?.({ block: 'center' }));
     });
     return () => cancelFrame(frame);
   }, [open]);
@@ -240,13 +240,18 @@ function TimePickerColumn({
 }: TimePickerColumnProps) {
   const reactId = useId().replace(/:/g, '');
   const listId = `time-picker-${reactId}`;
+  const wheelRemainderRef = useRef(0);
+
+  useEffect(() => {
+    const frame = requestFrame(() => {
+      listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+        ?.scrollIntoView?.({ block: 'center' });
+    });
+    return () => cancelFrame(frame);
+  }, [listRef, selected]);
 
   function select(nextValue: number): void {
     onSelect(nextValue);
-    requestFrame(() => {
-      listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
-        ?.scrollIntoView?.({ block: 'nearest' });
-    });
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -267,6 +272,29 @@ function TimePickerColumn({
     select(next);
   }
 
+  function handleWheel(event: WheelEvent<HTMLDivElement>): void {
+    if (event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const normalizedDelta = event.deltaMode === 1
+      ? event.deltaY * WHEEL_STEP_PX
+      : event.deltaMode === 2
+        ? event.deltaY * WHEEL_STEP_PX * 5
+        : event.deltaY;
+    if (
+      wheelRemainderRef.current !== 0
+      && Math.sign(wheelRemainderRef.current) !== Math.sign(normalizedDelta)
+    ) {
+      wheelRemainderRef.current = 0;
+    }
+    wheelRemainderRef.current += normalizedDelta;
+    const steps = Math.trunc(wheelRemainderRef.current / WHEEL_STEP_PX);
+    if (steps === 0) return;
+    wheelRemainderRef.current -= steps * WHEEL_STEP_PX;
+    select((selected + (steps % values.length) + values.length) % values.length);
+  }
+
   return (
     <div className="time-picker-column">
       <span className="time-picker-column-label" id={`${listId}-label`}>{label}</span>
@@ -275,6 +303,7 @@ function TimePickerColumn({
         aria-labelledby={`${listId}-label`}
         className="time-picker-list"
         onKeyDown={handleKeyDown}
+        onWheel={handleWheel}
         ref={listRef}
         role="listbox"
         tabIndex={0}

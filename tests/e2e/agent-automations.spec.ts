@@ -50,6 +50,7 @@ test.describe('Automation surface', () => {
     const automationRow = page.locator('.automation-list-row', { hasText: 'Daily repository review' });
     await expect(automationRow).toBeVisible();
     await expect(automationRow.locator('.automation-status-dot')).toBeVisible();
+    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).toHaveCount(1);
     const alignedLefts = await Promise.all([
       page.locator('.automations-search'),
       page.locator('.automations-filter'),
@@ -158,14 +159,29 @@ test.describe('Automation surface', () => {
     const scrollContract = await hourList.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
+        overflowY: style.overflowY,
         paddingInlineEnd: style.paddingInlineEnd,
         paddingInlineStart: style.paddingInlineStart,
-        scrollbarGutter: style.scrollbarGutter,
       };
     });
-    expect(scrollContract.scrollbarGutter).toContain('stable');
+    expect(scrollContract.overflowY).toBe('hidden');
     expect(scrollContract.paddingInlineStart).toBe(scrollContract.paddingInlineEnd);
     expect(Number.parseFloat(scrollContract.paddingInlineEnd)).toBeGreaterThan(0);
+    const selectedHour = await hourList.locator('[aria-selected="true"]').textContent();
+    await hourList.hover();
+    await page.mouse.wheel(0, 28);
+    await expect(hourList.locator('[aria-selected="true"]')).not.toHaveText(selectedHour ?? '');
+    const centeredSelection = await hourList.evaluate((element) => {
+      const selected = element.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!selected) return Number.POSITIVE_INFINITY;
+      const listRect = element.getBoundingClientRect();
+      const selectedRect = selected.getBoundingClientRect();
+      return Math.abs(
+        (listRect.top + listRect.height / 2)
+        - (selectedRect.top + selectedRect.height / 2),
+      );
+    });
+    expect(centeredSelection).toBeLessThan(1);
     await hourList.getByRole('option', { name: '10', exact: true }).click();
     await timePicker.getByRole('listbox', { name: 'Minute' }).getByRole('option', { name: '17', exact: true }).click();
     await expect(timePicker).toHaveCount(0);

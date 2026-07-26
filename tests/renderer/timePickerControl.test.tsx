@@ -56,6 +56,17 @@ describe('TimePickerControl', () => {
 
     expect(rendered.values.slice(-2)).toEqual(['10:05', '10:04']);
   });
+
+  test('uses wheel input to change a focused column without a visible scrollbar', async () => {
+    const rendered = renderTimePicker('09:05');
+    await click(rendered, rendered.document.querySelector('button[aria-label="Choose time"]'));
+    const listboxes = rendered.document.querySelectorAll<HTMLElement>('.time-picker-list');
+
+    await wheel(rendered, listboxes[0], 28);
+    await wheel(rendered, listboxes[1], -28);
+
+    expect(rendered.values.slice(-2)).toEqual(['10:05', '10:04']);
+  });
 });
 
 function renderTimePicker(initialValue: string): RenderedTimePicker {
@@ -143,6 +154,22 @@ async function keyDown(
   await act(async () => {
     const event = new rendered.window.Event('keydown', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'key', { value: key });
+    element.dispatchEvent(event);
+  });
+}
+
+async function wheel(
+  rendered: RenderedTimePicker,
+  element: Element | undefined,
+  deltaY: number,
+): Promise<void> {
+  if (!element) throw new Error('Missing wheel target');
+  await act(async () => {
+    const event = new rendered.window.Event('wheel', { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      deltaMode: { value: 0 },
+      deltaY: { value: deltaY },
+    });
     element.dispatchEvent(event);
   });
 }

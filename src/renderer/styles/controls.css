@@ -266,14 +266,10 @@
 .time-picker-list {
   height: 196px;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   border-radius: var(--radius-sm);
   outline: none;
-  padding-inline: var(--space-3);
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scroll-snap-type: y proximity;
+  padding: calc(var(--control-size-xl) * 3) var(--space-2);
 }
 
 :root[data-input-modality="keyboard"] .time-picker-list:focus-visible {
@@ -290,7 +286,6 @@
   font-size: var(--font-ui-sm);
   font-variant-numeric: tabular-nums;
   line-height: var(--line-ui-sm);
-  scroll-snap-align: nearest;
   user-select: none;
 }
 

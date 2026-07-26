@@ -317,9 +317,10 @@ selections: they remain inherit, explicitly none, and an exact allowlist.
 
 The compact list keeps Search and New in one toolbar row. Its equal-width status
 filter and Automation rows share one horizontal content boundary; each row
-aligns a small state dot and label with the Automation title. Time Picker columns
-reserve symmetric inline space and a stable scrollbar gutter so their centered
-selected surfaces never sit under an overlay scrollbar.
+aligns a small state dot and label with the Automation title, while unread state
+is attached to the leading icon instead of creating a competing status column.
+Time Picker columns use fixed-height seven-value wheels with no visible scrollbar
+and support pointer, wheel/trackpad, and keyboard selection.
 
 The drawer uses task-oriented grouped rows instead of exposing the storage
 schema as a flat form. Its information order is:

@@ -16,6 +16,7 @@ import { AnchoredActionMenu } from '../../ui/primitives/AnchoredActionMenu';
 import { Button } from '../../ui/primitives/Button';
 import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { Dialog } from '../../ui/primitives/Dialog';
+import { EmptyState } from '../../ui/primitives/FeedbackState';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Input } from '../../ui/primitives/Input';
 import { SegmentedControl } from '../../ui/primitives/SegmentedControl';
@@ -186,23 +187,29 @@ export function AutomationsView(props: AutomationsViewProps) {
       </div>
 
       <div className="automations-list">
-        {snapshot.loading ? <p className="automation-empty-copy">{t.loading}</p> : null}
+        {snapshot.loading ? (
+          <EmptyState className="automation-list-feedback" role="status" title={t.loading} />
+        ) : null}
         {!snapshot.loading && filtered.length === 0 ? (
           normalizedSearch || snapshot.statusFilter !== 'all' ? (
-            <div className="automation-empty-state">
-              <SearchIcon aria-hidden size={20} />
-              <strong>{t.noMatches}</strong>
-              <p>{t.noMatchesDescription}</p>
-            </div>
+            <EmptyState
+              body={t.noMatchesDescription}
+              className="automation-list-feedback"
+              icon={SearchIcon}
+              title={t.noMatches}
+            />
           ) : (
-            <div className="automation-empty-state">
-              <ScheduledIcon aria-hidden size={22} />
-              <strong>{t.empty}</strong>
-              <p>{t.emptyDescription}</p>
-              <Button onClick={(event) => openCreate(event.currentTarget)} size="sm" variant="primary">
-                <AddIcon size={12} />{t.new}
-              </Button>
-            </div>
+            <EmptyState
+              action={(
+                <Button onClick={(event) => openCreate(event.currentTarget)} size="sm" variant="primary">
+                  <AddIcon size={12} />{t.new}
+                </Button>
+              )}
+              body={t.emptyDescription}
+              className="automation-list-feedback"
+              icon={ScheduledIcon}
+              title={t.empty}
+            />
           )
         ) : null}
         {filtered.map((automation) => {
@@ -215,7 +222,10 @@ export function AutomationsView(props: AutomationsViewProps) {
               onClick={(event) => openAutomation(automation, event.currentTarget)}
               type="button"
             >
-              <span className="automation-list-icon"><ClockIcon size={14} /></span>
+              <span className="automation-list-icon">
+                <ClockIcon aria-hidden size={14} />
+                <span className={`automation-unread${unread ? ' is-visible' : ''}`} aria-hidden="true" />
+              </span>
               <span className="automation-list-copy">
                 <span className="automation-list-heading">
                   <strong>{automation.name}</strong>
@@ -228,7 +238,6 @@ export function AutomationsView(props: AutomationsViewProps) {
                   ? t.noNext
                   : t.next({ value: formatRelative(automation.nextOccurrenceAt) })}</small>
               </span>
-              <span className={`automation-unread${unread ? ' is-visible' : ''}`} aria-hidden="true" />
             </button>
           );
         })}
@@ -329,7 +338,7 @@ export function AutomationsView(props: AutomationsViewProps) {
           actions={menuActions}
           anchorRef={moreButtonRef}
           ariaLabel={t.moreActions}
-          className="automation-action-menu"
+          className="anchored-overlay-surface automation-action-menu"
           onClose={() => setMenuOpen(false)}
           width={180}
         />
