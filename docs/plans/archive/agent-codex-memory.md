@@ -50,8 +50,9 @@ The reference baseline is OpenAI Codex commit
 
 The deliberate Tenon adaptation is the publication substrate. Codex Markdown
 artifacts become a date-oriented Node graph, artifact citations become Node and
-Thread provenance, and Codex's generated summary becomes a bounded derived
-briefing rather than another stored Memory object. Codex separately configures
+Thread provenance, and Codex's relevance-driven lookup becomes compact routing
+instructions over ordinary Node tools rather than another stored Memory object.
+Codex separately configures
 `use_memories` and `generate_memories`; Tenon's single global
 `MemoryFeatureMode` deliberately binds both behaviors to one user-visible
 privacy switch and does not expose partially enabled global states.
@@ -306,8 +307,8 @@ excluded from Phase 1; if it previously contributed generated Memory, the
 transition enqueues Phase 2 to reconcile unsupported Nodes. `polluted` is
 pipeline control, not a third user-selectable Memory mode.
 
-Disabling the Thread mode removes the derived Memory briefing and implicit
-tagged-memory discovery from that Thread; disabling the feature does so for all
+Disabling the Thread mode removes the Memory routing context and implicit tagged
+Memory discovery from that Thread; disabling the feature does so for all
 Threads. A user can still attach or explicitly reference a Memory Node as
 ordinary input; the runtime treats that attachment as ordinary supplied content
 and does not secretly use the rest of the timeline Memory graph.
@@ -536,10 +537,16 @@ publication, or second document mutation path.
 
 ### 6. Retrieval, explicit intent, and citations
 
-Only a Turn admitted while both feature and Thread modes are enabled receives a
-bounded derived briefing assembled from current high-ranked `#d-belief` and
-`#d-guidance` Nodes, with Node IDs for provenance. Before contributing context
-and before each implicit Memory tool projection, Memory creates a fresh
+Only a Turn admitted while both feature and Thread modes are enabled receives
+compact Memory routing instructions. Memory prose is not injected into every
+prompt. The instructions ask the model to use existing `node_search` only when
+prior preferences, decisions, commitments, unresolved questions, or recurring
+workflow facts could materially improve the answer, then read only the one or
+two most relevant results with `node_read`. Self-contained requests such as
+current time, simple formatting, or questions fully answered by the current
+Turn skip Memory lookup.
+
+Before each implicit Memory tool projection, Memory creates a fresh
 `MemoryVisibilityView` from control state at a generation no older than the
 Turn's immutable `memoryVisibilityGeneration`; later invalidations can only make
 the view more restrictive. A generated Node is model-visible only when it is
@@ -547,24 +554,22 @@ outside every active `prepared` or `committed` rollback suppression, or its
 complete lineage retains at least one current supporting origin after those
 invalidations are applied. User-authored and user-edited Memory Nodes remain
 authoritative and are not suppressed as generated content. Missing control
-state, incomplete lineage, or an unreadable Memory store contributes no derived
-briefing and suppresses every canonical Memory Node from implicit tool results
-rather than exposing possibly stale Memory.
+state, incomplete lineage, or an unreadable Memory store suppresses every
+canonical Memory Node from implicit tool results rather than exposing possibly
+stale Memory.
 
-The briefing is recomputed and never stored as Summary, a hidden Memory object,
-or a duplicate Node. Detailed implicit recall uses existing `node_search` and
-`node_read` over the five Memory tags inside Daily Notes, but their model-visible
-projection uses the same `MemoryVisibilityView`: suppressed canonical Memory
-Nodes and generated descendants are omitted from search results and read
-outlines even when the tool starts from an ordinary ancestor. An authoritative
-user-authored or user-edited descendant remains model-visible and is promoted to
-an annotated root in that tool response rather than being hidden with its
-generated parent; this projection never mutates the Outliner. A Node explicitly
-attached or referenced by the user remains ordinary supplied input and bypasses
-implicit discovery, as defined above. The Memory extension defines no parallel
-list/read/search tools or private content backend. Public Nodes remain visible
-and editable in the Outliner while this model-only filter waits for asynchronous
-reconciliation.
+Detailed implicit recall uses existing `node_search` and `node_read` over the
+five Memory tags inside Daily Notes, but their model-visible projection uses the
+same `MemoryVisibilityView`: suppressed canonical Memory Nodes and generated
+descendants are omitted from search results and read outlines even when the tool
+starts from an ordinary ancestor. An authoritative user-authored or user-edited
+descendant remains model-visible and is promoted to an annotated root in that
+tool response rather than being hidden with its generated parent; this
+projection never mutates the Outliner. A Node explicitly attached or referenced
+by the user remains ordinary supplied input and bypasses implicit discovery, as
+defined above. The Memory extension defines no parallel list/read/search tools
+or private content backend. Public Nodes remain visible and editable in the
+Outliner while this model-only filter waits for asynchronous reconciliation.
 
 When the user explicitly asks to remember something in a Turn admitted while
 both Memory modes are enabled, the foreground root Thread uses ordinary Node
@@ -658,18 +663,24 @@ suppression. The Outliner can navigate from a generated Memory Node to its
 supporting Threads without embedding an old `[[chat:...]]` syntax or creating
 source child Nodes.
 
-`agentMessage.memoryCitation` entries contain `nodeId` and `note`, plus
-supporting `threadIds`. The renderer displays this dedicated citation row
-immediately below the final answer and outside the collapsed process disclosure.
-Clicking a citation opens the Memory Node in its Daily Node context and can
-navigate only to active, existing source Threads; archived or deleted sources
-are omitted. A completed cited agent message
-updates the referenced evidence's `usageCount` and `lastUsage`; accounting is
-keyed by distinct `originItemId`, so an inherited fork cannot increase ranking a
-second time. Citation usage is rebuildable control state: rollback removes
+The extension observes the canonical tool lifecycle and records a Memory use
+only when the built-in `node_read` succeeds for an exact requested Node ID that
+was returned and was canonical, visible Memory at read time. Search results,
+implicitly returned descendants, ordinary Nodes, failed reads, and
+extension/MCP tools with a coincidental name do not count. Reads deduplicate
+within a Turn and the citation set is bounded to eight Nodes.
+
+`agentMessage.memoryCitation` entries contain the actually read `nodeId` and
+`note`, plus supporting `threadIds`. The renderer displays one neutral,
+collapsed `Used memory` disclosure immediately below the final answer and
+outside the collapsed process disclosure. Expanding it reveals the Memory Node
+links in their Daily Node context and only active, existing source Threads;
+archived or deleted sources are omitted. A completed cited agent message updates
+the referenced evidence's `usageCount` and `lastUsage`; accounting is keyed by
+distinct `originItemId`, so an inherited fork cannot increase ranking a second
+time. Citation usage is rebuildable control state: rollback removes
 contributions from omitted citation Items before the next selection, while
-cumulative model and Goal usage remain unchanged. List/read/search operations
-alone do not count as use.
+cumulative model and Goal usage remain unchanged.
 
 Deleting a Memory Node makes an old citation explicitly unavailable. Reusing an
 ID for unrelated content is forbidden. Deleting a source Thread does not delete
@@ -789,7 +800,7 @@ shipping.
   fingerprints drop omitted origins, in-flight publications either commit first
   or fail their final recheck, and Phase 2 removes unsupported generated
   conclusions. Until that cleanup commits, the admission-pinned visibility view
-  removes affected generated Nodes from briefings and implicit Node-tool results,
+  removes affected generated Nodes from implicit Node-tool results,
   including while a failed commit hook is retried in-process. A successful retry
   durably queues reconciliation without requiring restart; startup still commits
   or aborts a stranded prepared invalidation by matching Core's rollout.
@@ -842,7 +853,7 @@ None. Ratifying this plan ratifies Codex's two-phase Memory behavior over the
 five-category daily timeline graph, source-date publication, generated daily
 headlines, fixed protected tag identities, global `MemoryFeatureMode` as a
 no-catch-up privacy boundary, admission-time Memory eligibility,
-user-authoritative edits, derived briefing plus Node-tool retrieval, Node/Thread
+user-authoritative edits, relevance-driven Node-tool retrieval, Node/Thread
 citations, current-projection rollback reconciliation with explicit Memory Node
 side effects retained, fail-closed generated-Memory visibility from rollback
 prepare through reconciliation, canonical-container-only Reset deletion,
@@ -873,10 +884,10 @@ old Memory data.
 - [ ] Implement bounded Phase 2 selection, tagged Node change sets, isolated
   consolidation, daily headline/category reconciliation, fingerprint conflict
   detection, receipt-based crash recovery, and forgetting.
-- [ ] Integrate the derived bounded briefing and tagged `node_search`/`node_read`
+- [ ] Integrate compact retrieval routing plus tagged `node_search`/`node_read`
   recall only when feature and Thread modes are enabled and through the same
   fail-closed `MemoryVisibilityView`; prove either disabled state contributes
-  neither implicitly.
+  neither implicit Memory nor routing instructions.
 - [ ] Implement explicit foreground remember/update/forget through existing Node
   tools, pre/post Memory-graph causation validation across tag and ancestry
   changes, global mode/generation enforcement, and immediate coalesced
@@ -897,8 +908,8 @@ old Memory data.
   `bun run test:core`, `bun run test:renderer`, focused hierarchy, provenance,
   fork, rollback before and after Phase 1 publication, rollback racing Phase 1
   and Phase 2 on both sides of the Memory write gate, crash recovery before and
-  after the rollout marker, immediate replacement-Turn briefing and implicit
-  Node-tool reads after published Memory rollback, a commit hook that fails once
+  after the rollout marker, immediate replacement-Turn implicit Node-tool reads
+  after published Memory rollback, a commit hook that fails once
   while the prepared filter stays active then retries, marks dirty, reconciles,
   and retires the filter without restart, persistent-failure capped backoff,
   missing-lineage `allGenerated` suppression, explicit Memory side-effect

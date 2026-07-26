@@ -3,6 +3,7 @@ import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
   ThreadServiceExtensionHost,
+  ToolLifecycleResult,
   TurnAdmissionContext,
   TurnAdmissionContribution,
 } from '../../../../core/agent/extensions';
@@ -38,14 +39,14 @@ import {
 } from './Phase1';
 import { Phase2 } from './Phase2';
 import {
+  type CanonicalMemoryNode,
   TimelineMemoryStore,
   timelineDigest,
   timelineNodeFingerprint,
   type MemoryVisibilityView,
 } from './TimelineMemoryStore';
 
-const MAX_BRIEFING_NODES = 16;
-const MAX_BRIEFING_CHARS = 6_000;
+const MAX_MEMORY_CITATIONS = 8;
 const EXPLICIT_MEMORY_INTENT = /\b(?:remember|forget)\b|\b(?:save|store|add|update|change|remove|delete)\b[^\n]{0,80}\bmemory\b|\bmemory\b[^\n]{0,80}\b(?:save|store|add|update|change|remove|delete)\b|记住|请记|帮我记|保存.{0,20}记忆|记忆.{0,20}(?:保存|添加|更新|修改|删除|移除)|忘掉|忘记/iu;
 
 interface ResetPublicationPayload {
@@ -87,8 +88,8 @@ export interface MemoryDocumentPolicy {
 }
 
 interface ContextCitation {
-  readonly turnId: TurnId;
-  readonly citation: MemoryCitation;
+  readonly entries: Map<string, string>;
+  readonly threadId: ThreadId;
 }
 
 export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy {
@@ -99,7 +100,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   private initialized = false;
   private workerStopped = false;
   private storeClosed = false;
-  private readonly contextCitations = new Map<ThreadId, ContextCitation>();
+  private readonly contextCitations = new Map<TurnId, ContextCitation>();
   private lastGraphDigest = '';
 
   constructor(
@@ -291,7 +292,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   contributeThreadContext(thread: Thread) {
     const activeTurn = this.currentTurn(thread.id);
     if (!activeTurn) return null;
-    this.contextCitations.delete(thread.id);
+    this.contextCitations.delete(activeTurn.id);
     const admission = this.control.admission(activeTurn.id);
     const explicitlyRequested = activeTurn.provenance.trigger.kind === 'user' && turnHasExplicitMemoryIntent(activeTurn);
     if (!admission?.eligibleAtAdmission || this.control.isTurnExcluded(activeTurn.id)) {
@@ -319,68 +320,71 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
         },
       } : null;
     }
-    const visible = this.visibleMemoryNodes();
-    const selected = visible
-      .filter((entry) => entry.category === 'belief' || entry.category === 'guidance')
-      .sort((left, right) => {
-        const leftUsage = this.control.usageForNode(left.node.id);
-        const rightUsage = this.control.usageForNode(right.node.id);
-        return rightUsage.count - leftUsage.count
-          || (rightUsage.lastUsage ?? right.node.updatedAt) - (leftUsage.lastUsage ?? left.node.updatedAt)
-          || left.node.id.localeCompare(right.node.id);
-      })
-      .slice(0, MAX_BRIEFING_NODES);
-    let remaining = MAX_BRIEFING_CHARS;
-    const lines: string[] = [];
-    const cited = [] as typeof selected;
-    for (const entry of selected) {
-      const line = `- [${entry.category} node:${entry.node.id}] ${entry.node.content.text.trim()}`;
-      if (!entry.node.content.text.trim() || line.length > remaining) continue;
-      lines.push(line);
-      cited.push(entry);
-      remaining -= line.length;
-    }
-    const contextParts = [MEMORY_OPERATION_CONTEXT];
-    if (lines.length > 0) {
-      contextParts.push(`Relevant durable Memory from the user's Daily Notes:\n${lines.join('\n')}`);
-    }
-    const threadIds = new Set<ThreadId>();
-    for (const entry of cited) {
-      for (const edge of this.control.lineageForNode(entry.node.id)) {
-        if (this.control.isOriginClaimed(edge.originItemId) && this.requireHost().isThreadNavigable(edge.threadId)) {
-          threadIds.add(edge.threadId);
-        }
-      }
-    }
-    if (cited.length > 0) {
-      this.contextCitations.set(thread.id, {
-        turnId: activeTurn.id,
-        citation: {
-          entries: cited.map((entry) => ({ nodeId: entry.node.id, note: entry.node.content.text.slice(0, 160) })),
-          threadIds: [...threadIds],
-        },
-      });
-    }
+    this.contextCitations.set(activeTurn.id, {
+      entries: new Map(),
+      threadId: thread.id,
+    });
     return {
       extensionId: this.id,
       additionalContext: {
         memory: {
           kind: 'application' as const,
-          value: contextParts.join('\n\n'),
+          value: MEMORY_OPERATION_CONTEXT,
         },
       },
     };
   }
 
+  onToolCompleted(context: ToolLifecycleResult): void {
+    const citation = this.contextCitations.get(context.turnId);
+    if (
+      !citation
+      || citation.threadId !== context.threadId
+      || context.identity.namespace !== null
+      || context.identity.name !== 'node_read'
+      || context.error !== null
+      || !successfulNodeRead(context.result)
+    ) return;
+
+    const requestedNodeIds = nodeReadRequestIds(context.arguments);
+    if (requestedNodeIds.length === 0) return;
+    const returnedNodeIds = nodeReadResultIds(context.result);
+    let visible: Map<string, CanonicalMemoryNode>;
+    try {
+      visible = new Map(this.visibleMemoryNodes().map((entry) => [entry.node.id, entry]));
+    } catch {
+      return;
+    }
+    for (const nodeId of requestedNodeIds) {
+      if (citation.entries.size >= MAX_MEMORY_CITATIONS) break;
+      if (citation.entries.has(nodeId) || !returnedNodeIds.has(nodeId)) continue;
+      const entry = visible.get(nodeId);
+      if (!entry) continue;
+      citation.entries.set(nodeId, entry.node.content.text.trim().slice(0, 160) || entry.category);
+    }
+  }
+
   contributeTurnItems(thread: Thread, turn: Turn) {
-    const context = this.contextCitations.get(thread.id);
-    this.contextCitations.delete(thread.id);
+    const context = this.contextCitations.get(turn.id);
+    this.contextCitations.delete(turn.id);
     const hasCompletedResponse = turn.status === 'completed' && turn.items.some((item) => (
       item.type === 'agentMessage'
       && (item.phase === 'final_answer' || item.phase === null)
       && Boolean(item.text.trim())
     ));
-    if (!context || context.turnId !== turn.id || context.citation.entries.length === 0 || !hasCompletedResponse) return [];
+    if (!context || context.threadId !== thread.id || context.entries.size === 0 || !hasCompletedResponse) return [];
+    const threadIds = new Set<ThreadId>();
+    for (const nodeId of context.entries.keys()) {
+      for (const edge of this.control.lineageForNode(nodeId)) {
+        if (this.control.isOriginClaimed(edge.originItemId) && this.requireHost().isThreadNavigable(edge.threadId)) {
+          threadIds.add(edge.threadId);
+        }
+      }
+    }
+    const citation: MemoryCitation = {
+      entries: [...context.entries].map(([nodeId, note]) => ({ nodeId, note })),
+      threadIds: [...threadIds],
+    };
     const id = uuidV7();
     const item: ThreadItem = {
       type: 'agentMessage',
@@ -388,9 +392,9 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
       provenance: { originThreadId: thread.id, originTurnId: turn.id, originItemId: id },
       text: '',
       phase: 'commentary',
-      memoryCitation: context.citation,
+      memoryCitation: citation,
     };
-    for (const entry of context.citation.entries) {
+    for (const entry of citation.entries) {
       this.control.recordCitationUsage(
         {
           citationItemId: id,
@@ -988,8 +992,33 @@ function rollbackMatchesMarker(
 
 const MEMORY_OPERATION_CONTEXT = `Durable Memory is stored as ordinary editable Nodes under source-date Daily Notes.
 The canonical hierarchy is one direct #d-memory container under a Daily Note, direct #d-episode children, and optional #d-belief, #d-question, or #d-guidance descendants.
+When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use node_search to find relevant Memory and read only the one or two most relevant results with node_read before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
 Use the ordinary Node tools only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
 Do not create unsolicited Memory, do not treat routine transcript narration as Memory, and do not modify stray reserved-tag Nodes outside the canonical hierarchy.`;
+
+function successfulNodeRead(value: unknown): boolean {
+  return isRecord(value) && value.ok === true;
+}
+
+function nodeReadRequestIds(value: unknown): readonly string[] {
+  if (!isRecord(value)) return [];
+  if (typeof value.node_id === 'string' && value.node_id.trim()) return [value.node_id.trim()];
+  if (!Array.isArray(value.node_ids)) return [];
+  return [...new Set(value.node_ids
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim()))];
+}
+
+function nodeReadResultIds(value: unknown): ReadonlySet<string> {
+  if (!isRecord(value) || !isRecord(value.data) || !Array.isArray(value.data.items)) return new Set();
+  return new Set(value.data.items.flatMap((entry) => (
+    isRecord(entry) && typeof entry.nodeId === 'string' ? [entry.nodeId] : []
+  )));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 function resetPublicationPayload(value: unknown): ResetPublicationPayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

@@ -1596,15 +1596,28 @@ button.thread-inline-activity:focus-visible,
   object-fit: cover;
 }
 
-.thread-memory-citations {
+.thread-memory-citations-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.thread-memory-citations-content ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-memory-citation-sources {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
-  margin-top: var(--space-5);
 }
 
-.thread-memory-citations a,
-.thread-memory-citations button {
+.thread-memory-citation-sources button {
   border: 0;
   background: transparent;
   color: var(--link);

@@ -254,62 +254,45 @@ describe('Codex Memory contracts', () => {
     expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
   });
 
-  test('retains published Memory after source Thread deletion without emitting a dead Thread link', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    seedGeneratedGraph(store, timeline);
-
-    const targetThreadId = 'thread:target';
-    const targetTurnId = 'turn:target';
-    const activeTurn: Turn = {
-      ...userTurn('Use relevant Memory', undefined, { kind: 'user' }, targetTurnId, 'item:target', targetThreadId),
-      status: 'inProgress',
-      completedAt: null,
-      durationMs: null,
-    };
-    const targetThread: Thread = {
-      ...rootThread([activeTurn]),
-      id: targetThreadId,
-      sessionId: targetThreadId,
-      status: { type: 'active', activeFlags: [] },
-    };
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost({
-      ...memoryThreadHost(targetThread),
-      persistentRootThreads: () => [targetThread],
-    });
-    extension.contributeTurnAdmission(admissionContext(targetThread, activeTurn));
-
+  test('routes Memory lookup without injecting Memory prose and cites only a successful exact read', () => {
+    const { extension, targetThread, activeTurn } = memoryCitationHarness();
     const context = extension.contributeThreadContext(targetThread);
-    expect(context?.additionalContext?.memory?.value).toContain('Belief');
+    expect(context?.additionalContext?.memory?.value).toContain('use node_search');
+    expect(context?.additionalContext?.memory?.value).not.toContain('Daily memory');
+    expect(context?.additionalContext?.memory?.value).not.toContain('Belief');
 
-    const completedTurn: Turn = {
-      ...activeTurn,
-      status: 'completed',
-      items: [
-        ...activeTurn.items,
-        {
-          type: 'agentMessage',
-          id: 'item:answer',
-          provenance: {
-            originThreadId: targetThreadId,
-            originTurnId: targetTurnId,
-            originItemId: 'item:answer',
-          },
-          text: 'Completed response',
-          phase: 'final_answer',
-          memoryCitation: null,
-        },
-      ],
-      completedAt: 2,
-      durationMs: 1,
-    };
-    const citation = extension.contributeTurnItems(targetThread, completedTurn)[0]?.item;
+    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
+    const citation = extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))[0]?.item;
     expect(citation).toMatchObject({
       type: 'agentMessage',
-      memoryCitation: { threadIds: [] },
+      memoryCitation: {
+        entries: [{ nodeId: MEMORY_NODE_ID, note: 'Daily memory' }],
+        threadIds: [],
+      },
     });
+  });
+
+  test('does not cite ordinary Nodes or failed Memory reads', () => {
+    const { extension, targetThread, activeTurn } = memoryCitationHarness();
+    extension.contributeThreadContext(targetThread);
+    completeNodeRead(extension, targetThread, activeTurn, ['ordinary:1']);
+    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID], false);
+
+    expect(extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))).toEqual([]);
+  });
+
+  test('deduplicates actually read Memory Nodes and bounds the citation disclosure', () => {
+    const { extension, targetThread, activeTurn, projection } = memoryCitationHarness(memoryProjection(10));
+    const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
+    extension.contributeThreadContext(targetThread);
+    completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
+    completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
+
+    const citation = extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))[0]?.item;
+    expect(citation?.type).toBe('agentMessage');
+    if (citation?.type !== 'agentMessage') throw new Error('Expected Memory citation Item');
+    expect(citation.memoryCitation?.entries).toHaveLength(8);
+    expect(new Set(citation.memoryCitation?.entries.map((entry) => entry.nodeId)).size).toBe(8);
   });
 
   test('admits only local non-Automation evidence and reuses the claimed source date', () => {
@@ -1587,7 +1570,11 @@ function admissionContext(thread: Thread, turn: Turn) {
   };
 }
 
-function memoryProjection(): DocumentProjection {
+function memoryProjection(extraBeliefs = 0): DocumentProjection {
+  const beliefIds = [
+    'belief:1',
+    ...Array.from({ length: extraBeliefs }, (_, index) => `belief:extra:${index}`),
+  ];
   const nodes = [
     node(WORKSPACE_ID, undefined, [DAILY_NOTES_ID, 'ordinary:1']),
     node(DAILY_NOTES_ID, WORKSPACE_ID, ['year']),
@@ -1595,8 +1582,11 @@ function memoryProjection(): DocumentProjection {
     node('week', 'year', ['day']),
     node('day', 'week', [MEMORY_NODE_ID], [TAG_DAY_ID], '2026-07-24'),
     node(MEMORY_NODE_ID, 'day', [EPISODE_NODE_ID], ['tag:d-memory'], 'Daily memory'),
-    node(EPISODE_NODE_ID, MEMORY_NODE_ID, ['belief:1'], ['tag:d-episode'], 'Episode'),
+    node(EPISODE_NODE_ID, MEMORY_NODE_ID, beliefIds, ['tag:d-episode'], 'Episode'),
     node('belief:1', EPISODE_NODE_ID, [], ['tag:d-belief'], 'Belief'),
+    ...beliefIds.slice(1).map((nodeId, index) => (
+      node(nodeId, EPISODE_NODE_ID, [], ['tag:d-belief'], `Belief ${index + 2}`)
+    )),
     node('ordinary:1', WORKSPACE_ID, ['stray:1']),
     node('stray:1', 'ordinary:1', [], ['tag:d-guidance'], 'Stray'),
     ...MEMORY_TAG_DEFINITIONS.map((definition) => node(definition.tagId, SCHEMA_ID, [], [], definition.name, 'tagDef')),
@@ -1732,5 +1722,77 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
     tryStartTurnIfIdle: async () => null,
     withThreadAdmissionBarrier: async (_threadId, operation) => operation({ kind: 'thread', threadId: THREAD_ID, generation: 0 }),
     withHostRootTurnAdmissionBarrier: async (operation) => operation({ kind: 'hostRootTurns', generation: 0 }),
+  };
+}
+
+function memoryCitationHarness(projection = memoryProjection()) {
+  const store = memoryStore();
+  const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+  seedGeneratedGraph(store, timeline);
+  const targetThreadId = 'thread:target';
+  const targetTurnId = 'turn:target';
+  const activeTurn: Turn = {
+    ...userTurn('Use relevant Memory', undefined, { kind: 'user' }, targetTurnId, 'item:target', targetThreadId),
+    status: 'inProgress',
+    completedAt: null,
+    durationMs: null,
+  };
+  const targetThread: Thread = {
+    ...rootThread([activeTurn]),
+    id: targetThreadId,
+    sessionId: targetThreadId,
+    status: { type: 'active', activeFlags: [] },
+  };
+  const extension = new MemoryExtension(store, timeline);
+  extension.bindHost({
+    ...memoryThreadHost(targetThread),
+    persistentRootThreads: () => [targetThread],
+  });
+  extension.contributeTurnAdmission(admissionContext(targetThread, activeTurn));
+  return { activeTurn, extension, projection, targetThread };
+}
+
+function completeNodeRead(
+  extension: MemoryExtension,
+  thread: Thread,
+  turn: Turn,
+  nodeIds: readonly string[],
+  ok = true,
+): void {
+  extension.onToolCompleted({
+    threadId: thread.id,
+    turnId: turn.id,
+    itemId: `item:read:${nodeIds.join(':')}`,
+    identity: { namespace: null, name: 'node_read' },
+    arguments: nodeIds.length === 1 ? { node_id: nodeIds[0]! } : { node_ids: [...nodeIds] },
+    result: ok
+      ? { ok: true, data: { items: nodeIds.map((nodeId) => ({ nodeId })) } }
+      : { ok: false, error: { code: 'node_not_found', message: 'Missing' } },
+    error: null,
+  });
+}
+
+function completedResponseTurn(activeTurn: Turn): Turn {
+  const answerId = `item:answer:${activeTurn.id}`;
+  return {
+    ...activeTurn,
+    status: 'completed',
+    items: [
+      ...activeTurn.items,
+      {
+        type: 'agentMessage',
+        id: answerId,
+        provenance: {
+          originThreadId: activeTurn.provenance.originThreadId,
+          originTurnId: activeTurn.id,
+          originItemId: answerId,
+        },
+        text: 'Completed response',
+        phase: 'final_answer',
+        memoryCitation: null,
+      },
+    ],
+    completedAt: 2,
+    durationMs: 1,
   };
 }

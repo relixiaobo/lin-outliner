@@ -51,8 +51,10 @@ Thread execution selections, active input requests, and Goals live in
   not disappear inside a counted tool group
 - collaboration Items and Subagent activity link directly to their canonical
   child Thread
-- Memory citation Items render the cited Daily Timeline Nodes and supporting
-  source Threads without introducing a second message or Memory view model
+- Memory citation Items render as one neutral, collapsed `Used memory`
+  disclosure below the answer; its expanded content links the actually read
+  Daily Timeline Nodes and navigable supporting Threads without introducing a
+  second message or Memory view model
 - compaction renders as a history boundary
 
 A completed Turn with a final answer and known duration folds its process Items

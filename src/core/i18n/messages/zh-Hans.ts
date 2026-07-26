@@ -924,6 +924,7 @@ commandPalette: {
       status: '状态',
       source: '来源',
       memory: '此线程的记忆',
+      memoryUsed: '使用的记忆',
       memorySource: ({ index }) => `来源线程 ${index}`,
       sources: {
         subagent: '子智能体',
