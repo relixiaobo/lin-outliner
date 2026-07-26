@@ -282,6 +282,21 @@ describe('Codex Memory contracts', () => {
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
   });
 
+  test('does not count literal Memory markers in code or existing Markdown links', () => {
+    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
+    extension.contributeThreadContext(targetThread);
+    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
+    const marker = `[[node:^${MEMORY_NODE_ID}]]`;
+    const response = [
+      `Inline code: \`${marker}\``,
+      `\`\`\`text\n${marker}\n\`\`\``,
+      `[Existing link](https://example.test/${marker} "${marker}")`,
+    ].join('\n\n');
+
+    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn, response));
+    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
+  });
+
   test('deduplicates actually read Memory Nodes and bounds inline citation accounting', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness(memoryProjection(10));
     const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);

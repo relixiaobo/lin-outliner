@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
 import {
   formatFileReferenceMarker,
   formatLocalFileReferenceUrl,
@@ -17,6 +18,19 @@ import {
 } from '../../src/core/referenceMarkup';
 
 describe('reference markup', () => {
+  test('finds only node references rendered as Markdown affordances', () => {
+    const markdown = [
+      'Visible [[node:^visible-node]] and **[[node:^bold-node]]**.',
+      '`[[node:^inline-code-node]]`',
+      '```text',
+      '[[node:^fenced-code-node]]',
+      '```',
+      '[Existing link](https://example.test/[[node:^link-url-node]] "[[node:^link-title-node]]")',
+    ].join('\n\n');
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual(['visible-node', 'bold-node']);
+  });
+
   test('formats prefixed node reference markers', () => {
     expect(formatNodeReferenceMarker('Alpha', 'node-alpha')).toBe('[[node:Alpha^node-alpha]]');
     expect(formatNodeReferenceMarker('Alpha\nBeta^Gamma', 'node-alpha')).toBe('[[node:Alpha Beta Gamma^node-alpha]]');

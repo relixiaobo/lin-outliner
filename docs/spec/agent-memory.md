@@ -224,10 +224,12 @@ Search results, implicitly returned descendants, ordinary Nodes, failed reads,
 and extension/MCP tools with a coincidental name do not count. Reads deduplicate
 within the Turn and the tracked read set is bounded to eight Nodes. A read is
 recorded as citation usage only when the completed final response also contains
-that exact Node as an inline `[[node:^id]]` reference. The response renders the
-reference through the ordinary clickable Node-link affordance; Core appends no
-Memory-specific commentary Item or citation disclosure. The `node_search` and
-`node_read` Items remain visible in the process disclosure and Run Details.
+that exact Node as an inline `[[node:^id]]` reference which the Markdown surface
+materializes as a Node-link affordance. Literal markers in fenced code, inline
+code, image metadata, or an existing Markdown link do not count as citation
+usage. Core appends no Memory-specific commentary Item or citation disclosure.
+The `node_search` and `node_read` Items remain visible in the process disclosure
+and Run Details.
 Usage counts distinct current `originItemId` values, so copied fork history
 cannot inflate ranking. Deleting a source Thread does not delete already
 published Memory Nodes or their retained evidence; those Nodes remain

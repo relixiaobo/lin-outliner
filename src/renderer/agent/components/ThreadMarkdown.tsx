@@ -94,10 +94,16 @@ function remarkThreadReferences() {
 }
 
 function transformReferenceText(node: MarkdownAstNode): void {
-  if (!node.children || node.type === 'code' || node.type === 'inlineCode') return;
+  if (
+    !node.children
+    || node.type === 'code'
+    || node.type === 'inlineCode'
+    || node.type === 'link'
+    || node.type === 'image'
+  ) return;
   const nextChildren: MarkdownAstNode[] = [];
   for (const child of node.children) {
-    if (child.type === 'text' && typeof child.value === 'string' && node.type !== 'link') {
+    if (child.type === 'text' && typeof child.value === 'string') {
       nextChildren.push(...referenceMarkdownNodes(child.value));
       continue;
     }

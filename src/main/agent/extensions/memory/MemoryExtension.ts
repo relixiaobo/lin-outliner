@@ -1,5 +1,5 @@
 import type { DocumentCommand } from '../../../../core/commands';
-import { parseNodeReferenceMarkers } from '../../../../core/referenceMarkup';
+import { renderedMarkdownNodeReferenceIds } from '../../../../core/markdownNodeReferences';
 import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
@@ -380,7 +380,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
         || (response.phase !== 'final_answer' && response.phase !== null)
         || !response.text.trim()
       ) continue;
-      const citedNodeIds = new Set(parseNodeReferenceMarkers(response.text).map((marker) => marker.nodeId));
+      const citedNodeIds = new Set(renderedMarkdownNodeReferenceIds(response.text));
       for (const nodeId of usage.nodeIds) {
         if (!citedNodeIds.has(nodeId)) continue;
         this.control.recordCitationUsage({
