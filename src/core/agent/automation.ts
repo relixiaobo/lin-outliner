@@ -21,7 +21,6 @@ export const AUTOMATION_TIMEZONE_MAX_LENGTH = 128;
 export const AUTOMATION_IDENTIFIER_MAX_LENGTH = 256;
 export const AUTOMATION_PATH_MAX_LENGTH = 4_096;
 export const AUTOMATION_PROJECT_BINDINGS_MAX_COUNT = 32;
-export const AUTOMATION_CAPABILITY_LIST_MAX_COUNT = 256;
 export const AUTOMATION_ERROR_MAX_LENGTH = 32_768;
 
 export interface AutomationSchedule {
@@ -40,14 +39,9 @@ export interface AutomationProjectBinding {
 }
 
 export interface AutomationConfiguration {
-  readonly profileName: string | null;
   readonly modelProvider: string | null;
   readonly model: string | null;
   readonly reasoningEffort: ReasoningEffort | null;
-  readonly tools: readonly string[] | null;
-  readonly skills: readonly string[] | null;
-  readonly plugins: readonly string[] | null;
-  readonly mcpServers: readonly string[] | null;
 }
 
 export interface Automation {
@@ -396,14 +390,9 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
 }
 
 export const EMPTY_AUTOMATION_CONFIGURATION: AutomationConfiguration = Object.freeze({
-  profileName: null,
   modelProvider: null,
   model: null,
   reasoningEffort: null,
-  tools: null,
-  skills: null,
-  plugins: null,
-  mcpServers: null,
 });
 
 export function decodeAutomationCreateInput(value: unknown): AutomationCreateInput {
@@ -637,11 +626,8 @@ function decodeRevisionedIdRequest(
 
 function decodeConfigurationPatch(value: unknown, path: string): Partial<AutomationConfiguration> {
   const record = objectValue(value, path);
-  exactKeys(record, [
-    'profileName', 'modelProvider', 'model', 'reasoningEffort', 'tools', 'skills', 'plugins', 'mcpServers',
-  ], path);
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
   return Object.freeze({
-    ...nullableStringProperty(record, 'profileName', path),
     ...nullableStringProperty(record, 'modelProvider', path),
     ...nullableStringProperty(record, 'model', path),
     ...(record.reasoningEffort === undefined
@@ -651,10 +637,6 @@ function decodeConfigurationPatch(value: unknown, path: string): Partial<Automat
             ? null
             : enumValue(record.reasoningEffort, REASONING_EFFORTS, `${path}.reasoningEffort`),
         }),
-    ...nullableStringArrayProperty(record, 'tools', path),
-    ...nullableStringArrayProperty(record, 'skills', path),
-    ...nullableStringArrayProperty(record, 'plugins', path),
-    ...nullableStringArrayProperty(record, 'mcpServers', path),
   });
 }
 
@@ -669,29 +651,6 @@ function nullableStringProperty<K extends keyof AutomationConfiguration>(
       ? null
       : boundedString(record[key], `${path}.${key}`, AUTOMATION_IDENTIFIER_MAX_LENGTH),
   } as Partial<Record<K, string | null>>;
-}
-
-function nullableStringArrayProperty<K extends keyof AutomationConfiguration>(
-  record: Record<string, unknown>,
-  key: K,
-  path: string,
-): Partial<Record<K, readonly string[] | null>> {
-  if (record[key] === undefined) return {};
-  return {
-    [key]: record[key] === null ? null : uniqueStringArray(record[key], `${path}.${key}`),
-  } as Partial<Record<K, readonly string[] | null>>;
-}
-
-function uniqueStringArray(value: unknown, path: string): readonly string[] {
-  if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
-  if (value.length > AUTOMATION_CAPABILITY_LIST_MAX_COUNT) {
-    throw new Error(`${path} must contain at most ${AUTOMATION_CAPABILITY_LIST_MAX_COUNT} entries`);
-  }
-  const result = value.map((entry, index) => (
-    boundedString(entry, `${path}[${index}]`, AUTOMATION_IDENTIFIER_MAX_LENGTH)
-  ));
-  if (new Set(result).size !== result.length) throw new Error(`${path} must not contain duplicates`);
-  return Object.freeze(result);
 }
 
 function uniqueEnumArray<T extends string>(value: unknown, allowed: readonly T[], path: string): readonly T[] {

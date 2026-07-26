@@ -21,7 +21,6 @@ import { AutomationService } from './agent/automations/AutomationService';
 import { AutomationStore } from './agent/automations/AutomationStore';
 import { createAutomationTool } from './agent/automations/AutomationTool';
 import { AutomationWorktree } from './agent/automations/AutomationWorktree';
-import { validateAutomationDependencies } from './agent/automations/AutomationDependencies';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
@@ -64,7 +63,6 @@ import {
   type EffectiveThreadConfiguration,
   type ReasoningEffort,
 } from '../core/agent/configuration';
-import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import {
   AGENT_CORE_NOTIFICATION_CHANNEL,
   AGENT_CORE_REQUEST_CHANNEL,
@@ -533,10 +531,6 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       managedSkillService.assertInvocable(skillId, expectedContentHash)
     ),
-    ...(context.turn.provenance.trigger.kind === 'feature'
-      && context.turn.provenance.trigger.feature === 'automation'
-      ? { allowedSkills: context.configuration.skills }
-      : {}),
     executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
       command,
       localRoot: agentLocalFileRoot,
@@ -615,14 +609,6 @@ async function validateAutomationEffectiveConfiguration(
   const provider = await getProviderRuntimeConfig(modelProvider);
   if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
   validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
-  const settings = await getAgentRuntimeSettings();
-  skillRuntime.updateDisabledSkills(settings.disabledSkills ?? []);
-  validateAutomationDependencies(configuration, {
-    tools: new Set(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
-    skills: new Set((await skillRuntime.listAvailableModelInvocableSkills()).map((skill) => skill.name)),
-    plugins: new Set(extensionRegistry.all().map((extension) => extension.id)),
-    mcpServers: new Set(),
-  });
 }
 const automationDispatcher = new AutomationDispatcher({
   store: automationStore,
@@ -630,15 +616,11 @@ const automationDispatcher = new AutomationDispatcher({
   worktrees: automationWorktree,
   defaultCwd: agentLocalFileRoot,
   resolveConfiguration: async (selection, cwd) => {
-    const configuration = agentConfigurationLoader.resolveProfile(selection.profileName ?? undefined, cwd);
+    const configuration = agentConfigurationLoader.resolveProfile(undefined, cwd);
     const effectiveConfiguration = Object.freeze({
       ...configuration,
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
-      ...(selection.tools === null ? {} : { tools: Object.freeze([...selection.tools]) }),
-      ...(selection.skills === null ? {} : { skills: Object.freeze([...selection.skills]) }),
-      ...(selection.plugins === null ? {} : { plugins: Object.freeze([...selection.plugins]) }),
-      ...(selection.mcpServers === null ? {} : { mcpServers: Object.freeze([...selection.mcpServers]) }),
     });
     const provider = selection.modelProvider
       ? await getProviderRuntimeConfig(selection.modelProvider)

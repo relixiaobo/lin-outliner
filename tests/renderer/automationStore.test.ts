@@ -6,10 +6,6 @@ import type {
   AutomationRun,
 } from '../../src/core/agent/automation';
 import {
-  capabilityListDraft,
-  capabilityListValue,
-} from '../../src/renderer/agent/automations/AutomationEditor';
-import {
   automationScheduleRrule,
   createAutomationScheduleDraft,
   isAutomationScheduleDraftValid,
@@ -307,16 +303,6 @@ describe('renderer Automation store', () => {
     }
   });
 
-  test('preserves inherited, explicitly empty, and explicit capability lists', () => {
-    expect(capabilityListDraft(null)).toEqual({ mode: 'inherit', value: '' });
-    expect(capabilityListDraft([])).toEqual({ mode: 'none', value: '' });
-    expect(capabilityListDraft(['skill-a'])).toEqual({ mode: 'allowlist', value: 'skill-a' });
-    expect(capabilityListValue({ mode: 'inherit', value: 'skill-a' })).toBeNull();
-    expect(capabilityListValue({ mode: 'none', value: 'skill-a' })).toEqual([]);
-    expect(capabilityListValue({ mode: 'allowlist', value: 'skill-a, skill-a, skill-b' }))
-      .toEqual(['skill-a', 'skill-b']);
-  });
-
   test('clamps the Automation drawer to its available height', () => {
     expect(clampAutomationDrawerHeight(200, 800)).toBe(360);
     expect(clampAutomationDrawerHeight(900, 800)).toBe(800);
@@ -343,14 +329,9 @@ function automation(id: string, updatedAt: number): Automation {
     destination: { kind: 'standalone' },
     projectBindings: [],
     configuration: {
-      profileName: null,
       modelProvider: null,
       model: null,
       reasoningEffort: null,
-      tools: null,
-      skills: null,
-      plugins: null,
-      mcpServers: null,
     },
     status: 'active',
     revision: 1,

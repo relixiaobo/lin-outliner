@@ -65,11 +65,6 @@ test.describe('Automation surface', () => {
     await timezone.selectOption('Asia/Shanghai');
     await page.getByRole('textbox', { name: 'Prompt' }).fill('Review the repository and summarize verified changes.');
     await expect(page.getByRole('button', { name: 'Start now' })).toBeDisabled();
-    await page.getByText('Advanced capabilities', { exact: true }).click();
-    const toolsMode = page.getByRole('radiogroup', { name: 'Tools' });
-    await expect(toolsMode.getByRole('radio', { name: 'Inherit' })).toBeChecked();
-    await toolsMode.getByRole('radio', { name: 'None' }).click();
-    await expect(page.getByRole('textbox', { name: 'Tools' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
 
@@ -122,7 +117,6 @@ test.describe('Automation surface', () => {
       .toMatchObject({
         modelProvider: 'openai',
         model: 'openai/gpt-5.4',
-        tools: [],
       });
     expect(calls.find((call) => call.cmd === 'automation/create')?.args.schedule.rrule)
       .toMatch(/RRULE:FREQ=WEEKLY;BYDAY=MO,WE$/);

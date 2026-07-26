@@ -37,7 +37,8 @@ consumer of due work rather than the owner of time.
 The Codex-backed product contract is: standalone schedules create a new Thread
 per occurrence, existing-Thread schedules preserve context, RRULE is the advanced
 schedule format, local/project worktree execution is supported, skills/plugins
-may be selected, and execution is unattended. Tenon retains its separately
+are inherited from the Thread or default Profile and Skills may be invoked in
+the prompt, and execution is unattended. Tenon retains its separately
 ratified Full Access host boundary instead of adopting Codex sandbox or approval
 policy concepts. Codex source does not expose its full scheduler implementation.
 Durable claims, latest-only catch-up, overlap coalescing, and cleanup below are
@@ -92,7 +93,7 @@ src/renderer/agent/automations/
 - optional destination `threadId` for existing-Thread delivery
 - zero or more local project bindings, each with a canonical real `cwd` and
   `executionMode: local | worktree`
-- optional model, reasoning effort, tool, skill, and plugin selections
+- optional provider, model, and reasoning effort selections
 - status `active | paused | completed`
 - created/updated timestamps and derived next occurrence
 
@@ -158,8 +159,10 @@ occurrence with the same aggregate omission rule.
 Definition edits are revision-checked. A scheduler claim stores the definition
 revision and complete saved selection snapshot for that occurrence, so changing
 the prompt, cadence, or selections cannot mutate an already claimed run. Main
-resolves that snapshot against the current provider and capability environment
-at dispatch and fails closed if it is no longer available.
+validates that snapshot against the current provider and model environment at
+dispatch and fails closed if the selection is no longer available. Standalone
+runs inherit the default Configuration Profile; existing-Thread runs inherit
+their destination Thread's persisted configuration.
 
 Ordinary edits affect only unclaimed occurrences; an already pending claim keeps
 its captured revision. Pause and delete first recover any accepted Turn through
@@ -242,11 +245,11 @@ Creating or enabling an Automation is standing authorization for its future
 occurrences to perform the saved work under the current OS account's Full Access.
 Automation does not add a sandbox, permission mode/profile, approval policy,
 managed fallback, risk confirmation, or pause/resume authorization flow. Each
-occurrence resolves its saved configuration revision into an effective tool
-catalog; current explicit user blocks are checked again at every tool dispatch,
-and native OS, authentication, provider, and service failures are returned by
-their owners. A tool that remains available has the same host-account authority
-as it has in an interactive Thread.
+occurrence receives its tool catalog from the destination Thread or default
+Configuration Profile; current explicit user blocks are checked again at every
+tool dispatch, and native OS, authentication, provider, and service failures are
+returned by their owners. A tool that remains available has the same host-account
+authority as it has in an interactive Thread.
 
 An Automation Turn may call root-only `request_user_input` for missing product
 input. That sets the canonical Thread `waitingOnUserInput` flag and keeps the
@@ -254,22 +257,22 @@ occurrence active while later due work coalesces, but it can never request or
 grant authorization. The Automations view links to the canonical Thread input
 request instead of copying it or inventing an Automation execution status.
 
-Skills and plugins are resolved at each occurrence from the saved selections.
-`null`, `[]`, and non-empty capability selections respectively mean inherit,
-explicitly none, and an exact allowlist. The effective Skill allowlist constrains
-both model-visible listing and invocation, and missing, disabled, or
-non-model-invocable dependencies fail visibly before model execution. A skill or
-foreground Thread can request an Automation create/update only through the
-host-owned `codex_app.automation_update` tool; model input never writes scheduler
-tables.
+Automation exposes no Profile, tool, Skill, Plugin, or MCP override fields.
+Those capability ceilings are host-private and inherited from the default
+Configuration Profile for standalone runs or the persisted destination Thread
+configuration for existing-Thread runs. An Automation prompt can explicitly
+invoke an available Skill with `$skill-name`; this is ordinary prompt content,
+not a saved allowlist. A skill or foreground Thread can request an Automation
+create/update only through the host-owned `codex_app.automation_update` tool;
+model input never writes scheduler tables.
 
 ### 6. Host tool and transport
 
 `codex_app.automation_update` supports Codex's create, update, view, and delete
 modes.
 Mutating modes use strict schemas for prompt, destination, RRULE/timezone,
-project bindings, model/effort, tools, skills, plugins, and status. Main performs
-path, Thread, schedule, dependency, and tool-catalog validation and returns the
+project bindings, model/effort, and status. Main performs path, Thread, schedule,
+and model validation and returns the
 canonical Automation DTO or deletion receipt. Current explicit blocks remain
 dispatch-time policy and are not copied into the definition. No tool or renderer
 schema accepts a permission profile, sandbox, or approval policy.
@@ -312,8 +315,8 @@ Create and detail/edit use this one drawer and one form. Existing values are
 directly editable; there is no separate read-only detail screen or Edit command.
 Changes remain a local draft until an atomic Save, with a fixed Save/Cancel
 footer. Closing or cancelling a dirty draft requires explicit discard
-confirmation. Saving never collapses `null`, `[]`, and non-empty capability
-selections: they remain inherit, explicitly none, and an exact allowlist.
+confirmation. Tool, Skill, Plugin, and MCP capability configuration stays outside
+the Automation form and is inherited at dispatch.
 
 The compact list keeps Search and New in one toolbar row. Its equal-width status
 filter and Automation rows share one horizontal content boundary; each row
@@ -333,8 +336,6 @@ schema as a flat form. Its information order is:
    daily or weekdays time, or weekly multi-select weekdays/time), timezone, and
    the structured custom rule fields when needed
 5. previous Automation runs
-6. advanced Profile and capability overrides for Tools, Skills, Plugins, and MCP
-   servers
 
 Model and timezone use finite native selectors. Model options come from usable
 provider catalogs and save provider plus provider-qualified model together;
@@ -358,8 +359,6 @@ The Automation editor supports:
 - timezone
 - no project, local project, or isolated worktree
 - model and reasoning effort
-- tools
-- skills and plugins
 - pause/resume, Start now, and delete commands
 - pin/unpin for worktree retention
 
@@ -401,9 +400,9 @@ Issue-trigger schedules, and any second scheduler that starts agent execution.
 - **Busy existing Thread:** retain one pending claim, start only through
   `tryStartTurnIfIdle`, and coalesce later due occurrences to the latest.
 - **Unattended work exceeds its saved scope:** Automation creation is explicit
-  standing authorization; every occurrence resolves the saved tool selections,
-  reevaluates current explicit blocks, records capability audits, and surfaces
-  native failures in its canonical Thread.
+  standing authorization; every occurrence inherits the host-owned Thread/Profile
+  capability ceiling, reevaluates current explicit blocks, records capability
+  audits, and surfaces native failures in its canonical Thread.
 - **Automation content leaks into Memory:** every dispatched Turn has immutable
   host-authored Automation provenance, including delivery into an existing user
   Thread; Memory filters that provenance rather than relying on Thread source or
@@ -441,7 +440,8 @@ trusted Turn provenance, and service-layer scheduling.
   Thread/Turn APIs with reciprocal AutomationRun provenance and trusted
   automation context.
 - [ ] Implement project/worktree lifecycle and unattended Full Access execution
-  through saved tool catalogs, current explicit blocks, and native failures.
+  through inherited Thread/Profile capabilities, current explicit blocks, and
+  native failures.
 - [ ] Implement `codex_app.automation_update`, preload APIs, notifications, Start
   now, and pause/delete/tombstone/retention semantics.
 - [ ] Delete every RecurringIssue, Issue schedule, AgentSession trigger,

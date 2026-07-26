@@ -15,8 +15,7 @@ An `Automation` is one revisioned definition containing:
 - a `standalone` or `existingThread` destination
 - zero or more stable project bindings whose saved `cwd` is a canonical real
   path, using `local` or `worktree` execution
-- optional Configuration Profile, provider, model, reasoning, tool, Skill,
-  Plugin, and MCP server selections
+- optional provider, model, and reasoning selections
 - `active`, `paused`, or `completed` status and timestamps
 
 The accepted schedule form contains exactly one floating local `DTSTART` and one
@@ -32,8 +31,8 @@ An `AutomationRun` is a narrow scheduling and routing record. It captures the
 Automation revision, scheduled instant, one project binding, complete saved
 definition and configuration-selection snapshot, optional worktree, reciprocal
 Thread/Turn IDs, read state, and pin state. Main resolves the effective provider,
-model, and capability configuration from that snapshot at dispatch and fails
-closed when current dependencies cannot satisfy it. The run does not copy model
+model, and inherited Thread/Profile configuration at dispatch and fails closed
+when the selected provider or model is unavailable. The run does not copy model
 output, Turn status, Goal status, tool history, or errors that occur after Turn
 admission.
 
@@ -89,15 +88,16 @@ Changing a completed definition's schedule reactivates it from the edit time;
 other edits preserve its completed state.
 
 Start now uses the saved definition and same durable claim/dispatch path. It does
-not bypass no-overlap, dependency validation, worktree preparation, tool
-selection, or explicit capability blocks.
+not bypass no-overlap, model validation, worktree preparation, inherited Thread
+configuration, or explicit capability blocks.
 
 ## Canonical Dispatch
 
 A standalone occurrence creates one persistent root Thread per project binding
 with `threadSource` classified as feature `automation`. It uses the Automation
-name, captured configuration, and prepared working directory. Its composer is
-read-only because only the host feature path may add Turns.
+name, captured model selection, default Configuration Profile, and prepared
+working directory. Its composer is read-only because only the host feature path
+may add Turns.
 
 An existing-Thread occurrence adds a Turn to one active persistent root user
 Thread and preserves that Thread's history, provider, Goal, and working context.
@@ -144,18 +144,20 @@ decision.
 ## Configuration And Authority
 
 Each claim stores the exact Automation definition revision. At dispatch, the
-host resolves its saved Profile and explicit overrides against the current
-provider, model catalog, tool catalog, Skill catalog, Plugin registry, and MCP
-server catalog. Create and update reject invalid current selections before
-persistence; dispatch repeats the resolution because catalogs and credentials
-may change before a future occurrence. Missing or disabled selected dependencies
-fail before Turn admission. An existing-Thread destination rejects explicit
-choices that differ from its effective persisted configuration both when saved
-and when dispatched. Capability selections retain three distinct values:
-`null` inherits the Profile, `[]` explicitly disables the capability class, and
-a non-empty list is the exact allowlist. For Automation Turns, the effective
-Skill allowlist filters both model-visible Skill listings and runtime invocation;
-disabled or non-model-invocable Skills are absent from dispatch validation.
+host validates its optional provider, model, and reasoning selections against
+the current provider catalog and credentials. Create and update validate current
+selections before persistence; dispatch repeats validation because credentials
+and model catalogs may change before a future occurrence. An existing-Thread
+destination rejects explicit selections that differ from its persisted provider,
+model, or reasoning configuration both when saved and when dispatched.
+
+Automation has no public Profile, tool, Skill, Plugin, or MCP selection fields.
+A standalone occurrence inherits those capabilities from the default
+Configuration Profile for its project; an existing-Thread occurrence inherits
+the destination Thread's complete persisted configuration. These capability
+ceilings remain host-private and are enforced by the normal Turn runtime. A
+prompt may invoke an available Skill explicitly with `$skill-name`; the prompt
+text does not create a separate Automation allowlist or dependency record.
 
 Creating or resuming an Automation is standing authorization for future
 occurrences under Tenon's Full Access model. Automation introduces no sandbox,
@@ -223,9 +225,9 @@ rather than the storage schema: name and prompt; a grouped Details table for
 destination, project, model, and reasoning; a grouped Frequency table whose
 conditional rows expose the complete preset (date and time for once, no
 additional value for hourly, time for daily and weekdays, or multiple weekdays
-and time for weekly), followed by timezone; previous runs; then advanced Profile
-and capability fields. Custom is a structured rule builder rather than a protocol
-text field: it supports hourly, daily, weekly, monthly, and yearly frequency,
+and time for weekly), followed by timezone; then previous runs. Custom is a
+structured rule builder rather than a protocol text field: it supports hourly,
+daily, weekly, monthly, and yearly frequency,
 interval, multi-select weekdays, month, multi-select month days, minute past the
 hour, and time as applicable. Every renderer schedule is compiled to and opened
 from the same canonical RRULE.
@@ -242,9 +244,7 @@ direct `HH:mm` entry and complete hour/minute selection with keyboard navigation
 Its fixed-height hour and minute wheels expose seven centered values without a
 visible scrollbar and support pointer, wheel/trackpad, and keyboard selection;
 weekday and month-day selectors are multi-select menus that cannot be emptied.
-Capability controls preserve inherit (`null`), explicitly none (`[]`), and exact
-allowlist states. Start now,
-pause/resume, delete, and worktree pinning operate through their canonical
+Start now, pause/resume, delete, and worktree pinning operate through their canonical
 commands rather than form mutation. `pending` and `dispatched` are presented as
 Pending and Started rather than exposing scheduler jargon. A pending reserved
 standalone Thread is not navigable until its Turn is dispatched.

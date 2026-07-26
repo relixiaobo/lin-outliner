@@ -388,26 +388,6 @@ describe('agent skills', () => {
     expect(second).toBeNull();
   });
 
-  test('enforces an Automation Skill allowlist in listings and invocation', async () => {
-    const runtime = new AgentSkillRuntime({
-      includeUserSkills: false,
-      allowedSkills: ['research'],
-    });
-
-    const listing = await runtime.buildSkillListingReminderText(200_000);
-    expect(listing).toContain('- research:');
-    expect(listing).not.toContain('- skillify:');
-    expect((await runtime.listAvailableModelInvocableSkills()).map((skill) => skill.name))
-      .toEqual(['research']);
-    expect(await runtime.invokeSkill({ skill: 'skillify', trigger: 'agent' })).toMatchObject({
-      ok: false,
-      code: 'skill_not_allowed',
-    });
-
-    runtime.updateDisabledSkills(['research']);
-    expect(await runtime.listAvailableModelInvocableSkills()).toEqual([]);
-  });
-
   test('can release reserved skill listings that were not sent', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: ['description: Demo skill'],

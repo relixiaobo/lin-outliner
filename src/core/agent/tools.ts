@@ -7,7 +7,6 @@ import {
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
 import {
-  AUTOMATION_CAPABILITY_LIST_MAX_COUNT,
   AUTOMATION_IDENTIFIER_MAX_LENGTH,
   AUTOMATION_NAME_MAX_LENGTH,
   AUTOMATION_PATH_MAX_LENGTH,
@@ -255,24 +254,10 @@ const automationProjectBindingSchema = objectSchema({
 const nullableStringSchema: JsonSchema = {
   oneOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
 };
-const nullableStringArraySchema: JsonSchema = {
-  oneOf: [
-    boundedArraySchema(
-      boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      AUTOMATION_CAPABILITY_LIST_MAX_COUNT,
-    ),
-    { type: 'null' },
-  ],
-};
 const automationConfigurationSchema = objectSchema({
-  profileName: nullableStringSchema,
   modelProvider: nullableStringSchema,
   model: nullableStringSchema,
   reasoningEffort: { oneOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
-  tools: nullableStringArraySchema,
-  skills: nullableStringArraySchema,
-  plugins: nullableStringArraySchema,
-  mcpServers: nullableStringArraySchema,
 });
 
 const automationDefinitionProperties = {

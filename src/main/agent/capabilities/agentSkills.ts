@@ -198,7 +198,6 @@ export interface SkillLoadOptions {
   }>>;
   managedSkillContentRoot?: string;
   assertManagedSkillInvocable?: (skillId: string, expectedContentHash: string) => Promise<void>;
-  allowedSkills?: readonly string[];
 }
 
 export interface BuiltInSkillResourceRootOptions {
@@ -409,7 +408,6 @@ export class AgentSkillRuntime {
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly assertManagedSkillInvocable?: SkillLoadOptions['assertManagedSkillInvocable'];
-  private readonly allowedSkills: ReadonlySet<string> | null;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
   private pendingTurnEffect: SkillTurnEffect | null = null;
@@ -423,9 +421,6 @@ export class AgentSkillRuntime {
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
     this.assertManagedSkillInvocable = options.assertManagedSkillInvocable;
-    this.allowedSkills = options.allowedSkills
-      ? new Set(options.allowedSkills.map(normalizeSkillName).filter(Boolean))
-      : null;
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
@@ -448,7 +443,6 @@ export class AgentSkillRuntime {
     if (this.invokedSkills.size === 0 && this.transientSkillReadRoots.size === 0) return [];
     const trustedRootsBySkill = new Map<string, string>();
     for (const skill of await this.registry.listAllSkills()) {
-      if (!this.isAllowed(skill) || this.isDisabledByRuntimeSettings(skill)) continue;
       const skillRoot = skillDirectoryForPrompt(skill);
       const skillName = normalizeSkillName(skill.name);
       if (skillRoot && skillName) trustedRootsBySkill.set(skillName, skillRoot);
@@ -491,11 +485,7 @@ export class AgentSkillRuntime {
 
   async reserveSkillListingReminderText(contextWindowTokens?: number | null): Promise<SkillListingReservation | null> {
     const skills = await this.registry.getModelInvocableSkills();
-    const newSkills = skills.filter((skill) => (
-      !this.listedSkills.has(skill)
-      && this.isAllowed(skill)
-      && !this.isDisabledByRuntimeSettings(skill)
-    ));
+    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill) && !this.isDisabledByRuntimeSettings(skill));
     if (newSkills.length === 0) return null;
 
     const content = formatSkillListing(newSkills, contextWindowTokens ?? undefined);
@@ -596,11 +586,6 @@ export class AgentSkillRuntime {
     return this.registry.listAllSkills();
   }
 
-  async listAvailableModelInvocableSkills(): Promise<SkillDefinition[]> {
-    const skills = await this.registry.getModelInvocableSkills();
-    return skills.filter((skill) => this.isAllowed(skill) && !this.isDisabledByRuntimeSettings(skill));
-  }
-
   async invokeSkill(input: InvokeSkillInput): Promise<SkillInvocationResult> {
     const requestedName = normalizeSkillName(input.skill);
     if (!requestedName) {
@@ -610,9 +595,6 @@ export class AgentSkillRuntime {
     let skill = await this.registry.resolveSkill(requestedName);
     if (!skill) {
       return { ok: false, code: 'unknown_skill', message: `Unknown skill: ${requestedName}` };
-    }
-    if (!this.isAllowed(skill)) {
-      return { ok: false, code: 'skill_not_allowed', message: `Skill ${skill.name} is not enabled for this Turn.` };
     }
     if (this.isDisabledByRuntimeSettings(skill)) {
       return { ok: false, code: 'skill_disabled', message: `Skill ${skill.name} is currently disabled in settings.` };
@@ -783,10 +765,6 @@ export class AgentSkillRuntime {
 
   private isDisabledByRuntimeSettings(skill: SkillDefinition): boolean {
     return skill.source !== 'managed' && this.disabledSkills.includes(skill.name);
-  }
-
-  private isAllowed(skill: SkillDefinition): boolean {
-    return this.allowedSkills === null || this.allowedSkills.has(normalizeSkillName(skill.name));
   }
 
   private recordTurnEffect(skill: SkillDefinition): void {

@@ -365,8 +365,7 @@
 }
 
 .automation-editor-intro,
-.automation-editor-section,
-.automation-configuration-fields {
+.automation-editor-section {
   display: grid;
   min-width: 0;
   gap: var(--space-4);
@@ -635,42 +634,6 @@
 .automation-number-input:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-shadow);
-}
-
-.automation-configuration > summary {
-  color: var(--text-secondary);
-  font-size: var(--font-ui-sm);
-  font-weight: 500;
-  line-height: var(--line-ui-sm);
-  user-select: none;
-}
-
-.automation-configuration {
-  border-top: 1px solid var(--separator);
-  padding-top: var(--space-5);
-}
-
-.automation-configuration[open] > summary {
-  margin-bottom: var(--space-5);
-}
-
-.automation-capability-list {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.automation-capability-mode {
-  display: flex;
-  width: 100%;
-}
-
-.automation-capability-mode .segmented-control-option {
-  min-width: 0;
-  flex: 1;
-  padding-right: var(--space-2);
-  padding-left: var(--space-2);
-  font-size: var(--font-ui-2xs);
 }
 
 .automation-editor-actions {

@@ -18,7 +18,6 @@ import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentC
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
 import { threadFeatureSource, type Thread, type Turn } from '../../src/core/agent/protocol';
 import { AutomationDispatcher } from '../../src/main/agent/automations/AutomationDispatcher';
-import { validateAutomationDependencies } from '../../src/main/agent/automations/AutomationDependencies';
 import {
   automationOccurrencesBetween,
   nextAutomationOccurrence,
@@ -49,6 +48,10 @@ describe('Automation protocol and schedule', () => {
       destination: { kind: 'standalone' },
     });
     expect(() => decodeAutomationRequest('create', { ...input, permissionProfile: 'full' })).toThrow('unknown fields');
+    expect(() => decodeAutomationRequest('create', {
+      ...input,
+      configuration: { tools: [] },
+    })).toThrow('unknown fields');
     expect(() => decodeAutomationRequest('create', { ...input, name: 'x'.repeat(201) })).toThrow('at most 200');
     expect(() => decodeAutomationRequest('create', {
       ...input,
@@ -183,20 +186,6 @@ describe('Automation protocol and schedule', () => {
     expect(nextAutomationOccurrence(once, Date.parse('2026-07-24T09:00:00Z'))).toBeNull();
   });
 
-  test('fails closed when any saved capability dependency is unavailable', () => {
-    expect(() => validateAutomationDependencies({
-      ...defaultEffectiveThreadConfiguration(),
-      tools: ['node_read', 'missing_tool'],
-      skills: ['review'],
-      plugins: ['memory'],
-      mcpServers: ['project-mcp'],
-    }, {
-      tools: new Set(['node_read']),
-      skills: new Set(),
-      plugins: new Set(['memory']),
-      mcpServers: new Set(),
-    })).toThrow('Tools: missing_tool; Skills: review; MCP servers: project-mcp');
-  });
 });
 
 describe('Automation durable scheduling', () => {
@@ -663,7 +652,7 @@ describe('Automation service serialization', () => {
       .rejects.toThrow('no retained worktree');
   });
 
-  test('rejects Start now while paused and validates dependencies before persistence', async () => {
+  test('rejects Start now while paused and validates configuration before persistence', async () => {
     const store = automationStore();
     const now = Date.parse('2026-07-24T09:00:00Z');
     const automation = store.create({ ...definition('20260724T100000'), status: 'paused' }, now);
@@ -774,11 +763,24 @@ describe('Automation Thread dispatch', () => {
     const standalone = store.create(definition('20260724T100000'), now);
     const standaloneRun = store.claimNow(standalone, null, now + 1);
     const standaloneHost = threadHost();
-    const standaloneDispatcher = dispatcherFor(store, standaloneHost, now + 2);
+    const inheritedStandaloneConfiguration = {
+      ...defaultEffectiveThreadConfiguration(),
+      tools: ['node_read'],
+      skills: ['research'],
+      plugins: ['memory'],
+      mcpServers: ['docs'],
+    };
+    const standaloneDispatcher = dispatcherFor(store, standaloneHost, now + 2, async () => ({
+      modelProvider: 'openai',
+      configuration: inheritedStandaloneConfiguration,
+    }));
     const dispatchedStandalone = await standaloneDispatcher.dispatch(standaloneRun);
 
     expect(dispatchedStandalone.state).toBe('dispatched');
     expect(standaloneHost.ensureCalls).toHaveLength(1);
+    expect(standaloneHost.ensureCalls[0]).toMatchObject({
+      configuration: inheritedStandaloneConfiguration,
+    });
     expect(standaloneHost.turnCalls[0]).toMatchObject({
       threadId: standaloneRun.threadId,
       clientUserMessageId: standaloneRun.id,
@@ -797,8 +799,25 @@ describe('Automation Thread dispatch', () => {
       destination: { kind: 'existingThread', threadId: existingThread.id },
     }, now + 3);
     const existingRun = store.claimNow(existing, null, now + 4);
-    const existingHost = threadHost(existingThread);
-    const existingDispatcher = dispatcherFor(store, existingHost, now + 5);
+    const inheritedThreadConfiguration = {
+      ...defaultEffectiveThreadConfiguration(),
+      tools: ['node_search'],
+      skills: ['planning'],
+      plugins: [],
+      mcpServers: ['project-docs'],
+    };
+    const existingHost = threadHost(existingThread, inheritedThreadConfiguration);
+    let validatedExistingConfiguration: unknown = null;
+    const existingDispatcher = dispatcherFor(
+      store,
+      existingHost,
+      now + 5,
+      undefined,
+      undefined,
+      async (_modelProvider, configuration) => {
+        validatedExistingConfiguration = configuration;
+      },
+    );
     const dispatchedExisting = await existingDispatcher.dispatch(existingRun);
 
     expect(dispatchedExisting).toMatchObject({
@@ -806,6 +825,7 @@ describe('Automation Thread dispatch', () => {
       threadId: existingThread.id,
     });
     expect(existingHost.ensureCalls).toHaveLength(0);
+    expect(validatedExistingConfiguration).toBe(inheritedThreadConfiguration);
     expect(existingHost.turnCalls[0]?.trigger).toEqual({
       kind: 'feature',
       feature: 'automation',
@@ -872,26 +892,26 @@ describe('Automation Thread dispatch', () => {
     expect(host.turnCalls[0]?.clientUserMessageId).toBe(run.id);
   });
 
-  test('fails before model execution when saved configuration cannot resolve', async () => {
+  test('fails before model execution when the saved model selection cannot resolve', async () => {
     const now = Date.parse('2026-07-24T09:00:00Z');
     const store = automationStore();
     const automation = store.create(definition('20260724T100000'), now);
     const run = store.claimNow(automation, null, now + 1);
     const host = threadHost();
     const dispatcher = dispatcherFor(store, host, now + 2, async () => {
-      throw new Error('Automation Skills are unavailable: missing-skill');
+      throw new Error('Automation model provider is unavailable: openai');
     });
     const failed = await dispatcher.dispatch(run);
 
     expect(failed).toMatchObject({
       state: 'failed',
       threadId: null,
-      error: 'Automation Skills are unavailable: missing-skill',
+      error: 'Automation model provider is unavailable: openai',
     });
     expect(host.turnCalls).toHaveLength(0);
   });
 
-  test('validates current existing-Thread dependencies before Turn admission', async () => {
+  test('validates the existing Thread model configuration before Turn admission', async () => {
     const now = Date.parse('2026-07-24T09:00:00Z');
     const store = automationStore();
     const destination = userThread(uuidV7(), '/tmp/existing');
@@ -1195,7 +1215,10 @@ interface ThreadHostProbe {
   deleteThread(threadId: string): Promise<void>;
 }
 
-function threadHost(existing?: Thread): ThreadHostProbe {
+function threadHost(
+  existing?: Thread,
+  configuration = defaultEffectiveThreadConfiguration(),
+): ThreadHostProbe {
   const threads = new Map<string, Thread>(existing ? [[existing.id, existing]] : []);
   const turns = new Map<string, Turn>();
   const ensureCalls: unknown[] = [];
@@ -1209,7 +1232,7 @@ function threadHost(existing?: Thread): ThreadHostProbe {
     persistentThreadExecutionContext(threadId) {
       const thread = threads.get(threadId);
       if (!thread) throw new Error(`Thread not found: ${threadId}`);
-      return { thread, configuration: defaultEffectiveThreadConfiguration() };
+      return { thread, configuration };
     },
     async ensureFeatureRootThread(input) {
       ensureCalls.push(input);
@@ -1264,7 +1287,10 @@ function dispatcherFor(
     configuration: ReturnType<typeof defaultEffectiveThreadConfiguration>;
   }>) | undefined = undefined,
   worktrees: Pick<AutomationWorktree, 'prepare'> | undefined = undefined,
-  validateEffectiveConfiguration: (() => Promise<void>) | undefined = undefined,
+  validateEffectiveConfiguration: ((
+    modelProvider: string,
+    configuration: ReturnType<typeof defaultEffectiveThreadConfiguration>,
+  ) => Promise<void>) | undefined = undefined,
 ): AutomationDispatcher {
   const resolve = resolveConfiguration ?? (async () => ({
     modelProvider: 'openai',

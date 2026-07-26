@@ -543,14 +543,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       destination: { kind: 'standalone' } | { kind: 'existingThread'; threadId: string };
       projectBindings: Array<{ id: string; cwd: string; executionMode: 'local' | 'worktree' }>;
       configuration: {
-        profileName: string | null;
         modelProvider: string | null;
         model: string | null;
         reasoningEffort: string | null;
-        tools: string[] | null;
-        skills: string[] | null;
-        plugins: string[] | null;
-        mcpServers: string[] | null;
       };
       status: 'active' | 'paused' | 'completed';
       revision: number;
@@ -1602,14 +1597,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             destination: clone(input.destination) as MockAutomation['destination'],
             projectBindings: clone(input.projectBindings ?? []) as MockAutomation['projectBindings'],
             configuration: {
-              profileName: null,
               modelProvider: null,
               model: null,
               reasoningEffort: null,
-              tools: null,
-              skills: null,
-              plugins: null,
-              mcpServers: null,
               ...clone(configuration ?? {}),
             },
             status: input.status === 'paused' ? 'paused' : 'active',

@@ -15,7 +15,6 @@ import { Button } from '../../ui/primitives/Button';
 import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Input } from '../../ui/primitives/Input';
-import { SegmentedControl } from '../../ui/primitives/SegmentedControl';
 import { SelectControl } from '../../ui/primitives/SelectControl';
 import { Textarea } from '../../ui/primitives/Textarea';
 import { AutomationScheduleEditor } from './AutomationScheduleEditor';
@@ -32,11 +31,6 @@ type ProjectBindingDraft = {
   readonly cwd: string;
   readonly executionMode: Exclude<ProjectMode, 'none'>;
 };
-
-export interface CapabilityListDraft {
-  readonly mode: 'inherit' | 'none' | 'allowlist';
-  readonly value: string;
-}
 
 interface AutomationEditorProps {
   readonly actionError: string | null;
@@ -124,14 +118,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
         destination,
         projectBindings,
         configuration: {
-          profileName: nullable(state.profileName),
           modelProvider: nullable(state.modelProvider),
           model: nullable(state.model),
           reasoningEffort: state.reasoningEffort || null,
-          tools: capabilityListValue(state.tools),
-          skills: capabilityListValue(state.skills),
-          plugins: capabilityListValue(state.plugins),
-          mcpServers: capabilityListValue(state.mcpServers),
         },
       };
       let saved: Automation;
@@ -391,47 +380,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
           </section>
         ) : null}
 
-        <details className="automation-configuration">
-          <summary>{t.advancedCapabilities}</summary>
-          <div className="automation-configuration-fields">
-            <div className="automation-editor-field-grid">
-              <Field label={t.profile}>
-                <Input disabled={props.busy} label={t.profile} onChange={(event) => setState({ ...state, profileName: event.target.value })} placeholder={t.inherited} value={state.profileName} />
-              </Field>
-            </div>
-            {(['tools', 'skills', 'plugins', 'mcpServers'] as const).map((key) => (
-              <Field as="div" key={key} label={t[key]}>
-                <div className="automation-capability-list">
-                  <SegmentedControl
-                    className="automation-capability-mode"
-                    disabled={props.busy}
-                    label={t[key]}
-                    onChange={(mode) => setState({ ...state, [key]: { ...state[key], mode } })}
-                    options={[
-                      { value: 'inherit', label: t.capabilityModes.inherit },
-                      { value: 'none', label: t.capabilityModes.none },
-                      { value: 'allowlist', label: t.capabilityModes.allowlist },
-                    ]}
-                    value={state[key].mode}
-                  />
-                  {state[key].mode === 'allowlist' ? (
-                    <Input
-                      disabled={props.busy}
-                      label={t[key]}
-                      onChange={(event) => setState({
-                        ...state,
-                        [key]: { ...state[key], value: event.target.value },
-                      })}
-                      placeholder={t.capabilityListPlaceholder}
-                      value={state[key].value}
-                    />
-                  ) : null}
-                </div>
-              </Field>
-            ))}
-          </div>
-        </details>
-
         {error || props.actionError ? (
           <p className="automation-error" role="alert">{error ?? props.actionError}</p>
         ) : null}
@@ -454,14 +402,9 @@ interface EditorState {
   readonly destination: 'standalone' | 'existingThread';
   readonly threadId: string;
   readonly projectBindings: readonly ProjectBindingDraft[];
-  readonly profileName: string;
   readonly modelProvider: string;
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort | '';
-  readonly tools: CapabilityListDraft;
-  readonly skills: CapabilityListDraft;
-  readonly plugins: CapabilityListDraft;
-  readonly mcpServers: CapabilityListDraft;
 }
 
 interface AutomationModelChoice {
@@ -529,14 +472,9 @@ function editorState(automation: Automation | null): EditorState {
     destination: automation?.destination.kind ?? 'standalone',
     threadId: automation?.destination.kind === 'existingThread' ? automation.destination.threadId : '',
     projectBindings: automation?.projectBindings.map((binding) => ({ ...binding })) ?? [],
-    profileName: automation?.configuration.profileName ?? '',
     modelProvider: automation?.configuration.modelProvider ?? '',
     model: automation?.configuration.model ?? '',
     reasoningEffort: automation?.configuration.reasoningEffort ?? '',
-    tools: capabilityListDraft(automation?.configuration.tools ?? null),
-    skills: capabilityListDraft(automation?.configuration.skills ?? null),
-    plugins: capabilityListDraft(automation?.configuration.plugins ?? null),
-    mcpServers: capabilityListDraft(automation?.configuration.mcpServers ?? null),
   };
 }
 
@@ -554,18 +492,6 @@ function replaceBinding(
 
 function nullable(value: string): string | null {
   return value.trim() || null;
-}
-
-export function capabilityListDraft(value: readonly string[] | null): CapabilityListDraft {
-  if (value === null) return { mode: 'inherit', value: '' };
-  if (value.length === 0) return { mode: 'none', value: '' };
-  return { mode: 'allowlist', value: value.join(', ') };
-}
-
-export function capabilityListValue(draft: CapabilityListDraft): readonly string[] | null {
-  if (draft.mode === 'inherit') return null;
-  if (draft.mode === 'none') return [];
-  return Object.freeze([...new Set(draft.value.split(',').map((item) => item.trim()).filter(Boolean))]);
 }
 
 function required(value: string, message: string): string {

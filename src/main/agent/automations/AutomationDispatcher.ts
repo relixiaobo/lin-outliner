@@ -273,21 +273,10 @@ export function assertAutomationConfigurationMatchesThread(
     selection.modelProvider !== null && selection.modelProvider !== modelProvider,
     selection.model !== null && selection.model !== configuration.model,
     selection.reasoningEffort !== null && selection.reasoningEffort !== configuration.reasoningEffort,
-    selection.profileName !== null && selection.profileName !== configuration.profileName,
-    selection.tools !== null && !sameStrings(selection.tools, configuration.tools),
-    selection.skills !== null && !sameStrings(selection.skills, configuration.skills),
-    selection.plugins !== null && !sameStrings(selection.plugins, configuration.plugins),
-    selection.mcpServers !== null && !sameStrings(selection.mcpServers, configuration.mcpServers),
   ];
   if (mismatches.some(Boolean)) {
     throw new Error('Automation configuration does not match the destination Thread configuration');
   }
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightValues = new Set(right);
-  return left.every((value) => rightValues.has(value));
 }
 
 function requireThreadId(run: AutomationRun): string {
