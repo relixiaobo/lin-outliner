@@ -297,7 +297,17 @@ function reactNodeText(node: ReactNode): string {
 function splitMarkdownBlocks(text: string): string[] {
   if (!text) return [''];
   try {
-    return Lexer.lex(text).map((token) => token.raw);
+    const tokens = Lexer.lex(text);
+    const definitions = tokens
+      .filter((token) => token.type === 'def')
+      .map((token) => token.raw)
+      .join('');
+    const visibleBlocks = tokens
+      .filter((token) => token.type !== 'def')
+      .map((token) => definitions
+        ? `${token.raw}${token.raw.endsWith('\n') ? '\n' : '\n\n'}${definitions}`
+        : token.raw);
+    return visibleBlocks.length > 0 ? visibleBlocks : [''];
   } catch {
     return [text];
   }
