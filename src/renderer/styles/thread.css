@@ -1104,8 +1104,7 @@
   padding: 0;
 }
 
-.thread-markdown a,
-.thread-memory-citations a {
+.thread-markdown a {
   color: var(--link);
 }
 
@@ -1594,36 +1593,6 @@ button.thread-inline-activity:focus-visible,
   height: 32px;
   border-radius: var(--radius-sm);
   object-fit: cover;
-}
-
-.thread-memory-citations-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.thread-memory-citations-content ul {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.thread-memory-citation-sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-}
-
-.thread-memory-citation-sources button {
-  border: 0;
-  background: transparent;
-  color: var(--link);
-  font: inherit;
-  padding: 0;
-  text-decoration: underline;
 }
 
 .thread-message-editor textarea,

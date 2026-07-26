@@ -1440,7 +1440,7 @@ export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
 
 export function isThreadProcessItem(item: ThreadItem): boolean {
   if (isThreadToolItem(item)) return true;
-  if (item.type === 'agentMessage') return item.phase === 'commentary' && item.memoryCitation === null;
+  if (item.type === 'agentMessage') return item.phase === 'commentary';
   return item.type === 'plan'
     || item.type === 'reasoning'
     || item.type === 'subAgentActivity'

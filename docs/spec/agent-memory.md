@@ -222,18 +222,16 @@ successful built-in `node_read` counts as Memory use only for exact requested
 Node IDs that were returned and were canonical, visible Memory at read time.
 Search results, implicitly returned descendants, ordinary Nodes, failed reads,
 and extension/MCP tools with a coincidental name do not count. Reads deduplicate
-within the Turn and the recorded citation set is bounded to eight Nodes.
-
-When a completed final response actually read Memory, Core appends a canonical
-commentary Item containing `memoryCitation`. The renderer places one neutral,
-collapsed `Used memory` disclosure immediately below the final response and
-outside the earlier process block. Expanding it reveals links to the real
-timeline Nodes and only supporting source Threads that still exist and are
-active/navigable. Archived and deleted Threads produce no dead link. Deleting a
-source Thread does not delete already published Memory Nodes or their retained
-evidence; those Nodes remain user-editable until ordinary editing, consolidation,
-or Reset changes them. Usage counts distinct current `originItemId` values, so
-copied fork history cannot inflate ranking.
+within the Turn and the tracked read set is bounded to eight Nodes. A read is
+recorded as citation usage only when the completed final response also contains
+that exact Node as an inline `[[node:^id]]` reference. The response renders the
+reference through the ordinary clickable Node-link affordance; Core appends no
+Memory-specific commentary Item or citation disclosure. The `node_search` and
+`node_read` Items remain visible in the process disclosure and Run Details.
+Usage counts distinct current `originItemId` values, so copied fork history
+cannot inflate ranking. Deleting a source Thread does not delete already
+published Memory Nodes or their retained evidence; those Nodes remain
+user-editable until ordinary editing, consolidation, or Reset changes them.
 
 ## Rollback And Reset
 
@@ -245,7 +243,8 @@ Before Core appends that marker, Memory durably prepares an invalidation with
 the exact rollback ID, omitted Turn IDs, before/after projection versions, and
 the affected generated Node set. The visibility generation advances
 immediately, so replacement Turns cannot read stale generated Memory. Commit
-withdraws omitted origin and citation support and enqueues Phase 1 and Phase 2.
+withdraws omitted origin and inline-citation usage and enqueues Phase 1 and
+Phase 2.
 Core retries a failed idempotent commit hook in-process; startup matches any
 stranded preparation against the complete durable marker before admitting new
 Turns.
@@ -299,7 +298,8 @@ search for `#d-memory`, so selecting a result opens the real Daily Notes context
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 
-Memory citations render beneath the response as one collapsed `Used memory`
-disclosure. Its expanded content contains Node links plus supporting Thread
-links. No Memory card view, artifact path, internal Thread, SQLite row, job,
-fingerprint, or publication state is user-facing.
+Memory used by a response appears only as ordinary inline Node references near
+the claims they support. Node-tool calls remain inspectable in the process and
+Run Details; there is no separate Memory disclosure, card view, artifact path,
+internal Thread, SQLite row, job, fingerprint, or publication state in the
+transcript.

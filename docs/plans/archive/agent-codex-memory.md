@@ -122,7 +122,7 @@ Memory uses these public concepts only:
 - `Stage1Output`: bounded daily episode candidates extracted from one source
   Thread version
 - the five ordinary tagged timeline Node categories
-- `MemoryCitation` attached to an `agentMessage` ThreadItem
+- ordinary inline Node references for claims that rely on Memory
 - `Memory Reset` as a confirmed user command
 
 Jobs, leases, fingerprints, usage counters, publication generations, feature
@@ -668,24 +668,23 @@ only when the built-in `node_read` succeeds for an exact requested Node ID that
 was returned and was canonical, visible Memory at read time. Search results,
 implicitly returned descendants, ordinary Nodes, failed reads, and
 extension/MCP tools with a coincidental name do not count. Reads deduplicate
-within a Turn and the citation set is bounded to eight Nodes.
-
-`agentMessage.memoryCitation` entries contain the actually read `nodeId` and
-`note`, plus supporting `threadIds`. The renderer displays one neutral,
-collapsed `Used memory` disclosure immediately below the final answer and
-outside the collapsed process disclosure. Expanding it reveals the Memory Node
-links in their Daily Node context and only active, existing source Threads;
-archived or deleted sources are omitted. A completed cited agent message updates
-the referenced evidence's `usageCount` and `lastUsage`; accounting is keyed by
+within a Turn and the tracked read set is bounded to eight Nodes. The final
+answer cites every relied-on Memory Node inline with the ordinary
+`[[node:^exact-id]]` reference syntax next to the supported claim. A read updates
+the referenced evidence's `usageCount` and `lastUsage` only when that exact Node
+reference is present in the completed final answer; accounting is keyed by
 distinct `originItemId`, so an inherited fork cannot increase ranking a second
 time. Citation usage is rebuildable control state: rollback removes
-contributions from omitted citation Items before the next selection, while
+contributions from omitted response Turns before the next selection, while
 cumulative model and Goal usage remain unchanged.
 
-Deleting a Memory Node makes an old citation explicitly unavailable. Reusing an
-ID for unrelated content is forbidden. Deleting a source Thread does not delete
-already published Memory Nodes or their retained evidence; later citations omit
-the unavailable Thread ID while continuing to link the Memory Node.
+The renderer introduces no Memory-specific Item or disclosure. Ordinary inline
+Node references navigate to the Memory Node in its Daily Note context, while
+the existing process disclosure and Run Details retain the `node_search` and
+`node_read` evidence. Deleting a Memory Node makes an old inline reference
+explicitly unavailable. Reusing an ID for unrelated content is forbidden.
+Deleting a source Thread does not delete already published Memory Nodes or
+their retained evidence.
 
 ### 7. Reset and user surface
 
@@ -839,7 +838,7 @@ shipping.
 ### 10. Collision result
 
 At drafting time, open PR #422 owned unrelated renderer date-count files. There
-is no overlap. This plan consumes Core's Thread/Turn/MemoryCitation, mutation
+is no overlap. This plan consumes Core's Thread/Turn, mutation
 causation, prepared/aborted/committed rollback lifecycle, extension admission-
 barrier, projection-neutral system-receipt, and protected system-tag-definition
 contracts. It uses existing Daily Node, tag, search, and Node command machinery
@@ -853,8 +852,9 @@ None. Ratifying this plan ratifies Codex's two-phase Memory behavior over the
 five-category daily timeline graph, source-date publication, generated daily
 headlines, fixed protected tag identities, global `MemoryFeatureMode` as a
 no-catch-up privacy boundary, admission-time Memory eligibility,
-user-authoritative edits, relevance-driven Node-tool retrieval, Node/Thread
-citations, current-projection rollback reconciliation with explicit Memory Node
+user-authoritative edits, relevance-driven Node-tool retrieval, inline Node
+citations with tool-trace audit, current-projection rollback reconciliation with
+explicit Memory Node
 side effects retained, fail-closed generated-Memory visibility from rollback
 prepare through reconciliation, canonical-container-only Reset deletion,
 complete removal of Dream, and complete deletion rather than migration of all
@@ -865,7 +865,7 @@ old Memory data.
 - [ ] Confirm the complete `agent-codex-core` replacement is merged and have the
   main agent add this plan to `docs/TASKS.md`; open the Draft PR claim.
 - [ ] Define current deterministic tag identities, `MemoryFeatureMode`,
-  `ThreadMemoryMode`, Node-backed `MemoryCitation`, tagged hierarchy validation,
+  `ThreadMemoryMode`, inline Node citation behavior, tagged hierarchy validation,
   and the control-only `memories.sqlite` schema, including mode generation,
   journals, complete terminal-evidence lineage, immutable Turn admission,
   Memory-visibility generations, rollback invalidation states, reset epochs,

@@ -254,45 +254,47 @@ describe('Codex Memory contracts', () => {
     expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
   });
 
-  test('routes Memory lookup without injecting Memory prose and cites only a successful exact read', () => {
-    const { extension, targetThread, activeTurn } = memoryCitationHarness();
+  test('routes Memory lookup without injecting prose and counts only an inline citation of an exact read', () => {
+    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
     const context = extension.contributeThreadContext(targetThread);
     expect(context?.additionalContext?.memory?.value).toContain('use node_search');
+    expect(context?.additionalContext?.memory?.value).toContain('[[node:^exact-id]]');
     expect(context?.additionalContext?.memory?.value).not.toContain('Daily memory');
     expect(context?.additionalContext?.memory?.value).not.toContain('Belief');
 
     completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
-    const citation = extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))[0]?.item;
-    expect(citation).toMatchObject({
-      type: 'agentMessage',
-      memoryCitation: {
-        entries: [{ nodeId: MEMORY_NODE_ID, note: 'Daily memory' }],
-        threadIds: [],
-      },
-    });
+    completeMemoryTurn(
+      extension,
+      targetThread,
+      completedResponseTurn(activeTurn, `Used the saved preference [[node:^${MEMORY_NODE_ID}]].`),
+    );
+    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
   });
 
-  test('does not cite ordinary Nodes or failed Memory reads', () => {
-    const { extension, targetThread, activeTurn } = memoryCitationHarness();
+  test('does not count ordinary Nodes, failed reads, or uncited Memory reads', () => {
+    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
     completeNodeRead(extension, targetThread, activeTurn, ['ordinary:1']);
     completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID], false);
+    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
 
-    expect(extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))).toEqual([]);
+    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn));
+    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
   });
 
-  test('deduplicates actually read Memory Nodes and bounds the citation disclosure', () => {
-    const { extension, targetThread, activeTurn, projection } = memoryCitationHarness(memoryProjection(10));
+  test('deduplicates actually read Memory Nodes and bounds inline citation accounting', () => {
+    const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness(memoryProjection(10));
     const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
     extension.contributeThreadContext(targetThread);
     completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
     completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
 
-    const citation = extension.contributeTurnItems(targetThread, completedResponseTurn(activeTurn))[0]?.item;
-    expect(citation?.type).toBe('agentMessage');
-    if (citation?.type !== 'agentMessage') throw new Error('Expected Memory citation Item');
-    expect(citation.memoryCitation?.entries).toHaveLength(8);
-    expect(new Set(citation.memoryCitation?.entries.map((entry) => entry.nodeId)).size).toBe(8);
+    const inlineCitations = memoryNodeIds.map((nodeId) => `[[node:^${nodeId}]]`).join(' ');
+    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn, inlineCitations));
+    expect(memoryNodeIds.map((nodeId) => store.usageForNode(nodeId).count > 0)).toEqual([
+      ...Array.from({ length: 8 }, () => true),
+      ...Array.from({ length: memoryNodeIds.length - 8 }, () => false),
+    ]);
   });
 
   test('admits only local non-Automation evidence and reuses the claimed source date', () => {
@@ -1725,7 +1727,7 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
   };
 }
 
-function memoryCitationHarness(projection = memoryProjection()) {
+function memoryUsageHarness(projection = memoryProjection()) {
   const store = memoryStore();
   const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
   seedGeneratedGraph(store, timeline);
@@ -1749,7 +1751,7 @@ function memoryCitationHarness(projection = memoryProjection()) {
     persistentRootThreads: () => [targetThread],
   });
   extension.contributeTurnAdmission(admissionContext(targetThread, activeTurn));
-  return { activeTurn, extension, projection, targetThread };
+  return { activeTurn, extension, projection, store, targetThread };
 }
 
 function completeNodeRead(
@@ -1772,7 +1774,16 @@ function completeNodeRead(
   });
 }
 
-function completedResponseTurn(activeTurn: Turn): Turn {
+function completeMemoryTurn(extension: MemoryExtension, thread: Thread, turn: Turn): void {
+  extension.onNotification({
+    type: 'turn/completed',
+    threadId: thread.id,
+    turnId: turn.id,
+    turn,
+  });
+}
+
+function completedResponseTurn(activeTurn: Turn, text = 'Completed response'): Turn {
   const answerId = `item:answer:${activeTurn.id}`;
   return {
     ...activeTurn,
@@ -1787,7 +1798,7 @@ function completedResponseTurn(activeTurn: Turn): Turn {
           originTurnId: activeTurn.id,
           originItemId: answerId,
         },
-        text: 'Completed response',
+        text,
         phase: 'final_answer',
         memoryCitation: null,
       },

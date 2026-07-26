@@ -138,7 +138,7 @@ test.describe('canonical agent Thread surface', () => {
     ]));
   });
 
-  test('keeps actually used Memory in one collapsed disclosure below the response', async ({ page }) => {
+  test('renders used Memory as an inline Node reference while keeping node_read in the process', async ({ page }) => {
     const fixture = await page.evaluate(async ({ memoryNodeId }) => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -149,8 +149,8 @@ test.describe('canonical agent Thread surface', () => {
       if (!threadId) throw new Error('Mock Thread not found');
       const turnId = '01910000-0000-7000-8000-00000000b101';
       const userId = '01910000-0000-7000-8000-00000000b102';
-      const answerId = '01910000-0000-7000-8000-00000000b103';
-      const citationId = '01910000-0000-7000-8000-00000000b104';
+      const toolId = '01910000-0000-7000-8000-00000000b103';
+      const answerId = '01910000-0000-7000-8000-00000000b104';
       const itemProvenance = (itemId: string) => ({
         originThreadId: threadId,
         originTurnId: turnId,
@@ -171,23 +171,25 @@ test.describe('canonical agent Thread surface', () => {
               content: [{ type: 'text', text: 'Use my saved preference.' }],
             },
             {
+              id: toolId,
+              type: 'dynamicToolCall',
+              provenance: itemProvenance(toolId),
+              namespace: null,
+              tool: 'node_read',
+              arguments: { node_id: memoryNodeId },
+              status: 'completed',
+              outputRef: null,
+              contentItems: [{ type: 'json', value: { nodeId: memoryNodeId, text: 'Prefer concise answers.' } }],
+              success: true,
+              durationMs: 8,
+            },
+            {
               id: answerId,
               type: 'agentMessage',
               provenance: itemProvenance(answerId),
-              text: 'I used your saved preference for this response.',
+              text: `I kept the response concise based on [[node:Saved preference^${memoryNodeId}]].`,
               phase: 'final_answer',
               memoryCitation: null,
-            },
-            {
-              id: citationId,
-              type: 'agentMessage',
-              provenance: itemProvenance(citationId),
-              text: '',
-              phase: 'commentary',
-              memoryCitation: {
-                entries: [{ nodeId: memoryNodeId, note: 'Prefer concise engineering answers.' }],
-                threadIds: [threadId],
-              },
             },
           ],
           itemsView: 'full',
@@ -217,40 +219,16 @@ test.describe('canonical agent Thread surface', () => {
 
     const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
     const answer = turn.locator('.thread-agent-message-final_answer');
-    const disclosure = turn.locator('.thread-memory-citations');
-    const toggle = disclosure.getByRole('button', { name: 'Used memory' });
     await expect(answer).toBeVisible();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(disclosure.getByText('Prefer concise engineering answers.')).toHaveCount(0);
-    expect(await turn.locator('.thread-agent-message-final_answer, .thread-memory-citations')
-      .evaluateAll((elements) => elements.map((element) => element.className))).toEqual([
-      'thread-item thread-agent-message thread-agent-message-final_answer',
-      'thread-item thread-text-disclosure thread-memory-citations',
-    ]);
-    expect(await toggle.evaluate((element) => {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--text-soft)';
-      document.body.append(probe);
-      const matches = getComputedStyle(element).color === getComputedStyle(probe).color;
-      probe.remove();
-      return matches;
-    })).toBe(true);
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(disclosure.getByRole('link', { name: 'Prefer concise engineering answers.' })).toBeVisible();
-    await expect(disclosure.getByRole('button', { name: 'Source Thread 1' })).toBeVisible();
+    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
+    await expect(turn.locator('.thread-memory-citations')).toHaveCount(0);
+    await expect(turn.getByText('Used memory')).toHaveCount(0);
+    const process = turn.locator('.thread-process-block');
+    await process.getByRole('button', { name: 'Worked for 1s' }).click();
+    await expect(process.locator('.thread-tool').filter({ hasText: 'node_read' })).toBeVisible();
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.mouse.move(0, 0);
-    await expect(toggle).toHaveCSS('color', await page.evaluate(() => {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--text-soft)';
-      document.body.append(probe);
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    }));
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
   });
 
   test('projects live and settled Turn process before the final response', async ({ page }) => {

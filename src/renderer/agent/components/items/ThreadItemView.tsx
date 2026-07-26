@@ -28,7 +28,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CopyIcon,
-  DatabaseIcon,
   FileDeleteToolIcon,
   FileEditToolIcon,
   FileGlobToolIcon,
@@ -123,9 +122,6 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     case 'userMessage':
       return <UserMessageItem {...props} item={props.item} />;
     case 'agentMessage':
-      if (props.item.memoryCitation) {
-        return <MemoryCitationDisclosure {...props} citation={props.item.memoryCitation} itemId={props.item.id} />;
-      }
       return (
         <article
           className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}
@@ -202,66 +198,6 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     default:
       return assertNever(props.item);
   }
-}
-
-function MemoryCitationDisclosure({
-  citation,
-  expandState,
-  itemId,
-  onOpenNodeReference,
-  onOpenThread,
-}: Pick<ThreadItemViewProps, 'expandState' | 'onOpenNodeReference' | 'onOpenThread'> & {
-  readonly citation: NonNullable<Extract<ThreadItem, { type: 'agentMessage' }>['memoryCitation']>;
-  readonly itemId: string;
-}) {
-  const t = useT();
-  const disclosureId = `memory-citation:${itemId}`;
-  const expanded = expandState.isExpanded(disclosureId, false);
-  return (
-    <div className="thread-item thread-text-disclosure thread-memory-citations">
-      <ButtonControl
-        aria-expanded={expanded}
-        className="thread-text-disclosure-toggle"
-        data-thread-disclosure-id={disclosureId}
-        onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
-      >
-        <DisclosureIndicator expanded={expanded} status={<DatabaseIcon size={ICON_SIZE.tiny} />} />
-        <span>{t.agent.thread.memoryUsed}</span>
-      </ButtonControl>
-      {expanded ? (
-        <div className="thread-disclosure-content thread-memory-citations-content">
-          <ul>
-            {citation.entries.map((entry) => (
-              <li key={entry.nodeId}>
-                <a
-                  href={threadNodeReferenceHref(entry.nodeId)}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpenNodeReference(entry.nodeId, threadNodeReferenceOpenOptionsFromClick(event));
-                  }}
-                >
-                  {entry.note}
-                </a>
-              </li>
-            ))}
-          </ul>
-          {citation.threadIds.length > 0 ? (
-            <div className="thread-memory-citation-sources">
-              {citation.threadIds.map((threadId, index) => (
-                <button
-                  key={threadId}
-                  onClick={() => void onOpenThread(threadId)}
-                  type="button"
-                >
-                  {t.agent.thread.memorySource({ index: index + 1 })}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 export function ThreadToolActivityGroup({
