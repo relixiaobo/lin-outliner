@@ -75,8 +75,10 @@ type E2EWindow = Window & {
     initialUrlPageTranslationPreferences?: UrlPageTranslationPreferences;
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
+    automationRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     getProviderApiKey: (providerId: string) => Promise<{ providerId: string; apiKey?: string }>;
     onAgentCoreNotification: (listener: (notification: unknown) => void) => () => void;
+    onAutomationNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     onTranslationLanguageChanged?: (listener: (language: TranslationLanguage) => void) => () => void;
@@ -265,6 +267,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const nodes = new Map<string, MockNode>();
     let now = 1_800_000_000_000;
     let sequence = 0;
+    let automationRunEventSequence = 0;
     // The mock doesn't track per-command change sets, so every command/event ships
     // a `full` ProjectionUpdate (the renderer rebuilds from it). Revision advances
     // monotonically to mirror the real emit chain; the delta path is unit-tested
@@ -286,6 +289,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     const agentCoreListeners: Array<(notification: unknown) => void> = [];
+    const automationListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     const settingsChangedListeners: Array<() => void> = [];
@@ -479,7 +483,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       id: string;
       items: MockThreadItem[];
       itemsView: 'full';
-      provenance: { originThreadId: string; originTurnId: string; trigger: { kind: 'user' } };
+      provenance: {
+        originThreadId: string;
+        originTurnId: string;
+        trigger: { kind: 'user' } | { kind: 'feature'; feature: 'automation'; ref: string };
+      };
       status: 'inProgress' | 'completed' | 'interrupted' | 'failed';
       error: { message: string } | null;
       execution: {
@@ -517,7 +525,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       preview: string;
       ephemeral: boolean;
       source: string;
-      threadSource: 'user';
+      threadSource: 'user' | 'automation';
       modelProvider: string;
       cwd: string;
       createdAt: number;
@@ -528,6 +536,52 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const mockThreads: MockThread[] = [];
     const mockTurns = new Map<string, MockTurn[]>();
     const mockGoals = new Map<string, unknown>();
+    type MockAutomation = {
+      id: string;
+      name: string;
+      prompt: string;
+      schedule: { rrule: string; timezone: string };
+      destination: { kind: 'standalone' } | { kind: 'existingThread'; threadId: string };
+      projectBindings: Array<{ id: string; cwd: string; executionMode: 'local' | 'worktree' }>;
+      configuration: {
+        modelProvider: string | null;
+        model: string | null;
+        reasoningEffort: string | null;
+      };
+      status: 'active' | 'paused' | 'completed';
+      revision: number;
+      nextOccurrenceAt: number | null;
+      createdAt: number;
+      updatedAt: number;
+    };
+    type MockAutomationRun = {
+      id: string;
+      automationId: string;
+      automationRevision: number;
+      eventSequence: number;
+      scheduledFor: number;
+      projectBindingKey: string;
+      snapshot: {
+        automationName: string;
+        prompt: string;
+        schedule: MockAutomation['schedule'];
+        destination: MockAutomation['destination'];
+        projectBinding: MockAutomation['projectBindings'][number] | null;
+        configuration: MockAutomation['configuration'];
+      };
+      state: 'pending' | 'dispatched' | 'failed' | 'omitted';
+      threadId: string | null;
+      turnId: string | null;
+      worktree: null;
+      omission: null;
+      error: string | null;
+      readAt: number | null;
+      pinned: boolean;
+      createdAt: number;
+      updatedAt: number;
+    };
+    const mockAutomations: MockAutomation[] = [];
+    const mockAutomationRuns: MockAutomationRun[] = [];
     const mockThreadConfigurations = new Map<string, {
       modelProvider: string;
       model: string;
@@ -541,6 +595,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const emitAgentCoreNotification = (notification: unknown) => {
       for (const listener of agentCoreListeners) listener(clone(notification));
+    };
+    const emitAutomationNotification = (notification: unknown) => {
+      for (const listener of automationListeners) listener(clone(notification));
     };
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
       const timestamp = ++now;
@@ -1512,6 +1569,210 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
+        calls.push({ cmd: `automation/${method}`, args: clone(input) });
+        if (method === 'list') return clone({ data: mockAutomations }) as T;
+        if (method === 'runs') {
+          let runs = mockAutomationRuns.filter((run) => (
+            input.automationId === undefined || run.automationId === input.automationId
+          ));
+          if (input.unreadOnly === true) {
+            runs = runs.filter((run) => (
+              run.readAt === null && (run.state === 'dispatched' || run.state === 'failed')
+            ));
+          }
+          const limit = typeof input.limit === 'number' ? input.limit : 100;
+          return clone({ data: runs.slice(0, limit) }) as T;
+        }
+        if (method === 'read') {
+          return clone({ automation: mockAutomations.find((item) => item.id === input.id) ?? null }) as T;
+        }
+        if (method === 'create') {
+          const schedule = clone(input.schedule) as MockAutomation['schedule'];
+          const configuration = input.configuration as Partial<MockAutomation['configuration']> | undefined;
+          const timestamp = ++now;
+          const automation: MockAutomation = {
+            id: nextCanonicalId(),
+            name: String(input.name),
+            prompt: String(input.prompt),
+            schedule,
+            destination: clone(input.destination) as MockAutomation['destination'],
+            projectBindings: clone(input.projectBindings ?? []) as MockAutomation['projectBindings'],
+            configuration: {
+              modelProvider: null,
+              model: null,
+              reasoningEffort: null,
+              ...clone(configuration ?? {}),
+            },
+            status: input.status === 'paused' ? 'paused' : 'active',
+            revision: 1,
+            nextOccurrenceAt: timestamp + 60 * 60 * 1_000,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          mockAutomations.push(automation);
+          emitAutomationNotification({ type: 'automation/changed', automationId: automation.id, automation });
+          return clone({ automation }) as T;
+        }
+        if (method === 'update') {
+          const index = mockAutomations.findIndex((item) => item.id === input.id);
+          if (index < 0) throw new Error(`Automation not found: ${String(input.id)}`);
+          const current = mockAutomations[index]!;
+          if (input.expectedRevision !== current.revision) throw new Error('Automation revision conflict');
+          const automation: MockAutomation = {
+            ...current,
+            ...clone(input),
+            id: current.id,
+            configuration: input.configuration
+              ? { ...current.configuration, ...clone(input.configuration as Partial<MockAutomation['configuration']>) }
+              : current.configuration,
+            revision: current.revision + 1,
+            updatedAt: ++now,
+          };
+          mockAutomations[index] = automation;
+          emitAutomationNotification({ type: 'automation/changed', automationId: automation.id, automation });
+          return clone({ automation }) as T;
+        }
+        if (method === 'pause' || method === 'resume') {
+          const automation = mockAutomations.find((item) => item.id === input.id);
+          if (!automation) throw new Error(`Automation not found: ${String(input.id)}`);
+          automation.status = method === 'pause' ? 'paused' : 'active';
+          automation.revision += 1;
+          automation.updatedAt = ++now;
+          emitAutomationNotification({ type: 'automation/changed', automationId: automation.id, automation });
+          return clone({ automation }) as T;
+        }
+        if (method === 'delete') {
+          const index = mockAutomations.findIndex((item) => item.id === input.id);
+          if (index < 0) throw new Error(`Automation not found: ${String(input.id)}`);
+          const [deleted] = mockAutomations.splice(index, 1);
+          emitAutomationNotification({ type: 'automation/changed', automationId: deleted!.id, automation: null });
+          return clone({ deleted: true, id: deleted!.id }) as T;
+        }
+        if (method === 'startNow') {
+          const automation = mockAutomations.find((item) => item.id === input.id);
+          if (!automation) throw new Error(`Automation not found: ${String(input.id)}`);
+          const thread = automation.destination.kind === 'existingThread'
+            ? threadById(automation.destination.threadId)
+            : createMockThread({ name: automation.name });
+          if (automation.destination.kind === 'standalone') {
+            thread.source = 'agent.automation';
+            thread.threadSource = 'automation';
+            emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+          }
+          const automationRunId = nextCanonicalId();
+          const turnId = nextCanonicalId();
+          const userItemId = nextCanonicalId();
+          const responseItemId = nextCanonicalId();
+          const timestamp = ++now;
+          const turn: MockTurn = {
+            id: turnId,
+            items: [
+              {
+                id: userItemId,
+                type: 'userMessage',
+                provenance: itemProvenance(thread.id, turnId, userItemId),
+                clientId: automationRunId,
+                content: [{ type: 'text', text: automation.prompt }],
+              },
+              {
+                id: responseItemId,
+                type: 'agentMessage',
+                provenance: itemProvenance(thread.id, turnId, responseItemId),
+                text: 'Automation completed in the canonical Thread.',
+                phase: 'final_answer',
+                memoryCitation: null,
+              },
+            ],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: thread.id,
+              originTurnId: turnId,
+              trigger: { kind: 'feature', feature: 'automation', ref: automationRunId },
+            },
+            status: 'completed',
+            error: null,
+            execution: {
+              modelProvider: 'openai',
+              model: 'openai/gpt-5.4',
+              reasoningEffort: 'medium',
+              usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: null },
+            },
+            startedAt: timestamp,
+            completedAt: timestamp + 20,
+            durationMs: 20,
+          };
+          mockTurns.get(thread.id)!.push(turn);
+          thread.preview = automation.prompt;
+          thread.updatedAt = timestamp + 20;
+          const run: MockAutomationRun = {
+            id: automationRunId,
+            automationId: automation.id,
+            automationRevision: automation.revision,
+            eventSequence: ++automationRunEventSequence,
+            scheduledFor: timestamp,
+            projectBindingKey: 'no-project',
+            snapshot: {
+              automationName: automation.name,
+              prompt: automation.prompt,
+              schedule: automation.schedule,
+              destination: automation.destination,
+              projectBinding: null,
+              configuration: automation.configuration,
+            },
+            state: 'dispatched',
+            threadId: thread.id,
+            turnId,
+            worktree: null,
+            omission: null,
+            error: null,
+            readAt: null,
+            pinned: false,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          mockAutomationRuns.push(run);
+          emitAutomationNotification({ type: 'automationRun/changed', run });
+          return clone({ runs: [run] }) as T;
+        }
+        if (method === 'runRead') {
+          return clone({ run: mockAutomationRuns.find((item) => item.id === input.id) ?? null }) as T;
+        }
+        if (method === 'runsMarkRead') {
+          const readAt = ++now;
+          const eventSequence = ++automationRunEventSequence;
+          let updatedCount = 0;
+          for (const run of mockAutomationRuns) {
+            if (
+              run.automationId !== input.automationId
+              || run.readAt !== null
+              || (run.state !== 'dispatched' && run.state !== 'failed')
+            ) continue;
+            run.readAt = readAt;
+            run.eventSequence = eventSequence;
+            run.updatedAt = readAt;
+            updatedCount += 1;
+          }
+          emitAutomationNotification({
+            type: 'automationRuns/markedRead',
+            automationId: String(input.automationId),
+            eventSequence,
+            readAt,
+          });
+          return clone({ automationId: input.automationId, eventSequence, readAt, updatedCount }) as T;
+        }
+        if (method === 'runMarkRead' || method === 'runPin') {
+          const run = mockAutomationRuns.find((item) => item.id === input.id);
+          if (!run) throw new Error(`AutomationRun not found: ${String(input.id)}`);
+          if (method === 'runMarkRead') run.readAt = ++now;
+          else run.pinned = input.pinned === true;
+          run.eventSequence = ++automationRunEventSequence;
+          run.updatedAt = ++now;
+          emitAutomationNotification({ type: 'automationRun/changed', run });
+          return clone({ run }) as T;
+        }
+        throw new Error(`Unhandled Automation mock request: ${method}`);
+      },
       agentCoreRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: method, args: clone(input) });
         if (method === 'thread/list') {
@@ -1739,6 +2000,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         return () => {
           const index = agentCoreListeners.indexOf(listener);
           if (index >= 0) agentCoreListeners.splice(index, 1);
+        };
+      },
+      onAutomationNotification: (listener) => {
+        automationListeners.push(listener);
+        return () => {
+          const index = automationListeners.indexOf(listener);
+          if (index >= 0) automationListeners.splice(index, 1);
         };
       },
       setTranslationLanguage: async (language) => {

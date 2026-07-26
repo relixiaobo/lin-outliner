@@ -258,6 +258,11 @@ admission, terminal citation Items, history-rollback invalidation, and private
 pipeline state are specified in [`agent-memory.md`](agent-memory.md); published
 Memory remains ordinary document Nodes rather than a Core entity.
 
+Automation is a feature consumer rather than a Core extension. It uses
+host-only root-Thread and idle-Turn admission, then records ordinary canonical
+Turns with immutable feature provenance. Schedule definitions and claims never
+enter Core stores. See [`agent-automations.md`](agent-automations.md).
+
 ## Renderer Diagnostics
 
 The Thread Details dialog is the canonical diagnostic surface. It renders the

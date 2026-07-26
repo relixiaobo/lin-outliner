@@ -32,6 +32,12 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(keys).toContain('create_goal');
     expect(keys).toContain('update_goal');
     expect(keys).toContain('skill');
+    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+      'This tool manages definitions only',
+    );
+    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+      'Never use shell sleep or polling',
+    );
   });
 
   test('round-trips canonical and flat provider encodings without aliases', () => {
@@ -52,38 +58,40 @@ describe('Codex Agent Core model-tool contract', () => {
         owner: contract.schemaOwner as 'capability' | 'configuration',
         inputSchema: { type: 'object', additionalProperties: false },
       }));
-    const automation = {
-      identity: { namespace: 'codex_app', name: 'automation_update' },
-      description: 'Create or update one Automation.',
+    const extensionTool = {
+      identity: { namespace: 'project_ext', name: 'knowledge_lookup' },
+      description: 'Look up project knowledge.',
       scope: 'rootThread',
       schemaOwner: 'extension',
       inputSchema: { type: 'object', additionalProperties: false },
       actionKinds: ['agent.plan.update'],
     } as const;
-    const registry = assembleModelToolRegistry(contributions, [automation]);
+    const registry = assembleModelToolRegistry(contributions, [extensionTool]);
     expect(registry.every((contract) => contract.inputSchema !== null)).toBe(true);
-    expect(encodeProviderToolName(automation.identity, 'flat', registry)).toBe('codex_app__automation_update');
-    expect(decodeProviderToolName('codex_app__automation_update', 'flat', registry)).toEqual(automation.identity);
+    expect(encodeProviderToolName(extensionTool.identity, 'flat', registry)).toBe('project_ext__knowledge_lookup');
+    expect(decodeProviderToolName('project_ext__knowledge_lookup', 'flat', registry)).toEqual(extensionTool.identity);
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'collaboration', name: 'automation_update' },
     }])).toThrow('namespace is reserved');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       schemaOwner: 'core',
     }])).toThrow('must be owned by extension');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'foo__bar', name: 'baz' },
     }])).toThrow('reserved flat-provider separator');
     expect(() => assembleModelToolRegistry(contributions, [{
-      ...automation,
+      ...extensionTool,
       identity: { namespace: 'foo', name: 'bar__baz' },
     }])).toThrow('reserved flat-provider separator');
   });
 
   test('keeps request_user_input root-only and normalizes its bounded contract', () => {
     expect(modelToolContract('request_user_input')?.scope).toBe('rootThread');
+    expect(JSON.stringify(modelToolContract('request_user_input')?.inputSchema))
+      .toContain('Put the recommended option first and suffix its label with \\"(Recommended)\\"');
     const normalized = normalizeRequestUserInputToolInput({
       questions: [{
         id: 'delivery_mode',
@@ -117,7 +125,7 @@ describe('Codex Agent Core model-tool contract', () => {
         ],
       }],
     })).toThrow('snake_case');
-    expect(() => normalizeRequestUserInputToolInput({
+    expect(normalizeRequestUserInputToolInput({
       questions: [{
         id: 'delivery_mode',
         header: 'Delivery',
@@ -127,7 +135,24 @@ describe('Codex Agent Core model-tool contract', () => {
           { label: 'Pause', description: 'B' },
         ],
       }],
-    })).toThrow('recommended choice');
+    }).questions[0]?.options[0]?.label).toBe('Direct');
+    expect(normalizeRequestUserInputToolInput({
+      questions: [{
+        id: 'automation_type',
+        header: '\u81ea\u52a8\u5316\u7c7b\u578b',
+        question: '\u4f60\u60f3\u6d4b\u8bd5\u54ea\u4e00\u79cd\u81ea\u52a8\u5316\u4efb\u52a1\uff1f',
+        options: [
+          {
+            label: '\u5b9a\u65f6\u63d0\u9192\uff08\u63a8\u8350\uff09',
+            description: '\u5728\u6307\u5b9a\u65f6\u95f4\u89e6\u53d1\u4e00\u6761\u63d0\u9192\u3002',
+          },
+          {
+            label: '\u5468\u671f\u4efb\u52a1',
+            description: '\u6309\u56fa\u5b9a\u65f6\u95f4\u91cd\u590d\u6267\u884c\u3002',
+          },
+        ],
+      }],
+    }).questions[0]?.options[0]?.label).toBe('\u5b9a\u65f6\u63d0\u9192\uff08\u63a8\u8350\uff09');
     expect(() => normalizeRequestUserInputToolInput({
       questions: [
         {

@@ -50,6 +50,23 @@
   transition: color var(--motion-fast);
 }
 
+.thread-dock-surface-action {
+  display: inline-flex;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.thread-dock-surface-action:hover,
+.thread-dock-surface-action:focus-visible {
+  color: var(--text-strong);
+}
+
 .thread-dock-title-button:hover,
 .thread-dock-title-button:focus-visible,
 .thread-dock-title-button[aria-expanded='true'] {

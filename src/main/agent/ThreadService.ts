@@ -52,6 +52,7 @@ import type {
   ThreadConfigurationSetRequest,
   ThreadConfigurationSummary,
   ThreadForkRequest,
+  ThreadFeatureSource,
   ThreadRollbackRequest,
   ThreadId,
   ThreadItem,
@@ -106,6 +107,7 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './runtime/types';
+import { runtimeEnvironmentContext } from './runtime/runtimeEnvironmentContext';
 import { uuidV7 } from './uuid';
 import {
   BUILT_IN_AGENT_ROLE_DEFINITIONS,
@@ -162,6 +164,21 @@ export interface RendererThreadStartDefaults {
 export interface ThreadUserContentResolutionContext {
   readonly threadId: ThreadId;
   readonly cwd: string;
+}
+
+export interface FeatureRootThreadInput {
+  readonly id: ThreadId;
+  readonly name: string;
+  readonly source: string;
+  readonly threadSource: ThreadFeatureSource;
+  readonly modelProvider: string;
+  readonly cwd: string;
+  readonly configuration: EffectiveThreadConfiguration;
+}
+
+export interface PersistentThreadExecutionContext {
+  readonly thread: Thread;
+  readonly configuration: EffectiveThreadConfiguration;
 }
 
 export interface SpawnChildThreadInput {
@@ -436,6 +453,61 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     }
     return threads;
+  }
+
+  persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext {
+    const record = this.requireThread(threadId);
+    if (record.thread.ephemeral || record.archived || record.thread.parentThreadId !== null) {
+      throw new Error(`Automation destination must be a persistent, active root Thread: ${threadId}`);
+    }
+    return { thread: record.thread, configuration: record.configuration };
+  }
+
+  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null {
+    return this.readTurn(threadId, turnId);
+  }
+
+  readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null {
+    const binding = this.readClientBinding(threadId, clientId);
+    return binding ? this.readTurn(threadId, binding.turnId) : null;
+  }
+
+  async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
+    return this.hostRootMutex.run(async () => {
+      const existing = this.metadata.read(input.id);
+      if (existing) {
+        const thread = existing.thread;
+        if (
+          existing.archived
+          || thread.ephemeral
+          || thread.parentThreadId !== null
+          || thread.threadSource !== input.threadSource
+          || thread.cwd !== input.cwd
+          || thread.modelProvider !== input.modelProvider
+          || JSON.stringify(existing.configuration) !== JSON.stringify(input.configuration)
+        ) {
+          throw new Error(`Existing Thread does not match the feature claim: ${input.id}`);
+        }
+        return thread;
+      }
+      return this.createThread({
+        id: input.id,
+        name: input.name,
+        ephemeral: false,
+        source: input.source,
+        threadSource: input.threadSource,
+        modelProvider: input.modelProvider,
+        cwd: input.cwd,
+      }, {
+        sessionId: input.id,
+        parentThreadId: null,
+        forkedFromId: null,
+        agentRole: null,
+        agentNickname: null,
+        configuration: input.configuration,
+        nameOrigin: 'derived',
+      });
+    });
   }
 
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[] {
@@ -1675,11 +1747,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const thread = this.requireThread(active.threadId).thread;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     try {
-      const systemContext = (hidden ? [] : await this.extensions.threadContext(thread))
+      const extensionContext = (hidden ? [] : await this.extensions.threadContext(thread))
         .map((contribution) => Object.entries(contribution.additionalContext)
           .map(([key, entry]) => `${key}: ${entry.value}`)
           .join('\n'))
         .filter(Boolean);
+      const systemContext = hidden
+        ? []
+        : [runtimeEnvironmentContext(this.now()), ...extensionContext];
       result = await this.executor.execute({
         thread,
         turn: initialTurn,

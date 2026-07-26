@@ -103,14 +103,16 @@ export function ThreadList({
     >
       <header>
         <h2>{t.agent.thread.title}</h2>
-        <IconButton
-          disabled={createDisabled}
-          icon={AddIcon}
-          label={t.agent.thread.new}
-          onClick={onCreate}
-          title={createTitle}
-          variant="message"
-        />
+        <span className="thread-list-header-actions">
+          <IconButton
+            disabled={createDisabled}
+            icon={AddIcon}
+            label={t.agent.thread.new}
+            onClick={onCreate}
+            title={createTitle}
+            variant="message"
+          />
+        </span>
       </header>
       <div className="thread-list-scroll">
         {threads.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.noThreads}</p> : null}

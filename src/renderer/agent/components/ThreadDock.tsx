@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
 import type { AgentProviderSettingsView, AgentSlashCommandView, SkillDefinition } from '../../api/types';
@@ -8,8 +8,10 @@ import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
   AgentIcon,
+  BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
+  ScheduledIcon,
   SettingsIcon,
   WarningIcon,
 } from '../../ui/icons';
@@ -17,12 +19,18 @@ import { Button } from '../../ui/primitives/Button';
 import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { Dialog } from '../../ui/primitives/Dialog';
 import { Input } from '../../ui/primitives/Input';
+import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
+
+const AutomationsView = lazy(async () => {
+  const module = await import('../automations/AutomationsView');
+  return { default: module.AutomationsView };
+});
 
 export type ThreadRailState = 'collapsed' | 'open';
 
@@ -48,6 +56,7 @@ export function ThreadDock({
   const t = useT();
   const snapshot = useThreadStore();
   const [listOpen, setListOpen] = useState(false);
+  const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   const [creating, setCreating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
@@ -206,21 +215,46 @@ export function ThreadDock({
     >
       <div className="thread-dock">
         <header className="thread-dock-header">
-          <button
-            aria-expanded={listOpen}
-            aria-label={t.agent.thread.list}
-            className="thread-dock-title-button"
-            onClick={() => setListOpen((current) => !current)}
-            ref={threadListAnchorRef}
-            type="button"
-          >
-            <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-            <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
-            <ChevronDownIcon
-              className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
-              size={ICON_SIZE.menu}
+          {surface === 'thread' ? (
+            <button
+              aria-expanded={listOpen}
+              aria-label={t.agent.thread.list}
+              className="thread-dock-title-button"
+              onClick={() => setListOpen((current) => !current)}
+              ref={threadListAnchorRef}
+              type="button"
+            >
+              <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+              <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
+              <ChevronDownIcon
+                className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
+                size={ICON_SIZE.menu}
+              />
+            </button>
+          ) : (
+            <button
+              aria-label={t.agent.automations.backToThreads}
+              className="thread-dock-title-button"
+              onClick={() => setSurface('thread')}
+              type="button"
+            >
+              <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+              <span className="thread-dock-title">{t.agent.automations.title}</span>
+            </button>
+          )}
+          {surface === 'thread' ? (
+            <IconButton
+              className="thread-dock-surface-action"
+              icon={ScheduledIcon}
+              label={t.agent.automations.open}
+              onClick={() => {
+                setListOpen(false);
+                setSurface('automations');
+              }}
+              strokeWidth={1.7}
+              variant="chrome"
             />
-          </button>
+          ) : null}
         </header>
         {actionError || providerError || snapshot.error ? (
           <div className="thread-dock-error" role="alert">
@@ -228,8 +262,8 @@ export function ThreadDock({
             <span>{actionError ?? providerError ?? snapshot.error}</span>
           </div>
         ) : null}
-        {snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
-        {!snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
+        {surface === 'thread' && snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
+        {surface === 'thread' && !snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
           <div className="thread-empty-state">
             <p>{t.agent.thread.providerRequired}</p>
             <button
@@ -243,7 +277,7 @@ export function ThreadDock({
             </button>
           </div>
         ) : null}
-        {thread ? (
+        {surface === 'thread' && thread ? (
           <>
             <ThreadView
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
@@ -277,7 +311,19 @@ export function ThreadDock({
             />
           </>
         ) : null}
-        {listOpen ? (
+        {surface === 'automations' ? (
+          <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
+            <AutomationsView
+              onOpenThread={async (threadId) => {
+                await threadStore.openThreadById(threadId);
+                setSurface('thread');
+              }}
+              providerSettings={providerSettings}
+              threads={snapshot.threads}
+            />
+          </Suspense>
+        ) : null}
+        {surface === 'thread' && listOpen ? (
           <ThreadList
             anchorRef={threadListAnchorRef}
             createDisabled={creating || providerBlocksCreation}

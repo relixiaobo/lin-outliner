@@ -9,10 +9,22 @@ Provider state is never a second product history.
 Thread, accepted Turn, prior history, effective configuration, additional
 context, cancellation signal, and `ItemRecorder`.
 
+Trusted application entries in `additionalContext` are authored only by main.
+In particular, scheduled Turns receive `automation_info` from the canonical
+Automation dispatcher; renderer input cannot create or replace it. Its schedule,
+routing, and provenance semantics are owned by
+[`agent-automations.md`](agent-automations.md).
+
 Before the first provider request it resolves the configured model, builds
 system context, restores prior model messages from canonical Items, and assembles
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
+
+For every ordinary Turn, main adds one trusted environment fragment containing
+the current local calendar date, the exact UTC instant at execution start, and
+the runtime-resolved IANA timezone. Relative schedules therefore never require
+shell commands to discover host time. Hidden internal Memory Turns remain
+isolated from this fragment together with other ordinary extension context.
 
 The same runtime also implements auxiliary Thread naming after the first user
 Turn becomes terminal. It resolves that Thread's current provider/model,

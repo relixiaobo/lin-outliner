@@ -19,6 +19,12 @@ The selected Thread ID is renderer state. Thread catalog, loaded pages, root
 Thread execution selections, active input requests, and Goals live in
 `threadStore`; components do not maintain parallel copies.
 
+The Thread list opens the separate Automations surface defined by
+[`agent-automations.md`](agent-automations.md). Its React chunk loads only when
+opened, so the default Thread and composer path does not load the schedule editor.
+Its canonical definition/run store merges realtime notifications monotonically
+with in-flight initial reads; it does not reuse or duplicate `threadStore`.
+
 ## Item Rendering
 
 `ThreadItemView` switches exhaustively on the canonical Item discriminant:

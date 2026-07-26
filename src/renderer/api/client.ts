@@ -48,6 +48,12 @@ import type {
   ThreadMemoryMode,
 } from '../../core/agent/memory';
 import type {
+  AutomationMethod,
+  AutomationNotification,
+  AutomationRequestByMethod,
+  AutomationResponseByMethod,
+} from '../../core/agent/automation';
+import type {
   PreviewListDirectoryResult,
   PreviewReadBytesResult,
   PreviewReadTextResult,
@@ -99,6 +105,13 @@ export const api = {
   },
   onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => (
     window.lin?.onAgentCoreNotification(listener) ?? (() => undefined)
+  ),
+  automationRequest: <Method extends AutomationMethod>(
+    method: Method,
+    input: AutomationRequestByMethod[Method],
+  ): Promise<AutomationResponseByMethod[Method]> => bridge((lin) => lin.automationRequest(method, input)),
+  onAutomationNotification: (listener: (notification: AutomationNotification) => void) => (
+    window.lin?.onAutomationNotification(listener) ?? (() => undefined)
   ),
   initWorkspace: () => command<ProjectionSnapshot>('init_workspace'),
   recordNodeAccess: (nodeId: string) => bridge((lin) => lin.recordNodeAccess(nodeId)),

@@ -102,6 +102,14 @@ export class ThreadStore {
     await this.loadTurns(threadId);
   }
 
+  async openThreadById(threadId: ThreadId): Promise<void> {
+    if (!this.snapshot.threads.some((thread) => thread.id === threadId)) {
+      const response = await this.client.agentCoreRequest('thread/read', { threadId, includeTurns: false });
+      this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
+    }
+    await this.selectThread(threadId);
+  }
+
   async createThread(input: { name?: string } = {}): Promise<Thread> {
     const response = await this.client.agentCoreRequest('thread/start', {
       source: 'app',

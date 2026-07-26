@@ -44,6 +44,10 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     pattern: /\b(?:conversations|runs|principals)\/|\bissue-operations\.jsonl\b/,
   },
   {
+    label: 'legacy scheduled-agent identity',
+    pattern: /\b(?:AgentRecurringIssue\w*|RecurringIssue\w*|recurringIssue\w*)\b|['"]recurring-issue['"]/,
+  },
+  {
     label: 'legacy model tool',
     pattern: /\b(?:ask_user_question|agent_session_start|agent_session_read|agent_session_send_message|agent_session_stop|past_chats|internal_delegation)\b/,
   },
@@ -85,6 +89,19 @@ describe('Agent Core clean replacement', () => {
       .filter((entry) => entry.isFile() && /^agent[A-Z].*\.ts$/.test(entry.name))
       .map((entry) => entry.name);
     expect(flatAgentModules).toEqual([]);
+  });
+
+  test('keeps scheduled agent execution under the canonical Automation owner', () => {
+    const scheduledAgentModules = walk(join(ROOT, 'src', 'main'))
+      .map((file) => relative(ROOT, file))
+      .filter((file) => (
+        /agent.*(?:schedule|recurr)|(?:schedule|recurr).*agent/i.test(file)
+      ))
+      .sort();
+    expect(scheduledAgentModules).toEqual([
+      'src/main/agent/automations/AutomationSchedule.ts',
+      'src/main/agent/automations/AutomationScheduler.ts',
+    ]);
   });
 });
 
