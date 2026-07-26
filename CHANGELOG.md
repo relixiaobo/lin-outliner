@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Unified Agent execution interactions (PR #438, codex-4)** — made Plan
+  updates transient Turn-local progress, navigates Run Details in the current
+  workspace pane with Back history, and gives ordinary tools and Skills one
+  expandable argument/result disclosure with clickable local paths. **Gate
+  (main):** review caught non-outliner root navigation replacing the wrong pane
+  and an incomplete keyboard/scroll contract for long Plan checklists; both
+  were fixed before the final rebase over #437. Final head `0f95e430` had no
+  reportable findings; verification covered typecheck, full `test:core` (1373
+  pass, 6 environment-dependent skips), full `test:renderer` (764 pass),
+  relevant E2E (166 pass, with two unchanged guard failures reproduced on
+  pre-merge `main`), docs and diff checks, and light/dark visual verification.
 - **Large local resources (PR #437, codex-3)** — replaced the shared attachment
   source-size ceiling with reference-based path-backed and managed resources,
   chunked pathless uploads, bounded file and image observations, immutable image

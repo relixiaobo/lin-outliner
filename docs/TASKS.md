@@ -24,14 +24,16 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, and the Core interface sequence #428/#430–#433) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-26).** Open PR queue: none. Recently merged: #437
+**In flight (2026-07-26).** Open PR queue: none. Recently merged: #438
+(`codex-4/agent-execution-interaction-consistency`) after iterative main review;
+see *Recently completed*. #437
 (`codex-3/large-local-resources`) after iterative main review; see *Recently
 completed*. #436
 (`codex-3/agent-memory-retrieval-citations`) and #435
@@ -580,6 +582,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-execution-interaction-consistency**
+  (`codex-4/agent-execution-interaction-consistency`, PR #438, codex-4, merged
+  2026-07-26, plan-track) — made `update_plan` a transient Turn-local progress
+  projection, moved Run Details into the current workspace pane and its Back
+  history, and unified ordinary tools and Skills under one expandable
+  argument/result disclosure with clickable local paths. The shipped design is
+  folded into the current Agent, workspace, and design-system specs; the plan is
+  archived at
+  `docs/plans/archive/agent-execution-interaction-consistency.md`.
+  **Gate (main):** review found that global root navigation could replace the
+  active non-outliner view instead of reusing an outliner pane, and that the
+  long Plan checklist lacked the complete focus, scrolling, and Escape
+  interaction. Codex-4 fixed both before rebasing over #437; final head
+  `0f95e430` had no reportable findings. Verified with typecheck, `docs:check`,
+  `git diff --check`, full `test:core` (1373 pass, 6 environment-dependent
+  skips), full `test:renderer` (764 pass), relevant E2E (166 pass, with two
+  unchanged guard failures reproduced on pre-merge `main`), and light/dark
+  visual verification.
 
 - **large-local-resources**
   (`codex-3/large-local-resources`, PR #437, codex-3, merged 2026-07-26,
