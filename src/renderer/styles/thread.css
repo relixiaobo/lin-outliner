@@ -1592,11 +1592,9 @@ button.thread-inline-activity:focus-visible,
   justify-content: center;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--preview-action-bg);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--preview-action-shadow);
-  color: var(--preview-action-fg);
+  background: var(--media-hud-bg);
+  box-shadow: var(--media-hud-compact-shadow);
+  color: var(--media-hud-fg);
   font-size: var(--font-ui-md);
   font-weight: 600;
   line-height: var(--line-ui-md);
@@ -1605,12 +1603,16 @@ button.thread-inline-activity:focus-visible,
 }
 
 .thread-image-gallery-more:hover {
-  background: var(--preview-action-hover-bg);
+  background: var(--media-hud-hover-bg);
+}
+
+.thread-image-gallery-more:active {
+  background: var(--media-hud-active-bg);
 }
 
 .thread-image-gallery-more:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring-shadow), var(--preview-action-shadow);
+  box-shadow: var(--focus-ring-shadow), var(--media-hud-compact-shadow);
 }
 
 .thread-image-gallery-collapse.icon-button {

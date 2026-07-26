@@ -70,8 +70,12 @@ canonical `ThreadUserContent[]` in sequence:
 The inline file reference keeps the existing Thread-scoped preview identity and
 does not add a second card wrapper inside the user-message surface. Galleries use
 purpose-built one-, two-, three-, and four-image layouts. More than four images
-start as four thumbnails with a `+N` expansion control; expanded galleries show
-every image and can be collapsed again. A tile still opens the shared reader.
+start as four thumbnails with a compact bottom-right `+N` expansion control;
+expanded galleries show every image and can be collapsed again. The count uses
+the shared fixed-contrast media-HUD palette over arbitrary image pixels, but it
+does not add file-preview blur or strong elevation. Rest, hover, active, and
+keyboard-focus states stay visually distinct without changing tile geometry. A
+tile still opens the shared reader.
 
 ### Dependencies and ownership
 

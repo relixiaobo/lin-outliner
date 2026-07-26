@@ -106,10 +106,14 @@ run and renders outside the bubble at its exact position. Consecutive images
 form one gallery before the next inline run starts. The gallery uses dedicated
 layouts for one, two, three, and four images. More than four images initially
 show four thumbnails with a `+N` control; expanding shows every image and adds a
-collapse control. The ordinary file reference retains its Thread-scoped preview
-identity without a second attachment-card wrapper; every gallery tile retains
-the same scoped identity and opens the shared reader. Replay, fork, and edit use
-the same canonical ordering rather than reconstructing attachment placement.
+collapse control. The overflow control is a compact bottom-right media-HUD badge:
+it uses the shared fixed-contrast palette and compact inset outline over arbitrary
+image pixels, exposes rest/hover/active/focus feedback, and does not add a
+backdrop filter or the file-preview action shadow. The ordinary file reference
+retains its Thread-scoped preview identity without a second attachment-card
+wrapper; every gallery tile retains the same scoped identity and opens the shared
+reader. Replay, fork, and edit use the same canonical ordering rather than
+reconstructing attachment placement.
 Each inline bubble keeps the five-line measured disclosure independently, so
 the collapse mask never crops gallery content.
 

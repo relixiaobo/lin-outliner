@@ -756,12 +756,14 @@ test.describe('canonical agent Thread surface', () => {
       const rootStyle = getComputedStyle(document.documentElement);
       return {
         background: buttonStyle.backgroundColor,
+        backdropFilter: buttonStyle.backdropFilter,
         foreground: buttonStyle.color,
-        expectedBackground: rootStyle.getPropertyValue('--preview-action-bg').trim(),
-        expectedForeground: rootStyle.getPropertyValue('--preview-action-fg').trim(),
+        expectedBackground: rootStyle.getPropertyValue('--media-hud-bg').trim(),
+        expectedForeground: rootStyle.getPropertyValue('--media-hud-fg').trim(),
       };
     });
     expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
+    expect(overflowContrast.backdropFilter).toBe('none');
     expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
     const overflowGeometry = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
       const tile = element.closest('.thread-image-gallery-tile');
@@ -781,6 +783,19 @@ test.describe('canonical agent Thread surface', () => {
     expect(overflowGeometry.areaRatio).toBeLessThan(0.25);
     expect(overflowGeometry.rightInset).toBe(overflowGeometry.expectedRightInset);
     expect(overflowGeometry.bottomInset).toBe(overflowGeometry.expectedBottomInset);
+    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
+    const interactionBackgrounds = await overflowBadge.evaluate(() => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      return {
+        hover: rootStyle.getPropertyValue('--media-hud-hover-bg').trim(),
+        active: rootStyle.getPropertyValue('--media-hud-active-bg').trim(),
+      };
+    });
+    await overflowBadge.hover();
+    await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.hover);
+    await page.mouse.down();
+    await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.active);
+    await page.mouse.up();
   });
 
   test('keeps a native selected image as a canonical local-file reference', async ({ page }) => {

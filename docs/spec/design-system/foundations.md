@@ -187,6 +187,14 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `--bg-content` is the opaque content panel; `--bg-elevated` is menus / popovers
   / HUD — in dark mode it is *lighter* than content so floating surfaces read as
   elevated.
+- **Media HUD contrast.** Compact controls over arbitrary document or image
+  pixels use the fixed `--media-hud-*` foreground/background pair instead of the
+  theme-relative `--fill-*` ladder. The pair owns rest, hover, active, foreground,
+  and outline roles and receives opaque reduced-transparency / increased-contrast
+  fallbacks. Compact count badges use `--media-hud-compact-shadow` without their
+  own blur or drop elevation. File-preview actions may additionally use the
+  separately registered preview backdrop and `--preview-action-shadow`; that
+  material treatment does not transfer to every media-HUD consumer.
 - **Status.** The current status token set is the product-used set:
   `--status-success` (Sage), `--status-warning` (Mustard), and
   `--status-danger`. Status colour is reserved for genuine semantic state, not
@@ -314,8 +322,9 @@ elevated tier (`--bg-elevated` + level-1 shadow) — not a second sheet of glass
 **Reduced transparency fallback.** Honor `prefers-reduced-transparency` (the user
 turned on macOS "Reduce transparency"): all materials collapse to their opaque
 seeds — rails become `--bg-window`, overlays become `--bg-elevated`, blur is
-dropped. HUD material tokens such as `--preview-action-*` also receive opaque
-fallbacks; legibility never depends on the blur being present.
+dropped. Fixed `--media-hud-*` backgrounds also receive opaque fallbacks, and the
+registered file-preview actions lose their backdrop blur; legibility never
+depends on transparency being present.
 
 **Increased contrast.** Honor `prefers-contrast: more` (macOS "Increase
 contrast"): strengthen the alpha-on-ink separators and outlines (step the
