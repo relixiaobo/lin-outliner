@@ -994,7 +994,7 @@ commandPalette: {
       previousRuns: '历史运行',
       noRuns: '还没有运行记录。',
       openThread: '打开线程',
-      markRead: '标为已读',
+      markAllRead: '全部标记为已读',
       pin: '保留工作树',
       unpin: '取消保留工作树',
       runStates: { pending: '等待中', dispatched: '已启动', failed: '失败', omitted: '已跳过' },

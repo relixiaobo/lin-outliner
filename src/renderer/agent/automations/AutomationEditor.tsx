@@ -375,7 +375,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
         {props.automation ? (
           <section className="automation-editor-section automation-runs-section">
-            <h3>{t.previousRuns}</h3>
             {props.runHistory}
           </section>
         ) : null}

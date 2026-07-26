@@ -314,12 +314,17 @@ the originating row or New Automation control.
 Create and detail/edit use this one drawer and one form. Existing values are
 directly editable; there is no separate read-only detail screen or Edit command.
 Changes remain a local draft until an atomic Save, with a fixed Save/Cancel
-footer. Closing or cancelling a dirty draft requires explicit discard
-confirmation. Tool, Skill, Plugin, and MCP capability configuration stays outside
-the Automation form and is inherited at dispatch.
+footer. The header keeps the Automation name and plain-text status visible while
+the form scrolls; it has no decorative status dot. Name and Prompt reuse shared
+form controls. Details and Frequency use the grouped-row geometry: comfortable
+row height, `--radius-md`, inset hairline, content-aligned separators, and
+row-owned keyboard focus. Closing or cancelling a dirty draft requires explicit
+discard confirmation. Tool, Skill, Plugin, and MCP capability configuration
+stays outside the Automation form and is inherited at dispatch.
 
 The compact list keeps Search and New in one toolbar row. Its equal-width status
-filter and Automation row content share one reading column, while hover fills use
+filter uses a strong neutral selected fill and label weight. The filter and
+Automation row content share one reading column, while hover fills use
 the rail's concentric block inset. Each row aligns compact status text with the
 Automation title, while unread state is attached to the leading icon instead of
 creating a competing status column. Previous-run rows use one in-row unread slot
@@ -364,7 +369,10 @@ The Automation editor supports:
 - pause/resume, Start now, and delete commands
 - pin/unpin for worktree retention
 
-Previous runs are compact status rows with occurrence time and unread state.
+Previous runs are compact status rows with occurrence time and one unread slot.
+The section header exposes one conditional Mark all as read command. Dispatched
+runs become read when opened, and individual rows never expose read-management
+commands.
 Opening a dispatched run closes the drawer and navigates to its canonical Thread
 and Turn; it never copies or embeds a transcript. The drawer may show scheduler
 claim/dispatch failures and worktree retention controls, but it never renders an

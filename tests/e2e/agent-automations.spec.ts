@@ -16,6 +16,23 @@ test.describe('Automation surface', () => {
     const filterWidths = await page.locator('.automations-filter .segmented-control-option')
       .evaluateAll((options) => options.map((option) => option.getBoundingClientRect().width));
     expect(Math.max(...filterWidths) - Math.min(...filterWidths)).toBeLessThan(1);
+    const selectedFilter = page.locator('.automations-filter [role="radio"][aria-checked="true"]');
+    const unselectedFilter = page.locator('.automations-filter [role="radio"][aria-checked="false"]').first();
+    await expect(selectedFilter).toHaveText('All');
+    const [selectedFilterStyle, unselectedFilterStyle] = await Promise.all([
+      selectedFilter,
+      unselectedFilter,
+    ].map((locator) => locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        fontWeight: Number.parseInt(style.fontWeight, 10),
+      };
+    })));
+    expect(selectedFilterStyle.backgroundColor).not.toBe(unselectedFilterStyle.backgroundColor);
+    expect(selectedFilterStyle.boxShadow).not.toBe('none');
+    expect(selectedFilterStyle.fontWeight).toBeGreaterThanOrEqual(600);
 
     await toolbar.getByRole('button', { name: 'New Automation' }).click();
     const createDrawer = page.getByRole('dialog', { name: 'New Automation' });
@@ -47,6 +64,33 @@ test.describe('Automation surface', () => {
 
     const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
     await expect(detailDrawer).toBeVisible();
+    const drawerTitle = detailDrawer.getByRole('heading', { name: 'Daily repository review' });
+    await expect(drawerTitle).toBeVisible();
+    await expect(detailDrawer.locator('.automation-drawer-status')).toHaveText('Active');
+    await expect(detailDrawer.locator('.automation-drawer-status > *')).toHaveCount(0);
+    const [drawerTitleLeft, editorLeft] = await Promise.all([
+      drawerTitle,
+      detailDrawer.locator('.automation-name-field'),
+    ].map((locator) => locator.evaluate((element) => element.getBoundingClientRect().left)));
+    expect(Math.abs(drawerTitleLeft - editorLeft)).toBeLessThan(1);
+    const detailsGroup = detailDrawer.locator('.automation-settings-group').first();
+    const groupContract = await detailsGroup.evaluate((element) => {
+      const rows = [...element.querySelectorAll<HTMLElement>('.automation-setting-row')];
+      const style = getComputedStyle(element);
+      const separator = rows[1] ? getComputedStyle(rows[1], '::before') : null;
+      return {
+        borderTopWidth: style.borderTopWidth,
+        boxShadow: style.boxShadow,
+        minRowHeight: Math.min(...rows.map((row) => row.getBoundingClientRect().height)),
+        separatorLeft: separator?.left,
+        separatorRight: separator?.right,
+      };
+    });
+    expect(groupContract.borderTopWidth).toBe('0px');
+    expect(groupContract.boxShadow).not.toBe('none');
+    expect(groupContract.minRowHeight).toBeGreaterThanOrEqual(44);
+    expect(groupContract.separatorLeft).toBe('8px');
+    expect(groupContract.separatorRight).toBe('8px');
     const automationRow = page.locator('.automation-list-row', { hasText: 'Daily repository review' });
     await expect(automationRow).toBeVisible();
     await expect(automationRow.locator('.automation-status-dot')).toHaveCount(0);
@@ -88,6 +132,17 @@ test.describe('Automation surface', () => {
     await expect(automationRow.locator('.automation-list-icon > .automation-unread')).toHaveClass(/is-visible/);
     await expect(run.locator('.automation-run-state')).toHaveCount(0);
     await expect(run.locator('.automation-run-unread')).toHaveClass(/is-visible/);
+    await expect(run.getByRole('button', { name: 'Mark as read' })).toHaveCount(0);
+    await expect(run.getByRole('button', { name: /Daily repository review, Unread/ })).toBeVisible();
+    const markAllRead = detailDrawer.getByRole('button', { name: 'Mark all as read' });
+    await expect(markAllRead).toBeVisible();
+    await markAllRead.click();
+    await expect(markAllRead).toHaveCount(0);
+    await expect(run.locator('.automation-run-unread')).not.toHaveClass(/is-visible/);
+    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).not.toHaveClass(/is-visible/);
+
+    await page.getByRole('button', { name: 'Start now' }).click();
+    await expect(run.locator('.automation-run-unread')).toHaveClass(/is-visible/);
     await run.getByRole('button', { name: /Daily repository review/ }).click();
 
     await expect(page.locator('.thread-dock-title')).toHaveText('Daily repository review');
@@ -101,6 +156,7 @@ test.describe('Automation surface', () => {
     await page.keyboard.press('Escape');
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Open Automations' }).click();
     await page.locator('.automation-list-row', { hasText: 'Daily repository review' }).click();
+    await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Automation actions' }).click();
     await page.getByRole('menu', { name: 'Automation actions' }).getByRole('menuitem', { name: 'Delete Automation' }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete Automation' });

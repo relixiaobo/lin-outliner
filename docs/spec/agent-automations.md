@@ -212,8 +212,9 @@ one aligned toolbar row; the equal-width status filter and list rows use the sam
 reading column, while row hover fills use the rail's concentric `--rail-pad`
 boundary. Each row presents status as compact text aligned with its title;
 unread state sits on the row's leading icon instead of competing with the status
-slot. Previous-run rows likewise reserve one in-row leading slot for unread
-state and express execution state as text, never as a second adjacent dot. Selecting an
+slot. The selected status filter uses a stronger neutral fill and label weight.
+Previous-run rows likewise reserve one in-row leading slot for unread state and
+express execution state as text, never as a second adjacent dot. Selecting an
 Automation, or creating one, opens the same modal bottom drawer over the list.
 The drawer is bottom-aligned,
 defaults to 80% height with a 52px top gap, keeps a 360px minimum where the
@@ -222,9 +223,14 @@ normalized height as a best-effort renderer preference.
 
 The drawer is the sole create/detail/edit surface. Existing fields are directly
 editable as one local draft, with an atomic Save/Cancel footer and discard
-confirmation before a dirty draft closes. Its reading order follows the task
-rather than the storage schema: name and prompt; a grouped Details table for
-destination, project, model, and reasoning; a grouped Frequency table whose
+confirmation before a dirty draft closes. Its header keeps the Automation name
+and a plain-text status visible while the form scrolls; status never uses a
+decorative dot. Name and Prompt use the shared form-control skin. Details and
+Frequency follow the grouped-row contract with the comfortable row-height token,
+`--radius-md`, an inset hairline, content-aligned separators, and row-owned
+keyboard focus. Its reading order follows the task rather than the storage schema:
+name and prompt; a grouped Details table for destination, project, model, and
+reasoning; a grouped Frequency table whose
 conditional rows expose the complete preset (date and time for once, no
 additional value for hourly, time for daily and weekdays, or multiple weekdays
 and time for weekly), followed by timezone; then previous runs. Custom is a
@@ -250,6 +256,9 @@ Start now, pause/resume, delete, and worktree pinning operate through their cano
 commands rather than form mutation. `pending` and `dispatched` are presented as
 Pending and Started rather than exposing scheduler jargon. A pending reserved
 standalone Thread is not navigable until its Turn is dispatched.
+Previous runs expose one conditional Mark all as read action in the section
+header. Opening a navigable run marks it read automatically; individual run rows
+never carry a read-management action.
 
 Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including

@@ -1060,7 +1060,7 @@ commandPalette: {
       previousRuns: 'Previous runs',
       noRuns: 'No runs yet.',
       openThread: 'Open Thread',
-      markRead: 'Mark as read',
+      markAllRead: 'Mark all as read',
       pin: 'Pin worktree',
       unpin: 'Unpin worktree',
       runStates: { pending: 'Pending', dispatched: 'Started', failed: 'Failed', omitted: 'Omitted' },

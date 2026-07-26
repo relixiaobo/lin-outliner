@@ -5,60 +5,83 @@ import { Button } from '../../ui/primitives/Button';
 
 interface AutomationRunsViewProps {
   readonly automationName: string;
+  readonly busy: boolean;
   readonly runs: readonly AutomationRun[];
-  readonly onMarkRead: (run: AutomationRun) => Promise<void>;
+  readonly onMarkAllRead: (runs: readonly AutomationRun[]) => Promise<void>;
   readonly onOpenThread: (run: AutomationRun) => Promise<void>;
   readonly onPin: (run: AutomationRun, pinned: boolean) => Promise<void>;
 }
 
 export function AutomationRunsView(props: AutomationRunsViewProps) {
   const t = useT().agent.automations;
-  if (props.runs.length === 0) return <p className="automation-empty-copy automation-runs-empty">{t.noRuns}</p>;
+  const unreadRuns = props.runs.filter(isUnread);
   return (
-    <div className="automation-runs">
-      {props.runs.map((run) => {
-        const navigable = run.state === 'dispatched' && Boolean(run.threadId);
-        return (
-          <article className="automation-run" key={run.id}>
-            <button
-              className="automation-run-main"
-              disabled={!navigable}
-              onClick={() => void props.onOpenThread(run)}
-              type="button"
-            >
-              <span
-                className={`automation-run-unread${run.readAt === null ? ' is-visible' : ''}`}
-                aria-hidden="true"
-              />
-              <span className="automation-run-copy">
-                <strong>{props.automationName}</strong>
-                <small>
-                  <span className={`automation-run-status is-${run.state}`}>{t.runStates[run.state]}</span>
-                  <span aria-hidden="true"> · </span>
-                  <time dateTime={new Date(run.scheduledFor).toISOString()} title={formatDate(run.scheduledFor)}>
-                    {formatRelative(run.scheduledFor)}
-                  </time>
-                </small>
-                {run.omission ? <span>{t.omitted({ count: run.omission.count })}</span> : null}
-                {run.error ? <span className="automation-run-error">{run.error}</span> : null}
-              </span>
-              {navigable ? <OpenIcon className="automation-run-open" aria-hidden size={12} /> : null}
-            </button>
-            <div className="automation-run-actions">
-              {run.readAt === null && (run.state === 'dispatched' || run.state === 'failed') ? (
-                <Button onClick={() => void props.onMarkRead(run)} size="sm" variant="ghost">{t.markRead}</Button>
-              ) : null}
-              {run.worktree?.removedAt === null ? (
-                <Button onClick={() => void props.onPin(run, !run.pinned)} size="sm" variant="ghost">
-                  <PinIcon size={12} />{run.pinned ? t.unpin : t.pin}
-                </Button>
-              ) : null}
-            </div>
-          </article>
-        );
-      })}
-    </div>
+    <>
+      <div className="automation-runs-header">
+        <h3>{t.previousRuns}</h3>
+        {unreadRuns.length > 0 ? (
+          <Button
+            disabled={props.busy}
+            onClick={() => void props.onMarkAllRead(unreadRuns)}
+            size="sm"
+            variant="ghost"
+          >
+            {t.markAllRead}
+          </Button>
+        ) : null}
+      </div>
+      {props.runs.length === 0 ? (
+        <p className="automation-empty-copy automation-runs-empty">{t.noRuns}</p>
+      ) : (
+        <div className="automation-runs">
+          {props.runs.map((run) => {
+            const navigable = run.state === 'dispatched' && Boolean(run.threadId);
+            const unread = isUnread(run);
+            return (
+              <article className={`automation-run${unread ? ' is-unread' : ''}`} key={run.id}>
+                <button
+                  aria-label={unread ? `${props.automationName}, ${t.unread}` : undefined}
+                  className="automation-run-main"
+                  disabled={!navigable}
+                  onClick={() => void props.onOpenThread(run)}
+                  type="button"
+                >
+                  <span
+                    className={`automation-run-unread${unread ? ' is-visible' : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span className="automation-run-copy">
+                    <strong>{props.automationName}</strong>
+                    <small>
+                      <span className={`automation-run-status is-${run.state}`}>{t.runStates[run.state]}</span>
+                      <span aria-hidden="true"> · </span>
+                      <time dateTime={new Date(run.scheduledFor).toISOString()} title={formatDate(run.scheduledFor)}>
+                        {formatRelative(run.scheduledFor)}
+                      </time>
+                    </small>
+                    {run.omission ? <span>{t.omitted({ count: run.omission.count })}</span> : null}
+                    {run.error ? <span className="automation-run-error">{run.error}</span> : null}
+                  </span>
+                  {navigable ? <OpenIcon className="automation-run-open" aria-hidden size={12} /> : null}
+                </button>
+                {run.worktree?.removedAt === null ? (
+                  <div className="automation-run-actions">
+                    <Button onClick={() => void props.onPin(run, !run.pinned)} size="sm" variant="ghost">
+                      <PinIcon size={12} />{run.pinned ? t.unpin : t.pin}
+                    </Button>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
+}
+
+function isUnread(run: AutomationRun): boolean {
+  return run.readAt === null && (run.state === 'dispatched' || run.state === 'failed');
 }
 
 function formatRelative(timestamp: number): string {

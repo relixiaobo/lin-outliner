@@ -258,12 +258,11 @@ export function AutomationsView(props: AutomationsViewProps) {
           <AutomationDrawerResizeHandle />
           <header className="automation-drawer-header">
             <div className="automation-drawer-heading">
-              <h2 className={selected ? 'automation-drawer-title-accessible' : undefined}>
+              <h2 title={selected?.name}>
                 {drawer.kind === 'create' ? t.new : selected?.name ?? t.details}
               </h2>
               {selected ? (
                 <span className={`automation-drawer-status is-${selected.status}`}>
-                  <span aria-hidden="true" />
                   {t.filters[selected.status]}
                 </span>
               ) : null}
@@ -315,7 +314,10 @@ export function AutomationsView(props: AutomationsViewProps) {
               runHistory={selected ? (
                 <AutomationRunsView
                   automationName={selected.name}
-                  onMarkRead={(run) => perform(() => automationStore.markRunRead(run)).then(() => undefined)}
+                  busy={busy}
+                  onMarkAllRead={(unreadRuns) => perform(async () => {
+                    for (const run of unreadRuns) await automationStore.markRunRead(run);
+                  }).catch(() => undefined)}
                   onOpenThread={async (run) => {
                     await perform(() => openRunThread(run, props.onOpenThread));
                     closeDrawer();
