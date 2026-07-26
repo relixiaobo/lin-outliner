@@ -138,7 +138,8 @@ export interface AutomationRunListInput {
 
 export type AutomationNotification =
   | { readonly type: 'automation/changed'; readonly automation: Automation | null; readonly automationId: string }
-  | { readonly type: 'automationRun/changed'; readonly run: AutomationRun };
+  | { readonly type: 'automationRun/changed'; readonly run: AutomationRun }
+  | { readonly type: 'automationRuns/markedRead'; readonly automationId: string; readonly readAt: number };
 
 export const AUTOMATION_REQUEST_CHANNEL = 'lin:automation:request';
 export const AUTOMATION_NOTIFICATION_CHANNEL = 'lin:automation:notification';
@@ -155,6 +156,7 @@ export interface AutomationRequestByMethod {
   readonly runs: AutomationRunListInput;
   readonly runRead: { readonly id: string };
   readonly runMarkRead: { readonly id: string };
+  readonly runsMarkRead: { readonly automationId: string };
   readonly runPin: { readonly id: string; readonly pinned: boolean };
 }
 
@@ -170,13 +172,14 @@ export type AutomationResponseByMethod = {
   readonly runs: { readonly data: readonly AutomationRun[] };
   readonly runRead: { readonly run: AutomationRun | null };
   readonly runMarkRead: { readonly run: AutomationRun };
+  readonly runsMarkRead: { readonly automationId: string; readonly readAt: number; readonly updatedCount: number };
   readonly runPin: { readonly run: AutomationRun };
 };
 
 export type AutomationMethod = keyof AutomationResponseByMethod;
 export const AUTOMATION_METHODS = [
   'list', 'read', 'create', 'update', 'pause', 'resume', 'delete',
-  'startNow', 'runs', 'runRead', 'runMarkRead', 'runPin',
+  'startNow', 'runs', 'runRead', 'runMarkRead', 'runsMarkRead', 'runPin',
 ] as const satisfies readonly AutomationMethod[];
 
 export function decodeAutomationRequest<Method extends AutomationMethod>(
@@ -197,6 +200,13 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
     case 'runRead':
     case 'runMarkRead':
       return decodeIdRequest(value, `automation ${method}`) as AutomationRequestByMethod[Method];
+    case 'runsMarkRead': {
+      const record = objectValue(value, 'automation runsMarkRead');
+      exactKeys(record, ['automationId'], 'automation runsMarkRead');
+      return Object.freeze({
+        automationId: uuid(record.automationId, 'automation runsMarkRead.automationId'),
+      }) as AutomationRequestByMethod[Method];
+    }
     case 'pause':
     case 'resume':
     case 'delete':
@@ -263,6 +273,13 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
       return Object.freeze({
         run: decodeAutomationRun(record.run, `${path}.run`),
       }) as AutomationResponseByMethod[Method];
+    case 'runsMarkRead':
+      exactKeys(record, ['automationId', 'readAt', 'updatedCount'], path);
+      return Object.freeze({
+        automationId: uuid(record.automationId, `${path}.automationId`),
+        readAt: timestamp(record.readAt, `${path}.readAt`),
+        updatedCount: nonNegativeInteger(record.updatedCount, `${path}.updatedCount`),
+      }) as AutomationResponseByMethod[Method];
   }
 }
 
@@ -285,6 +302,14 @@ export function decodeAutomationNotification(value: unknown): AutomationNotifica
     return Object.freeze({
       type: record.type,
       run: decodeAutomationRun(record.run, `${path}.run`),
+    });
+  }
+  if (record.type === 'automationRuns/markedRead') {
+    exactKeys(record, ['type', 'automationId', 'readAt'], path);
+    return Object.freeze({
+      type: record.type,
+      automationId: uuid(record.automationId, `${path}.automationId`),
+      readAt: timestamp(record.readAt, `${path}.readAt`),
     });
   }
   throw new Error(`${path}.type is invalid`);
@@ -720,6 +745,10 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[], path
 
 function positiveInteger(value: unknown, path: string): number {
   return boundedInteger(value, 1, Number.MAX_SAFE_INTEGER, path);
+}
+
+function nonNegativeInteger(value: unknown, path: string): number {
+  return boundedInteger(value, 0, Number.MAX_SAFE_INTEGER, path);
 }
 
 function boundedInteger(value: unknown, minimum: number, maximum: number, path: string): number {

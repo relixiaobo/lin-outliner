@@ -1735,6 +1735,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (method === 'runRead') {
           return clone({ run: mockAutomationRuns.find((item) => item.id === input.id) ?? null }) as T;
         }
+        if (method === 'runsMarkRead') {
+          const readAt = ++now;
+          let updatedCount = 0;
+          for (const run of mockAutomationRuns) {
+            if (
+              run.automationId !== input.automationId
+              || run.readAt !== null
+              || (run.state !== 'dispatched' && run.state !== 'failed')
+            ) continue;
+            run.readAt = readAt;
+            run.updatedAt = readAt;
+            updatedCount += 1;
+          }
+          emitAutomationNotification({
+            type: 'automationRuns/markedRead',
+            automationId: String(input.automationId),
+            readAt,
+          });
+          return clone({ automationId: input.automationId, readAt, updatedCount }) as T;
+        }
         if (method === 'runMarkRead' || method === 'runPin') {
           const run = mockAutomationRuns.find((item) => item.id === input.id);
           if (!run) throw new Error(`AutomationRun not found: ${String(input.id)}`);

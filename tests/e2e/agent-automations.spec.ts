@@ -188,7 +188,7 @@ test.describe('Automation surface', () => {
       'automation/pause',
       'automation/resume',
       'automation/startNow',
-      'automation/runMarkRead',
+      'automation/runsMarkRead',
       'automation/delete',
     ]));
     expect(calls.find((call) => call.cmd === 'automation/update')?.args.configuration)

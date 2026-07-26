@@ -51,6 +51,12 @@ describe('renderer Automation store', () => {
     });
     await store.loadRunsForAutomation(first.id);
     expect(store.getSnapshot().runs).toEqual([firstRun]);
+    notify({ type: 'automationRuns/markedRead', automationId: first.id, readAt: 50 });
+    expect(store.getSnapshot().runs[0]?.readAt).toBe(50);
+    expect(store.getSnapshot().unreadAutomationIds).not.toContain(first.id);
+    notify({ type: 'automationRun/changed', run: firstRun });
+    expect(store.getSnapshot().runs[0]?.readAt).toBe(50);
+    expect(store.getSnapshot().unreadAutomationIds).not.toContain(first.id);
 
     notify({ type: 'automation/changed', automationId: second.id, automation: second });
     expect(store.getSnapshot().automations.map((item) => item.id)).toEqual([second.id, first.id]);
@@ -121,6 +127,9 @@ describe('renderer Automation store', () => {
         if (method === 'resume') return { automation: { ...created, status: 'active', revision: 3, updatedAt: 23 } };
         if (method === 'startNow') return { runs: [started] };
         if (method === 'runMarkRead') return { run: { ...started, readAt: 31 } };
+        if (method === 'runsMarkRead') {
+          return { automationId: created.id, readAt: 32, updatedCount: 201 };
+        }
         if (method === 'runPin') return { run: { ...started, pinned: true } };
         if (method === 'delete') return { deleted: true, id: created.id };
         throw new Error(`Unexpected method: ${method}`);
@@ -137,12 +146,17 @@ describe('renderer Automation store', () => {
     expect(store.getSnapshot().unreadAutomationIds).toContain(created.id);
     await store.markRunRead(started);
     expect(store.getSnapshot().unreadAutomationIds).not.toContain(created.id);
+    await store.startNow(created);
+    expect(store.getSnapshot().unreadAutomationIds).toContain(created.id);
+    await store.markAutomationRunsRead(created.id);
+    expect(store.getSnapshot().unreadAutomationIds).not.toContain(created.id);
+    expect(store.getSnapshot().runs.find((item) => item.id === started.id)?.readAt).toBe(32);
     await store.pinRun(started, true);
     await store.delete(created);
 
     expect(calls.map((call) => call.method)).toEqual([
       'list', 'runs', 'create', 'update', 'pause', 'resume', 'startNow',
-      'runMarkRead', 'runs', 'runPin', 'delete',
+      'runMarkRead', 'runs', 'startNow', 'runsMarkRead', 'runPin', 'delete',
     ]);
     expect(calls.find((call) => call.method === 'pause')?.input).toEqual({
       id: created.id,

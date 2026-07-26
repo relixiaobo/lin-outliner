@@ -6,23 +6,23 @@ import { Button } from '../../ui/primitives/Button';
 interface AutomationRunsViewProps {
   readonly automationName: string;
   readonly busy: boolean;
+  readonly hasUnread: boolean;
   readonly runs: readonly AutomationRun[];
-  readonly onMarkAllRead: (runs: readonly AutomationRun[]) => Promise<void>;
+  readonly onMarkAllRead: () => Promise<void>;
   readonly onOpenThread: (run: AutomationRun) => Promise<void>;
   readonly onPin: (run: AutomationRun, pinned: boolean) => Promise<void>;
 }
 
 export function AutomationRunsView(props: AutomationRunsViewProps) {
   const t = useT().agent.automations;
-  const unreadRuns = props.runs.filter(isUnread);
   return (
     <>
       <div className="automation-runs-header">
         <h3>{t.previousRuns}</h3>
-        {unreadRuns.length > 0 ? (
+        {props.hasUnread ? (
           <Button
             disabled={props.busy}
-            onClick={() => void props.onMarkAllRead(unreadRuns)}
+            onClick={() => void props.onMarkAllRead()}
             size="sm"
             variant="ghost"
           >

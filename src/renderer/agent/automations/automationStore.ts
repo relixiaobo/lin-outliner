@@ -42,6 +42,7 @@ export class AutomationRendererStore {
   private readonly runMutationVersions = new Map<string, number>();
   private readonly automationDeletionVersions = new Map<string, number>();
   private readonly unreadMutationVersions = new Map<string, number>();
+  private readonly runsMarkedReadVersions = new Map<string, { readonly readAt: number; readonly version: number }>();
   private readonly runLoadGenerations = new Map<string, number>();
 
   constructor(private readonly client: AutomationStoreClient = api) {}
@@ -181,6 +182,11 @@ export class AutomationRendererStore {
     return response.run;
   }
 
+  async markAutomationRunsRead(automationId: string): Promise<void> {
+    const response = await this.client.automationRequest('runsMarkRead', { automationId });
+    this.applyRunsMarkedRead(response.automationId, response.readAt);
+  }
+
   async pinRun(run: AutomationRun, pinned: boolean): Promise<AutomationRun> {
     const response = await this.client.automationRequest('runPin', { id: run.id, pinned });
     this.upsertRun(response.run);
@@ -193,7 +199,26 @@ export class AutomationRendererStore {
       else this.removeAutomation(notification.automationId);
       return;
     }
+    if (notification.type === 'automationRuns/markedRead') {
+      this.applyRunsMarkedRead(notification.automationId, notification.readAt);
+      return;
+    }
     this.upsertRun(notification.run);
+  }
+
+  private applyRunsMarkedRead(automationId: string, readAt: number): void {
+    const version = this.recordMutation();
+    this.runsMarkedReadVersions.set(automationId, { readAt, version });
+    const runs = this.snapshot.runs.map((run) => {
+      const normalized = this.applyRunsReadBoundary(run);
+      if (normalized === run) return run;
+      this.runMutationVersions.set(run.id, version);
+      return normalized;
+    });
+    const ids = new Set(this.snapshot.unreadAutomationIds);
+    ids.delete(automationId);
+    this.unreadMutationVersions.set(automationId, version);
+    this.patch({ runs, unreadAutomationIds: [...ids].sort() });
   }
 
   private upsertAutomation(automation: Automation): void {
@@ -205,9 +230,10 @@ export class AutomationRendererStore {
 
   private upsertRun(run: AutomationRun): void {
     const version = this.recordMutation();
-    this.runMutationVersions.set(run.id, version);
-    if (isUnread(run)) this.setUnread(run.automationId, true, version);
-    this.patch({ runs: sortBySchedule(upsert(this.snapshot.runs, run)) });
+    const normalized = this.applyRunsReadBoundary(run);
+    this.runMutationVersions.set(normalized.id, version);
+    if (isUnread(normalized)) this.setUnread(normalized.automationId, true, version);
+    this.patch({ runs: sortBySchedule(upsert(this.snapshot.runs, normalized)) });
   }
 
   private removeAutomation(id: string): void {
@@ -244,13 +270,24 @@ export class AutomationRendererStore {
     loaded: readonly AutomationRun[],
     baselineMutationVersion: number,
   ): readonly AutomationRun[] {
-    let merged = [...loaded];
+    let merged = loaded.map((run) => {
+      const boundary = this.runsMarkedReadVersions.get(run.automationId);
+      return boundary && boundary.version > baselineMutationVersion
+        ? this.applyRunsReadBoundary(run)
+        : run;
+    });
     for (const run of this.snapshot.runs) {
       if ((this.runMutationVersions.get(run.id) ?? 0) > baselineMutationVersion) {
         merged = upsert(merged, run);
       }
     }
     return sortBySchedule(merged);
+  }
+
+  private applyRunsReadBoundary(run: AutomationRun): AutomationRun {
+    const boundary = this.runsMarkedReadVersions.get(run.automationId);
+    if (!boundary || !isUnread(run) || run.updatedAt > boundary.readAt) return run;
+    return { ...run, readAt: boundary.readAt, updatedAt: boundary.readAt };
   }
 
   private mergeUnreadReload(

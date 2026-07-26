@@ -315,9 +315,9 @@ export function AutomationsView(props: AutomationsViewProps) {
                 <AutomationRunsView
                   automationName={selected.name}
                   busy={busy}
-                  onMarkAllRead={(unreadRuns) => perform(async () => {
-                    for (const run of unreadRuns) await automationStore.markRunRead(run);
-                  }).catch(() => undefined)}
+                  hasUnread={snapshot.unreadAutomationIds.includes(selected.id)}
+                  onMarkAllRead={() => perform(() => automationStore.markAutomationRunsRead(selected.id))
+                    .catch(() => undefined)}
                   onOpenThread={async (run) => {
                     await perform(() => openRunThread(run, props.onOpenThread));
                     closeDrawer();

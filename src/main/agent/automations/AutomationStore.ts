@@ -495,6 +495,18 @@ export class AutomationStore {
     return this.requireRun(id);
   }
 
+  markAutomationRunsRead(
+    automationId: string,
+    now = Date.now(),
+  ): { readonly readAt: number; readonly updatedCount: number } {
+    this.require(automationId, now);
+    const result = this.db.prepare(`
+      UPDATE automation_runs SET read_at = ?, updated_at = ?
+      WHERE automation_id = ? AND read_at IS NULL AND state IN ('dispatched', 'failed')
+    `).run(now, now, automationId);
+    return Object.freeze({ readAt: now, updatedCount: Number(result.changes) });
+  }
+
   pinRun(id: string, pinned: boolean, now = Date.now()): AutomationRun {
     const current = this.requireRun(id);
     if (!current.worktree || current.worktree.removedAt !== null) {

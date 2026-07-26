@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
@@ -73,6 +73,8 @@ describe('Automation protocol and schedule', () => {
       status: 'paused',
     })).toMatchObject({ status: 'paused' });
     expect(() => decodeAutomationRequest('startNow', { id: 'not-an-id' })).toThrow('UUIDv7');
+    expect(decodeAutomationRequest('runsMarkRead', { automationId: uuidV7() }))
+      .toHaveProperty('automationId');
 
     const store = automationStore();
     const automation = store.create(input, Date.parse('2026-07-24T08:00:00Z'));
@@ -90,6 +92,16 @@ describe('Automation protocol and schedule', () => {
 
     const run = store.claimNow(automation, null, Date.parse('2026-07-24T08:30:00Z'));
     expect(decodeAutomationResponse('runs', { data: [run] }).data[0]).toEqual(run);
+    expect(decodeAutomationResponse('runsMarkRead', {
+      automationId: automation.id,
+      readAt: 10,
+      updatedCount: 201,
+    })).toEqual({ automationId: automation.id, readAt: 10, updatedCount: 201 });
+    expect(decodeAutomationNotification({
+      type: 'automationRuns/markedRead',
+      automationId: automation.id,
+      readAt: 10,
+    })).toEqual({ type: 'automationRuns/markedRead', automationId: automation.id, readAt: 10 });
     expect(() => decodeAutomationResponse('runs', {
       data: [{ ...run, state: 'dispatched', turnId: null }],
     })).toThrow('inconsistent');
@@ -482,6 +494,12 @@ describe('Automation durable scheduling', () => {
     expect(store.listRuns({ limit: 500 })).toHaveLength(500);
     expect(store.dispatchedRunsForReconciliation()).toHaveLength(501);
     expect(store.retainedWorktreeRunsForCleanup().map((run) => run.id)).toEqual([oldestRunId]);
+    expect(store.listRuns({ automationId: automation.id, unreadOnly: true, limit: 1_000 })).toHaveLength(501);
+    expect(store.markAutomationRunsRead(automation.id, now + 1_000)).toEqual({
+      readAt: now + 1_000,
+      updatedCount: 501,
+    });
+    expect(store.listRuns({ automationId: automation.id, unreadOnly: true, limit: 1_000 })).toHaveLength(0);
   });
 });
 
@@ -1047,6 +1065,70 @@ describe('Automation worktrees', () => {
     await expect(worktrees.prepare(persisted)).rejects.toThrow();
     await expect(worktrees.snapshotAndRemove(prepared.worktree!)).rejects.toThrow();
     expect(await readFile(join(prepared.cwd, 'tracked.txt'), 'utf8')).toBe('before\n');
+  });
+
+  test('retains worktrees containing ignored files or embedded repositories', async () => {
+    const root = await tempRoot('automation-worktree-unrecoverable-');
+    const source = join(root, 'source');
+    await initializeGitRepository(source);
+    await writeFile(join(source, '.gitignore'), 'ignored-output\n');
+    await execFileAsync('git', ['-C', source, 'add', '.gitignore']);
+    await execFileAsync('git', ['-C', source, 'commit', '-m', 'Ignore generated output']);
+    const canonicalSource = await realpath(source);
+    const store = automationStore();
+    const automation = store.create({
+      ...definition('20260724T100000'),
+      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+    }, Date.parse('2026-07-24T09:00:00Z'));
+    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const worktrees = new AutomationWorktree(root);
+    const prepared = await worktrees.prepare(run);
+
+    const ignoredPath = join(prepared.cwd, 'ignored-output');
+    await writeFile(ignoredPath, 'must survive\n');
+    await expect(worktrees.snapshotAndRemove(prepared.worktree!)).rejects.toThrow('ignored content');
+    expect(await readFile(ignoredPath, 'utf8')).toBe('must survive\n');
+
+    await rm(ignoredPath);
+    const embeddedPath = join(prepared.cwd, 'nested-repository');
+    await execFileAsync('git', ['init', embeddedPath]);
+    await expect(worktrees.snapshotAndRemove(prepared.worktree!)).rejects.toThrow('embedded repository');
+    expect(await stat(join(embeddedPath, '.git'))).toBeTruthy();
+
+    await rm(embeddedPath, { recursive: true });
+    let persisted = prepared.worktree!;
+    await expect(worktrees.snapshotAndRemove(prepared.worktree!, async (metadata) => {
+      persisted = metadata;
+      await writeFile(ignoredPath, 'created after snapshot persistence\n');
+    })).rejects.toThrow('ignored content');
+    expect(await readFile(ignoredPath, 'utf8')).toBe('created after snapshot persistence\n');
+    expect(await stat(persisted.snapshotPath!)).toBeTruthy();
+
+    await rm(ignoredPath);
+    const removed = await worktrees.snapshotAndRemove(persisted);
+    expect(removed.removedAt).not.toBeNull();
+    await expect(stat(prepared.cwd)).rejects.toThrow();
+  });
+
+  test('refreshes a persisted snapshot before removing its worktree', async () => {
+    const root = await tempRoot('automation-worktree-refresh-');
+    const source = join(root, 'source');
+    await initializeGitRepository(source);
+    const canonicalSource = await realpath(source);
+    const store = automationStore();
+    const automation = store.create({
+      ...definition('20260724T100000'),
+      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+    }, Date.parse('2026-07-24T09:00:00Z'));
+    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const worktrees = new AutomationWorktree(root);
+    const prepared = await worktrees.prepare(run);
+
+    const removed = await worktrees.snapshotAndRemove(prepared.worktree!, async () => {
+      await writeFile(join(prepared.cwd, 'late-output.txt'), 'created after snapshot persistence\n');
+    });
+    expect(await readFile(removed.snapshotPath!, 'utf8')).toContain('late-output.txt');
+    await expect(stat(prepared.cwd)).rejects.toThrow();
   });
 
   test('cleans an unpinned worktree after its pending run is omitted', async () => {

@@ -190,9 +190,13 @@ For older unpinned terminal, omitted, or pre-Turn-failed runs, the host writes a
 binary Git patch against the captured base commit under the managed snapshot
 root, including committed and uncommitted changes. Snapshot metadata is durably
 stored before the registered worktree is removed; `removedAt` is stored
-afterward. Pending dispatch recovery revalidates the persisted source, managed
-path, registration, and captured base commit. A crash or any failed step resumes
-without using or removing an unrecorded or unrecognized worktree.
+afterward. Ignored content and embedded repositories are not representable in
+that patch, so their presence blocks cleanup and leaves the worktree intact.
+Cleanup revalidates those conditions and refreshes the durable patch immediately
+before removal, including when resuming a previously persisted snapshot. Pending
+dispatch recovery revalidates the persisted source, managed path, registration,
+and captured base commit. A crash or any failed step resumes without using or
+removing an unrecorded or unrecognized worktree.
 
 ## Transport And Renderer
 
@@ -266,7 +270,10 @@ Pending and Started rather than exposing scheduler jargon. A pending reserved
 standalone Thread is not navigable until its Turn is dispatched.
 Previous runs expose one conditional Mark all as read action in the section
 header. Opening a navigable run marks it read automatically; individual run rows
-never carry a read-management action.
+never carry a read-management action. Mark all as read is one host-side update
+over every unread dispatched or failed Run for the Automation, independent of
+the renderer's bounded recent-run page, and publishes one bounded aggregate
+notification for all open renderer surfaces.
 
 Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including

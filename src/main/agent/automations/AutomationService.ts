@@ -130,6 +130,16 @@ export class AutomationService {
         await this.runChanged(run);
         return { run } as AutomationResponseByMethod[Method];
       }
+      case 'runsMarkRead': {
+        const { automationId } = decoded as AutomationRequestByMethod['runsMarkRead'];
+        const result = this.options.store.markAutomationRunsRead(automationId, this.now());
+        await this.publish({
+          type: 'automationRuns/markedRead',
+          automationId,
+          readAt: result.readAt,
+        });
+        return { automationId, ...result } as AutomationResponseByMethod[Method];
+      }
       case 'runPin': {
         const value = decoded as AutomationRequestByMethod['runPin'];
         return this.options.scheduler.runExclusive(async () => {

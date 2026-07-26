@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, open, realpath, stat } from 'node:fs/promises';
+import { mkdir, open, opendir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { AutomationRun, AutomationWorktreeMetadata } from '../../../core/agent/automation';
@@ -119,10 +119,7 @@ export class AutomationWorktree {
       const snapshotRoot = await realpath(this.snapshotRoot);
       const snapshotPath = resolve(snapshotRoot, `${path.split(sep).at(-1)}.patch`);
       assertContained(snapshotRoot, snapshotPath);
-      await git(['-C', path, 'add', '--intent-to-add', '.']);
-      const patch = await gitRawOutput([
-        '-C', path, 'diff', '--binary', '--no-ext-diff', metadata.baseCommit,
-      ]);
+      const patch = await recoverablePatch(path, metadata.baseCommit);
       await durableWrite(snapshotPath, patch);
       prepared = Object.freeze({ ...metadata, snapshotPath });
       await onSnapshot?.(prepared);
@@ -136,9 +133,52 @@ export class AutomationWorktree {
     if (pathExists) {
       const sourceCwd = await directoryRealpath(prepared.sourceCwd);
       await assertRegisteredDetachedWorktree(sourceCwd, path);
+      await gitOutput(['-C', sourceCwd, 'cat-file', '-e', `${prepared.baseCommit}^{commit}`]);
+      await refreshSnapshot(path, prepared.baseCommit, prepared.snapshotPath!);
       await git(['-C', sourceCwd, 'worktree', 'remove', '--force', path]);
     }
     return Object.freeze({ ...prepared, removedAt: Date.now() });
+  }
+}
+
+async function recoverablePatch(worktreePath: string, baseCommit: string): Promise<string> {
+  await assertNoIgnoredContent(worktreePath);
+  await assertNoEmbeddedRepositories(worktreePath);
+  await git(['-C', worktreePath, 'add', '--intent-to-add', '.']);
+  return gitRawOutput([
+    '-C', worktreePath, 'diff', '--binary', '--no-ext-diff', baseCommit,
+  ]);
+}
+
+async function refreshSnapshot(worktreePath: string, baseCommit: string, snapshotPath: string): Promise<void> {
+  const patch = await recoverablePatch(worktreePath, baseCommit);
+  const previous = await readFile(snapshotPath, 'utf8');
+  if (patch !== previous) await durableWrite(snapshotPath, patch);
+}
+
+async function assertNoIgnoredContent(worktreePath: string): Promise<void> {
+  const output = await gitRawOutput([
+    '-C', worktreePath, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z',
+  ]);
+  const ignored = output.split('\0').filter(Boolean);
+  if (ignored.length === 0) return;
+  const sample = ignored.slice(0, 3).join(', ');
+  throw new Error(`Automation worktree contains ignored content that is not recoverable from its patch: ${sample}`);
+}
+
+async function assertNoEmbeddedRepositories(worktreePath: string): Promise<void> {
+  const directories = [worktreePath];
+  while (directories.length > 0) {
+    const directoryPath = directories.pop()!;
+    const directory = await opendir(directoryPath);
+    for await (const entry of directory) {
+      const entryPath = join(directoryPath, entry.name);
+      if (directoryPath === worktreePath && entry.name === '.git') continue;
+      if (entry.name === '.git') {
+        throw new Error(`Automation worktree contains an embedded repository that is not recoverable from its patch: ${entryPath}`);
+      }
+      if (entry.isDirectory()) directories.push(entryPath);
+    }
   }
 }
 
