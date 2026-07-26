@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Large local resources (PR #437, codex-3)** — replaced the shared attachment
+  source-size ceiling with reference-based path-backed and managed resources,
+  chunked pathless uploads, bounded file and image observations, immutable image
+  prompt snapshots, exact attachment authorization, and independent managed
+  payload copies for Thread forks. **Gate (main):** review caught cleanup keys
+  coupled to mutable metadata, fork copies sharing writable inodes, and model or
+  Preview / Open / Reveal paths exposing canonical managed payloads; all three
+  were fixed before merge. Final head `964fe3b2` had no reportable findings;
+  verification across the final two heads covered typecheck, full `test:core`
+  (1372 pass, 6 environment-dependent skips), focused Core tests (91 pass),
+  full `test:renderer` (758 pass), Agent Thread E2E (40 pass), docs and diff
+  checks, and light/dark visual verification.
 - **Memory retrieval and inline Node citations (PR #436, codex-3)** — replaced
   eager Memory briefing injection with relevance-driven `node_search` /
   `node_read` routing and records usage only when a successfully read Memory Node
