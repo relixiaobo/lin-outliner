@@ -365,7 +365,7 @@ export function useWorkspaceLayout({
 
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     const current = panels.find((panel) => panel.id === activePanelId);
-    const targetPanel = isWorkspacePanel(current) ? current : panels.find(isOutlinerPanel);
+    const targetPanel = isOutlinerPanel(current) ? current : panels.find(isOutlinerPanel);
     if (targetPanel) {
       setActivePanelId(targetPanel.id);
       setPanels((prev) => prev.map((panel) => (

@@ -1458,26 +1458,48 @@ test.describe('canonical agent Thread surface', () => {
         threadId,
         turnId,
         explanation: 'Working through the interaction contract',
-        plan: [
-          { step: 'Inspect the current behavior', status: 'completed' },
-          { step: 'Implement the transient projection', status: 'in_progress' },
-          { step: 'Verify terminal cleanup', status: 'pending' },
-        ],
+        plan: Array.from({ length: 24 }, (_, index) => ({
+          step: index === 0
+            ? 'Inspect the current behavior'
+            : index === 1
+              ? 'Implement the transient projection'
+              : `Verify interaction checkpoint ${index + 1}`,
+          status: index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending',
+        })),
       });
       return { threadId, turn };
     });
 
     const progress = page.locator('.thread-plan-progress-summary');
-    await expect(progress).toHaveText('Step 2 / 3');
+    await expect(progress).toHaveText('Step 2 / 24');
+    await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();
     const checklist = page.locator('.thread-plan-progress-popover');
     await expect(checklist).toBeVisible();
     await expect(checklist).toContainText('Working through the interaction contract');
-    await expect(checklist.locator('li')).toHaveText([
-      'Inspect the current behavior',
-      'Implement the transient projection',
-      'Verify terminal cleanup',
-    ]);
+    await expect(checklist.locator('li')).toHaveCount(24);
+    await expect(checklist.locator('li').first()).toHaveText('Inspect the current behavior');
+    await expect(checklist.locator('li').last()).toHaveText('Verify interaction checkpoint 24');
+    expect(await checklist.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    await checklist.hover();
+    await page.mouse.wheel(0, 480);
+    await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await page.mouse.move(1, 1);
+    await expect(checklist).not.toBeVisible();
+    await progress.focus();
+    await progress.press('Enter');
+    await expect(progress).toHaveAttribute('aria-expanded', 'true');
+    await expect(checklist).toBeVisible();
+    await expect(checklist).toBeFocused();
+    await checklist.evaluate((element) => { element.scrollTop = 0; });
+    await checklist.press('PageDown');
+    await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await checklist.press('Escape');
+    await expect(progress).toHaveAttribute('aria-expanded', 'false');
+    await expect(progress).toBeFocused();
+    await expect(checklist).not.toBeVisible();
 
     await page.evaluate(({ threadId, turn }) => {
       const e2eWindow = window as Window & {

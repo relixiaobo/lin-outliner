@@ -54,7 +54,9 @@ separate from canonical `Turn.items`. Repeated calls replace that snapshot.
 restart does not reconstruct it.
 
 The latest Plan appears as compact progress immediately above the composer. Its
-hover/focus state reveals the complete checklist. A terminal Turn snapshot
+hover state previews the complete checklist; activating the summary opens the
+same focusable, scrollable checklist, and Escape closes it with focus restored.
+A terminal Turn snapshot
 contains neither the Plan nor the `update_plan` tool call, so completion,
 failure, and interruption all remove the progress UI. Model history and Run
 Details consume canonical Items only and therefore have no Plan branch and do

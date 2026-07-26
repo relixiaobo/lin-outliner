@@ -1231,7 +1231,11 @@ function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryS
 
 function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
   const t = useT();
-  const tooltipId = useId();
+  const summaryId = useId();
+  const popoverId = useId();
+  const summaryRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
   const total = plan.plan.length;
   if (total === 0) return null;
   const activeIndex = plan.plan.findIndex((step) => step.status === 'in_progress');
@@ -1239,19 +1243,47 @@ function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
   const current = activeIndex >= 0 ? activeIndex + 1 : pendingIndex >= 0 ? pendingIndex + 1 : total;
   const complete = plan.plan.every((step) => step.status === 'completed');
   return (
-    <div className="thread-plan-progress">
-      <div
-        aria-describedby={tooltipId}
+    <div
+      className={`thread-plan-progress${open ? ' is-open' : ''}`}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        aria-controls={popoverId}
+        aria-expanded={open}
+        aria-live="polite"
         className="thread-plan-progress-summary"
-        role="status"
-        tabIndex={0}
+        id={summaryId}
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+          if (nextOpen) {
+            window.requestAnimationFrame(() => popoverRef.current?.focus());
+          }
+        }}
+        ref={summaryRef}
+        type="button"
       >
         {complete
           ? <CheckIcon aria-hidden size={ICON_SIZE.tiny} />
           : <LoaderIcon aria-hidden className="thread-plan-progress-spinner" size={ICON_SIZE.tiny} />}
         <span>{t.agent.thread.planProgress({ current, total })}</span>
-      </div>
-      <div className="thread-plan-progress-popover" id={tooltipId} role="tooltip">
+      </button>
+      <div
+        aria-labelledby={summaryId}
+        className="thread-plan-progress-popover"
+        id={popoverId}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          setOpen(false);
+          summaryRef.current?.focus();
+        }}
+        ref={popoverRef}
+        role="region"
+        tabIndex={0}
+      >
         {plan.explanation ? <p>{plan.explanation}</p> : null}
         <ol>
           {plan.plan.map((step, index) => (

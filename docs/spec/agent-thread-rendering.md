@@ -281,8 +281,10 @@ and removes it when the provider recovers or the Turn becomes terminal.
 
 `turn/plan/updated` is also transient execution state, not an Item. The selected
 Thread keeps only the latest snapshot for its active Turn and shows compact
-`Step n / total` progress above the composer. Hover or keyboard focus reveals
-the complete checklist. A replacement snapshot overwrites the prior one;
+`Step n / total` progress above the composer. Hover previews the complete
+checklist; activating the summary opens the same scrollable checklist and moves
+keyboard focus into it. Escape closes it and restores focus to the summary. A
+replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
 or application restart removes it. It never appears in transcript history, Run
 Details, response copy, or as `Used update_plan`.

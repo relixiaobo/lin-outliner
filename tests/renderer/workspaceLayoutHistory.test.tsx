@@ -90,6 +90,83 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
+  test('global root navigation leaves active Run Details and reuses an existing outliner pane', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-details',
+      panels: [
+        {
+          id: 'panel-outliner',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-details',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+          backStack: [{ kind: 'outliner', rootId: 'alpha' }],
+          forwardStack: [],
+        },
+      ],
+    });
+
+    act(() => {
+      h.api.navigateRoot('alpha');
+    });
+
+    expect(h.api.activePanelId).toBe('panel-outliner');
+    expect(h.api.panels).toEqual([
+      {
+        id: 'panel-outliner',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'alpha' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      },
+      {
+        id: 'panel-details',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'alpha' }],
+        forwardStack: [],
+      },
+    ]);
+  });
+
+  test('global root navigation adds an outliner beside a lone Run Details pane', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-details',
+      panels: [{
+        id: 'panel-details',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.navigateRoot('alpha');
+    });
+
+    expect(h.api.panels).toHaveLength(2);
+    expect(h.api.panels[0]).toMatchObject({
+      id: 'panel-details',
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+    });
+    expect(h.api.panels[1]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'outliner', rootId: 'alpha' },
+    });
+    expect(h.api.activePanelId).toBe(h.api.panels[1]?.id);
+  });
+
   test('new file preview panes can open as file-only readers', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
