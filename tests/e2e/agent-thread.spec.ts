@@ -763,6 +763,24 @@ test.describe('canonical agent Thread surface', () => {
     });
     expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
     expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
+    const overflowGeometry = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+      const tile = element.closest('.thread-image-gallery-tile');
+      if (!tile) throw new Error('Overflow badge tile was not found');
+      const buttonRect = element.getBoundingClientRect();
+      const tileRect = tile.getBoundingClientRect();
+      const tileStyle = getComputedStyle(tile);
+      const cornerInset = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-4'));
+      return {
+        areaRatio: (buttonRect.width * buttonRect.height) / (tileRect.width * tileRect.height),
+        rightInset: tileRect.right - buttonRect.right,
+        bottomInset: tileRect.bottom - buttonRect.bottom,
+        expectedRightInset: cornerInset + Number.parseFloat(tileStyle.borderRightWidth),
+        expectedBottomInset: cornerInset + Number.parseFloat(tileStyle.borderBottomWidth),
+      };
+    });
+    expect(overflowGeometry.areaRatio).toBeLessThan(0.25);
+    expect(overflowGeometry.rightInset).toBe(overflowGeometry.expectedRightInset);
+    expect(overflowGeometry.bottomInset).toBe(overflowGeometry.expectedBottomInset);
   });
 
   test('keeps a native selected image as a canonical local-file reference', async ({ page }) => {

@@ -1583,20 +1583,34 @@ button.thread-inline-activity:focus-visible,
 
 .thread-image-gallery-more {
   position: absolute;
-  inset: 0;
+  right: var(--space-4);
+  bottom: var(--space-4);
   display: flex;
+  min-width: var(--control-size-xl);
+  height: var(--control-size-xl);
   align-items: center;
   justify-content: center;
   border: 0;
+  border-radius: var(--radius-pill);
   background: var(--preview-action-bg);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--preview-action-shadow);
   color: var(--preview-action-fg);
-  font-size: var(--title-section);
+  font-size: var(--font-ui-md);
   font-weight: 600;
-  line-height: var(--line-heading-lg);
+  line-height: var(--line-ui-md);
+  padding: 0 var(--space-5);
+  transition: background var(--motion-fast);
+}
+
+.thread-image-gallery-more:hover {
+  background: var(--preview-action-hover-bg);
 }
 
 .thread-image-gallery-more:focus-visible {
-  box-shadow: var(--focus-ring-shadow-inset);
+  outline: none;
+  box-shadow: var(--focus-ring-shadow), var(--preview-action-shadow);
 }
 
 .thread-image-gallery-collapse.icon-button {
