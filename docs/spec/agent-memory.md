@@ -175,10 +175,13 @@ canonical generated Node has current evidence or is deleted.
 
 ## Retrieval And Node Tools
 
-An eligible Turn receives a bounded derived briefing from visible beliefs and
-guidance. The briefing is recomputed and is never stored as another Memory
-object. The existing `node_search` and `node_read` tools remain the detailed
-retrieval surface.
+An eligible Turn receives compact routing instructions, not Memory prose. The
+instructions tell the model to use `node_search` only when prior preferences,
+decisions, commitments, unresolved questions, or recurring workflow facts could
+materially improve the answer, then read only the one or two most relevant
+results with `node_read`. Self-contained requests such as current time, simple
+formatting, or questions fully answered by the current Turn skip Memory lookup.
+The existing Node tools are the only retrieval surface.
 
 Implicit Node-tool projections omit generated Nodes suppressed by a prepared or
 committed history rollback, Nodes without current evidence, and all canonical
@@ -218,16 +221,26 @@ Nodes cannot bypass authorization. Ordinary history remains available. A stack
 that can execute but lacks a resolvable entry, or an entry with missing or
 truncated metadata, fails closed.
 
-When a final response used derived Memory, Core appends a canonical commentary
-Item containing `memoryCitation`. The renderer treats it as a dedicated,
-always-visible citation row immediately below the final response, not as part of
-the earlier collapsed process block. Each entry links to the real timeline Node
-and the citation links only to supporting source Threads that still exist and
-are active/navigable. Archived and deleted Threads produce no dead link. Deleting
-a source Thread does not delete already published Memory Nodes or their retained
-evidence; those Nodes remain user-editable until ordinary editing, consolidation,
-or Reset changes them. Usage counts distinct current `originItemId` values, so
-copied fork history cannot inflate ranking.
+The Memory extension observes the existing canonical tool lifecycle. A
+successful built-in `node_read` counts as Memory use only for exact requested
+Node IDs that were returned and were canonical, visible Memory at read time.
+Search results, implicitly returned descendants, ordinary Nodes, failed reads,
+and extension/MCP tools with a coincidental name do not count. Reads deduplicate
+within the Turn and the tracked read set is bounded to eight Nodes. A read is
+recorded as citation usage only when the completed final response also contains
+that exact Node as an inline `[[node:^id]]` reference which the Markdown surface
+materializes as a Node-link affordance. Literal markers in fenced code, inline
+code, image metadata, or an existing Markdown link do not count as citation
+usage. Display and attribution share the same remark AST traversal, including
+Markdown escape and character-entity normalization, so every visible Node-link
+affordance has identical citation semantics. Core appends no Memory-specific
+commentary Item or citation disclosure.
+The `node_search` and `node_read` Items remain visible in the process disclosure
+and Run Details.
+Usage counts distinct current `originItemId` values, so copied fork history
+cannot inflate ranking. Deleting a source Thread does not delete already
+published Memory Nodes or their retained evidence; those Nodes remain
+user-editable until ordinary editing, consolidation, or Reset changes them.
 
 ## Rollback And Reset
 
@@ -239,7 +252,8 @@ Before Core appends that marker, Memory durably prepares an invalidation with
 the exact rollback ID, omitted Turn IDs, before/after projection versions, and
 the affected generated Node set. The visibility generation advances
 immediately, so replacement Turns cannot read stale generated Memory. Commit
-withdraws omitted origin and citation support and enqueues Phase 1 and Phase 2.
+withdraws omitted origin and inline-citation usage and enqueues Phase 1 and
+Phase 2.
 Core retries a failed idempotent commit hook in-process; startup matches any
 stranded preparation against the complete durable marker before admitting new
 Turns.
@@ -293,6 +307,8 @@ search for `#d-memory`, so selecting a result opens the real Daily Notes context
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 
-Memory citations render beneath the response as Node links plus supporting
-Thread links. No Memory card view, artifact path, internal Thread, SQLite row,
-job, fingerprint, or publication state is user-facing.
+Memory used by a response appears only as ordinary inline Node references near
+the claims they support. Node-tool calls remain inspectable in the process and
+Run Details; there is no separate Memory disclosure, card view, artifact path,
+internal Thread, SQLite row, job, fingerprint, or publication state in the
+transcript.

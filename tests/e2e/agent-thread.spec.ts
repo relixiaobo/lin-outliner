@@ -138,6 +138,99 @@ test.describe('canonical agent Thread surface', () => {
     ]));
   });
 
+  test('renders used Memory as an inline Node reference while keeping node_read in the process', async ({ page }) => {
+    const fixture = await page.evaluate(async ({ memoryNodeId }) => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000b101';
+      const userId = '01910000-0000-7000-8000-00000000b102';
+      const toolId = '01910000-0000-7000-8000-00000000b103';
+      const answerId = '01910000-0000-7000-8000-00000000b104';
+      const itemProvenance = (itemId: string) => ({
+        originThreadId: threadId,
+        originTurnId: turnId,
+        originItemId: itemId,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userId,
+              type: 'userMessage',
+              provenance: itemProvenance(userId),
+              clientId: null,
+              content: [{ type: 'text', text: 'Use my saved preference.' }],
+            },
+            {
+              id: toolId,
+              type: 'dynamicToolCall',
+              provenance: itemProvenance(toolId),
+              namespace: null,
+              tool: 'node_read',
+              arguments: { node_id: memoryNodeId },
+              status: 'completed',
+              outputRef: null,
+              contentItems: [{ type: 'json', value: { nodeId: memoryNodeId, text: 'Prefer concise answers.' } }],
+              success: true,
+              durationMs: 8,
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: itemProvenance(answerId),
+              text: `I kept the response concise based on [[node:Saved preference^${memoryNodeId}]].`,
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          execution: {
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.4',
+            reasoningEffort: 'medium',
+            usage: {
+              input: 100,
+              output: 20,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 120,
+              cost: null,
+            },
+          },
+          startedAt: Date.now() - 1_000,
+          completedAt: Date.now(),
+          durationMs: 1_000,
+        },
+      });
+      return { turnId };
+    }, { memoryNodeId: ids.today });
+
+    const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
+    const answer = turn.locator('.thread-agent-message-final_answer');
+    await expect(answer).toBeVisible();
+    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
+    await expect(turn.locator('.thread-memory-citations')).toHaveCount(0);
+    await expect(turn.getByText('Used memory')).toHaveCount(0);
+    const process = turn.locator('.thread-process-block');
+    await process.getByRole('button', { name: 'Worked for 1s' }).click();
+    await expect(process.locator('.thread-tool').filter({ hasText: 'node_read' })).toBeVisible();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.mouse.move(0, 0);
+    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
+  });
+
   test('projects live and settled Turn process before the final response', async ({ page }) => {
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     const ids = await page.evaluate(async () => {

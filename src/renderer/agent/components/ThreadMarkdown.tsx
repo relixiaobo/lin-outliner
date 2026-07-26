@@ -11,6 +11,10 @@ import { Lexer } from 'marked';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remend from 'remend';
 import remarkGfm from 'remark-gfm';
+import {
+  transformMarkdownReferenceTextNodes,
+  type MarkdownReferenceAstNode,
+} from '../../../core/markdownReferenceAst';
 import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
@@ -37,14 +41,6 @@ interface ThreadMarkdownProps {
   readonly onNodeReferenceOpen?: ThreadNodeReferenceOpenHandler;
   readonly streaming?: boolean;
   readonly text: string;
-}
-
-interface MarkdownAstNode {
-  children?: MarkdownAstNode[];
-  title?: string | null;
-  type?: string;
-  url?: string;
-  value?: string;
 }
 
 const REMARK_PLUGINS = [remarkGfm, remarkThreadReferences];
@@ -90,24 +86,12 @@ export function ThreadMarkdown({
 }
 
 function remarkThreadReferences() {
-  return (tree: MarkdownAstNode) => transformReferenceText(tree);
+  return (tree: MarkdownReferenceAstNode) => {
+    transformMarkdownReferenceTextNodes(tree, referenceMarkdownNodes);
+  };
 }
 
-function transformReferenceText(node: MarkdownAstNode): void {
-  if (!node.children || node.type === 'code' || node.type === 'inlineCode') return;
-  const nextChildren: MarkdownAstNode[] = [];
-  for (const child of node.children) {
-    if (child.type === 'text' && typeof child.value === 'string' && node.type !== 'link') {
-      nextChildren.push(...referenceMarkdownNodes(child.value));
-      continue;
-    }
-    transformReferenceText(child);
-    nextChildren.push(child);
-  }
-  node.children = nextChildren;
-}
-
-function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
+function referenceMarkdownNodes(text: string): MarkdownReferenceAstNode[] {
   return splitReferenceMarkers(text).map((segment) => {
     if (segment.type === 'text') return { type: 'text', value: segment.text };
     if (segment.target.kind === 'local-file') {
@@ -313,7 +297,17 @@ function reactNodeText(node: ReactNode): string {
 function splitMarkdownBlocks(text: string): string[] {
   if (!text) return [''];
   try {
-    return Lexer.lex(text).map((token) => token.raw);
+    const tokens = Lexer.lex(text);
+    const definitions = tokens
+      .filter((token) => token.type === 'def')
+      .map((token) => token.raw)
+      .join('');
+    const visibleBlocks = tokens
+      .filter((token) => token.type !== 'def')
+      .map((token) => definitions
+        ? `${token.raw}${token.raw.endsWith('\n') ? '\n' : '\n\n'}${definitions}`
+        : token.raw);
+    return visibleBlocks.length > 0 ? visibleBlocks : [''];
   } catch {
     return [text];
   }

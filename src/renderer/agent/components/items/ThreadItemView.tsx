@@ -134,32 +134,6 @@ export function ThreadItemView(props: ThreadItemViewProps) {
               streaming={props.streaming}
               text={props.item.text}
             />
-            {props.item.memoryCitation ? (
-              <div className="thread-memory-citations">
-                {props.item.memoryCitation.entries.map((entry) => (
-                  <a
-                    href={threadNodeReferenceHref(entry.nodeId)}
-                    key={entry.nodeId}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      props.onOpenNodeReference(entry.nodeId, threadNodeReferenceOpenOptionsFromClick(event));
-                    }}
-                    style={threadNodeReferenceStyle(entry.nodeId, props.index)}
-                  >
-                    {entry.note}
-                  </a>
-                ))}
-                {props.item.memoryCitation.threadIds.map((threadId, index) => (
-                  <button
-                    key={threadId}
-                    onClick={() => void props.onOpenThread(threadId)}
-                    type="button"
-                  >
-                    {t.agent.thread.memorySource({ index: index + 1 })}
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </div>
           {props.item.phase !== 'commentary' ? props.agentResponseTail : null}
         </article>

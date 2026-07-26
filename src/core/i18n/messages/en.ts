@@ -1088,7 +1088,6 @@ commandPalette: {
       status: 'Status',
       source: 'Source',
       memory: 'Memory for this Thread',
-      memorySource: ({ index }: { index: number }) => `Source Thread ${index}`,
       sources: {
         subagent: 'Subagent',
         memory: 'Memory',

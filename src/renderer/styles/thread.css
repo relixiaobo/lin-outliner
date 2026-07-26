@@ -1121,8 +1121,7 @@
   padding: 0;
 }
 
-.thread-markdown a,
-.thread-memory-citations a {
+.thread-markdown a {
   color: var(--link);
 }
 
@@ -1611,23 +1610,6 @@ button.thread-inline-activity:focus-visible,
   height: 32px;
   border-radius: var(--radius-sm);
   object-fit: cover;
-}
-
-.thread-memory-citations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-
-.thread-memory-citations a,
-.thread-memory-citations button {
-  border: 0;
-  background: transparent;
-  color: var(--link);
-  font: inherit;
-  padding: 0;
-  text-decoration: underline;
 }
 
 .thread-message-editor textarea,

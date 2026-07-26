@@ -57,8 +57,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   not disappear inside a counted tool group
 - collaboration Items and Subagent activity link directly to their canonical
   child Thread
-- Memory citation Items render the cited Daily Timeline Nodes and supporting
-  source Threads without introducing a second message or Memory view model
+- Memory used by an answer renders through the ordinary inline Node-reference
+  affordance next to the supported claim; `node_search` and `node_read` remain
+  in the process and Run Details, with no separate Memory Item or disclosure
 - compaction renders as a history boundary
 
 A completed Turn with a final answer and known duration folds its process Items
