@@ -58,17 +58,16 @@ URL descriptor. File descriptors identify their authority as `local-file` or
 Agent Core does not add another target kind:
 
 - a `ThreadAttachmentContent` with `source.kind === 'localFile'` routes to a
-  `local-file` target;
-- a `ThreadAttachmentContent` with `source.kind === 'asset'` routes to an
-  `asset` target;
-- inline attachment bytes remain Item content until a host-owned action
-  materializes them as an asset; and
+  Thread-authorized `local-file` target for its canonical live path;
+- a `ThreadAttachmentContent` with `source.kind === 'threadPayload'` routes to a
+  Thread-authorized `local-file` target resolved from managed storage; and
 - file paths and images referenced by command/tool Items route through the same
   local-file or asset authority as equivalent Outliner content.
 
 The identity chain is therefore `ThreadItem -> source-owned PreviewTarget`, not
-a second Agent file store. A forked Thread keeps Item history/provenance and
-resolves the same source identity without copying external bytes.
+a preview-specific file store. A forked Thread keeps Item history/provenance,
+retains external live paths, and copies only inherited Thread-managed payloads
+into the fork's existing payload store.
 
 ### Shared panel shell and registry
 

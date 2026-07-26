@@ -1,6 +1,7 @@
 import { parseLocalFileReferenceUrl } from '../../../core/referenceMarkup';
 
 export interface InlineFilePreviewDescriptor {
+  attachmentId?: string;
   entryKind?: 'file' | 'directory';
   iconDataUrl?: string;
   lastModified?: number;
@@ -10,6 +11,7 @@ export interface InlineFilePreviewDescriptor {
   ref?: string;
   sizeBytes?: number;
   thumbnailDataUrl?: string;
+  threadId?: string;
 }
 
 export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Record<string, string> {
@@ -25,6 +27,8 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
   setFiniteNumberAttr(attrs, 'data-inline-ref-last-modified', file.lastModified);
   setAttr(attrs, 'data-inline-ref-icon-data-url', file.iconDataUrl);
   setAttr(attrs, 'data-inline-ref-thumbnail-data-url', file.thumbnailDataUrl);
+  setAttr(attrs, 'data-inline-ref-thread-id', file.threadId);
+  setAttr(attrs, 'data-inline-ref-attachment-id', file.attachmentId);
   return attrs;
 }
 

@@ -32,10 +32,13 @@ import {
   type ThreadStatus,
   type ThreadTextContent,
   type ThreadUserContent,
+  type ThreadResourceReference,
   type Turn,
   type TurnProvenance,
   type TurnTrigger,
 } from './protocol';
+import { MAX_MANAGED_ATTACHMENT_BYTES } from '../agentAttachmentLimits';
+import { safeAttachmentFileName } from '../agentAttachmentPaths';
 import {
   THREAD_GOAL_STATUSES,
   type ThreadGoal,
@@ -1350,19 +1353,16 @@ function decodeUserContent(value: unknown): ThreadUserContent {
       ...(record.note === undefined ? {} : { note: stringValue(record.note, 'userContent.note', true) }),
     });
   }
-  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'extractedText'], 'userContent');
+  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'promptImage', 'extractedText'], 'userContent');
   const source = recordValue(record.source, 'userContent.source');
-  const kind = enumValue(source.kind, ['asset', 'localFile', 'inline'], 'userContent.source.kind');
+  const kind = enumValue(source.kind, ['localFile', 'threadPayload'], 'userContent.source.kind');
   let decodedSource: ThreadAttachmentContent['source'];
-  if (kind === 'asset') {
-    exactKeys(source, ['kind', 'assetId'], 'userContent.source');
-    decodedSource = { kind, assetId: stringValue(source.assetId, 'userContent.source.assetId') };
-  } else if (kind === 'localFile') {
+  if (kind === 'localFile') {
     exactKeys(source, ['kind', 'path'], 'userContent.source');
     decodedSource = { kind, path: stringValue(source.path, 'userContent.source.path') };
   } else {
-    exactKeys(source, ['kind', 'dataBase64'], 'userContent.source');
-    decodedSource = { kind, dataBase64: stringValue(source.dataBase64, 'userContent.source.dataBase64') };
+    exactKeys(source, ['kind', 'ref'], 'userContent.source');
+    decodedSource = { kind, ref: decodeThreadResourceReference(source.ref, 'userContent.source.ref') };
   }
   return deepFreeze<ThreadAttachmentContent>({
     type,
@@ -1371,9 +1371,32 @@ function decodeUserContent(value: unknown): ThreadUserContent {
     mimeType: stringValue(record.mimeType, 'userContent.mimeType'),
     sizeBytes: nonNegativeInteger(record.sizeBytes, 'userContent.sizeBytes'),
     source: decodedSource,
+    ...(record.promptImage === undefined
+      ? {}
+      : { promptImage: decodeThreadResourceReference(record.promptImage, 'userContent.promptImage') }),
     ...(record.extractedText === undefined
       ? {}
       : { extractedText: stringValue(record.extractedText, 'userContent.extractedText', true) }),
+  });
+}
+
+export function decodeThreadResourceReference(
+  value: unknown,
+  field = 'threadResourceReference',
+): ThreadResourceReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'mimeType', 'byteLength', 'fileName'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!/^[a-f0-9]{64}$/u.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  const byteLength = nonNegativeInteger(record.byteLength, `${field}.byteLength`);
+  if (byteLength > MAX_MANAGED_ATTACHMENT_BYTES) fail(`${field}.byteLength`, 'exceeds the managed resource budget');
+  const fileName = stringValue(record.fileName, `${field}.fileName`);
+  if (safeAttachmentFileName(fileName) !== fileName) fail(`${field}.fileName`, 'expected a safe base name');
+  return deepFreeze({
+    id,
+    mimeType: stringValue(record.mimeType, `${field}.mimeType`),
+    byteLength,
+    fileName,
   });
 }
 

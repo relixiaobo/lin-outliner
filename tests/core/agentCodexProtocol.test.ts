@@ -52,7 +52,7 @@ const allItems: readonly ThreadItem[] = [
         name: 'brief.txt',
         mimeType: 'text/plain',
         sizeBytes: 5,
-        source: { kind: 'asset', assetId: 'asset-1' },
+        source: { kind: 'localFile', path: '/tmp/brief.txt' },
       },
     ],
   },
@@ -246,6 +246,68 @@ describe('Codex Agent Core protocol codec', () => {
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.provenance)).toBe(true);
     }
+  });
+
+  test('keeps attachments reference-only and rejects legacy inline bytes', () => {
+    const ref = {
+      id: 'b'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 128,
+      fileName: 'prompt.png',
+    };
+    const managed = decodeThreadItem({
+      type: 'userMessage',
+      id: 'managed-message',
+      provenance: { ...itemProvenance, originItemId: 'managed-message' },
+      clientId: null,
+      content: [{
+        type: 'attachment',
+        id: 'managed-attachment',
+        name: 'image.png',
+        mimeType: 'image/png',
+        sizeBytes: 1024,
+        source: { kind: 'threadPayload', ref: { ...ref, fileName: 'image.png', byteLength: 1024 } },
+        promptImage: ref,
+      }],
+    });
+    expect(managed).toMatchObject({
+      content: [{ source: { kind: 'threadPayload' }, promptImage: ref }],
+    });
+    expect(() => decodeThreadItem({
+      type: 'userMessage',
+      id: 'legacy-message',
+      provenance: { ...itemProvenance, originItemId: 'legacy-message' },
+      clientId: null,
+      content: [{
+        type: 'attachment',
+        id: 'legacy-attachment',
+        name: 'legacy.png',
+        mimeType: 'image/png',
+        sizeBytes: 3,
+        source: { kind: 'inline', dataBase64: 'YWJj' },
+      }],
+    })).toThrow('expected one of: localFile, threadPayload');
+    expect(() => decodeThreadItem({
+      ...(managed as ThreadItem),
+      content: [{
+        ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
+        source: { kind: 'threadPayload', ref: { ...ref, fileName: '../prompt.png' } },
+      }],
+    })).toThrow('expected a safe base name');
+    expect(() => decodeThreadItem({
+      ...(managed as ThreadItem),
+      content: [{
+        ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
+        source: { kind: 'threadPayload', ref: { ...ref, fileName: '..' } },
+      }],
+    })).toThrow('expected a safe base name');
+    expect(() => decodeThreadItem({
+      ...(managed as ThreadItem),
+      content: [{
+        ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
+        source: { kind: 'threadPayload', ref: { ...ref, byteLength: 2 * 1024 * 1024 * 1024 + 1 } },
+      }],
+    })).toThrow('managed resource budget');
   });
 
   test('rejects legacy history, invalid lineage, and approval state', () => {

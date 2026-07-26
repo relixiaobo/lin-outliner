@@ -7,6 +7,8 @@ export type PreviewTarget =
       path: string;
       entryKind: PreviewEntryKind;
       label?: string;
+      threadId?: string;
+      attachmentId?: string;
     }
   | {
       kind: 'asset';
@@ -81,7 +83,9 @@ export interface PreviewListDirectoryResult {
 export function previewTargetKey(target: PreviewTarget): string {
   switch (target.kind) {
     case 'local-file':
-      return `local-file:${target.entryKind}:${target.path}`;
+      return target.threadId && target.attachmentId
+        ? `local-file:thread-attachment:${target.threadId}:${target.attachmentId}:${target.entryKind}:${target.path}`
+        : `local-file:${target.entryKind}:${target.path}`;
     case 'asset':
       return `asset:${target.assetId}`;
     case 'url':
@@ -94,11 +98,17 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
   const label = typeof value.label === 'string' && value.label.trim() ? value.label : undefined;
   if (value.kind === 'local-file') {
     if (typeof value.path !== 'string' || !value.path) return null;
+    const threadId = typeof value.threadId === 'string' && value.threadId.trim() ? value.threadId : undefined;
+    const attachmentId = typeof value.attachmentId === 'string' && value.attachmentId.trim()
+      ? value.attachmentId
+      : undefined;
+    if (Boolean(threadId) !== Boolean(attachmentId)) return null;
     return {
       kind: 'local-file',
       path: value.path,
       entryKind: value.entryKind === 'directory' ? 'directory' : 'file',
       ...(label ? { label } : {}),
+      ...(threadId && attachmentId ? { threadId, attachmentId } : {}),
     };
   }
   if (value.kind === 'asset') {

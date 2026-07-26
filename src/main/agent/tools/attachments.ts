@@ -1,19 +1,31 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../../../core/agentAttachmentLimits';
-import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
-import type { ThreadAttachmentContent, ThreadUserContent } from '../../../core/agent/protocol';
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
 import {
-  agentAttachmentDir,
-  materializePathBackedAttachment,
-  pruneOldAgentAttachments,
-} from '../capabilities/agentAttachmentMaterialization';
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+} from '../../../core/agentAttachmentLimits';
+import type {
+  ThreadAttachmentContent,
+  ThreadResourceReference,
+  ThreadUserContent,
+} from '../../../core/agent/protocol';
+import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
 import type { ThreadUserContentResolutionContext } from '../ThreadService';
 
 export interface AttachmentResolverOptions {
-  readonly scratchRoot: string;
-  readonly resolveAssetPath: (assetId: string) => Promise<string | null>;
+  readonly useResourcePath: <T>(
+    threadId: string,
+    ref: ThreadResourceReference,
+    use: (path: string) => Promise<T>,
+  ) => Promise<T | null>;
+  readonly prepareImageSnapshot: (input: {
+    readonly threadId: string;
+    readonly attachment: ThreadAttachmentContent;
+    readonly sourcePath: string;
+  }) => Promise<{
+    readonly ref: ThreadResourceReference;
+    readonly created: boolean;
+  }>;
 }
 
 export class AttachmentResolver {
@@ -23,51 +35,93 @@ export class AttachmentResolver {
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
   ): Promise<readonly ThreadUserContent[]> {
-    return Promise.all(content.map(async (part) => (
-      part.type === 'attachment' ? this.resolveAttachment(part, context) : part
-    )));
+    const resolved: ThreadUserContent[] = [];
+    for (const part of content) {
+      resolved.push(part.type === 'attachment' ? await this.resolveAttachment(part, context) : part);
+    }
+    return resolved;
   }
 
   private async resolveAttachment(
     attachment: ThreadAttachmentContent,
     context: ThreadUserContentResolutionContext,
   ): Promise<ThreadAttachmentContent> {
-    if (attachment.source.kind === 'inline' && attachment.mimeType.startsWith('image/')) {
-      return attachment;
+    const sourceMimeType = attachment.source.kind === 'threadPayload'
+      ? attachment.source.ref.mimeType
+      : attachment.mimeType;
+    if (
+      sourceMimeType.startsWith('image/')
+      && attachment.source.kind === 'threadPayload'
+      && attachment.source.ref.byteLength > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES
+    ) throw new Error('Image attachment exceeds the image decode budget.');
+    if (attachment.source.kind === 'threadPayload') {
+      const resolved = await this.options.useResourcePath(
+        context.threadId,
+        attachment.source.ref,
+        (sourcePath) => this.resolveFromPath(attachment, sourcePath, context),
+      );
+      if (!resolved) {
+        throw new Error(`Managed attachment payload is unavailable or corrupt: ${attachment.source.ref.id}`);
+      }
+      return resolved;
     }
-    const sourcePath = attachment.source.kind === 'localFile'
-      ? attachment.source.path
-      : attachment.source.kind === 'asset'
-        ? await this.resolveAsset(attachment.source.assetId)
-        : await this.writeInlineAttachment(attachment);
-    const materialized = await materializePathBackedAttachment(
-      context.cwd,
-      this.options.scratchRoot,
-      { name: attachment.name, path: sourcePath },
-    );
-    return {
+    const sourcePath = await canonicalAttachmentPath(context.cwd, attachment.source.path);
+    return this.resolveFromPath(attachment, sourcePath, context);
+  }
+
+  private async resolveFromPath(
+    attachment: ThreadAttachmentContent,
+    sourcePath: string,
+    context: ThreadUserContentResolutionContext,
+  ): Promise<ThreadAttachmentContent> {
+    const sourceMimeType = attachment.source.kind === 'threadPayload'
+      ? attachment.source.ref.mimeType
+      : attachment.mimeType;
+    const sourceStat = await stat(sourcePath);
+    const source = attachment.source.kind === 'localFile'
+      ? { kind: 'localFile' as const, path: sourcePath }
+      : attachment.source;
+    const normalized: ThreadAttachmentContent = {
       ...attachment,
-      source: { kind: 'localFile', path: materialized.path },
+      mimeType: sourceMimeType,
+      sizeBytes: sourceStat.isFile() ? sourceStat.size : 0,
+      source,
+    };
+    if (!normalized.mimeType.startsWith('image/')) return normalized;
+    if (normalized.promptImage) {
+      await this.validatePromptImage(context.threadId, normalized.promptImage);
+      return normalized;
+    }
+    const promptImage = await this.options.prepareImageSnapshot({
+      threadId: context.threadId,
+      attachment: normalized,
+      sourcePath,
+    });
+    if (promptImage.created) context.recordCreatedResource(promptImage.ref);
+    return {
+      ...normalized,
+      promptImage: promptImage.ref,
     };
   }
 
-  private async resolveAsset(assetId: string): Promise<string> {
-    const path = await this.options.resolveAssetPath(assetId);
-    if (!path) throw new Error(`Attachment asset was not found: ${assetId}`);
-    return path;
-  }
-
-  private async writeInlineAttachment(attachment: ThreadAttachmentContent): Promise<string> {
-    if (attachment.source.kind !== 'inline') throw new Error('Inline attachment source is required');
-    const data = Buffer.from(attachment.source.dataBase64, 'base64');
-    if (data.byteLength > MAX_MATERIALIZED_ATTACHMENT_BYTES) {
-      throw new Error('Inline attachment is too large to materialize for agent access.');
+  private async validatePromptImage(threadId: string, ref: ThreadResourceReference): Promise<void> {
+    if (!ref.mimeType.startsWith('image/') || ref.byteLength > MAX_PROMPT_IMAGE_BYTES) {
+      throw new Error('Attachment prompt image exceeds the model-input image budget.');
     }
-    await pruneOldAgentAttachments(this.options.scratchRoot);
-    const directory = agentAttachmentDir(this.options.scratchRoot);
-    await mkdir(directory, { recursive: true });
-    const path = join(directory, `${randomUUID()}-${safeAttachmentFileName(attachment.name)}`);
-    await writeFile(path, data);
-    return path;
+    const available = await this.options.useResourcePath(threadId, ref, async () => true);
+    if (!available) throw new Error(`Managed attachment payload is unavailable or corrupt: ${ref.id}`);
   }
+}
+
+async function canonicalAttachmentPath(cwd: string, inputPath: string): Promise<string> {
+  const root = await realpath(path.resolve(cwd));
+  const candidate = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
+  const canonical = await realpath(candidate);
+  const fileStat = await stat(canonical);
+  if (fileStat.isFile()) return canonical;
+  if (fileStat.isDirectory() && isPathInside(root, canonical)) return canonical;
+  if (fileStat.isDirectory()) {
+    throw new Error('Directory attachments outside the Thread working directory are not supported.');
+  }
+  throw new Error('Only regular file attachments can be used by the Agent.');
 }

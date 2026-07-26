@@ -60,18 +60,30 @@ provider transcript is stored or used as a history authority.
 `userMessage` Item. The same normalized content is persisted and passed to the
 provider for initial input, steering, and later history reconstruction.
 
-Inline images remain provider image input. Local-file attachments, asset-backed
-attachments, and non-image inline attachments resolve to a readable local path.
-Files already inside the Thread working directory or app-owned scratch retain
-their real path; other regular files are copied into bounded app-owned scratch
-as a stable snapshot. Assets resolve through the host asset service. External
-directories, missing assets, oversized files, and unsupported file kinds fail
-admission instead of producing an unreadable transcript Item.
+Attachment sources are reference-only. `localFile` records a canonical live
+path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
+and safe display filename. Neither source carries base64 or an unbounded byte
+array. A path-backed regular file is canonicalized without being copied and has
+no shared source-size ceiling. A pathless browser `File` crosses preload in
+1 MiB chunks into staged Thread storage, with a 2 GiB per-resource budget and an
+8 GiB per-Thread quota. Completion hashes and atomically publishes the payload;
+failure, cancellation, startup recovery, draft removal, and unreferenced-resource
+reconciliation reclaim incomplete or orphaned data.
 
-Provider input describes a path-backed attachment with its readable path and
-directs the model to `file_read`; it never relies on an asset ID or a transient
-renderer selection path. Scratch attachments are ephemeral host data and use
-the same pruning policy as other agent scratch artifacts.
+Non-image provider input describes a readable path and directs the model to
+`file_read`. A `localFile` uses its live canonical user path; a `threadPayload`
+uses an independent Turn-scoped copy under Agent scratch. The runtime removes
+that observation when execution ends, and model or tool writes to it cannot
+modify the private content-addressed payload. Images are decoded in main from a
+source of at most 256 MiB, orientation-normalized by the native image pipeline,
+bounded to 2,000 px, and persisted as an immutable prompt snapshot of at most
+4.5 MiB.
+All native image observations share one main-process queue, so attachment
+admission and parallel `file_read` calls cannot aggregate decode and resize work.
+The canonical attachment retains the original resource reference plus the
+snapshot reference. Initial execution, steering, history replay, and forks use
+that same snapshot. Only the provider boundary converts its bytes to base64;
+renderer state, IPC, rollouts, and canonical Items never do.
 
 ## Stream Normalization
 
@@ -102,12 +114,13 @@ Thread-owned content-addressed payload store. The Item keeps only a bounded
 renderer/history projection plus an immutable `outputRef` containing digest,
 MIME type, byte length, and summary. `thread/item/output/read` validates the
 requested Thread/Turn/Item/ref tuple and byte length before returning text.
-Forked Items retain origin provenance while materializing referenced payloads
-under the fork's own Thread directory. Payload reads resolve through the
-requested Thread, so deleting the source Thread cannot invalidate inherited
-text or image results. Payload reads never become provider history authority;
-prior model messages are rebuilt from canonical Items and their full output
-references.
+Forked Items retain origin provenance while copying referenced payloads under
+the fork's own Thread directory. Managed resource copies use copy-on-write when
+available but always receive a distinct inode. Payload reads resolve through the
+requested Thread, so deleting or corrupting the source Thread cannot invalidate
+inherited text or image results. Payload reads never become provider history
+authority; prior model messages are rebuilt from canonical Items and their full
+output references.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image

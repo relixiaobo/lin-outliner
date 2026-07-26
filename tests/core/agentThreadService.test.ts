@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -195,7 +195,7 @@ describe('ThreadService', () => {
         name: 'research-notes.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 12,
-        source: { kind: 'asset', assetId: 'preview-asset' },
+        source: { kind: 'localFile', path: '/tmp/research-notes.pdf' },
       }],
     });
     await fixture.executor.waitUntilWaiting(1);
@@ -646,7 +646,7 @@ describe('ThreadService', () => {
         name: 'start.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 10,
-        source: { kind: 'asset', assetId: 'asset-start' },
+        source: { kind: 'localFile', path: '/outside/start.pdf' },
       }],
     });
     await fixture.executor.waitUntilWaiting();
@@ -951,6 +951,259 @@ describe('ThreadService', () => {
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
     await opened.service.close();
+  });
+
+  test('copies inherited managed attachments and prompt snapshots into a fork', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const sourceRef = await fixture.service.writeThreadResource(
+      source.id,
+      Buffer.from('original image'),
+      'image/png',
+      'source.png',
+    );
+    const promptRef = await fixture.service.writeThreadResource(
+      source.id,
+      Buffer.from('prompt image'),
+      'image/png',
+      'prompt.png',
+    );
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{
+        type: 'attachment',
+        id: 'managed-image',
+        name: 'source.png',
+        mimeType: 'image/png',
+        sizeBytes: sourceRef.byteLength,
+        source: { kind: 'threadPayload', ref: sourceRef },
+        promptImage: promptRef,
+      }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(source.id);
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    await fixture.service.deleteThread(source.id);
+
+    expect(await fixture.service.readThreadResource(fork.id, sourceRef)).toEqual(Buffer.from('original image'));
+    expect(await fixture.service.readThreadResource(fork.id, promptRef)).toEqual(Buffer.from('prompt image'));
+    await fixture.service.close();
+  });
+
+  test('exposes managed attachments only through disposable scratch observations', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const ref = await fixture.service.writeThreadResource(
+      thread.id,
+      Buffer.from('canonical attachment'),
+      'text/plain',
+      'attachment.txt',
+    );
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{
+        type: 'attachment',
+        id: 'managed-attachment',
+        name: ref.fileName,
+        mimeType: ref.mimeType,
+        sizeBytes: ref.byteLength,
+        source: { kind: 'threadPayload', ref },
+      }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const modelPath = await fixture.executor.contexts[0]!.resolveResourceObservationPath(ref);
+    expect(modelPath).toContain(join(fixture.root, 'agent-scratch'));
+    await writeFile(modelPath!, 'modified by model');
+    expect(await fixture.service.readThreadResource(thread.id, ref)).toEqual(Buffer.from('canonical attachment'));
+
+    const external = await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment');
+    expect(external?.path).toContain(join(fixture.root, 'agent-scratch'));
+    expect(external?.path).not.toBe(modelPath);
+    await writeFile(external!.path, 'modified by external app');
+    expect(await fixture.service.readThreadResource(thread.id, ref)).toEqual(Buffer.from('canonical attachment'));
+    expect((await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment'))?.path)
+      .toBe(external!.path);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await expect(readFile(modelPath!)).rejects.toThrow();
+    expect(await readFile(external!.path, 'utf8')).toBe('modified by external app');
+    const substituted = join(fixture.root, 'substituted.txt');
+    await writeFile(substituted, 'must not be exposed');
+    await rm(external!.path);
+    await symlink(substituted, external!.path);
+    expect(await fixture.service.resolveAttachmentFile(thread.id, 'managed-attachment')).toBeNull();
+    expect(await readFile(substituted, 'utf8')).toBe('must not be exposed');
+    await fixture.service.close();
+  });
+
+  test('keeps exact attachment authorization stable across repeated canonical IDs', async () => {
+    const fixture = await createFixture();
+    const filePath = join(fixture.root, 'repeated.txt');
+    await writeFile(filePath, 'repeated attachment');
+    const canonicalPath = await realpath(filePath);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const attachment = {
+      type: 'attachment' as const,
+      id: 'stable-attachment-id',
+      name: 'repeated.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 19,
+      source: { kind: 'localFile' as const, path: canonicalPath },
+    };
+
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [attachment] });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [attachment] });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(await fixture.service.resolveAttachmentFile(thread.id, attachment.id))
+      .toMatchObject({ path: canonicalPath, attachment: { id: attachment.id } });
+    await fixture.service.close();
+  });
+
+  test('discards draft resources but retains referenced resources and prunes crash leftovers', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const discarded = await fixture.service.writeThreadResource(
+      thread.id,
+      Buffer.from('discarded'),
+      'text/plain',
+      'discarded.txt',
+    );
+    expect(await fixture.service.discardUnreferencedThreadResource(thread.id, discarded)).toBe(true);
+    expect(await fixture.service.readThreadResource(thread.id, discarded)).toBeNull();
+
+    const retained = await fixture.service.writeThreadResource(
+      thread.id,
+      Buffer.from('retained'),
+      'text/plain',
+      'retained.txt',
+    );
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{
+        type: 'attachment',
+        id: 'retained-attachment',
+        name: retained.fileName,
+        mimeType: retained.mimeType,
+        sizeBytes: retained.byteLength,
+        source: { kind: 'threadPayload', ref: retained },
+      }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    expect(await fixture.service.discardUnreferencedThreadResource(thread.id, retained)).toBe(false);
+    expect(await fixture.service.discardUnreferencedThreadResource(thread.id, {
+      ...retained,
+      mimeType: 'application/octet-stream',
+    })).toBe(false);
+    expect(await fixture.service.readThreadResource(thread.id, retained)).toEqual(Buffer.from('retained'));
+
+    const crashLeftover = await fixture.service.writeThreadResource(
+      thread.id,
+      Buffer.from('leftover'),
+      'text/plain',
+      'leftover.txt',
+    );
+    await fixture.service.close();
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(await reopened.service.readThreadResource(thread.id, retained)).toEqual(Buffer.from('retained'));
+    expect(await reopened.service.readThreadResource(thread.id, crashLeftover)).toBeNull();
+    await reopened.service.close();
+  });
+
+  test('rolls back only newly created resources when content admission fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const stores = createStores(root);
+    const executor = new ControlledExecutor();
+    const extensions = new ExtensionRegistry();
+    extensions.register({
+      id: 'failing-admission',
+      contributeTurnAdmission: () => {
+        throw new Error('later admission failed');
+      },
+    });
+    let payload = Buffer.from('new prompt');
+    let lastRef: Awaited<ReturnType<ToolPayloadStore['writeResource']>> | null = null;
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      extensions,
+      resolveUserContent: async (_content, context) => {
+        const written = await stores.payloads.writeResourceWithStatus(
+          context.threadId,
+          payload,
+          'image/png',
+          'prompt.png',
+        );
+        lastRef = written.ref;
+        if (written.created) context.recordCreatedResource(written.ref);
+        return _content;
+      },
+    });
+    await service.initialize();
+    const thread = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    await expect(service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'first attempt' }],
+    })).rejects.toThrow('later admission failed');
+    expect(lastRef).not.toBeNull();
+    expect(await service.readThreadResource(thread.id, lastRef!)).toBeNull();
+
+    const existing = await service.writeThreadResource(
+      thread.id,
+      Buffer.from('existing prompt'),
+      'image/png',
+      'prompt.png',
+    );
+    payload = Buffer.from('existing prompt');
+    await expect(service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'second attempt' }],
+    })).rejects.toThrow('later admission failed');
+    expect(await service.readThreadResource(thread.id, existing)).toEqual(payload);
+    await service.close();
   });
 
   test('rolls back the terminal Turn in place and retries failed commit hooks without restart', async () => {
@@ -2168,7 +2421,14 @@ async function openFixture(
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);
   return {
-    service: new ThreadService({ stores, executor, now: clock, extensions, ...options }),
+    service: new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      now: clock,
+      extensions,
+      ...options,
+    }),
     stores,
   };
 }

@@ -166,6 +166,14 @@ export interface ThreadTextContent {
   readonly text: string;
 }
 
+export interface ThreadResourceReference {
+  /** Content-addressed lowercase SHA-256 digest. */
+  readonly id: string;
+  readonly mimeType: string;
+  readonly byteLength: number;
+  readonly fileName: string;
+}
+
 export interface ThreadAttachmentContent {
   readonly type: 'attachment';
   readonly id: string;
@@ -173,9 +181,9 @@ export interface ThreadAttachmentContent {
   readonly mimeType: string;
   readonly sizeBytes: number;
   readonly source:
-    | { readonly kind: 'asset'; readonly assetId: string }
     | { readonly kind: 'localFile'; readonly path: string }
-    | { readonly kind: 'inline'; readonly dataBase64: string };
+    | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
+  readonly promptImage?: ThreadResourceReference;
   readonly extractedText?: string;
 }
 

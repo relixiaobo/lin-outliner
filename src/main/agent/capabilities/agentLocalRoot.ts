@@ -2,7 +2,7 @@ import path from 'node:path';
 
 // Two app-owned roots, both leaf directories under userData (per clone in dev):
 //   workdir — the agent's default cwd + file_* root; the place its own outputs land.
-//   scratch — ephemeral materialized attachments / web-fetch / tool-outputs / PDF pages.
+//   scratch — ephemeral web-fetch / tool-output / PDF-page data.
 // They are siblings, never nested, so scratch never pollutes the (possibly repo) workdir.
 export const AGENT_WORKDIR_DIR = 'agent-workdir';
 export const AGENT_SCRATCH_DIR = 'agent-scratch';

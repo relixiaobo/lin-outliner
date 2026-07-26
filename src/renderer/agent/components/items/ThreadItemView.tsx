@@ -90,6 +90,7 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
+  readonly threadId: string;
   readonly onDisclosureToggle: () => void;
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
@@ -252,6 +253,7 @@ function UserMessageItem({
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
+  threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
   const originalText = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []).join('\n');
@@ -300,7 +302,7 @@ function UserMessageItem({
             measureKey={item.id}
             onDisclosureToggle={onDisclosureToggle}
           >
-            {renderUserContent(item.content, index, onOpenNodeReference)}
+            {renderUserContent(item.content, index, onOpenNodeReference, threadId)}
           </UserMessageCollapsibleContent>
           {showMessageActions ? (
             <div className="thread-message-actions">
@@ -330,6 +332,7 @@ function renderUserContent(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
+  threadId: string,
 ): ReactNode[] {
   const rendered: ReactNode[] = [];
   let inline: ReactNode[] = [];
@@ -363,7 +366,7 @@ function renderUserContent(
       return;
     }
     flushInline();
-    rendered.push(<ThreadAttachment content={part} key={part.id} />);
+    rendered.push(<ThreadAttachment content={part} key={part.id} threadId={threadId} />);
   });
   flushInline();
   return rendered;
@@ -1158,24 +1161,25 @@ function ImageViewItem({ path }: { readonly path: string }) {
   );
 }
 
-function ThreadAttachment({ content }: { readonly content: ThreadAttachmentContent }) {
+function ThreadAttachment({
+  content,
+  threadId,
+}: {
+  readonly content: ThreadAttachmentContent;
+  readonly threadId: string;
+}) {
   const target = useMemo(() => {
-    if (content.source.kind === 'localFile') {
-      return {
-        kind: 'local-file' as const,
-        path: content.source.path,
-        entryKind: content.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const,
-      };
-    }
-    if (content.source.kind === 'asset') return { kind: 'asset' as const, assetId: content.source.assetId };
-    return null;
-  }, [content.source]);
+    return {
+      kind: 'local-file' as const,
+      path: content.source.kind === 'localFile' ? content.source.path : content.name,
+      entryKind: content.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const,
+      label: content.name,
+      threadId,
+      attachmentId: content.id,
+    };
+  }, [content.id, content.mimeType, content.name, content.source, threadId]);
   const preview = usePreviewObjectUrl(content.mimeType.startsWith('image/') ? target : null, { mimeType: content.mimeType });
-  const imageSource = content.mimeType.startsWith('image/')
-    ? content.source.kind === 'inline'
-      ? `data:${content.mimeType};base64,${content.source.dataBase64}`
-      : preview.src
-    : null;
+  const imageSource = content.mimeType.startsWith('image/') ? preview.src : null;
   const body = imageSource ? (
     <img alt={content.name} loading="lazy" src={imageSource} />
   ) : (
@@ -1187,7 +1191,7 @@ function ThreadAttachment({ content }: { readonly content: ThreadAttachmentConte
       <small>{formatBytes(content.sizeBytes)}</small>
     </span>
   );
-  if (content.source.kind === 'localFile' && !imageSource) {
+  if (!imageSource) {
     return (
       <div className="thread-attachment">
         <InlineFileReference
@@ -1196,15 +1200,16 @@ function ThreadAttachment({ content }: { readonly content: ThreadAttachmentConte
             entryKind: content.mimeType === 'inode/directory' ? 'directory' : 'file',
             mimeType: content.mimeType,
             name: content.name,
-            path: content.source.path,
+            path: target.path,
             ref: content.name,
             sizeBytes: content.sizeBytes,
+            threadId,
+            attachmentId: content.id,
           }}
         />
       </div>
     );
   }
-  if (!target) return <div className="thread-attachment">{body}</div>;
   return <button className="thread-attachment" onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })} type="button">{body}</button>;
 }
 

@@ -10,7 +10,7 @@ describe('Thread preview', () => {
         name: 'fallback.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 10,
-        source: { kind: 'asset', assetId: 'asset-1' },
+        source: { kind: 'localFile', path: '/tmp/brief.txt' },
       },
       { type: 'nodeReference', nodeId: 'node-1', note: 'Node fallback' },
       { type: 'text', text: '  Primary\nrequest  ' },
@@ -21,7 +21,7 @@ describe('Thread preview', () => {
       name: 'fallback.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 10,
-      source: { kind: 'asset', assetId: 'asset-1' },
+      source: { kind: 'localFile', path: '/tmp/brief.txt' },
     }])).toBe('fallback.pdf');
     expect(threadPreviewFromContent([
       { type: 'nodeReference', nodeId: 'node-1', note: '  Node\n fallback  ' },

@@ -19,9 +19,11 @@ import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { requestAddPreviewTargetToOutline } from '../preview/previewIngest';
 
 export interface InlineFileMenuFile {
+  attachmentId?: string;
   path: string;
   name: string;
   entryKind: 'file' | 'directory';
+  threadId?: string;
 }
 
 interface InlineFileContextMenuProps {
@@ -38,6 +40,9 @@ export function previewTargetForInlineFile(file: InlineFileMenuFile): PreviewTar
     path: file.path,
     entryKind: file.entryKind,
     label: file.name,
+    ...(file.threadId && file.attachmentId
+      ? { threadId: file.threadId, attachmentId: file.attachmentId }
+      : {}),
   };
 }
 
@@ -80,11 +85,21 @@ export function InlineFileContextMenu({
   };
 
   const openExternally = () => {
-    void window.lin?.openLocalFile?.({ path: file.path });
+    void window.lin?.openLocalFile?.({
+      path: file.path,
+      ...(file.threadId && file.attachmentId
+        ? { threadId: file.threadId, attachmentId: file.attachmentId }
+        : {}),
+    });
   };
 
   const revealInFinder = () => {
-    void window.lin?.revealLocalFile?.({ path: file.path });
+    void window.lin?.revealLocalFile?.({
+      path: file.path,
+      ...(file.threadId && file.attachmentId
+        ? { threadId: file.threadId, attachmentId: file.attachmentId }
+        : {}),
+    });
   };
 
   const run = (action: () => void) => () => {

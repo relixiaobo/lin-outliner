@@ -12,7 +12,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createNodeTools, type NodeToolScope, type OutlinerToolHost } from './agentNodeTools';
-import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
+import {
+  createLocalTools,
+  scratchRootForWorkdir,
+  type AgentFileReadImageNormalizer,
+  type AgentLocalWorkspaceContext,
+} from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createGenerateImageTool, type AgentImageGenerationRuntime } from './agentImageGenerationTool';
@@ -211,6 +216,7 @@ export type { ToolEnvelope } from './agentToolEnvelope';
 export interface AgentToolsOptions {
   localFileRoot?: string;
   localWorkspace?: AgentLocalWorkspaceContext;
+  imageNormalizer?: AgentFileReadImageNormalizer;
   skillRuntime?: AgentSkillRuntime;
   imageGeneration?: AgentImageGenerationRuntime;
   allowedTools?: readonly string[];
@@ -251,6 +257,7 @@ function buildAgentToolCatalog(
       localRoot: options.localFileRoot,
       workspace: options.localWorkspace,
       skillRuntime: options.skillRuntime,
+      imageNormalizer: options.imageNormalizer,
     }),
   }, {
     precondition: true,

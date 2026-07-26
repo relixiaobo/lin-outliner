@@ -5,6 +5,7 @@ import type {
   AgentCoreNotification,
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
+  ThreadResourceReference,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
@@ -88,7 +89,6 @@ export interface LinPickedLocalFile {
   sizeBytes: number;
   lastModified: number;
   iconDataUrl?: string;
-  imageDataBase64?: string;
   thumbnailDataUrl?: string;
 }
 
@@ -163,6 +163,8 @@ export interface LinLocalFileReferencePreview {
 
 export interface LinPreviewLocalFileReferenceOptions {
   path: string;
+  threadId?: string;
+  attachmentId?: string;
 }
 
 export interface LinPreviewLocalFileReferenceResult {
@@ -171,6 +173,8 @@ export interface LinPreviewLocalFileReferenceResult {
 
 export interface LinOpenLocalFileOptions {
   path: string;
+  threadId?: string;
+  attachmentId?: string;
 }
 
 export interface LinOpenLocalFileResult {
@@ -181,17 +185,31 @@ export interface LinRevealLocalFileResult {
   revealed: boolean;
 }
 
-export interface LinStageAttachmentInput {
-  name: string;
-  mimeType: string;
-  bytes: ArrayBuffer;
-}
-
-export interface LinStageAttachmentResult {
-  path: string;
+export interface LinBeginAttachmentUploadInput {
+  threadId: string;
+  attachmentId: string;
   name: string;
   mimeType: string;
   sizeBytes: number;
+}
+
+export interface LinAttachmentUploadIdentity {
+  threadId: string;
+  attachmentId: string;
+  uploadId: string;
+}
+
+export interface LinAppendAttachmentUploadInput extends LinAttachmentUploadIdentity {
+  bytes: ArrayBuffer;
+}
+
+export interface LinBeginAttachmentUploadResult {
+  uploadId: string;
+}
+
+export interface LinDiscardAttachmentResourceInput {
+  threadId: string;
+  ref: ThreadResourceReference;
 }
 
 const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD === 'web'
@@ -440,8 +458,16 @@ const api = {
     ipcRenderer.invoke('lin:recent-local-files', options) as Promise<LinRecentLocalFilesResult>,
   searchLocalFiles: (options: LinSearchLocalFilesOptions) =>
     ipcRenderer.invoke('lin:search-local-files', options) as Promise<LinSearchLocalFilesResult>,
-  stageAttachment: (input: LinStageAttachmentInput) =>
-    ipcRenderer.invoke('lin:stage-attachment', input) as Promise<LinStageAttachmentResult>,
+  beginAttachmentUpload: (input: LinBeginAttachmentUploadInput) =>
+    ipcRenderer.invoke('lin:attachment-upload/begin', input) as Promise<LinBeginAttachmentUploadResult>,
+  appendAttachmentUpload: (input: LinAppendAttachmentUploadInput) =>
+    ipcRenderer.invoke('lin:attachment-upload/append', input) as Promise<Record<string, never>>,
+  finishAttachmentUpload: (input: LinAttachmentUploadIdentity) =>
+    ipcRenderer.invoke('lin:attachment-upload/finish', input) as Promise<ThreadResourceReference>,
+  abortAttachmentUpload: (input: LinAttachmentUploadIdentity) =>
+    ipcRenderer.invoke('lin:attachment-upload/abort', input) as Promise<Record<string, never>>,
+  discardAttachmentResource: (input: LinDiscardAttachmentResourceInput) =>
+    ipcRenderer.invoke('lin:attachment-resource/discard', input) as Promise<{ discarded: boolean }>,
 };
 
 contextBridge.exposeInMainWorld('lin', api);

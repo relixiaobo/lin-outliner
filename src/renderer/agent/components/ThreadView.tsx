@@ -17,9 +17,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  MAX_INLINE_IMAGE_BASE64_CHARS,
-  MAX_RAW_INLINE_IMAGE_BYTES,
-  MAX_STAGED_ATTACHMENT_BYTES,
+  ATTACHMENT_UPLOAD_CHUNK_BYTES,
+  MAX_MANAGED_ATTACHMENT_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import type { Messages } from '../../../core/i18n';
 import type {
@@ -29,6 +28,7 @@ import type {
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
   ThreadItem,
+  ThreadResourceReference,
   ThreadUserContent,
   Turn,
 } from '../../../core/agent/protocol';
@@ -119,20 +119,11 @@ interface ThreadViewProps {
 
 const MAX_ATTACHMENTS = 6;
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5_000;
-const INLINE_IMAGE_MAX_DIMENSION = 2_000;
-const INLINE_IMAGE_JPEG_QUALITIES = [0.8, 0.7, 0.55, 0.4];
 const TRANSCRIPT_ROW_GAP_PX = 12;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_TURNS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const MAX_CACHED_THREAD_UI_STATES = 32;
-const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-]);
 const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   content: [],
   empty: true,
@@ -315,6 +306,8 @@ export function ThreadView({
   const scrollMetricsFrameRef = useRef<number | null>(null);
   const stickToBottomRef = useRef(true);
   const attachmentsRef = useRef<ThreadAttachmentContent[]>([]);
+  const attachmentOperationTailRef = useRef<Promise<void>>(Promise.resolve());
+  const attachmentLifecycleControllerRef = useRef<AbortController | null>(null);
   const attachmentPreviewUrlsRef = useRef(new Map<string, string>());
   const attachmentSourceKeysRef = useRef(new Map<string, string>());
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
@@ -460,10 +453,19 @@ export function ThreadView({
     }
   }, [threadId]);
 
-  useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
-    attachmentPreviewUrlsRef.current.clear();
-  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    attachmentLifecycleControllerRef.current = controller;
+    return () => {
+      controller.abort();
+      if (attachmentLifecycleControllerRef.current === controller) {
+        attachmentLifecycleControllerRef.current = null;
+      }
+      for (const attachment of attachmentsRef.current) discardManagedAttachment(threadId, attachment);
+      for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
+      attachmentPreviewUrlsRef.current.clear();
+    };
+  }, [threadId]);
 
   useEffect(() => {
     if (!error) return undefined;
@@ -541,7 +543,21 @@ export function ThreadView({
     }
   }
 
-  async function addPickedFiles() {
+  function enqueueAttachmentOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = attachmentOperationTailRef.current
+      .catch(() => undefined)
+      .then(operation);
+    attachmentOperationTailRef.current = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function addPickedFiles(): Promise<void> {
+    return enqueueAttachmentOperation(processPickedFiles);
+  }
+
+  async function processPickedFiles() {
+    const signal = attachmentLifecycleControllerRef.current?.signal;
+    if (!signal || signal.aborted) return;
     if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
       setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
       return;
@@ -550,6 +566,7 @@ export function ThreadView({
     if (window.lin?.pickLocalFiles) {
       try {
         const result = await window.lin.pickLocalFiles({ maxFiles: MAX_ATTACHMENTS - attachmentsRef.current.length });
+        if (signal.aborted) return;
         if (!result.canceled) {
           const next: PreparedComposerAttachment[] = [];
           const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
@@ -557,6 +574,7 @@ export function ThreadView({
           let skippedOverflow = result.skippedCount ?? 0;
           let failure: string | null = null;
           for (const file of result.files) {
+            if (signal.aborted) return;
             if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
               skippedOverflow += 1;
               continue;
@@ -567,13 +585,14 @@ export function ThreadView({
               continue;
             }
             try {
-              const prepared = await attachmentFromPickedFile(file);
+              const prepared = attachmentFromPickedFile(file);
               next.push(prepared);
               existingKeys.add(prepared.sourceKey);
             } catch (attachmentError) {
               failure ??= errorMessage(attachmentError);
             }
           }
+          if (signal.aborted) return;
           commitPreparedAttachments(next);
           setError(failure
             ?? duplicateAttachmentMessage(skippedDuplicates, t.agent.composer)
@@ -595,7 +614,13 @@ export function ThreadView({
     await addBrowserFiles(files);
   }
 
-  async function addBrowserFiles(files: readonly File[]) {
+  function addBrowserFiles(files: readonly File[]): Promise<void> {
+    return enqueueAttachmentOperation(() => processBrowserFiles(files));
+  }
+
+  async function processBrowserFiles(files: readonly File[]) {
+    const signal = attachmentLifecycleControllerRef.current?.signal;
+    if (!signal || signal.aborted) return;
     if (waitingForInput || files.length === 0) return;
     if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
       setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
@@ -608,22 +633,30 @@ export function ThreadView({
     let skippedOverflow = 0;
     let failure: string | null = null;
     for (const file of files) {
-      if (file.size <= 0) continue;
       if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
         skippedOverflow += 1;
         continue;
       }
       try {
-        const prepared = await attachmentFromBrowserFile(file);
+        const prepared = await attachmentFromBrowserFile(file, threadId, signal);
         if (existingKeys.has(prepared.sourceKey)) {
+          const retained = [...attachmentsRef.current, ...next.map((candidate) => candidate.content)];
+          if (!retained.some((attachment) => sameManagedResource(attachment, prepared.content))) {
+            discardManagedAttachment(threadId, prepared.content);
+          }
           skippedDuplicates += 1;
           continue;
         }
         next.push(prepared);
         existingKeys.add(prepared.sourceKey);
       } catch (attachmentError) {
+        if (signal.aborted) break;
         failure ??= errorMessage(attachmentError);
       }
+    }
+    if (signal.aborted) {
+      for (const prepared of next) discardPreparedAttachment(threadId, prepared);
+      return;
     }
     commitPreparedAttachments(next);
     setError(failure
@@ -692,9 +725,17 @@ export function ThreadView({
     return result?.thumbnailDataUrl ? { ...file, thumbnailDataUrl: result.thumbnailDataUrl } : file;
   }
 
-  async function selectLocalFile(
+  function selectLocalFile(
     file: ThreadComposerLocalFileCandidate,
   ): Promise<ThreadComposerFileReference | null> {
+    return enqueueAttachmentOperation(() => processSelectedLocalFile(file));
+  }
+
+  async function processSelectedLocalFile(
+    file: ThreadComposerLocalFileCandidate,
+  ): Promise<ThreadComposerFileReference | null> {
+    const signal = attachmentLifecycleControllerRef.current?.signal;
+    if (!signal || signal.aborted) return null;
     if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
       setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
       return null;
@@ -702,12 +743,14 @@ export function ThreadView({
     setError(null);
     try {
       const prepared = await window.lin?.prepareLocalFile?.({ id: file.id });
+      if (signal.aborted) return null;
       if (!prepared?.file) throw new Error(`${file.name || 'Attachment'} is no longer available.`);
-      const attachment = await attachmentFromPickedFile({
+      const attachment = attachmentFromPickedFile({
         ...prepared.file,
         iconDataUrl: prepared.file.iconDataUrl ?? file.iconDataUrl,
         thumbnailDataUrl: prepared.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
       });
+      if (signal.aborted) return null;
       const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
       if (existingKeys.has(attachment.sourceKey)) {
         setError(t.agent.composer.skippedDuplicates({ count: 1 }));
@@ -731,11 +774,16 @@ export function ThreadView({
     const retained = current.filter((attachment) => referencedIds.has(attachment.id));
     if (retained.length === current.length) return;
     for (const attachment of current) {
-      if (!referencedIds.has(attachment.id)) releaseAttachmentUiState(
-        attachment.id,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-      );
+      if (!referencedIds.has(attachment.id)) {
+        if (!retained.some((candidate) => sameManagedResource(candidate, attachment))) {
+          discardManagedAttachment(threadId, attachment);
+        }
+        releaseAttachmentUiState(
+          attachment.id,
+          attachmentPreviewUrlsRef.current,
+          attachmentSourceKeysRef.current,
+        );
+      }
     }
     updateAttachments(() => retained);
   }
@@ -782,6 +830,7 @@ export function ThreadView({
                     onOpenThread={onOpenThread}
                     onOpenTurnDetails={onOpenTurnDetails}
                     onReadToolOutput={onReadToolOutput}
+                    threadId={threadId}
                     turn={turn}
                   />
                 </ThreadTranscriptTurnShell>
@@ -936,6 +985,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onOpenThread,
   onOpenTurnDetails,
   onReadToolOutput,
+  threadId,
   turn,
 }: {
   readonly canEditUserMessage: boolean;
@@ -948,6 +998,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
+  readonly threadId: string;
   readonly turn: Turn;
 }) {
   const responseItem = lastAgentResponse(turn);
@@ -1004,6 +1055,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
+      threadId={threadId}
     />
   );
   return (
@@ -1506,7 +1558,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function attachmentFromPickedFile(file: {
+function attachmentFromPickedFile(file: {
   readonly entryKind?: 'file' | 'directory';
   readonly path: string;
   readonly name: string;
@@ -1514,83 +1566,40 @@ async function attachmentFromPickedFile(file: {
   readonly sizeBytes: number;
   readonly lastModified?: number;
   readonly iconDataUrl?: string;
-  readonly imageDataBase64?: string;
   readonly thumbnailDataUrl?: string;
-}): Promise<PreparedComposerAttachment> {
+}): PreparedComposerAttachment {
   const entryKind = file.entryKind === 'directory' || file.mimeType === 'inode/directory'
     ? 'directory'
     : 'file';
   const mimeType = entryKind === 'directory' ? 'inode/directory' : file.mimeType || 'application/octet-stream';
-  validateAttachment(file.name, file.sizeBytes, mimeType);
   const id = crypto.randomUUID();
-  const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
-  let previewUrl: string | undefined;
-  let thumbnailDataUrl = file.thumbnailDataUrl;
-  let content: ThreadAttachmentContent;
-  if (inlineImageMimeType) {
-    if (!file.imageDataBase64) {
-      throw new Error(`${file.name || 'Image'} could not be loaded for inline model vision input.`);
-    }
-    const imageFile = fileFromBase64(
-      file.imageDataBase64,
-      file.name || 'image',
-      inlineImageMimeType,
-      file.lastModified ?? Date.now(),
-    );
-    const inlineImage = await readInlineImageForModel(imageFile, inlineImageMimeType);
-    if (!thumbnailDataUrl) {
-      previewUrl = URL.createObjectURL(imageFile);
-      thumbnailDataUrl = previewUrl;
-    }
-    content = {
-      type: 'attachment',
-      id,
-      name: file.name || 'image',
-      mimeType: inlineImage.mimeType,
-      sizeBytes: file.sizeBytes,
-      source: { kind: 'inline', dataBase64: inlineImage.dataBase64 },
-    };
-  } else {
-    content = {
-      type: 'attachment',
-      id,
-      name: file.name || 'attachment',
-      mimeType,
-      sizeBytes: file.sizeBytes,
-      source: { kind: 'localFile', path: file.path },
-    };
-  }
+  const content: ThreadAttachmentContent = {
+    type: 'attachment',
+    id,
+    name: file.name || 'attachment',
+    mimeType,
+    sizeBytes: file.sizeBytes,
+    source: { kind: 'localFile', path: file.path },
+  };
   return {
     content,
-    ...(previewUrl ? { previewUrl } : {}),
-    reference: attachmentToComposerReference(content, { ...file, thumbnailDataUrl }),
+    reference: attachmentToComposerReference(content, file),
     sourceKey: `path:${file.path}`,
   };
 }
 
-async function attachmentFromBrowserFile(file: File): Promise<PreparedComposerAttachment> {
+async function attachmentFromBrowserFile(
+  file: File,
+  threadId: string,
+  signal: AbortSignal,
+): Promise<PreparedComposerAttachment> {
+  throwIfAttachmentUploadAborted(signal);
   const name = file.name || 'attachment';
   const mimeType = file.type || 'application/octet-stream';
-  validateAttachment(name, file.size, mimeType);
   const id = crypto.randomUUID();
   const nativePath = window.lin?.getFilePath?.(file) ?? '';
-  const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
-  const bytes = nativePath && !inlineImageMimeType ? null : await file.arrayBuffer();
-  const hash = nativePath || !bytes ? '' : await sha256ArrayBuffer(bytes);
-  let previewUrl: string | undefined;
   let content: ThreadAttachmentContent;
-  if (inlineImageMimeType) {
-    const inlineImage = await readInlineImageForModel(file, inlineImageMimeType, bytes ?? undefined);
-    previewUrl = URL.createObjectURL(file);
-    content = {
-      type: 'attachment',
-      id,
-      name,
-      mimeType: inlineImage.mimeType,
-      sizeBytes: file.size,
-      source: { kind: 'inline', dataBase64: inlineImage.dataBase64 },
-    };
-  } else if (nativePath) {
+  if (nativePath) {
     content = {
       type: 'attachment',
       id,
@@ -1600,17 +1609,21 @@ async function attachmentFromBrowserFile(file: File): Promise<PreparedComposerAt
       source: { kind: 'localFile', path: nativePath },
     };
   } else {
-    if (!window.lin?.stageAttachment || !bytes) throw new Error('Attachment staging is unavailable.');
-    const staged = await window.lin.stageAttachment({ name, mimeType, bytes });
+    if (file.size > MAX_MANAGED_ATTACHMENT_BYTES) {
+      throw new Error(`${name} exceeds the pathless attachment storage budget.`);
+    }
+    const ref = await uploadPathlessAttachment(file, threadId, id, name, mimeType, signal);
     content = {
       type: 'attachment',
       id,
-      name: staged.name,
-      mimeType: staged.mimeType,
-      sizeBytes: staged.sizeBytes,
-      source: { kind: 'localFile', path: staged.path },
+      name,
+      mimeType,
+      sizeBytes: file.size,
+      source: { kind: 'threadPayload', ref },
     };
   }
+  throwIfAttachmentUploadAborted(signal);
+  const previewUrl = mimeType.startsWith('image/') ? URL.createObjectURL(file) : undefined;
   return {
     content,
     ...(previewUrl ? { previewUrl } : {}),
@@ -1619,119 +1632,73 @@ async function attachmentFromBrowserFile(file: File): Promise<PreparedComposerAt
       ...(nativePath ? { path: nativePath } : {}),
       ...(previewUrl ? { thumbnailDataUrl: previewUrl } : {}),
     }),
-    sourceKey: nativePath ? `path:${nativePath}` : hash ? `hash:${hash}` : `id:${id}`,
+    sourceKey: nativePath ? `path:${nativePath}` : `payload:${content.source.kind === 'threadPayload' ? content.source.ref.id : id}`,
   };
 }
 
-function normalizeInlineImageMimeType(mimeType: string): string | null {
-  const normalized = mimeType.trim().toLowerCase();
-  if (!SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(normalized)) return null;
-  return normalized === 'image/jpg' ? 'image/jpeg' : normalized;
-}
-
-function fileFromBase64(dataBase64: string, name: string, mimeType: string, lastModified: number): File {
-  const binary = atob(dataBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return new File([bytes], name, { type: mimeType, lastModified });
-}
-
-async function sha256ArrayBuffer(bytes: ArrayBuffer): Promise<string> {
-  if (!globalThis.crypto?.subtle) return '';
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function validateAttachment(
+async function uploadPathlessAttachment(
+  file: File,
+  threadId: string,
+  attachmentId: string,
   name: string,
-  sizeBytes: number,
   mimeType: string,
+  signal: AbortSignal,
 ) {
-  const limit = normalizeInlineImageMimeType(mimeType) ? MAX_RAW_INLINE_IMAGE_BYTES : MAX_STAGED_ATTACHMENT_BYTES;
-  if (sizeBytes > limit) {
-    throw new Error(`${name || 'Attachment'} is larger than ${formatBytes(limit)} and cannot be attached.`);
-  }
-}
-
-async function readInlineImageForModel(
-  file: File,
-  mimeType: string,
-  bytes?: ArrayBuffer,
-): Promise<{ readonly dataBase64: string; readonly mimeType: string }> {
-  const original = {
-    dataBase64: arrayBufferToBase64(bytes ?? await file.arrayBuffer()),
+  const bridge = window.lin;
+  if (
+    !bridge?.beginAttachmentUpload
+    || !bridge.appendAttachmentUpload
+    || !bridge.finishAttachmentUpload
+    || !bridge.abortAttachmentUpload
+    || !bridge.discardAttachmentResource
+  ) throw new Error('Attachment streaming is unavailable.');
+  throwIfAttachmentUploadAborted(signal);
+  const { uploadId } = await bridge.beginAttachmentUpload({
+    threadId,
+    attachmentId,
+    name,
     mimeType,
-  };
-  if (original.dataBase64.length <= MAX_INLINE_IMAGE_BASE64_CHARS) return original;
-  if (mimeType.toLowerCase() === 'image/gif') {
-    throw new Error(`${file.name || 'Image'} is too large for inline model vision input.`);
-  }
-  return resizeInlineImageForModel(file);
-}
-
-async function resizeInlineImageForModel(
-  file: File,
-): Promise<{ readonly dataBase64: string; readonly mimeType: string }> {
-  const bitmap = await createImageBitmap(file);
+    sizeBytes: file.size,
+  });
+  const identity = { threadId, attachmentId, uploadId };
+  let completedRef: ThreadResourceReference | null = null;
   try {
-    let width = bitmap.width;
-    let height = bitmap.height;
-    if (width > INLINE_IMAGE_MAX_DIMENSION || height > INLINE_IMAGE_MAX_DIMENSION) {
-      const scale = Math.min(INLINE_IMAGE_MAX_DIMENSION / width, INLINE_IMAGE_MAX_DIMENSION / height);
-      width = Math.max(1, Math.round(width * scale));
-      height = Math.max(1, Math.round(height * scale));
-    }
-    while (width >= 1 && height >= 1) {
-      for (const quality of INLINE_IMAGE_JPEG_QUALITIES) {
-        const blob = await renderBitmapToBlob(bitmap, width, height, quality);
-        const dataBase64 = arrayBufferToBase64(await blob.arrayBuffer());
-        if (dataBase64.length <= MAX_INLINE_IMAGE_BASE64_CHARS) {
-          return { dataBase64, mimeType: 'image/jpeg' };
+    const reader = file.stream().getReader();
+    const abortReader = () => { void reader.cancel().catch(() => undefined); };
+    signal.addEventListener('abort', abortReader, { once: true });
+    try {
+      for (;;) {
+        throwIfAttachmentUploadAborted(signal);
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (let offset = 0; offset < value.byteLength; offset += ATTACHMENT_UPLOAD_CHUNK_BYTES) {
+          throwIfAttachmentUploadAborted(signal);
+          const source = value.subarray(offset, offset + ATTACHMENT_UPLOAD_CHUNK_BYTES);
+          const chunk = new Uint8Array(source.byteLength);
+          chunk.set(source);
+          await bridge.appendAttachmentUpload({ ...identity, bytes: chunk.buffer });
         }
       }
-      const nextWidth = Math.max(1, Math.floor(width * 0.75));
-      const nextHeight = Math.max(1, Math.floor(height * 0.75));
-      if (nextWidth === width && nextHeight === height) break;
-      width = nextWidth;
-      height = nextHeight;
+    } finally {
+      signal.removeEventListener('abort', abortReader);
+      reader.releaseLock();
     }
-  } finally {
-    bitmap.close();
+    throwIfAttachmentUploadAborted(signal);
+    completedRef = await bridge.finishAttachmentUpload(identity);
+    throwIfAttachmentUploadAborted(signal);
+    return completedRef;
+  } catch (error) {
+    if (completedRef) {
+      await bridge.discardAttachmentResource({ threadId, ref: completedRef }).catch(() => undefined);
+    } else {
+      await bridge.abortAttachmentUpload(identity).catch(() => undefined);
+    }
+    throw error;
   }
-  throw new Error(`${file.name || 'Image'} could not be resized for inline model vision input.`);
 }
 
-function renderBitmapToBlob(
-  bitmap: ImageBitmap,
-  width: number,
-  height: number,
-  quality: number,
-): Promise<Blob> {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('Could not prepare image for model input.');
-  context.fillStyle = 'white';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(bitmap, 0, 0, width, height);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('Could not encode image for model input.'));
-    }, 'image/jpeg', quality);
-  });
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
+function throwIfAttachmentUploadAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new DOMException('Attachment upload was canceled.', 'AbortError');
 }
 
 function uniqueAttachments(attachments: readonly ThreadAttachmentContent[]): ThreadAttachmentContent[] {
@@ -1739,9 +1706,7 @@ function uniqueAttachments(attachments: readonly ThreadAttachmentContent[]): Thr
   return attachments.filter((attachment) => {
     const key = attachment.source.kind === 'localFile'
       ? `path:${attachment.source.path}`
-      : attachment.source.kind === 'asset'
-        ? `asset:${attachment.source.assetId}`
-        : `id:${attachment.id}`;
+      : `payload:${attachment.source.ref.id}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1761,8 +1726,27 @@ function currentAttachmentSourceKeys(
 
 function canonicalAttachmentSourceKey(attachment: ThreadAttachmentContent): string {
   if (attachment.source.kind === 'localFile') return `path:${attachment.source.path}`;
-  if (attachment.source.kind === 'asset') return `asset:${attachment.source.assetId}`;
-  return `id:${attachment.id}`;
+  return `payload:${attachment.source.ref.id}`;
+}
+
+function sameManagedResource(
+  left: ThreadAttachmentContent,
+  right: ThreadAttachmentContent,
+): boolean {
+  return left.source.kind === 'threadPayload'
+    && right.source.kind === 'threadPayload'
+    && left.source.ref.id === right.source.ref.id
+    && left.source.ref.fileName === right.source.ref.fileName;
+}
+
+function discardManagedAttachment(threadId: string, attachment: ThreadAttachmentContent): void {
+  if (attachment.source.kind !== 'threadPayload' || !window.lin?.discardAttachmentResource) return;
+  void window.lin.discardAttachmentResource({ threadId, ref: attachment.source.ref }).catch(() => undefined);
+}
+
+function discardPreparedAttachment(threadId: string, attachment: PreparedComposerAttachment): void {
+  discardManagedAttachment(threadId, attachment.content);
+  if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
 }
 
 function releaseAttachmentUiState(

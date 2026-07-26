@@ -71,6 +71,28 @@ describe('local file preview stream registry', () => {
     }
   });
 
+  test('issues an exact-file token without turning its parent into a trusted root', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'lin-preview-stream-exact-'));
+    try {
+      const exactPath = join(outsideRoot, 'exact.mp4');
+      const siblingPath = join(outsideRoot, 'sibling.mp4');
+      await writeFile(exactPath, 'exact');
+      await writeFile(siblingPath, 'sibling');
+      const registry = new LocalFilePreviewStreamRegistry(() => [root]);
+
+      const token = await registry.issueExactPath(exactPath, 'video/mp4');
+      expect(token).toBeTruthy();
+      expect(await registry.issuePath(siblingPath, 'video/mp4')).toBeNull();
+      expect(await (await registry.serve(token!, requestWithRange(null))).text()).toBe('exact');
+
+      await rm(exactPath);
+      await symlink(siblingPath, exactPath);
+      expect((await registry.serve(token!, requestWithRange(null))).status).toBe(404);
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   test('rejects missing tokens and files that no longer resolve inside the trusted root', async () => {
     const outsideRoot = await mkdtemp(join(tmpdir(), 'lin-preview-local-stream-outside-'));
     try {

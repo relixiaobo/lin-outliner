@@ -130,19 +130,21 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         ? context.configuration.developerInstructions.join('\n\n')
         : await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
       if (context.signal.aborted) return { status: 'interrupted' };
-      const initialPrompt = currentPrompt(context);
+      const initialPrompt = await currentPrompt(context);
       const prompt = internalMemory
         ? initialPrompt
         : await this.options.preparePrompt?.(context, initialPrompt) ?? initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
       const normalizer = new PiEventNormalizer(context);
+      const priorMessages = await historyMessages(context, runtime.model);
+      if (context.signal.aborted) return { status: 'interrupted' };
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
           systemPrompt,
           model: runtime.model,
           thinkingLevel: runtime.thinkingLevel,
           tools,
-          messages: historyMessages(context, runtime.model),
+          messages: priorMessages,
         },
         streamFn: createAbortSettledStreamFn(piStreamSimple, {
           onProviderRetry: (event) => context.onProviderRetry(event.phase === 'retrying'
@@ -160,7 +162,10 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return { status: 'interrupted' };
       }
       unsubscribe = agent.subscribe((event) => normalizer.handle(event));
-      context.onSteer((input) => agent?.steer(modelUserMessage(input.content)));
+      context.onSteer(async (input) => {
+        const message = await modelUserMessage(input.content, Date.now(), context);
+        if (!context.signal.aborted) agent?.steer(message);
+      });
       await agent.prompt(prompt);
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
@@ -835,7 +840,7 @@ function defaultSystemPrompt(context: TurnExecutionContext, skillListing: string
   ].filter(Boolean).join('\n\n');
 }
 
-export function historyMessages(context: TurnExecutionContext, model: Model<Api>): Message[] {
+export async function historyMessages(context: TurnExecutionContext, model: Model<Api>): Promise<Message[]> {
   const messages: Message[] = [];
   for (const turn of context.historyBeforeTurn) {
     let assistantContent: Array<TextContent | ToolCall> = [];
@@ -856,7 +861,7 @@ export function historyMessages(context: TurnExecutionContext, model: Model<Api>
     for (const item of turn.items) {
       if (item.type === 'userMessage') {
         flushAssistant();
-        messages.push(modelUserMessage(item.content, turn.startedAt));
+        messages.push(await modelUserMessage(item.content, turn.startedAt, context));
         continue;
       }
       if (isToolItem(item)) {
@@ -900,7 +905,7 @@ export function historyMessages(context: TurnExecutionContext, model: Model<Api>
   return messages;
 }
 
-function currentPrompt(context: TurnExecutionContext): UserMessage {
+async function currentPrompt(context: TurnExecutionContext): Promise<UserMessage> {
   const input = context.turn.items
     .filter((item) => item.type === 'userMessage')
     .flatMap((item) => item.content);
@@ -910,10 +915,14 @@ function currentPrompt(context: TurnExecutionContext): UserMessage {
         text: `[${entry.kind} context: ${key}]\n${entry.value}`,
       }))
     : [];
-  return modelUserMessage([...input, ...additional], context.turn.startedAt);
+  return modelUserMessage([...input, ...additional], context.turn.startedAt, context);
 }
 
-export function modelUserMessage(content: readonly ThreadUserContent[], timestamp = Date.now()): UserMessage {
+export async function modelUserMessage(
+  content: readonly ThreadUserContent[],
+  timestamp = Date.now(),
+  resources?: Pick<TurnExecutionContext, 'readResource' | 'resolveResourceObservationPath'>,
+): Promise<UserMessage> {
   const converted: Array<TextContent | ImageContent> = [];
   for (const part of content) {
     switch (part.type) {
@@ -924,14 +933,20 @@ export function modelUserMessage(content: readonly ThreadUserContent[], timestam
         converted.push({ type: 'text', text: `[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}` });
         break;
       case 'attachment':
-        if (part.source.kind === 'inline' && part.mimeType.startsWith('image/')) {
-          converted.push({ type: 'image', data: part.source.dataBase64, mimeType: part.mimeType });
+        if (part.mimeType.startsWith('image/') && part.promptImage) {
+          if (!resources) throw new Error('Attachment image resources are unavailable.');
+          const image = await resources.readResource(part.promptImage);
+          if (!image) throw new Error(`Attachment prompt image is unavailable or corrupt: ${part.name}`);
+          converted.push({ type: 'image', data: image.toString('base64'), mimeType: part.promptImage.mimeType });
         } else {
           const location = part.source.kind === 'localFile'
             ? `\nReadable path: ${part.source.path}\nUse file_read with this path to inspect the attachment.`
-            : part.source.kind === 'asset'
-              ? `\nAsset id: ${part.source.assetId}`
-              : '';
+            : resources
+              ? await resources.resolveResourceObservationPath(part.source.ref).then((path) => {
+                  if (!path) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
+                  return `\nReadable path: ${path}\nUse file_read with this path to inspect the attachment.`;
+                })
+              : `\nManaged payload: ${part.source.ref.id}`;
           converted.push({
             type: 'text',
             text: `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]${location}${part.extractedText ? `\n${part.extractedText}` : ''}`,

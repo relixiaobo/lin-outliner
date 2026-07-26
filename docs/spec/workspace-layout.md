@@ -181,7 +181,14 @@ interface WorkspacePanelBase {
 }
 
 type PreviewTarget =
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory'; label?: string }
+  | {
+      kind: 'local-file';
+      path: string;
+      entryKind: 'file' | 'directory';
+      label?: string;
+      threadId?: string;
+      attachmentId?: string;
+    }
   | { kind: 'asset'; assetId: string; label?: string }
   | { kind: 'url'; url: string; label?: string };
 
@@ -382,8 +389,16 @@ resolve it through the preload preview API:
 
 Source authority stays source-specific:
 
-- `local-file` targets are validated in main through the local-file reference
-  policy before reads or external open.
+- Ordinary `local-file` targets are validated in main through the local-file
+  reference policy before reads or external open. A transcript attachment adds
+  the owning `threadId` and `attachmentId` as a pair. Main resolves that identity
+  from canonical history and authorizes only its recorded canonical file (or an
+  in-root descendant for a directory); a filename hint is accepted only while
+  resolving the exact managed attachment. Managed payloads are copied to
+  disposable Agent scratch before Preview, Open, or Reveal; their private
+  content-addressed paths never leave the storage layer. Exact-file stream tokens
+  retain that constraint and never promote the parent directory to a trusted
+  root. Symlink replacement, mismatched IDs, and path substitution fail closed.
 - `asset` targets resolve by `assetId` inside the asset jail. Image and media
   rendering may use the existing no-CORS `asset://` URL. Fetch-based EPUB
   loading instead receives an opaque `preview-local://` UUID backed by the

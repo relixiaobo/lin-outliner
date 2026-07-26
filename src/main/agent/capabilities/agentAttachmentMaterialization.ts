@@ -1,83 +1,69 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
-import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../../../core/agentAttachmentLimits';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
 export const AGENT_GENERATED_IMAGE_DIR = 'generated-images';
-export const AGENT_ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-// The whole scratch root is bounded by the same age as attachments; nothing in it is durable.
-export const AGENT_SCRATCH_TTL_MS = AGENT_ATTACHMENT_TTL_MS;
+export const AGENT_SCRATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export interface PathBackedAttachment {
-  name: string;
-  path: string;
+export interface ManagedAttachmentObservation {
+  resolvePath(ref: ThreadResourceReference): Promise<string | null>;
+  dispose(): Promise<void>;
 }
 
-export async function materializePathBackedAttachment<T extends PathBackedAttachment>(
-  localRoot: string,
+export function createManagedAttachmentObservation(
   scratchRoot: string,
-  attachment: T,
-): Promise<T> {
+  copyResource: (
+    ref: ThreadResourceReference,
+    targetDirectory: string,
+  ) => Promise<string | null>,
+): ManagedAttachmentObservation {
+  let disposed = false;
+  let workspacePromise: Promise<string> | null = null;
+  const resources = new Map<string, Promise<string | null>>();
+
+  const workspace = (): Promise<string> => {
+    if (workspacePromise) return workspacePromise;
+    workspacePromise = (async () => {
+      const root = path.join(path.resolve(scratchRoot), AGENT_ATTACHMENT_DIR);
+      await mkdir(root, { recursive: true });
+      const target = path.join(root, randomUUID());
+      await mkdir(target);
+      return target;
+    })();
+    return workspacePromise;
+  };
+
   return {
-    ...attachment,
-    path: await materializeAgentLocalPath(localRoot, scratchRoot, attachment.path, attachment.name),
+    resolvePath(ref) {
+      if (disposed) throw new Error('Managed attachment observation is closed.');
+      const key = `${ref.id}\0${ref.fileName}`;
+      const existing = resources.get(key);
+      if (existing) return existing;
+      const pending = (async () => {
+        const targetDirectory = path.join(await workspace(), randomUUID());
+        await mkdir(targetDirectory);
+        const copied = await copyResource(ref, targetDirectory);
+        if (!copied) await rm(targetDirectory, { recursive: true, force: true });
+        return copied ? realpath(copied) : null;
+      })();
+      resources.set(key, pending);
+      return pending;
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      await Promise.allSettled(resources.values());
+      const target = await workspacePromise?.catch(() => null);
+      if (target) await rm(target, { recursive: true, force: true });
+      resources.clear();
+    },
   };
 }
 
-// Sources already in the workdir or scratch are returned as-is. Other attachments are copied
-// into app-owned scratch so the Thread receives a stable local snapshot instead of depending on
-// the lifetime of the original selection path.
-export async function materializeAgentLocalPath(
-  localRoot: string,
-  scratchRoot: string,
-  inputPath: string,
-  label = 'attachment',
-): Promise<string> {
-  const root = path.resolve(localRoot);
-  const rootRealPath = await realpath(root);
-  const sourcePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
-  const sourceRealPath = await realpath(sourcePath);
-  // A source already in the workdir or app-owned scratch (for example, a staged attachment)
-  // is returned as-is rather than copied again.
-  const scratchRealPath = await safeRealPath(scratchRoot);
-  if (isPathInside(rootRealPath, sourceRealPath)) return sourceRealPath;
-  if (scratchRealPath && isPathInside(scratchRealPath, sourceRealPath)) return sourceRealPath;
-
-  const sourceStat = await stat(sourceRealPath);
-  if (sourceStat.isDirectory()) {
-    throw new Error('Directory attachments outside the Thread working directory cannot be materialized as stable snapshots.');
-  }
-  if (!sourceStat.isFile()) {
-    throw new Error('Only regular file attachments can be materialized for agent access.');
-  }
-  if (sourceStat.size > MAX_MATERIALIZED_ATTACHMENT_BYTES) {
-    throw new Error(`Attachment is larger than ${formatBytes(MAX_MATERIALIZED_ATTACHMENT_BYTES)} and cannot be materialized for agent access.`);
-  }
-
-  await pruneOldAgentAttachments(scratchRoot);
-  const attachmentDir = agentAttachmentDir(scratchRoot);
-  await mkdir(attachmentDir, { recursive: true });
-  const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(label || path.basename(sourceRealPath))}`);
-  await copyFile(sourceRealPath, targetPath);
-  return targetPath;
-}
-
-export function agentAttachmentDir(scratchRoot: string): string {
-  return path.join(path.resolve(scratchRoot), AGENT_ATTACHMENT_DIR);
-}
-
-export async function pruneOldAgentAttachments(
-  scratchRoot: string,
-  now = Date.now(),
-  ttlMs = AGENT_ATTACHMENT_TTL_MS,
-): Promise<void> {
-  await pruneDirEntriesByTtl(agentAttachmentDir(scratchRoot), now, ttlMs);
-}
-
-// Bound the whole scratch root by age. Scratch is app-owned ephemeral data (materialized
-// attachments, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
+// Bound the whole scratch root by age. Scratch is app-owned ephemeral data (attachment
+// observations, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
 // so anything untouched past the TTL is removed. Pruning the entries WITHIN each scratch subdir
 // (by per-entry mtime) rather than the subdirs themselves keeps actively-written areas intact
 // while still reclaiming stale files. Best-effort; called once at startup.
@@ -121,34 +107,9 @@ async function pruneDirEntriesByTtl(dir: string, now: number, ttlMs: number): Pr
   }));
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
-}
-
 export function isPathInside(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-async function safeRealPath(target: string): Promise<string | null> {
-  try {
-    const resolved = await realpath(path.resolve(target));
-    // A root that resolves to the filesystem root makes the whole disk "inside" it; treat it
-    // as no root (mirrors localFileReferenceSecurity.trustedRootRealPath).
-    if (path.parse(resolved).root === resolved) return null;
-    return resolved;
-  } catch {
-    return null;
-  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

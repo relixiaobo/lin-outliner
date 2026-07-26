@@ -8,9 +8,9 @@ import { setBoundedMapEntry } from './boundedMap';
 import type { TrustedLocalFileReference } from './localFileReferenceSecurity';
 
 export interface PreviewLocalFileTokenEntry {
+  constraint: { kind: 'root'; path: string } | { kind: 'exact'; path: string };
   mimeType: string;
   path: string;
-  rootPath: string;
   sizeBytes: number;
 }
 
@@ -44,9 +44,24 @@ export class LocalFilePreviewStreamRegistry {
     if (!rootPath) return null;
     const token = randomUUID();
     setBoundedMapEntry(this.entries, token, {
+      constraint: { kind: 'root', path: rootPath },
       mimeType,
       path: resolvedPath,
-      rootPath,
+      sizeBytes: fileStats.size,
+    }, PREVIEW_LOCAL_TOKEN_LIMIT);
+    return token;
+  }
+
+  async issueExactPath(filePath: string, mimeType: string): Promise<string | null> {
+    const resolvedPath = await realpath(filePath).catch(() => null);
+    if (!resolvedPath) return null;
+    const fileStats = await stat(resolvedPath).catch(() => null);
+    if (!fileStats?.isFile() || fileStats.size <= 0) return null;
+    const token = randomUUID();
+    setBoundedMapEntry(this.entries, token, {
+      constraint: { kind: 'exact', path: resolvedPath },
+      mimeType,
+      path: resolvedPath,
       sizeBytes: fileStats.size,
     }, PREVIEW_LOCAL_TOKEN_LIMIT);
     return token;
@@ -125,7 +140,7 @@ async function trustedRootForFile(filePath: string, allowedRoots: readonly strin
 
 async function openCurrentSafeFile(entry: PreviewLocalFileTokenEntry): Promise<OpenPreviewLocalFile | null> {
   const fileRealPath = await realpath(entry.path).catch(() => null);
-  if (!fileRealPath || !isPathInside(entry.rootPath, fileRealPath)) return null;
+  if (!fileRealPath || !matchesConstraint(entry.constraint, fileRealPath)) return null;
   const handle = await open(fileRealPath, OPEN_NOFOLLOW).catch(() => null);
   if (!handle) return null;
   try {
@@ -144,6 +159,15 @@ async function openCurrentSafeFile(entry: PreviewLocalFileTokenEntry): Promise<O
     await handle.close().catch(() => undefined);
     return null;
   }
+}
+
+function matchesConstraint(
+  constraint: PreviewLocalFileTokenEntry['constraint'],
+  filePath: string,
+): boolean {
+  return constraint.kind === 'exact'
+    ? filePath === constraint.path
+    : isPathInside(constraint.path, filePath);
 }
 
 async function safeTrustedRootRealPath(root: string): Promise<string | null> {
