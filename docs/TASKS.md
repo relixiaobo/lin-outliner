@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434, and the Core interface sequence #428/#430–#433) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, and the Core interface sequence #428/#430–#433) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,9 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-24).** Open PR queue: none. Recently merged: #434
-(`codex-3/agent-codex-memory`) after iterative main review; see *Recently
-completed*. #429 (`codex-3/agent-codex-core-runtime`) after iterative main
+**In flight (2026-07-26).** Open PR queue: none. Recently merged: #436
+(`codex-3/agent-memory-retrieval-citations`) and #435
+(`codex-3/agent-codex-automations`) after iterative main review; see *Recently
+completed*. #434 (`codex-3/agent-codex-memory`) after iterative main review; see
+*Recently completed*. #429 (`codex-3/agent-codex-core-runtime`) after iterative main
 review, completing the interface sequence #428/#430–#433; see *Recently
 completed*. #423
 (`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
@@ -272,11 +274,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-codex-automations** (`draft`, plan merged #423; unblocked by the complete
-  `agent-codex-core` replacement shipped in #429) — add one host-owned Codex-style Automation
-  scheduler as a complete feature in one PR, with canonical Threads and Turns as
-  the execution record. It may proceed independently of Memory after Core lands.
-  See `docs/plans/agent-codex-automations.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -581,6 +578,40 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-codex-memory retrieval and citations**
+  (`codex-3/agent-memory-retrieval-citations`, PR #436, codex-3, merged
+  2026-07-26, plan-track follow-up) — replaced eager Memory briefing injection
+  with relevance-driven `node_search` / `node_read`, counts usage only for
+  successfully read Memory Nodes cited through rendered inline Node references,
+  and keeps the canonical tool process without a separate Memory disclosure.
+  The current design is folded into `docs/spec/agent-memory.md`,
+  `docs/spec/agent-thread-rendering.md`, and the archived Memory plan.
+  **Gate (main):** iterative review caught Markdown literal false attribution,
+  parser drift for escapes and entities, and reference-style links losing their
+  definitions across renderer blocks. Codex-3 fixed every finding before merge;
+  final head `3495305` had no reportable findings. Verified on merged `main`
+  together with #435: typecheck, `docs:check`, diff check, full `test:core`
+  (1342 pass, 6 environment-dependent skips), full `test:renderer` (758 pass),
+  and focused Automation + Agent Thread E2E (40 pass).
+
+- **agent-codex-automations**
+  (`codex-3/agent-codex-automations`, PR #435, codex-3, merged 2026-07-26,
+  plan-track) — added durable host-owned Automations with strict protocol and IPC
+  boundaries, SQLite-backed RRULE/IANA scheduling, catch-up and overlap handling,
+  crash recovery, canonical Thread/Turn execution, local-project and managed
+  worktree modes, structured schedule editing, unread Run state, and a complete
+  light/dark renderer surface. The shipped design is folded into
+  `docs/spec/agent-automations.md` and related Agent specs; the plan is archived
+  at `docs/plans/archive/agent-codex-automations.md`.
+  **Gate (main):** iterative review caught cleanup paths that could lose ignored
+  or embedded-repository content, stale worktree snapshots, the bounded renderer
+  page leaking into bulk-read behavior, and stale/same-millisecond Run races.
+  Codex-3 fixed every finding, including a durable monotonic event sequence;
+  final head `321f65c` had no reportable findings. Verified on merged `main` with
+  typecheck, `docs:check`, diff check, full `test:core` (1342 pass, 6
+  environment-dependent skips), full `test:renderer` (758 pass), and focused
+  Automation + Agent Thread E2E (40 pass).
 
 - **agent-codex-memory**
   (`codex-3/agent-codex-memory`, PR #434, codex-3, merged 2026-07-24,

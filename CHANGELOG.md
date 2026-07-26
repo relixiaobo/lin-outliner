@@ -12,6 +12,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Memory retrieval and inline Node citations (PR #436, codex-3)** — replaced
+  eager Memory briefing injection with relevance-driven `node_search` /
+  `node_read` routing and records usage only when a successfully read Memory Node
+  is cited through the rendered inline Node-reference affordance. Thread history
+  keeps the canonical tool process visible without a separate Memory disclosure.
+  **Gate (main):** iterative review caught Markdown literals being attributed as
+  citations, display/accounting parser drift for escapes and entities, and
+  reference-style links losing definitions across renderer blocks; all were
+  fixed before merge. Final head `3495305` passed the merged-main verification
+  listed with PR #435 below.
+- **Codex Automations (PR #435, codex-3)** — added host-owned durable scheduled
+  Agent work with strict protocol and IPC boundaries, SQLite-backed RRULE/IANA
+  scheduling, catch-up and overlap handling, canonical Thread/Turn execution,
+  crash recovery, local-project and managed-worktree modes, structured schedule
+  editing, unread Run state, and a complete light/dark Automation surface.
+  **Gate (main):** iterative review caught cleanup paths that could discard
+  ignored or embedded-repository content, stale worktree snapshots, the bounded
+  renderer page leaking into bulk-read behavior, and stale/same-millisecond Run
+  notification races; all were fixed before merge, including a durable monotonic
+  Run event sequence. Final head `321f65c` passed merged-main typecheck, full
+  `test:core` (1342 pass, 6 environment-dependent skips), full `test:renderer`
+  (758 pass), focused Automation + Agent Thread E2E (40 pass), docs check, and
+  diff check.
 - **Codex Memory on daily timeline Nodes (PR #434, codex-3)** — added durable
   Codex-style Memory as ordinary editable Daily Notes Nodes under deterministic
   protected `#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and
