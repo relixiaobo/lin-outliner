@@ -104,7 +104,12 @@ export function InlineFilePreviewLayer() {
           status: file.path && window.lin?.previewLocalFileReference ? 'loading' : 'ready',
         });
         if (!file.path || !window.lin?.previewLocalFileReference) return;
-        void window.lin.previewLocalFileReference({ path: file.path })
+        void window.lin.previewLocalFileReference({
+          path: file.path,
+          ...(file.threadId && file.attachmentId
+            ? { threadId: file.threadId, attachmentId: file.attachmentId }
+            : {}),
+        })
           .then((result) => {
             if (requestIdRef.current !== requestId || activeElementRef.current !== element) return;
             setPreview({
@@ -178,12 +183,7 @@ export function InlineFilePreviewLayer() {
       }
       dispatchPreviewTargetOpen({
         newPane: wantsNewPaneFromClick(event),
-        target: {
-          kind: 'local-file',
-          path: file.path,
-          entryKind: file.entryKind,
-          label: file.name,
-        },
+        target: previewTargetForInlineFile(file as InlineFileMenuFile),
       });
       hidePreview();
     }
@@ -197,7 +197,14 @@ export function InlineFilePreviewLayer() {
       event.stopPropagation();
       hidePreview();
       setFileMenu({
-        file: { path: file.path, name: file.name, entryKind: file.entryKind },
+        file: {
+          path: file.path,
+          name: file.name,
+          entryKind: file.entryKind,
+          ...(file.threadId && file.attachmentId
+            ? { threadId: file.threadId, attachmentId: file.attachmentId }
+            : {}),
+        },
         x: event.clientX,
         y: event.clientY,
       });
@@ -378,6 +385,8 @@ function fileFromElement(element: HTMLElement): InlineFilePreviewFile | null {
     path: dataset.inlineRefPath,
     ref: dataset.inlineRefRef,
     sizeBytes: finiteNumber(dataset.inlineRefSizeBytes),
+    threadId: dataset.inlineRefThreadId,
+    attachmentId: dataset.inlineRefAttachmentId,
     thumbnailDataUrl: dataset.inlineRefThumbnailDataUrl,
   };
 }

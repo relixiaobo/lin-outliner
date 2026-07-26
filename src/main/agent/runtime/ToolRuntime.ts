@@ -16,7 +16,10 @@ import type { ReasoningEffort } from '../../../core/agent/configuration';
 import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
-import type { AgentLocalWorkspaceContext } from '../capabilities/agentLocalTools';
+import type {
+  AgentFileReadImageNormalizer,
+  AgentLocalWorkspaceContext,
+} from '../capabilities/agentLocalTools';
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
 import { createUserSkillPrompt, type AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
@@ -27,6 +30,7 @@ import type { TurnExecutionContext } from './types';
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
+  readonly imageNormalizer?: AgentFileReadImageNormalizer;
   readonly skillRuntime?: AgentSkillRuntime | ((context: TurnExecutionContext) => AgentSkillRuntime);
   readonly imageGeneration?: AgentImageGenerationRuntime | ((context: TurnExecutionContext) => AgentImageGenerationRuntime);
   readonly capabilityTools?: (
@@ -75,6 +79,7 @@ export class ToolRuntime {
       : (await import('../capabilities/agentTools')).createAgentTools(this.outliner, {
           localFileRoot: context.thread.cwd,
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
+          ...(this.options.imageNormalizer === undefined ? {} : { imageNormalizer: this.options.imageNormalizer }),
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
         });

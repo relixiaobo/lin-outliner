@@ -1,72 +1,227 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ThreadResourceReference } from '../../src/core/agent/protocol';
+import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../src/core/agentAttachmentLimits';
 import { AttachmentResolver } from '../../src/main/agent/tools/attachments';
 
 const roots: string[] = [];
+const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('AttachmentResolver', () => {
-  test('normalizes local files, assets, and non-image inline data to stable readable paths', async () => {
+  test('canonicalizes a very large local file without copying or applying a shared source limit', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
-    const scratchRoot = await temporaryRoot('tenon-attachment-scratch-');
     const externalRoot = await temporaryRoot('tenon-attachment-source-');
-    const localPath = join(externalRoot, 'local.txt');
-    const assetPath = join(externalRoot, 'asset.pdf');
-    await writeFile(localPath, 'local contents');
-    await writeFile(assetPath, 'asset contents');
-    const resolver = new AttachmentResolver({
-      scratchRoot,
-      resolveAssetPath: async (assetId) => assetId === 'asset-1' ? assetPath : null,
+    const sourcePath = join(externalRoot, 'large-local.bin');
+    await writeFile(sourcePath, '');
+    await truncate(sourcePath, 3 * 1024 * 1024 * 1024);
+    const resolver = resolverWithResources(new Map());
+
+    const [resolved] = await resolver.resolve([
+      attachment('local', 'large-local.bin', 'application/octet-stream', {
+        kind: 'localFile',
+        path: sourcePath,
+      }),
+    ], resolutionContext(workdir));
+
+    expect(resolved).toMatchObject({
+      source: { kind: 'localFile', path: await realpath(sourcePath) },
+      sizeBytes: 3 * 1024 * 1024 * 1024,
     });
+    expect((await stat(sourcePath)).size).toBe(3 * 1024 * 1024 * 1024);
+  });
+
+  test('resolves managed payloads and records an immutable prompt image reference', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    const managedRoot = await temporaryRoot('tenon-attachment-managed-');
+    const documentPath = join(managedRoot, 'report.pdf');
+    const imagePath = join(managedRoot, 'source.png');
+    await writeFile(documentPath, 'managed report');
+    await writeFile(imagePath, 'image source');
+    const documentRef = resourceRef('1', 'application/pdf', 14, 'report.pdf');
+    const imageRef = resourceRef('2', 'image/png', 12, 'source.png');
+    const promptRef = resourceRef('3', 'image/png', 8, 'prompt.png');
+    const snapshots: string[] = [];
+    const resolver = new AttachmentResolver({
+      resolveResourcePath: async (_threadId, ref) => new Map([
+        [documentRef.id, documentPath],
+        [imageRef.id, imagePath],
+        [promptRef.id, join(managedRoot, 'prompt.png')],
+      ]).get(ref.id) ?? null,
+      prepareImageSnapshot: async ({ sourcePath }) => {
+        snapshots.push(sourcePath);
+        return { ref: promptRef, created: true };
+      },
+    });
+    const createdResources: ThreadResourceReference[] = [];
 
     const resolved = await resolver.resolve([
-      attachment('local', 'local.txt', 'text/plain', { kind: 'localFile', path: localPath }),
-      attachment('asset', 'asset.pdf', 'application/pdf', { kind: 'asset', assetId: 'asset-1' }),
-      attachment('inline', 'inline.txt', 'text/plain', {
-        kind: 'inline',
-        dataBase64: Buffer.from('inline contents').toString('base64'),
+      attachment('document', 'report.pdf', 'application/octet-stream', {
+        kind: 'threadPayload',
+        ref: documentRef,
       }),
-      attachment('image', 'image.png', 'image/png', { kind: 'inline', dataBase64: 'aW1hZ2U=' }),
-    ], { threadId: '018f0f24-7b2e-7a3f-8a4b-123456789abc', cwd: workdir });
+      attachment('image', 'source.png', 'image/png', {
+        kind: 'threadPayload',
+        ref: imageRef,
+      }),
+    ], resolutionContext(workdir, createdResources));
 
-    const scratchRealPath = await realpath(scratchRoot);
-    for (const [index, expected] of ['local contents', 'asset contents', 'inline contents'].entries()) {
-      const part = resolved[index];
-      expect(part?.type).toBe('attachment');
-      if (part?.type !== 'attachment' || part.source.kind !== 'localFile') throw new Error('Expected localFile attachment');
-      expect((await realpath(part.source.path)).startsWith(scratchRealPath)).toBe(true);
-      expect(await readFile(part.source.path, 'utf8')).toBe(expected);
-    }
-    expect(resolved[3]).toMatchObject({ source: { kind: 'inline', dataBase64: 'aW1hZ2U=' } });
+    expect(resolved[0]).toMatchObject({
+      mimeType: 'application/pdf',
+      sizeBytes: 14,
+      source: { kind: 'threadPayload', ref: documentRef },
+    });
+    expect(resolved[1]).toMatchObject({ promptImage: promptRef });
+    expect(snapshots).toEqual([imagePath]);
+    expect(createdResources).toEqual([promptRef]);
   });
 
-  test('fails closed when an asset no longer exists', async () => {
+  test('fails closed when a managed payload is unavailable', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
-    const scratchRoot = await temporaryRoot('tenon-attachment-scratch-');
-    const resolver = new AttachmentResolver({ scratchRoot, resolveAssetPath: async () => null });
+    const missingRef = resourceRef('4', 'application/pdf', 10, 'missing.pdf');
+    const resolver = resolverWithResources(new Map());
 
     await expect(resolver.resolve([
-      attachment('missing', 'missing.pdf', 'application/pdf', { kind: 'asset', assetId: 'missing' }),
-    ], { threadId: '018f0f24-7b2e-7a3f-8a4b-123456789abc', cwd: workdir }))
-      .rejects.toThrow('Attachment asset was not found');
+      attachment('missing', 'missing.pdf', 'application/pdf', {
+        kind: 'threadPayload',
+        ref: missingRef,
+      }),
+    ], resolutionContext(workdir)))
+      .rejects.toThrow('Managed attachment payload is unavailable or corrupt');
+  });
+
+  test('reports a created snapshot before a later attachment fails', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    const managedRoot = await temporaryRoot('tenon-attachment-managed-');
+    const imagePath = join(managedRoot, 'source.png');
+    await writeFile(imagePath, 'image source');
+    const imageRef = resourceRef('a', 'image/png', 12, 'source.png');
+    const missingRef = resourceRef('b', 'text/plain', 7, 'missing.txt');
+    const promptRef = resourceRef('c', 'image/png', 8, 'prompt.png');
+    const createdResources: ThreadResourceReference[] = [];
+    const resolver = new AttachmentResolver({
+      resolveResourcePath: async (_threadId, ref) => ref.id === imageRef.id ? imagePath : null,
+      prepareImageSnapshot: async () => ({ ref: promptRef, created: true }),
+    });
+
+    await expect(resolver.resolve([
+      attachment('image', 'source.png', 'image/png', { kind: 'threadPayload', ref: imageRef }),
+      attachment('missing', 'missing.txt', 'text/plain', { kind: 'threadPayload', ref: missingRef }),
+    ], resolutionContext(workdir, createdResources)))
+      .rejects.toThrow('Managed attachment payload is unavailable or corrupt');
+    expect(createdResources).toEqual([promptRef]);
+  });
+
+  test('rejects an oversized managed image before resolving or hashing its payload', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    let resolutions = 0;
+    const resolver = new AttachmentResolver({
+      resolveResourcePath: async () => {
+        resolutions += 1;
+        return null;
+      },
+      prepareImageSnapshot: async () => ({
+        ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
+        created: true,
+      }),
+    });
+
+    await expect(resolver.resolve([
+      attachment('large-image', 'large.png', 'application/octet-stream', {
+        kind: 'threadPayload',
+        ref: resourceRef(
+          '5',
+          'image/png',
+          MAX_IMAGE_ATTACHMENT_SOURCE_BYTES + 1,
+          'large.png',
+        ),
+      }),
+    ], resolutionContext(workdir))).rejects.toThrow('image decode budget');
+    expect(resolutions).toBe(0);
+  });
+
+  test('serializes image snapshot preparation to bound aggregate decode work', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    const managedRoot = await temporaryRoot('tenon-attachment-managed-');
+    const resources = new Map<string, string>();
+    const refs = await Promise.all(['first', 'second', 'third'].map(async (name, index) => {
+      const filePath = join(managedRoot, `${name}.png`);
+      await writeFile(filePath, name);
+      const ref = resourceRef(String(index + 6), 'image/png', name.length, `${name}.png`);
+      resources.set(ref.id, filePath);
+      return ref;
+    }));
+    let activePreparations = 0;
+    let maximumPreparations = 0;
+    const resolver = new AttachmentResolver({
+      resolveResourcePath: async (_threadId, ref) => resources.get(ref.id) ?? null,
+      prepareImageSnapshot: async () => {
+        activePreparations += 1;
+        maximumPreparations = Math.max(maximumPreparations, activePreparations);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activePreparations -= 1;
+        return {
+          ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
+          created: true,
+        };
+      },
+    });
+
+    await resolver.resolve(refs.map((ref, index) => attachment(
+      `image-${index}`,
+      ref.fileName,
+      ref.mimeType,
+      { kind: 'threadPayload', ref },
+    )), resolutionContext(workdir));
+
+    expect(maximumPreparations).toBe(1);
   });
 });
+
+function resolverWithResources(resources: ReadonlyMap<string, string>): AttachmentResolver {
+  return new AttachmentResolver({
+    resolveResourcePath: async (_threadId, ref) => resources.get(ref.id) ?? null,
+    prepareImageSnapshot: async () => ({
+      ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
+      created: true,
+    }),
+  });
+}
+
+function resolutionContext(
+  cwd: string,
+  createdResources: ThreadResourceReference[] = [],
+) {
+  return {
+    threadId: THREAD_ID,
+    cwd,
+    recordCreatedResource: (ref: ThreadResourceReference) => createdResources.push(ref),
+  };
+}
 
 function attachment(
   id: string,
   name: string,
   mimeType: string,
   source:
-    | { readonly kind: 'asset'; readonly assetId: string }
     | { readonly kind: 'localFile'; readonly path: string }
-    | { readonly kind: 'inline'; readonly dataBase64: string },
+    | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference },
 ) {
-  return { type: 'attachment' as const, id, name, mimeType, sizeBytes: 32, source };
+  return { type: 'attachment' as const, id, name, mimeType, sizeBytes: 1, source };
+}
+
+function resourceRef(
+  digit: string,
+  mimeType: string,
+  byteLength: number,
+  fileName: string,
+): ThreadResourceReference {
+  return { id: digit.repeat(64), mimeType, byteLength, fileName };
 }
 
 async function temporaryRoot(prefix: string): Promise<string> {

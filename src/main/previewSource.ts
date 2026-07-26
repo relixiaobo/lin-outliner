@@ -33,9 +33,13 @@ export interface LocalFilePreviewMetadata {
   thumbnailDataUrl?: string;
 }
 
+export interface ThreadAttachmentPreviewFile extends TrustedLocalFileReference {
+  readonly acceptedPathHints: readonly string[];
+}
+
 export interface PreviewCommandContext {
   // The app-owned roots a local-file preview may resolve under: the agent workdir and its
-  // scratch sibling (materialized attachments / web-fetch outputs live in scratch).
+  // scratch sibling (web-fetch outputs and generated preview artifacts live in scratch).
   agentLocalFileRoots: readonly string[];
   // Relative generated-image references are model-authored shortcuts for files
   // created by the app, so they resolve only under the generated-image roots.
@@ -44,6 +48,8 @@ export interface PreviewCommandContext {
   assetFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   inferMimeType: (filePath: string) => string;
   localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;
+  threadAttachmentFile?: (threadId: string, attachmentId: string) => Promise<ThreadAttachmentPreviewFile | null>;
+  threadAttachmentFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
 }
 
@@ -83,15 +89,13 @@ async function previewSourceForTarget(
   context: PreviewCommandContext,
 ): Promise<PreviewSourceDescriptor | null> {
   if (target.kind === 'local-file') {
-    const file = await resolveTrustedLocalFileReference(
-      target.path,
-      context.agentLocalFileRoots,
-      localFileReferenceOptions(context),
-    );
+    const file = await resolveLocalFileTarget(target, context);
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
     const streamUrl = metadata.entryKind === 'file'
-      ? await context.localFileStreamUrl?.(file, metadata.mimeType)
+      ? target.threadId && target.attachmentId
+        ? await context.threadAttachmentFileStreamUrl?.(file.path, metadata.mimeType)
+        : await context.localFileStreamUrl?.(file, metadata.mimeType)
       : null;
     const normalizedTarget: PreviewTarget = {
       ...target,
@@ -184,11 +188,7 @@ async function previewBytesBufferForTarget(
   context: PreviewCommandContext,
 ): Promise<{ bytes: Buffer; mimeType: string; error?: never } | { bytes?: never; mimeType?: never; error: string }> {
   if (target.kind === 'local-file') {
-    const file = await resolveTrustedLocalFileReference(
-      target.path,
-      context.agentLocalFileRoots,
-      localFileReferenceOptions(context),
-    );
+    const file = await resolveLocalFileTarget(target, context);
     if (!file) return { error: 'missing' };
     if (file.entryKind !== 'file') return { error: 'unsupported-entry-kind' };
     if (file.stats.size > limitBytes) return { error: 'too-large' };
@@ -219,11 +219,7 @@ async function previewDirectoryEntriesForTarget(
   context: PreviewCommandContext,
 ): Promise<PreviewListDirectoryResult> {
   if (target.kind !== 'local-file') return { entries: null, error: 'unsupported-target' };
-  const file = await resolveTrustedLocalFileReference(
-    target.path,
-    context.agentLocalFileRoots,
-    localFileReferenceOptions(context),
-  );
+  const file = await resolveLocalFileTarget(target, context);
   if (!file) return { entries: null, error: 'missing' };
   if (file.entryKind !== 'directory') return { entries: null, error: 'unsupported-entry-kind' };
 
@@ -242,7 +238,7 @@ async function previewDirectoryEntriesForTarget(
     }
     const child = await resolveTrustedLocalFileReference(
       join(file.path, dirent.name),
-      context.agentLocalFileRoots,
+      target.threadId && target.attachmentId ? [file.path] : context.agentLocalFileRoots,
       localFileReferenceOptions(context),
     );
     if (!child) continue;
@@ -254,6 +250,9 @@ async function previewDirectoryEntriesForTarget(
         kind: 'local-file',
         path: child.path,
         entryKind: child.entryKind,
+        ...(target.threadId && target.attachmentId
+          ? { threadId: target.threadId, attachmentId: target.attachmentId }
+          : {}),
       },
       mimeType,
       sizeBytes: child.entryKind === 'directory' ? 0 : child.stats.size,
@@ -262,6 +261,32 @@ async function previewDirectoryEntriesForTarget(
   }
 
   return { entries, truncated };
+}
+
+async function resolveLocalFileTarget(
+  target: Extract<PreviewTarget, { kind: 'local-file' }>,
+  context: PreviewCommandContext,
+): Promise<TrustedLocalFileReference | null> {
+  if (!target.threadId || !target.attachmentId) {
+    return resolveTrustedLocalFileReference(
+      target.path,
+      context.agentLocalFileRoots,
+      localFileReferenceOptions(context),
+    );
+  }
+  const attachment = await context.threadAttachmentFile?.(target.threadId, target.attachmentId);
+  if (!attachment) return null;
+  if (attachment.entryKind === 'file') {
+    return target.path === attachment.path || attachment.acceptedPathHints.includes(target.path)
+      ? attachment
+      : null;
+  }
+  if (target.path === attachment.path || attachment.acceptedPathHints.includes(target.path)) return attachment;
+  return resolveTrustedLocalFileReference(
+    target.path,
+    [attachment.path],
+    localFileReferenceOptions(context),
+  );
 }
 
 function localFileReferenceOptions(context: PreviewCommandContext): TrustedLocalFileReferenceOptions {

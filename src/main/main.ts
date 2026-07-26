@@ -3,7 +3,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -25,6 +25,7 @@ import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { AttachmentResolver } from './agent/tools/attachments';
+import { Mutex } from './agent/Mutex';
 import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
@@ -33,6 +34,7 @@ import {
   decodeThreadMemoryMode,
   memoryTagId,
 } from '../core/agent/memory';
+import { decodeThreadResourceReference } from '../core/agent/codec';
 import {
   AUTOMATION_NOTIFICATION_CHANNEL,
   AUTOMATION_REQUEST_CHANNEL,
@@ -55,6 +57,7 @@ import {
 import type {
   AgentCoreMethod,
   AgentCoreRequestByMethod,
+  ThreadAttachmentContent,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
@@ -205,13 +208,16 @@ import {
 } from '../core/translationLanguage';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
-import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
+import {
+  ATTACHMENT_UPLOAD_CHUNK_BYTES,
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGE_DIMENSION,
+} from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
   AGENT_GENERATED_IMAGE_DIR,
-  agentAttachmentDir,
   pruneAgentScratch,
-  pruneOldAgentAttachments,
 } from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
@@ -446,8 +452,8 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
 });
-// Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
-// bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
+// Scratch holds only ephemeral, app-owned data (web-fetch binaries, bash overflow logs, and PDF
+// page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
@@ -475,16 +481,26 @@ void getAgentRuntimeSettings().then((settings) => {
 }).catch((error) => console.error('[agent] failed to load skill settings', error));
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+let threadService!: ThreadService;
+const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
-  scratchRoot: agentScratchRoot,
-  resolveAssetPath: (assetId) => assetService.pathFor(assetId),
+  resolveResourcePath: (threadId, ref) => threadService.resolveThreadResourcePath(threadId, ref),
+  prepareImageSnapshot: async ({ threadId, attachment, sourcePath }) => {
+    const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
+    return threadService.writeThreadResourceWithStatus(
+      threadId,
+      snapshot.bytes,
+      snapshot.mimeType,
+      snapshot.fileName,
+    );
+  },
 });
 const turnExecutor = new PiTurnExecutor({
   createTools: (context) => toolRuntime.createTools(context),
   preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
   skillListing: (context) => toolRuntime.skillListing(context),
 });
-const threadService = ThreadService.open(
+threadService = ThreadService.open(
   resolvedUserDataDir,
   turnExecutor,
   {
@@ -650,6 +666,9 @@ toolRuntime = new ToolRuntime(threadService, {
   outliner: documentService,
   filterOutlinerProjection: (projection, causation) => memoryExtension.filterProjection(projection, causation),
   localWorkspace: localWorkspaceForTurn,
+  imageNormalizer: async ({ filePath, signal }) => {
+    return prepareBoundedAgentImage(filePath, basename(filePath), signal);
+  },
   skillRuntime: skillRuntimeForTurn,
   imageGeneration: (context) => createThreadImageGenerationRuntime(
     context.turn.id,
@@ -1820,6 +1839,53 @@ function trustedLocalFileReferenceOptions() {
   };
 }
 
+interface LocalFileOperationInput {
+  readonly path?: unknown;
+  readonly threadId?: unknown;
+  readonly attachmentId?: unknown;
+}
+
+async function resolveLocalFileOperation(
+  raw: LocalFileOperationInput | undefined,
+  allowAttachmentPathHint = false,
+): Promise<TrustedLocalFileReference | null> {
+  const threadId = typeof raw?.threadId === 'string' && raw.threadId.trim() ? raw.threadId : null;
+  const attachmentId = typeof raw?.attachmentId === 'string' && raw.attachmentId.trim()
+    ? raw.attachmentId
+    : null;
+  if (Boolean(threadId) !== Boolean(attachmentId)) return null;
+  if (!threadId || !attachmentId) {
+    return resolveTrustedLocalFileReference(
+      raw?.path,
+      [agentLocalFileRoot, agentScratchRoot],
+      trustedLocalFileReferenceOptions(),
+    );
+  }
+  const attachment = await threadService.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
+  if (!attachment) return null;
+  if (attachment.entryKind === 'directory') {
+    return resolveTrustedLocalFileReference(
+      raw?.path,
+      [attachment.path],
+      trustedLocalFileReferenceOptions(),
+    );
+  }
+  if (allowAttachmentPathHint) {
+    const requestedPath = typeof raw?.path === 'string' ? raw.path : '';
+    const acceptedHints = attachment.attachment.source.kind === 'localFile'
+      ? [attachment.path, attachment.attachment.source.path]
+      : [
+          attachment.path,
+          attachment.attachment.name,
+          attachment.attachment.source.ref.fileName,
+        ];
+    return acceptedHints.includes(requestedPath) ? attachment : null;
+  }
+  if (typeof raw?.path !== 'string') return null;
+  const requestedPath = await realpath(raw.path).catch(() => null);
+  return requestedPath === attachment.path ? attachment : null;
+}
+
 function registerIpc() {
   ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
@@ -1887,6 +1953,7 @@ function registerIpc() {
         return pageTranslationService.handle(command, args ?? {});
       }
       if (isPreviewCommand(command)) {
+        assertMainRenderer(event, 'Preview');
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
           agentGeneratedImageRoots: [agentScratchRoot],
@@ -1898,6 +1965,21 @@ function registerIpc() {
           inferMimeType,
           localFileStreamUrl: async (file, mimeType) => {
             const token = await localFilePreviewStreams.issue(file, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
+          threadAttachmentFile: async (threadId, attachmentId) => (
+            threadService.resolveAttachmentFile(threadId, attachmentId).then((resolved) => {
+              if (!resolved) return null;
+              return {
+                ...resolved,
+                acceptedPathHints: resolved.attachment.source.kind === 'localFile'
+                  ? [resolved.attachment.source.path]
+                  : [resolved.attachment.name, resolved.attachment.source.ref.fileName],
+              };
+            }).catch(() => null)
+          ),
+          threadAttachmentFileStreamUrl: async (filePath, mimeType) => {
+            const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           localFileReferencePreview,
@@ -2249,69 +2331,91 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+  ipcMain.handle('lin:preview-local-file-reference', async (event, rawOptions?: LocalFileOperationInput) => {
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment preview');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file) return { file: null };
     return { file: await localFileReferencePreview(file) };
   });
 
-  ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+  ipcMain.handle('lin:open-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment open');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
     const error = await shell.openPath(file.path);
     return { opened: error.length === 0 };
   });
 
-  ipcMain.handle('lin:reveal-local-file', async (_event, rawOptions?: { path?: unknown }) => {
+  ipcMain.handle('lin:reveal-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
     // Reveal-in-Finder never executes the file, so it carries no `isSafeLocalFileOpenTarget`
     // gate (an app/script that can't be opened can still be revealed); the same trusted-root
     // boundary as `lin:open-local-file` is the authority.
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment reveal');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file) return { revealed: false };
     shell.showItemInFolder(file.path);
     return { revealed: true };
   });
 
-  ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
-    bytes?: unknown;
-    mimeType?: unknown;
-    name?: unknown;
-  }) => {
-    const bytes = stagedAttachmentBuffer(rawOptions?.bytes);
-    if (!bytes) throw new Error('Attachment bytes are required.');
-    if (bytes.byteLength > MAX_STAGED_ATTACHMENT_BYTES) {
-      throw new Error(`Attachment is larger than ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)} and cannot be staged.`);
+  ipcMain.handle('lin:attachment-upload/begin', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    const expectedBytes = Number(raw?.sizeBytes);
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+      throw new Error('Attachment upload size must be a non-negative safe integer.');
     }
-    const rawName = typeof rawOptions?.name === 'string' && rawOptions.name.trim()
-      ? rawOptions.name.trim()
-      : 'attachment';
-    const mimeType = typeof rawOptions?.mimeType === 'string' && rawOptions.mimeType.trim()
-      ? rawOptions.mimeType.trim()
-      : 'application/octet-stream';
-    const name = safeAttachmentFileName(rawName);
-    await pruneOldAgentAttachments(agentScratchRoot);
-    const attachmentDir = agentAttachmentDir(agentScratchRoot);
-    await mkdir(attachmentDir, { recursive: true });
-    const filePath = join(attachmentDir, `${randomUUID()}-${name}`);
-    await writeFile(filePath, bytes);
-    return {
-      path: filePath,
-      name: rawName,
-      mimeType,
-      sizeBytes: bytes.byteLength,
-    };
+    const threadId = requiredNonEmptyString(raw?.threadId, 'threadId');
+    const attachmentId = requiredNonEmptyString(raw?.attachmentId, 'attachmentId');
+    const uploadId = await threadService.beginAttachmentUpload({
+      threadId,
+      attachmentId,
+      expectedBytes,
+      mimeType: requiredNonEmptyString(raw?.mimeType, 'mimeType'),
+      fileName: requiredNonEmptyString(raw?.name, 'name'),
+    });
+    return { uploadId };
+  });
+
+  ipcMain.handle('lin:attachment-upload/append', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    const bytes = stagedAttachmentBuffer(raw?.bytes);
+    if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_UPLOAD_CHUNK_BYTES) {
+      throw new Error('Attachment upload chunk is invalid.');
+    }
+    await threadService.appendAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+      bytes,
+    });
+    return {};
+  });
+
+  ipcMain.handle('lin:attachment-upload/finish', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    return threadService.finishAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+    });
+  });
+
+  ipcMain.handle('lin:attachment-upload/abort', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    await threadService.abortAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+    });
+    return {};
+  });
+
+  ipcMain.handle('lin:attachment-resource/discard', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment resource discard');
+    const discarded = await threadService.discardUnreferencedThreadResource(
+      requiredNonEmptyString(raw?.threadId, 'threadId'),
+      decodeThreadResourceReference(raw?.ref, 'attachmentResource.ref'),
+    );
+    return { discarded };
   });
 }
 
@@ -2346,23 +2450,26 @@ function requiredNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
+function assertMainRenderer(event: IpcMainInvokeEvent, capability: string): void {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error(`${capability} is available only to the main application window.`);
+  }
+}
+
+function assertAttachmentFileOperationRenderer(
+  event: IpcMainInvokeEvent,
+  input: LocalFileOperationInput | undefined,
+  capability: string,
+): void {
+  if (input?.threadId !== undefined || input?.attachmentId !== undefined) {
+    assertMainRenderer(event, capability);
+  }
+}
+
 function stagedAttachmentBuffer(value: unknown): Buffer | null {
   if (value instanceof ArrayBuffer) return Buffer.from(value);
   if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
   return null;
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
@@ -2932,11 +3039,7 @@ async function localPickedFile(filePath: string) {
     const fileStat = await stat(filePath);
     const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
     if (!entryKind) return null;
-    if (entryKind === 'file' && fileStat.size <= 0) return null;
     const mimeType = entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath);
-    const imageDataBase64 = entryKind === 'file' && isInlineImageMimeType(mimeType) && fileStat.size <= MAX_RAW_INLINE_IMAGE_BYTES
-      ? (await readFile(filePath)).toString('base64')
-      : undefined;
     const [visual] = await withLocalFileIcons([{
       entryKind,
       mimeType,
@@ -2952,11 +3055,100 @@ async function localPickedFile(filePath: string) {
       lastModified: fileStat.mtimeMs,
       ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
       ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
-      ...(imageDataBase64 ? { imageDataBase64 } : {}),
     };
   } catch {
     return null;
   }
+}
+
+async function prepareAttachmentPromptImage(
+  attachment: ThreadAttachmentContent,
+  sourcePath: string,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  return prepareBoundedAgentImage(sourcePath, attachment.name);
+}
+
+async function prepareBoundedAgentImage(
+  sourcePath: string,
+  displayName: string,
+  signal?: AbortSignal,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  return agentImageObservationMutex.run(async () => {
+    signal?.throwIfAborted();
+    return prepareBoundedAgentImageUnlocked(sourcePath, displayName);
+  });
+}
+
+async function prepareBoundedAgentImageUnlocked(
+  sourcePath: string,
+  displayName: string,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  const sourceStat = await stat(sourcePath);
+  if (!sourceStat.isFile() || sourceStat.size <= 0) {
+    throw new Error(`Image is not a readable regular file: ${displayName}`);
+  }
+  if (sourceStat.size > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
+    throw new Error(
+      `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
+    );
+  }
+  let image = await nativeImage.createThumbnailFromPath(sourcePath, {
+    width: MAX_PROMPT_IMAGE_DIMENSION,
+    height: MAX_PROMPT_IMAGE_DIMENSION,
+  });
+  if (image.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
+
+  const png = image.toPNG();
+  if (png.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
+    return {
+      bytes: png,
+      mimeType: 'image/png',
+      fileName: 'prompt.png',
+      dimensions: image.getSize(),
+    };
+  }
+
+  for (;;) {
+    for (const quality of [80, 70, 55, 40]) {
+      const jpeg = image.toJPEG(quality);
+      if (jpeg.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
+        return {
+          bytes: jpeg,
+          mimeType: 'image/jpeg',
+          fileName: 'prompt.jpg',
+          dimensions: image.getSize(),
+        };
+      }
+    }
+    const size = image.getSize();
+    const width = Math.max(1, Math.floor(size.width * 0.75));
+    const height = Math.max(1, Math.floor(size.height * 0.75));
+    if (width === size.width && height === size.height) break;
+    image = image.resize({ width, height, quality: 'best' });
+  }
+  throw new Error(`Image could not fit the model-input image budget: ${displayName}`);
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MiB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
 function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
@@ -2985,13 +3177,6 @@ function inferMimeType(filePath: string): string {
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
-}
-
-function isInlineImageMimeType(mimeType: string): boolean {
-  return mimeType === 'image/jpeg'
-    || mimeType === 'image/png'
-    || mimeType === 'image/gif'
-    || mimeType === 'image/webp';
 }
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([

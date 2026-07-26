@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -21,9 +21,12 @@ import {
   type BashStopData,
 } from '../../src/main/agent/capabilities/agentLocalTools';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
-import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agent/capabilities/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { agentDerivedFileCache } from '../../src/main/agent/capabilities/agentFileIngestionCache';
+import {
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+} from '../../src/core/agentAttachmentLimits';
 import {
   clearRipgrepCommandCacheForTests,
   getBundledRipgrepExecutablePath,
@@ -408,37 +411,26 @@ describe('agent local tools', () => {
     });
   });
 
-  test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
+  test('an app-owned resource in a separate scratch root is readable by file_read', async () => {
     // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
     // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.
     // This proves the materializer and file tool agree when scratch sits outside the workdir.
     await withWorkspace(async (workspaceRoot) => {
       const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
-      const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-source-'));
       try {
-        const sourcePath = path.join(sourceRoot, 'report.txt');
-        await writeFile(sourcePath, 'materialized body', 'utf8');
-
-        // The app materializes an attachment exactly as production does.
-        const attachment = await materializePathBackedAttachment(workspaceRoot, scratchRoot, {
-          name: 'report.txt',
-          path: sourcePath,
-        });
-        expect(attachment.path).toStartWith(agentAttachmentDir(scratchRoot));
-        expect(attachment.path).not.toStartWith(path.resolve(workspaceRoot));
-
-        // The agent can then read that materialized path back through file_read.
+        const resourcePath = path.join(scratchRoot, 'thread-resources', 'report.txt');
+        await mkdir(path.dirname(resourcePath), { recursive: true });
+        await writeFile(resourcePath, 'managed body', 'utf8');
         const fileRead = createLocalTools({ localRoot: workspaceRoot, scratchRoot })
           .find((tool) => tool.name === 'file_read')!;
-        const read = (await (fileRead.execute as any)('call', { file_path: attachment.path })).details as ToolEnvelope<{
+        const read = (await (fileRead.execute as any)('call', { file_path: resourcePath })).details as ToolEnvelope<{
           type: 'text';
           file: { content: string };
         }>;
         expect(read.ok).toBe(true);
-        expect(read.data!.file.content).toBe('materialized body');
+        expect(read.data!.file.content).toBe('managed body');
       } finally {
         await rm(scratchRoot, { recursive: true, force: true });
-        await rm(sourceRoot, { recursive: true, force: true });
       }
     });
   });
@@ -478,9 +470,87 @@ describe('agent local tools', () => {
         content: 'beta',
         numLines: 1,
         startLine: 2,
-        totalLines: 3,
+        totalLines: null,
+        hasMore: true,
       });
       expect(read.instructions).toContain('offset 3');
+    });
+  });
+
+  test('file_read reports EOF instead of a bogus continuation offset', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'short.txt');
+      await writeFile(filePath, 'alpha\nbeta\n', 'utf8');
+
+      const read = await executeTool<{
+        type: 'text';
+        file: { content: string; numLines: number; startLine: number; totalLines: number | null; hasMore: boolean };
+      }>(workspaceRoot, 'file_read', { file_path: filePath, offset: 9, limit: 1 });
+
+      expect(read.status).toBe('partial');
+      expect(read.data!.file).toEqual({
+        filePath,
+        content: '',
+        numLines: 0,
+        startLine: 0,
+        totalLines: 2,
+        hasMore: false,
+      });
+      expect(read.instructions).toContain('Reached the end of the file');
+      expect(read.instructions).not.toContain('offset 0');
+    });
+  });
+
+  test('file_read stops after a bounded line window without rejecting a huge source', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'huge.log');
+      await writeFile(filePath, `first\nsecond\n${'x'.repeat(8192)}`, 'utf8');
+      await truncate(filePath, 2 * 1024 * 1024 * 1024);
+
+      const read = await executeTool<{
+        type: 'text';
+        file: { content: string; totalLines: number | null; hasMore: boolean };
+      }>(workspaceRoot, 'file_read', { file_path: filePath, limit: 1 });
+
+      expect(read.ok).toBe(true);
+      expect(read.status).toBe('partial');
+      expect(read.data!.file).toMatchObject({ content: 'first', totalLines: null, hasMore: true });
+      expect((await stat(filePath)).size).toBe(2 * 1024 * 1024 * 1024);
+    });
+  });
+
+  test('file_read bounds a single long line by characters', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'long-line.txt');
+      await writeFile(filePath, 'x'.repeat(250_000), 'utf8');
+
+      const read = await executeTool<{
+        type: 'text';
+        file: { content: string; lineTruncated?: boolean; totalLines: number | null };
+      }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+      expect(read.ok).toBe(true);
+      expect(read.status).toBe('partial');
+      expect(read.data!.file.content).toHaveLength(200_000);
+      expect(read.data!.file.lineTruncated).toBe(true);
+      expect(read.data!.file.totalLines).toBeNull();
+    });
+  });
+
+  test('file_read propagates cancellation instead of recording a file failure', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'cancel.txt');
+      await writeFile(filePath, 'content', 'utf8');
+      const fileRead = createLocalTools({ localRoot: workspaceRoot })
+        .find((tool) => tool.name === 'file_read')!;
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect((fileRead.execute as any)(
+        'call',
+        { file_path: filePath },
+        controller.signal,
+      )).rejects.toMatchObject({ name: 'AbortError' });
     });
   });
 
@@ -656,6 +726,64 @@ describe('agent local tools', () => {
       expect(visible.data.file.dimensions).toEqual({ width: 7, height: 11 });
       expect(visible.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+    });
+  });
+
+  test('file_read normalizes a large image into a bounded observation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'large-image.png');
+      await writeFile(filePath, makePng(4_000, 3_000));
+      await truncate(filePath, MAX_PROMPT_IMAGE_BYTES + 1);
+      const normalized = makePng(1_000, 750);
+      let normalizations = 0;
+      const tool = createLocalTools({
+        localRoot: workspaceRoot,
+        imageNormalizer: async ({ filePath: observedPath, sourceMimeType }) => {
+          normalizations += 1;
+          expect(observedPath).toBe(filePath);
+          expect(sourceMimeType).toBe('image/png');
+          return {
+            bytes: normalized,
+            mimeType: 'image/png',
+            dimensions: { width: 1_000, height: 750 },
+          };
+        },
+      }).find((candidate) => candidate.name === 'file_read')!;
+
+      const result = await (tool.execute as any)('bounded-image', { file_path: filePath });
+      const read = result.details as ToolEnvelope<{
+        type: 'image';
+        file: { originalSize: number; base64: string; dimensions: { width: number; height: number } };
+      }>;
+
+      expect(read.ok).toBe(true);
+      expect(read.data!.file.originalSize).toBe(MAX_PROMPT_IMAGE_BYTES + 1);
+      expect(read.data!.file.dimensions).toEqual({ width: 1_000, height: 750 });
+      expect(Buffer.from(read.data!.file.base64, 'base64')).toEqual(normalized);
+      expect(normalizations).toBe(1);
+    });
+  });
+
+  test('file_read rejects an image above its decode budget before normalization', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'oversized-image.png');
+      await writeFile(filePath, makePng(1, 1));
+      await truncate(filePath, MAX_IMAGE_ATTACHMENT_SOURCE_BYTES + 1);
+      let normalizations = 0;
+      const tool = createLocalTools({
+        localRoot: workspaceRoot,
+        imageNormalizer: async () => {
+          normalizations += 1;
+          return { bytes: makePng(1, 1), mimeType: 'image/png' };
+        },
+      }).find((candidate) => candidate.name === 'file_read')!;
+
+      const result = await (tool.execute as any)('oversized-image', { file_path: filePath });
+      const read = result.details as ToolEnvelope<unknown>;
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('image_decode_budget_exceeded');
+      expect(normalizations).toBe(0);
     });
   });
 
@@ -1093,6 +1221,22 @@ describe('agent local tools', () => {
       expect(read.ok).toBe(false);
       expect(read.error?.code).toBe('pdf_corrupted');
       expect(read.error?.message).toContain('not a valid PDF');
+    });
+  });
+
+  test('file_read rejects an oversized PDF before buffering the source', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'oversized.pdf');
+      await writeFile(filePath, '%PDF-');
+      await truncate(filePath, 100 * 1024 * 1024 + 1);
+      const tool = createLocalTools({ localRoot: workspaceRoot })
+        .find((candidate) => candidate.name === 'file_read')!;
+
+      const result = await (tool.execute as any)('oversized-pdf', { file_path: filePath });
+      const read = result.details as ToolEnvelope<unknown>;
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('pdf_too_large');
     });
   });
 

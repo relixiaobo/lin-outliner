@@ -64,6 +64,21 @@ Relative paths resolve from the Thread working directory. Full Access permits
 absolute host paths unless an explicit block removes the capability. File tools
 return bounded content and persist oversized output in app-owned scratch space.
 
+Ordinary text `file_read` bounds the observation rather than the source. It
+classifies encoding and binary content from an 8 KiB prefix, streams only until
+the requested line window, an extra-content signal, or the 200,000-character
+projection budget is reached, then closes the stream. `totalLines` is known only
+when the scan reaches EOF; `hasMore` and `lineTruncated` make incomplete views
+explicit. The active Turn's `AbortSignal` reaches the reader; cancellation closes
+the stream and propagates as cancellation rather than being rewritten as a file
+failure. Editing and notebook parsing still require their independent 10 MiB
+whole-file budget. Image `file_read` uses main's globally serialized native
+normalization path: it accepts at most 256 MiB of source data and emits at most
+2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
+PDF and rich-document reads retain their own page, byte, output, and timeout
+budgets; PDF source size is rejected before whole-file buffering, and rendered
+page images are normalized serially through the same bounded image path.
+
 `bash` executes through the host shell, streams bounded output, records process
 identity, and may return a background handle. `bash_stop` addresses only a known
 live process handle. Native command exit and filesystem errors remain visible to

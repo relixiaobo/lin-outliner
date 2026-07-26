@@ -1951,7 +1951,12 @@ export async function openPreviewSource(source: PreviewSourceDescriptor): Promis
     return;
   }
   if (source.sourceKind === 'local-file' && source.target.kind === 'local-file') {
-    await window.lin?.openLocalFile?.({ path: source.target.path });
+    await window.lin?.openLocalFile?.({
+      path: source.target.path,
+      ...(source.target.threadId && source.target.attachmentId
+        ? { threadId: source.target.threadId, attachmentId: source.target.attachmentId }
+        : {}),
+    });
   }
 }
 
@@ -1967,6 +1972,11 @@ export async function revealPreviewSource(source: PreviewSourceDescriptor): Prom
     return;
   }
   if (source.sourceKind === 'local-file' && source.target.kind === 'local-file') {
-    await window.lin?.revealLocalFile?.({ path: source.target.path });
+    await window.lin?.revealLocalFile?.({
+      path: source.target.path,
+      ...(source.target.threadId && source.target.attachmentId
+        ? { threadId: source.target.threadId, attachmentId: source.target.attachmentId }
+        : {}),
+    });
   }
 }

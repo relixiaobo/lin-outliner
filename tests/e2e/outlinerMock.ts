@@ -53,6 +53,8 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
   agentTurnFailure?: boolean | string;
+  /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
+  attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
 }
@@ -92,7 +94,8 @@ type E2EWindow = Window & {
     notifySettingsChanged?: () => Promise<void>;
     onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
-    openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
+    openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
+    revealLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ revealed: boolean }>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
     prepareLocalFile?: (options: { id: string }) => Promise<{
       file: {
@@ -102,10 +105,10 @@ type E2EWindow = Window & {
         mimeType: string;
         sizeBytes: number;
         lastModified: number;
-        imageDataBase64?: string;
+        thumbnailDataUrl?: string;
       } | null;
     }>;
-    previewLocalFileReference?: (options: { path: string }) => Promise<{
+    previewLocalFileReference?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{
       file: {
         entryKind: 'file' | 'directory';
         path: string;
@@ -118,6 +121,33 @@ type E2EWindow = Window & {
         thumbnailDataUrl?: string;
       } | null;
     }>;
+    beginAttachmentUpload?: (input: {
+      threadId: string;
+      attachmentId: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+    }) => Promise<{ uploadId: string }>;
+    appendAttachmentUpload?: (input: {
+      threadId: string;
+      attachmentId: string;
+      uploadId: string;
+      bytes: ArrayBuffer;
+    }) => Promise<Record<string, never>>;
+    finishAttachmentUpload?: (input: {
+      threadId: string;
+      attachmentId: string;
+      uploadId: string;
+    }) => Promise<{ id: string; mimeType: string; byteLength: number; fileName: string }>;
+    abortAttachmentUpload?: (input: {
+      threadId: string;
+      attachmentId: string;
+      uploadId: string;
+    }) => Promise<Record<string, never>>;
+    discardAttachmentResource?: (input: {
+      threadId: string;
+      ref: { id: string; mimeType: string; byteLength: number; fileName: string };
+    }) => Promise<{ discarded: boolean }>;
     recentLocalFiles?: (options?: { limit?: number }) => Promise<{
       files: Array<{
         entryKind: 'file' | 'directory';
@@ -131,12 +161,6 @@ type E2EWindow = Window & {
         iconDataUrl?: string;
         thumbnailDataUrl?: string;
       }>;
-    }>;
-    stageAttachment?: (input: { name: string; mimeType: string; bytes: ArrayBuffer }) => Promise<{
-      path: string;
-      name: string;
-      mimeType: string;
-      sizeBytes: number;
     }>;
   };
 };
@@ -288,6 +312,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    const attachmentUploads = new Map<string, {
+      threadId: string;
+      attachmentId: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      receivedBytes: number;
+      chunks: Uint8Array[];
+    }>();
     const agentCoreListeners: Array<(notification: unknown) => void> = [];
     const automationListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
@@ -472,7 +505,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             name: string;
             mimeType: string;
             sizeBytes: number;
-            source: { kind: 'asset'; assetId: string } | { kind: 'localFile'; path: string } | { kind: 'inline'; dataBase64: string };
+            source:
+              | { kind: 'localFile'; path: string }
+              | {
+                  kind: 'threadPayload';
+                  ref: { id: string; mimeType: string; byteLength: number; fileName: string };
+                };
           }
       >;
       text?: string;
@@ -2054,6 +2092,60 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
       onSettingsNavigate: () => () => {},
+      beginAttachmentUpload: async (input) => {
+        const uploadId = `upload-${++sequence}`;
+        attachmentUploads.set(uploadId, { ...input, receivedBytes: 0, chunks: [] });
+        calls.push({ cmd: 'attachment-upload/begin', args: clone({ ...input, uploadId }) });
+        return { uploadId };
+      },
+      appendAttachmentUpload: async (input) => {
+        if (options.attachmentUploadDelayMs) await delay(options.attachmentUploadDelayMs);
+        const upload = attachmentUploads.get(input.uploadId);
+        if (!upload) throw new Error('Mock attachment upload was not found');
+        upload.receivedBytes += input.bytes.byteLength;
+        upload.chunks.push(new Uint8Array(input.bytes.slice(0)));
+        calls.push({
+          cmd: 'attachment-upload/append',
+          args: clone({
+            threadId: input.threadId,
+            attachmentId: input.attachmentId,
+            uploadId: input.uploadId,
+            byteLength: input.bytes.byteLength,
+          }),
+        });
+        return {};
+      },
+      finishAttachmentUpload: async (input) => {
+        const upload = attachmentUploads.get(input.uploadId);
+        if (!upload || upload.receivedBytes !== upload.sizeBytes) {
+          throw new Error('Mock attachment upload length mismatch');
+        }
+        attachmentUploads.delete(input.uploadId);
+        calls.push({ cmd: 'attachment-upload/finish', args: clone(input) });
+        const bytes = new Uint8Array(upload.receivedBytes);
+        let offset = 0;
+        for (const chunk of upload.chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        const id = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+        return {
+          id,
+          mimeType: upload.mimeType,
+          byteLength: upload.sizeBytes,
+          fileName: upload.name,
+        };
+      },
+      abortAttachmentUpload: async (input) => {
+        attachmentUploads.delete(input.uploadId);
+        calls.push({ cmd: 'attachment-upload/abort', args: clone(input) });
+        return {};
+      },
+      discardAttachmentResource: async (input) => {
+        calls.push({ cmd: 'attachment-resource/discard', args: clone(input) });
+        return { discarded: true };
+      },
       recentLocalFiles: async () => ({
         files: [
           {
@@ -2122,20 +2214,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               mimeType: 'image/png',
               sizeBytes: 10,
               lastModified: now - 3_000,
-              imageDataBase64: 'bW9jayBpbWFnZQ==',
+              thumbnailDataUrl: 'data:image/png;base64,bW9jayBpbWFnZQ==',
             },
           };
         }
         return { file: null };
-      },
-      stageAttachment: async (input) => {
-        const safeName = (input.name || 'attachment').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'attachment';
-        return {
-          path: `/mock/local-root/tmp/agent-attachments/${++sequence}-${safeName}`,
-          name: input.name || 'attachment',
-          mimeType: input.mimeType || 'application/octet-stream',
-          sizeBytes: input.bytes.byteLength,
-        };
       },
       getProviderApiKey: async (providerId) => {
         const args = { providerId };

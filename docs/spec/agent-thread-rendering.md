@@ -218,13 +218,19 @@ Turn, then resubmits the original structured content with only its text replaced
 as a fresh Turn in the same Thread. It does not mutate the sealed source Turn or
 undo any document, file, tool, Goal, or external effect.
 
-Attachment interaction retains the established source-identity rules. Local
-paths deduplicate by path; pathless files deduplicate by a renderer-only content
-hash, so same-named files from different sources remain distinct. Duplicate and
-attachment-limit skips produce transient feedback. Supported images selected by
-the native picker remain inline model-vision input while their composer reference
-keeps the local path for preview; renderer-only source keys, icons, thumbnails,
-and hashes never enter `ThreadAttachmentContent`.
+Attachment interaction retains source identity without carrying source bytes.
+Local paths deduplicate by path. Pathless files stream to Thread-owned storage
+and deduplicate by the returned content digest, so same-named files with
+different content remain distinct. Native picker, browser file, drag-and-drop,
+and mention admissions share one serialized composer queue, so duplicate and
+six-attachment limit checks observe every previously committed admission.
+Removing an unsent managed reference or leaving its Thread aborts an unfinished
+upload and discards a completed payload when neither another retained draft
+reference nor canonical history owns it. Duplicate and attachment-count skips
+produce transient feedback. Composer previews may use renderer-only object URLs
+or native thumbnails, but icons, thumbnails, object URLs, and upload state never
+enter `ThreadAttachmentContent`. Images receive their bounded immutable prompt
+snapshot during main-process admission, not in renderer canvas code.
 
 `request_user_input` replaces the editor inside the existing composer surface
 with an in-dock form tied to one Item. It is a product-input surface, never a

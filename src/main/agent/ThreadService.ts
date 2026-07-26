@@ -1,4 +1,6 @@
+import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Stats } from 'node:fs';
 import {
   createHostRootTurnAdmissionBarrierSnapshot,
   createThreadAdmissionBarrierSnapshot,
@@ -71,6 +73,8 @@ import type {
   ThreadTurnsListRequest,
   ThreadTurnsListResponse,
   ThreadUserContent,
+  ThreadAttachmentContent,
+  ThreadResourceReference,
   JsonValue,
   Turn,
   TurnId,
@@ -164,6 +168,14 @@ export interface RendererThreadStartDefaults {
 export interface ThreadUserContentResolutionContext {
   readonly threadId: ThreadId;
   readonly cwd: string;
+  readonly recordCreatedResource: (ref: ThreadResourceReference) => void;
+}
+
+export interface ResolvedThreadAttachmentFile {
+  readonly entryKind: 'file' | 'directory';
+  readonly path: string;
+  readonly stats: Stats;
+  readonly attachment: ThreadAttachmentContent;
 }
 
 export interface FeatureRootThreadInput {
@@ -369,6 +381,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    await this.payloads.initialize();
+    const knownThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
     for (const archived of [false, true]) {
       let cursor: string | null = null;
@@ -376,11 +390,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           await this.reconcileThread(thread.id);
+          knownThreadIds.push(thread.id);
           if (!archived) resumableThreadIds.push(thread.id);
         }
         cursor = page.nextCursor;
       } while (cursor);
     }
+    await Promise.all(knownThreadIds.map((threadId) => (
+      this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId))
+    )));
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
       const { thread } = await this.resumeThread(threadId);
@@ -410,6 +428,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const operations = await Promise.allSettled([
       this.rollout.flush(),
       this.rollbackRecovery.close(),
+      this.payloads.abortAllResourceUploads(),
       Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId))),
     ]);
     for (const result of operations) {
@@ -711,6 +730,172 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { output: { ref: item.outputRef, text } };
   }
 
+  async beginAttachmentUpload(input: {
+    readonly threadId: ThreadId;
+    readonly attachmentId: string;
+    readonly expectedBytes: number;
+    readonly mimeType: string;
+    readonly fileName: string;
+  }): Promise<string> {
+    this.requireThread(input.threadId);
+    return this.payloads.beginResourceUpload(input);
+  }
+
+  async appendAttachmentUpload(input: {
+    readonly threadId: ThreadId;
+    readonly attachmentId: string;
+    readonly uploadId: string;
+    readonly bytes: Uint8Array;
+  }): Promise<void> {
+    this.requireThread(input.threadId);
+    await this.payloads.appendResourceUpload(
+      input.threadId,
+      input.attachmentId,
+      input.uploadId,
+      input.bytes,
+    );
+  }
+
+  async finishAttachmentUpload(input: {
+    readonly threadId: ThreadId;
+    readonly attachmentId: string;
+    readonly uploadId: string;
+  }): Promise<ThreadResourceReference> {
+    this.requireThread(input.threadId);
+    return this.payloads.finishResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+  }
+
+  async abortAttachmentUpload(input: {
+    readonly threadId: ThreadId;
+    readonly attachmentId: string;
+    readonly uploadId: string;
+  }): Promise<void> {
+    await this.payloads.abortResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+  }
+
+  async writeThreadResource(
+    threadId: ThreadId,
+    bytes: Uint8Array,
+    mimeType: string,
+    fileName: string,
+  ): Promise<ThreadResourceReference> {
+    this.requireThread(threadId);
+    return this.payloads.writeResource(threadId, bytes, mimeType, fileName);
+  }
+
+  async writeThreadResourceWithStatus(
+    threadId: ThreadId,
+    bytes: Uint8Array,
+    mimeType: string,
+    fileName: string,
+  ): Promise<{ readonly ref: ThreadResourceReference; readonly created: boolean }> {
+    this.requireThread(threadId);
+    return this.payloads.writeResourceWithStatus(threadId, bytes, mimeType, fileName);
+  }
+
+  async resolveThreadResourcePath(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<string | null> {
+    this.requireThread(threadId);
+    return this.payloads.resourcePath(threadId, ref);
+  }
+
+  async readThreadResource(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<Buffer | null> {
+    this.requireThread(threadId);
+    return this.payloads.readResource(threadId, ref);
+  }
+
+  async discardUnreferencedThreadResource(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<boolean> {
+    return this.threadMutex.run(threadId, async () => {
+      this.requireThread(threadId);
+      if (this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+        return false;
+      }
+      return this.payloads.deleteResource(threadId, ref);
+    });
+  }
+
+  async resolveAttachmentFile(
+    threadId: ThreadId,
+    attachmentId: string,
+  ): Promise<ResolvedThreadAttachmentFile | null> {
+    this.requireThread(threadId);
+    const matches = this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => (
+      item.type === 'userMessage'
+        ? item.content.flatMap((content) => (
+            content.type === 'attachment' && content.id === attachmentId ? [content] : []
+          ))
+        : []
+    )));
+    if (matches.length === 0) return null;
+    const attachment = matches[0]!;
+    if (matches.some((candidate) => !attachmentSourcesEqual(candidate, attachment))) return null;
+    const storedPath = attachment.source.kind === 'localFile'
+      ? attachment.source.path
+      : await this.payloads.resourcePath(threadId, attachment.source.ref);
+    if (!storedPath) return null;
+    const canonicalPath = await realpath(storedPath).catch(() => null);
+    if (!canonicalPath) return null;
+    if (attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) return null;
+    const fileStats = await stat(canonicalPath).catch(() => null);
+    const entryKind = fileStats?.isFile() ? 'file' : fileStats?.isDirectory() ? 'directory' : null;
+    if (!fileStats || !entryKind) return null;
+    return { attachment, entryKind, path: canonicalPath, stats: fileStats };
+  }
+
+  private threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
+    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => (
+      item.type === 'userMessage'
+        ? item.content.flatMap((content) => content.type === 'attachment'
+          ? [
+              ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
+              ...(content.promptImage ? [content.promptImage] : []),
+            ]
+          : [])
+        : []
+    )));
+  }
+
+  private async resolveAdmissionContent(
+    content: readonly ThreadUserContent[],
+    thread: Thread,
+  ): Promise<{
+    readonly content: readonly ThreadUserContent[];
+    readonly createdResources: readonly ThreadResourceReference[];
+  }> {
+    const createdResources: ThreadResourceReference[] = [];
+    try {
+      const resolved = await this.resolveUserContent(content, {
+        threadId: thread.id,
+        cwd: thread.cwd,
+        recordCreatedResource: (ref) => createdResources.push(ref),
+      });
+      return { content: resolved, createdResources };
+    } catch (error) {
+      await this.discardCreatedAdmissionResources(thread.id, createdResources);
+      throw error;
+    }
+  }
+
+  private async discardCreatedAdmissionResources(
+    threadId: ThreadId,
+    resources: readonly ThreadResourceReference[],
+  ): Promise<void> {
+    const referenced = this.threadResourceReferences(threadId);
+    const unique = resources.filter((ref, index) => (
+      resources.findIndex((candidate) => resourceReferencesEqual(candidate, ref)) === index
+      && !referenced.some((candidate) => resourceReferencesEqual(candidate, ref))
+    ));
+    await Promise.all(unique.map((ref) => this.payloads.deleteResource(threadId, ref)));
+  }
+
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
     const state = this.ephemeral.get(request.threadId);
     if (!state) return this.history.listItems(request);
@@ -907,6 +1092,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const copied = copyTurn(sourceTurn, now);
     const items: ThreadItem[] = [];
     for (const item of copied.items) {
+      if (item.type === 'userMessage') {
+        for (const content of item.content) {
+          if (content.type !== 'attachment') continue;
+          const refs = [
+            ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
+            ...(content.promptImage ? [content.promptImage] : []),
+          ];
+          for (const ref of refs) {
+            const copied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
+            if (!copied) throw new Error(`Missing attachment payload: ${ref.id}`);
+          }
+        }
+      }
       if ('outputRef' in item && item.outputRef) {
         const payloadCopied = await this.payloads.copyTextToThread(
           sourceThreadId,
@@ -1198,18 +1396,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return { turnId: existing.turnId, acceptedItemId: existing.itemId, deduplicated: true };
       }
       const thread = this.requireThread(request.threadId).thread;
-      const input = await this.resolveUserContent(request.input, {
-        threadId: thread.id,
-        cwd: thread.cwd,
-      });
-      const item = userMessage(request.threadId, active.turnId, input, request.clientUserMessageId ?? null);
-      await active.recorder.completedImmediately(item, this.now());
-      if (request.clientUserMessageId) this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
-      const steered = { content: input, additionalContext: request.additionalContext };
-      if (active.steeringHandler) await active.steeringHandler(steered);
-      else active.queuedSteering.push(steered);
-      this.signalCollaborationActivity(request.threadId);
-      return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
+      const admission = await this.resolveAdmissionContent(request.input, thread);
+      try {
+        const item = userMessage(
+          request.threadId,
+          active.turnId,
+          admission.content,
+          request.clientUserMessageId ?? null,
+        );
+        await active.recorder.completedImmediately(item, this.now());
+        if (request.clientUserMessageId) this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
+        const steered = { content: admission.content, additionalContext: request.additionalContext };
+        if (active.steeringHandler) await active.steeringHandler(steered);
+        else active.queuedSteering.push(steered);
+        this.signalCollaborationActivity(request.threadId);
+        return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
+      } catch (error) {
+        await this.discardCreatedAdmissionResources(thread.id, admission.createdResources);
+        throw error;
+      }
     });
   }
 
@@ -1660,10 +1865,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
     const startedAt = this.now();
     const turnId = request.turnId ?? uuidV7(startedAt);
-    const input = await this.resolveUserContent(request.input, {
-      threadId: record.thread.id,
-      cwd: record.thread.cwd,
-    });
+    const admission = await this.resolveAdmissionContent(request.input, record.thread);
+    try {
+      return await this.commitAcceptedTurn(request, record, turnId, startedAt, admission.content);
+    } catch (error) {
+      await this.discardCreatedAdmissionResources(record.thread.id, admission.createdResources);
+      throw error;
+    }
+  }
+
+  private async commitAcceptedTurn(
+    request: PrivilegedTurnStartRequest,
+    record: ThreadCatalogRecord,
+    turnId: TurnId,
+    startedAt: number,
+    input: readonly ThreadUserContent[],
+  ): Promise<AcceptedTurn> {
     const preview = threadPreviewFromContent(input);
     const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null);
     const turn = decodeTurn({
@@ -1764,6 +1981,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         systemContext,
         signal: active.controller.signal,
         recorder: active.recorder,
+        resolveResourcePath: (ref) => this.payloads.resourcePath(active.threadId, ref),
+        readResource: (ref) => this.payloads.readResource(active.threadId, ref),
         persistOutputImage: (itemId, index, dataBase64, mimeType) => this.payloads.writeImage(
           active.threadId,
           itemId,
@@ -2706,6 +2925,37 @@ function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must be non-empty`);
   return normalized;
+}
+
+function attachmentSourcesEqual(
+  left: ThreadAttachmentContent,
+  right: ThreadAttachmentContent,
+): boolean {
+  if (
+    left.name !== right.name
+    || left.mimeType !== right.mimeType
+    || left.sizeBytes !== right.sizeBytes
+    || left.source.kind !== right.source.kind
+  ) return false;
+  if (left.source.kind === 'localFile' && right.source.kind === 'localFile') {
+    if (left.source.path !== right.source.path) return false;
+  } else if (left.source.kind === 'threadPayload' && right.source.kind === 'threadPayload') {
+    if (!resourceReferencesEqual(left.source.ref, right.source.ref)) return false;
+  } else {
+    return false;
+  }
+  if (!left.promptImage || !right.promptImage) return left.promptImage === right.promptImage;
+  return resourceReferencesEqual(left.promptImage, right.promptImage);
+}
+
+function resourceReferencesEqual(
+  left: ThreadResourceReference,
+  right: ThreadResourceReference,
+): boolean {
+  return left.id === right.id
+    && left.mimeType === right.mimeType
+    && left.byteLength === right.byteLength
+    && left.fileName === right.fileName;
 }
 
 function userMessage(

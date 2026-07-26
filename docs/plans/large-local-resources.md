@@ -71,9 +71,11 @@ the recorded user Item and is the authorization key for operations that need to
 cross the normal Thread path boundary. No attachment source contains base64 or
 an unbounded byte array.
 
-Path-backed admission resolves symlinks, requires a regular file, records the
-canonical path, and does not copy or reject based on source length. Later access
-revalidates the referenced file and reports native missing or changed behavior.
+Path-backed admission resolves symlinks, records the canonical path, and does
+not copy or reject regular files based on source length. Directory references
+remain supported only when they resolve inside the Thread working directory;
+they are not copied and record a zero byte size. Later access revalidates the
+referenced path and reports native missing or changed behavior.
 
 Pathless admission streams chunks across the preload boundary into a staged
 Thread payload writer. The writer enforces a managed-input storage budget,
@@ -100,10 +102,11 @@ Image attachments are normalized in main, never renderer. The renderer sends a
 local-file reference or streams a pathless source; it does not call
 `FileReader.readAsDataURL` and does not construct base64 protocol content.
 
-Before model input, main decodes within an image-specific input budget, applies
-orientation, downscales to the configured maximum dimensions/pixels, and writes
-the encoded prompt snapshot to Thread-owned payload storage. The persisted user
-Item references both the original resource and this bounded, immutable prompt
+Before model input, main serializes all native image observations across Threads
+and tool calls, decodes within an image-specific source-byte budget, applies
+orientation, downscales to the configured maximum dimensions, and writes the
+bounded encoded prompt snapshot to Thread-owned payload storage. The persisted
+user Item references both the original resource and this immutable prompt
 snapshot. Initial execution, steering replay, history reconstruction, and Thread
 forks therefore observe the same bounded image bytes even if an external source
 later changes.
@@ -143,7 +146,7 @@ Remove the shared source-file ceiling and keep named limits at the point where a
 consumer allocates or transforms data:
 
 - managed pathless payload byte budget and Thread storage quota;
-- image encoded-byte, decoded-pixel, dimension, and provider-request budgets;
+- image source-byte, output-byte, dimension, and provider-request budgets;
 - PDF parser page/byte/time budgets;
 - Office converter byte/time/output budgets;
 - preview range and media-stream behavior;
@@ -156,9 +159,14 @@ resource must not be reported as a generic attachment-size rejection.
 
 Admission is transactional: no user Item is recorded until every pathless
 upload and required image snapshot is finalized. Failure removes owned staging
-files and leaves path-backed resources untouched. Startup cleanup removes stale
-staging entries. Cancellation is observed during chunk writes, hashing, image
-normalization, and file scanning.
+files and any newly created, still-unreferenced prompt snapshots while leaving
+path-backed and pre-existing content-addressed resources untouched. Startup
+cleanup reconciles crash leftovers and removes stale staging entries. Upload
+chunking and file scanning observe cancellation and close their active reader or
+stream. Electron's native image transform exposes no cooperative cancellation
+primitive, so once image normalization starts it runs to completion inside its
+independent source-byte, dimension, and encoded-output budgets; only a completed
+snapshot may be published.
 
 Persisted attachment references are replayable without renderer state. Missing
 external files produce explicit unavailable content while managed payload

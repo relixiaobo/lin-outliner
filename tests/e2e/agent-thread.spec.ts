@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { MAX_INLINE_IMAGE_BASE64_CHARS, MAX_RAW_INLINE_IMAGE_BYTES } from '../../src/core/agentAttachmentLimits';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+
+const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
 
 async function createNewThread(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -532,7 +533,7 @@ test.describe('canonical agent Thread surface', () => {
     ]);
   });
 
-  test('keeps same-named files from distinct sources and accepts a regular file above the image limit', async ({ page }) => {
+  test('keeps same-named files from distinct sources and accepts a regular file above the former shared limit', async ({ page }) => {
     await createNewThread(page);
     const fileInput = page.locator('.thread-composer-file-input');
     await fileInput.setInputFiles({
@@ -548,7 +549,7 @@ test.describe('canonical agent Thread surface', () => {
     await fileInput.setInputFiles({
       name: 'archive.bin',
       mimeType: 'application/octet-stream',
-      buffer: Buffer.alloc(MAX_RAW_INLINE_IMAGE_BYTES + 1),
+      buffer: Buffer.alloc(FORMER_SHARED_ATTACHMENT_LIMIT_BYTES + 1),
     });
 
     await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(3);
@@ -558,16 +559,16 @@ test.describe('canonical agent Thread surface', () => {
     const input = start?.args.input as Array<{
       name?: string;
       sizeBytes?: number;
-      source?: { kind?: string; path?: string };
+      source?: { kind?: string; ref?: { id?: string } };
       type?: string;
     }>;
     const reports = input.filter((part) => part.type === 'attachment' && part.name === 'report.bin');
     expect(reports).toHaveLength(2);
-    expect(new Set(reports.map((part) => part.source?.path)).size).toBe(2);
+    expect(new Set(reports.map((part) => part.source?.ref?.id)).size).toBe(2);
     expect(input).toContainEqual(expect.objectContaining({
       type: 'attachment',
       name: 'archive.bin',
-      sizeBytes: MAX_RAW_INLINE_IMAGE_BYTES + 1,
+      sizeBytes: FORMER_SHARED_ATTACHMENT_LIMIT_BYTES + 1,
     }));
   });
 
@@ -584,6 +585,28 @@ test.describe('canonical agent Thread surface', () => {
 
     await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(1);
     await expect(page.getByRole('status')).toContainText("Skipped 1 file that's already attached.");
+  });
+
+  test('serializes overlapping attachment batches at the composer limit', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(() => {
+      const input = document.querySelector<HTMLInputElement>('.thread-composer-file-input');
+      if (!input) throw new Error('Composer file input was not found');
+      const dispatchBatch = (prefix: string) => {
+        const transfer = new DataTransfer();
+        for (let index = 0; index < 4; index += 1) {
+          transfer.items.add(new File([`${prefix}-${index}`], `${prefix}-${index}.txt`, { type: 'text/plain' }));
+        }
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      dispatchBatch('first');
+      dispatchBatch('second');
+    });
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(6);
+    await expect(page.getByRole('status')).toContainText('Skipped 2 files over the 6 attachment limit.');
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin')).toHaveLength(6);
   });
 
   test('preserves a directory selected from the composer mention menu', async ({ page }) => {
@@ -606,7 +629,7 @@ test.describe('canonical agent Thread surface', () => {
     })]);
   });
 
-  test('keeps a native selected image as canonical inline vision input', async ({ page }) => {
+  test('keeps a native selected image as a canonical local-file reference', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('@');
@@ -614,7 +637,7 @@ test.describe('canonical agent Thread surface', () => {
 
     const imageRef = page.locator('.thread-composer-inline-ref[data-inline-ref-path="/mock/local-root/reference.png"]');
     await expect(imageRef).toContainText('reference.png');
-    await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^blob:/);
+    await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^data:image\/png;base64,/);
     await page.getByRole('button', { name: 'Send' }).click();
 
     const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
@@ -622,47 +645,30 @@ test.describe('canonical agent Thread surface', () => {
       type: 'attachment',
       name: 'reference.png',
       mimeType: 'image/png',
-      source: { kind: 'inline', dataBase64: 'bW9jayBpbWFnZQ==' },
+      source: { kind: 'localFile', path: '/mock/local-root/reference.png' },
     })]);
   });
 
-  test('rejects an image above the raw image limit before decoding it', async ({ page }) => {
+  test('does not reject an image at the renderer boundary because it exceeds the former shared limit', async ({ page }) => {
     await createNewThread(page);
     await page.locator('.thread-composer-file-input').setInputFiles({
-      name: 'oversized.png',
+      name: 'large-source.png',
       mimeType: 'image/png',
-      buffer: Buffer.alloc(MAX_RAW_INLINE_IMAGE_BYTES + 1),
+      buffer: Buffer.alloc(FORMER_SHARED_ATTACHMENT_LIMIT_BYTES + 1),
     });
 
-    await expect(page.getByRole('status')).toContainText('oversized.png is larger than 10 MB');
-    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(0);
+    await expect(page.locator('.thread-composer-inline-ref')).toContainText('large-source.png');
+    await expect(page.getByRole('status')).toHaveCount(0);
   });
 
-  test('compresses a pathless image to the bounded inline model payload', async ({ page }) => {
+  test('streams a pathless image in bounded chunks and records only a managed reference', async ({ page }) => {
     await createNewThread(page);
-    const originalSize = await page.locator('.thread-composer-file-input').evaluate(async (element) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 1_536;
-      canvas.height = 1_536;
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Canvas is unavailable');
-      const image = context.createImageData(canvas.width, canvas.height);
-      for (let offset = 0; offset < image.data.length; offset += 65_536) {
-        crypto.getRandomValues(image.data.subarray(offset, Math.min(offset + 65_536, image.data.length)));
-      }
-      for (let offset = 3; offset < image.data.length; offset += 4) image.data[offset] = 255;
-      context.putImageData(image, 0, 0);
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((value) => value ? resolve(value) : reject(new Error('PNG encoding failed')), 'image/png');
-      });
-      const transfer = new DataTransfer();
-      transfer.items.add(new File([blob], 'noise.png', { type: 'image/png' }));
-      const input = element as HTMLInputElement;
-      input.files = transfer.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return blob.size;
+    const originalSize = 2 * 1024 * 1024 + 123;
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'noise.png',
+      mimeType: 'image/png',
+      buffer: Buffer.alloc(originalSize, 7),
     });
-    expect(originalSize * 4 / 3).toBeGreaterThan(MAX_INLINE_IMAGE_BASE64_CHARS);
 
     const imageRef = page.locator('.thread-composer-inline-ref');
     await expect(imageRef).toContainText('noise.png');
@@ -672,11 +678,38 @@ test.describe('canonical agent Thread surface', () => {
     const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
     const attachment = (start?.args.input as Array<{
       mimeType?: string;
-      source?: { kind?: string; dataBase64?: string };
+      sizeBytes?: number;
+      source?: { kind?: string; ref?: { byteLength?: number; mimeType?: string } };
     }>)[0];
-    expect(attachment?.mimeType).toBe('image/jpeg');
-    expect(attachment?.source?.kind).toBe('inline');
-    expect(attachment?.source?.dataBase64?.length).toBeLessThanOrEqual(MAX_INLINE_IMAGE_BASE64_CHARS);
+    expect(attachment?.mimeType).toBe('image/png');
+    expect(attachment?.sizeBytes).toBe(originalSize);
+    expect(attachment?.source).toMatchObject({
+      kind: 'threadPayload',
+      ref: { byteLength: originalSize, mimeType: 'image/png' },
+    });
+    const chunks = (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/append');
+    expect(chunks.map((call) => call.args.byteLength)).toEqual([1024 * 1024, 1024 * 1024, 123]);
+  });
+
+  test('discards an unsent managed resource when its composer reference is removed', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'draft.bin',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.from('draft payload'),
+    });
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await expect(page.locator('.thread-composer-inline-ref')).toContainText('draft.bin');
+
+    await composer.focus();
+    await composer.press('End');
+    await composer.press('Backspace');
+    await composer.press('Backspace');
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(0);
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'attachment-resource/discard').length
+    )).toBe(1);
   });
 
   test('retains measured long-message disclosure behavior', async ({ page }) => {
@@ -1742,6 +1775,25 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(savedTop - 2);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(savedTop + 2);
   });
+});
+
+test('aborts an in-flight pathless upload when its Thread is left', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadDelayMs: 200 });
+  await page.locator('.thread-composer-file-input').setInputFiles({
+    name: 'pending.bin',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.alloc(2 * 1024 * 1024),
+  });
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin').length
+  )).toBe(1);
+
+  await createNewThread(page);
+
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
+  )).toBe(1);
+  expect((await commandCalls(page)).some((call) => call.cmd === 'attachment-upload/finish')).toBe(false);
 });
 
 test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {

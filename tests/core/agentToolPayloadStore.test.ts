@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -7,6 +7,7 @@ import {
   ToolPayloadStore,
   measureToolPayloadImage,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { MAX_THREAD_MANAGED_ATTACHMENT_BYTES } from '../../src/core/agentAttachmentLimits';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -70,5 +71,250 @@ describe('Agent tool payload store', () => {
     }
     expect(invalidDigestError).toBeInstanceOf(Error);
     expect((invalidDigestError as Error).message).toBe('Invalid tool output digest');
+  });
+
+  test('streams a managed resource into content-addressed storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const uploadId = await store.beginResourceUpload({
+      threadId,
+      attachmentId: 'attachment-1',
+      expectedBytes: 6,
+      mimeType: 'text/plain',
+      fileName: '../report.txt',
+    });
+
+    await store.appendResourceUpload(threadId, 'attachment-1', uploadId, Buffer.from('abc'));
+    await store.appendResourceUpload(threadId, 'attachment-1', uploadId, Buffer.from('def'));
+    const ref = await store.finishResourceUpload(threadId, 'attachment-1', uploadId);
+
+    expect(ref.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(ref).toEqual({
+      id: ref.id,
+      mimeType: 'text/plain',
+      byteLength: 6,
+      fileName: 'report.txt',
+    });
+    expect(await store.readResource(threadId, ref)).toEqual(Buffer.from('abcdef'));
+  });
+
+  test('stores an empty managed resource without a special transport path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const uploadId = await store.beginResourceUpload({
+      threadId,
+      attachmentId: 'empty-attachment',
+      expectedBytes: 0,
+      mimeType: 'application/octet-stream',
+      fileName: 'empty.bin',
+    });
+
+    const ref = await store.finishResourceUpload(threadId, 'empty-attachment', uploadId);
+
+    expect(ref.byteLength).toBe(0);
+    expect(await store.readResource(threadId, ref)).toEqual(Buffer.alloc(0));
+  });
+
+  test('reports whether a direct resource write created new storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+
+    const first = await store.writeResourceWithStatus(
+      threadId,
+      Buffer.from('prompt image'),
+      'image/png',
+      'prompt.png',
+    );
+    const second = await store.writeResourceWithStatus(
+      threadId,
+      Buffer.from('prompt image'),
+      'image/png',
+      'prompt.png',
+    );
+
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ ref: first.ref, created: false });
+  });
+
+  test('removes incomplete staged uploads on failure and startup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const uploadId = await store.beginResourceUpload({
+      threadId,
+      attachmentId: 'attachment-1',
+      expectedBytes: 4,
+      mimeType: 'text/plain',
+      fileName: 'partial.txt',
+    });
+    await store.appendResourceUpload(threadId, 'attachment-1', uploadId, Buffer.from('abc'));
+    await expect(store.finishResourceUpload(threadId, 'attachment-1', uploadId))
+      .rejects.toThrow('declared byte length');
+    expect(await readdir(join(root, threadId, '.staging'))).toEqual([]);
+
+    const stalePath = join(root, threadId, '.staging', 'stale');
+    await writeFile(stalePath, 'stale');
+    await new ToolPayloadStore(root).initialize();
+    await expect(stat(stalePath)).rejects.toThrow();
+  });
+
+  test('copies managed resources to a fork and preserves them after source deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const forkThreadId = uuidV7(1_720_000_000_001);
+    const ref = await store.writeResource(sourceThreadId, Buffer.from('fork resource'), 'text/plain', 'fork.txt');
+
+    expect(await store.copyResourceToThread(sourceThreadId, forkThreadId, ref)).toBe(true);
+    await store.deleteThread(sourceThreadId);
+    expect(await store.readResource(forkThreadId, ref)).toEqual(Buffer.from('fork resource'));
+  });
+
+  test('applies the Thread quota to direct resource writes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const existingPath = join(root, threadId, 'resources', 'a'.repeat(64), 'existing.bin');
+    await mkdir(join(root, threadId, 'resources', 'a'.repeat(64)), { recursive: true });
+    await writeFile(existingPath, '');
+    await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 1);
+
+    await expect(store.writeResource(threadId, Buffer.from('xx'), 'application/octet-stream', 'next.bin'))
+      .rejects.toThrow('Thread storage quota');
+  });
+
+  test('serializes concurrent upload reservations against the Thread quota', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const existingPath = join(root, threadId, 'resources', 'a'.repeat(64), 'existing.bin');
+    await mkdir(join(root, threadId, 'resources', 'a'.repeat(64)), { recursive: true });
+    await writeFile(existingPath, '');
+    await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 3);
+
+    const results = await Promise.allSettled(['first', 'second'].map((attachmentId) => (
+      store.beginResourceUpload({
+        threadId,
+        attachmentId,
+        expectedBytes: 2,
+        mimeType: 'application/octet-stream',
+        fileName: `${attachmentId}.bin`,
+      })
+    )));
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const admitted = results.find((result) => result.status === 'fulfilled');
+    if (admitted?.status === 'fulfilled') {
+      await store.abortResourceUpload(threadId, 'first', admitted.value).catch(async () => {
+        await store.abortResourceUpload(threadId, 'second', admitted.value);
+      });
+    }
+  });
+
+  test('applies the Thread quota when copying a managed resource to a fork', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const ref = await store.writeResource(sourceThreadId, Buffer.from('xx'), 'application/octet-stream', 'source.bin');
+    const existingPath = join(root, targetThreadId, 'resources', 'a'.repeat(64), 'existing.bin');
+    await mkdir(join(root, targetThreadId, 'resources', 'a'.repeat(64)), { recursive: true });
+    await writeFile(existingPath, '');
+    await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 1);
+
+    await expect(store.copyResourceToThread(sourceThreadId, targetThreadId, ref))
+      .rejects.toThrow('Thread storage quota');
+  });
+
+  test('prunes unreferenced resources and preserves canonical Thread references', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const retained = await store.writeResource(threadId, Buffer.from('retained'), 'text/plain', 'retained.txt');
+    const orphan = await store.writeResource(threadId, Buffer.from('orphan'), 'text/plain', 'orphan.txt');
+
+    await store.pruneUnreferencedResources(threadId, [retained]);
+
+    expect(await store.readResource(threadId, retained)).toEqual(Buffer.from('retained'));
+    expect(await store.readResource(threadId, orphan)).toBeNull();
+    expect(await store.deleteResource(threadId, retained)).toBe(true);
+    expect(await store.deleteResource(threadId, retained)).toBe(false);
+  });
+
+  test('does not follow a symlinked digest directory while pruning resources', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    const external = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-external-'));
+    roots.push(root, external);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const digestPath = join(root, threadId, 'resources', 'a'.repeat(64));
+    const externalFile = join(external, 'keep.txt');
+    await mkdir(join(root, threadId, 'resources'), { recursive: true });
+    await writeFile(externalFile, 'keep');
+    await symlink(external, digestPath);
+
+    await store.pruneUnreferencedResources(threadId, []);
+
+    expect(await readFile(externalFile, 'utf8')).toBe('keep');
+    await expect(stat(digestPath)).rejects.toThrow();
+  });
+
+  test('does not follow a symlinked Thread directory during startup cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    const external = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-external-'));
+    roots.push(root, external);
+    const threadId = uuidV7(1_720_000_000_000);
+    const externalFile = join(external, '.staging', 'keep.txt');
+    await mkdir(join(external, '.staging'));
+    await writeFile(externalFile, 'keep');
+    await symlink(external, join(root, threadId));
+
+    await new ToolPayloadStore(root).initialize();
+
+    expect(await readFile(externalFile, 'utf8')).toBe('keep');
+  });
+
+  test('rejects a managed resource replaced by a symbolic link', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const ref = await store.writeResource(threadId, Buffer.from('secret'), 'text/plain', 'resource.txt');
+    const resourcePath = await store.resourcePath(threadId, ref);
+    const replacementPath = join(root, 'replacement.txt');
+    await writeFile(replacementPath, 'secret');
+    await rm(resourcePath!);
+    await symlink(replacementPath, resourcePath!);
+
+    expect(await store.resourcePath(threadId, ref)).toBeNull();
+    expect(await store.readResource(threadId, ref)).toBeNull();
+  });
+
+  test('rejects same-length corruption after a managed resource was verified', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const ref = await store.writeResource(threadId, Buffer.from('original'), 'text/plain', 'resource.txt');
+    const resourcePath = await store.resourcePath(threadId, ref);
+    await writeFile(resourcePath!, 'modified');
+
+    expect(await store.resourcePath(threadId, ref)).toBeNull();
+    expect(await store.readResource(threadId, ref)).toBeNull();
+    await expect(store.writeResource(threadId, Buffer.from('original'), 'text/plain', 'resource.txt'))
+      .rejects.toThrow('conflicts with an existing resource');
   });
 });

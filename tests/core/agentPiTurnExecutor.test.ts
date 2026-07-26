@@ -164,8 +164,8 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('gives the model a readable path for non-image attachments', () => {
-    const message = modelUserMessage([{
+  test('gives the model a readable path for non-image attachments', async () => {
+    const message = await modelUserMessage([{
       type: 'attachment',
       id: 'attachment-1',
       name: 'report.pdf',
@@ -177,6 +177,33 @@ describe('PiTurnExecutor event normalization', () => {
     expect(message.content).toEqual([{
       type: 'text',
       text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /workspace/agent-attachments/report.pdf\nUse file_read with this path to inspect the attachment.',
+    }]);
+  });
+
+  test('encodes only the persisted prompt image at the provider boundary', async () => {
+    const promptImage = {
+      id: 'c'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 8,
+      fileName: 'prompt.png',
+    };
+    const message = await modelUserMessage([{
+      type: 'attachment',
+      id: 'attachment-image',
+      name: 'source.png',
+      mimeType: 'image/png',
+      sizeBytes: 4096,
+      source: { kind: 'localFile', path: '/outside/source.png' },
+      promptImage,
+    }], 1_720_000_000_000, {
+      readResource: async (ref) => ref.id === promptImage.id ? Buffer.from('snapshot') : null,
+      resolveResourcePath: async () => null,
+    });
+
+    expect(message.content).toEqual([{
+      type: 'image',
+      data: Buffer.from('snapshot').toString('base64'),
+      mimeType: 'image/png',
     }]);
   });
 
@@ -349,7 +376,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '{"task":"extract"}' }]);
   });
 
-  test('reconstructs canonical tool calls, results, and reasoning for later Turns', () => {
+  test('reconstructs canonical tool calls, results, and reasoning for later Turns', async () => {
     const fixture = createContext();
     const threadId = fixture.context.thread.id;
     const turnId = fixture.context.turn.id;
@@ -397,7 +424,7 @@ describe('PiTurnExecutor event normalization', () => {
       }],
     };
 
-    const messages = historyMessages(context, testModel);
+    const messages = await historyMessages(context, testModel);
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult', 'toolResult']);
     expect(messages[1]).toMatchObject({
       role: 'assistant',
@@ -699,6 +726,8 @@ function createContext(): {
     systemContext: [],
     signal: new AbortController().signal,
     recorder,
+    resolveResourcePath: async () => null,
+    readResource: async () => null,
     persistOutputImage: async () => '/workspace/tool-output.png',
     persistOutputText: async (_itemId, text, mimeType, summary) => ({
       id: 'a'.repeat(64),

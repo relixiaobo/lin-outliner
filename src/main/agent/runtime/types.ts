@@ -3,6 +3,7 @@ import type {
   AdditionalContext,
   Thread,
   ThreadItemOutputReference,
+  ThreadResourceReference,
   ThreadUserContent,
   Turn,
   TurnExecutionDetails,
@@ -25,6 +26,8 @@ export interface TurnExecutionContext {
   readonly systemContext: readonly string[];
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
+  resolveResourcePath(ref: ThreadResourceReference): Promise<string | null>;
+  readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
     itemId: string,
     index: number,

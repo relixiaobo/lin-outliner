@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
@@ -85,6 +85,69 @@ describe('preview source commands', () => {
       expect(text.text).toBe('png-bytes');
     } finally {
       await rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test('authorizes one external attachment without widening the trusted roots', async () => {
+    const externalRoot = await mkdtemp(join(tmpdir(), 'lin-preview-attachment-test-'));
+    try {
+      const attachmentPath = join(externalRoot, 'attached.txt');
+      const substitutedPath = join(externalRoot, 'substituted.txt');
+      await writeFile(attachmentPath, 'attached bytes');
+      await writeFile(substitutedPath, 'substituted bytes');
+      const attachmentStats = await stat(attachmentPath);
+      const streamPaths: string[] = [];
+      const context = previewContext({
+        threadAttachmentFile: async (threadId, attachmentId) => (
+          threadId === 'thread-1' && attachmentId === 'attachment-1'
+            ? {
+                entryKind: 'file',
+                path: attachmentPath,
+                stats: attachmentStats,
+                acceptedPathHints: ['attached.txt'],
+              }
+            : null
+        ),
+        threadAttachmentFileStreamUrl: async (filePath) => {
+          streamPaths.push(filePath);
+          return `${PREVIEW_LOCAL_URL_SCHEME}://attachment-token`;
+        },
+      });
+      const authorizedTarget = {
+        kind: 'local-file' as const,
+        path: 'attached.txt',
+        entryKind: 'file' as const,
+        threadId: 'thread-1',
+        attachmentId: 'attachment-1',
+      };
+
+      const resolved = await handlePreviewCommand('preview_resolve_source', {
+        target: authorizedTarget,
+      }, context) as PreviewResolveSourceResult;
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        displayPath: attachmentPath,
+        streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://attachment-token`,
+        target: { path: attachmentPath, threadId: 'thread-1', attachmentId: 'attachment-1' },
+      });
+      expect(streamPaths).toEqual([attachmentPath]);
+
+      const text = await handlePreviewCommand('preview_read_text', {
+        target: authorizedTarget,
+      }, context) as PreviewReadTextResult;
+      expect(text.text).toBe('attached bytes');
+
+      const substituted = await handlePreviewCommand('preview_resolve_source', {
+        target: { ...authorizedTarget, path: substitutedPath },
+      }, context) as PreviewResolveSourceResult;
+      expect(substituted.source).toBeNull();
+
+      const ambient = await handlePreviewCommand('preview_resolve_source', {
+        target: { kind: 'local-file', path: attachmentPath, entryKind: 'file' },
+      }, context) as PreviewResolveSourceResult;
+      expect(ambient.source).toBeNull();
+    } finally {
+      await rm(externalRoot, { recursive: true, force: true });
     }
   });
 

@@ -6,6 +6,7 @@ import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { StringDecoder } from 'node:string_decoder';
 import {
   AgentFileIngestionFailure,
   ingestRichDocumentAsMarkdown,
@@ -36,21 +37,41 @@ import {
 import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolProcess';
 import { resolveRipgrepCommand, type ResolvedRipgrepCommand } from './agentRipgrep';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
+import {
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGE_DIMENSION,
+} from '../../../core/agentAttachmentLimits';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
-interface LocalToolOptions {
+export type AgentImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+export interface AgentFileReadImageObservation {
+  readonly bytes: Uint8Array;
+  readonly mimeType: AgentImageMediaType;
+  readonly dimensions?: ImageDimensions;
+}
+
+export type AgentFileReadImageNormalizer = (input: {
+  readonly filePath: string;
+  readonly sourceMimeType: AgentImageMediaType;
+  readonly signal?: AbortSignal;
+}) => Promise<AgentFileReadImageObservation>;
+
+export interface LocalToolOptions {
   localRoot?: string;
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
+  imageNormalizer?: AgentFileReadImageNormalizer;
 }
 
 export interface AgentLocalWorkspaceContext {
   // The Thread working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
-  // App-owned ephemeral area for materialized attachments, web fetches, tool output, and PDF
-  // pages. A sibling of `root`, so it does not appear in default workdir listings. Defaults to
+  // App-owned ephemeral area for web fetches, tool output, and PDF pages. A sibling of `root`,
+  // so it does not appear in default workdir listings. Defaults to
   // `<root>/tmp` when no explicit scratch root is supplied.
   scratchRoot: string;
   readFileState: Map<string, ReadFileState>;
@@ -81,7 +102,9 @@ interface FileReadTextData {
     content: string;
     numLines: number;
     startLine: number;
-    totalLines: number;
+    totalLines: number | null;
+    hasMore: boolean;
+    lineTruncated?: boolean;
   };
 }
 
@@ -90,7 +113,7 @@ interface FileReadImageData {
   file: {
     filePath: string;
     base64: string;
-    type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    type: AgentImageMediaType;
     originalSize: number;
     dimensions?: ImageDimensions;
   };
@@ -435,7 +458,9 @@ const backgroundTasks = new Map<string, BackgroundTask>();
 
 const DEFAULT_FILE_READ_LIMIT = 2000;
 const MAX_FILE_READ_LIMIT = 20000;
-const MAX_TEXT_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_READ_CHARS = 200_000;
+const TEXT_FILE_PREFIX_BYTES = 8 * 1024;
+const MAX_EDITABLE_TEXT_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_MARKDOWN_SOURCE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_GLOB_LIMIT = 100;
 const FILE_GLOB_CANDIDATE_LIMIT = 5000;
@@ -592,7 +617,7 @@ const BASH_STOP_PARAMETERS = {
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
   const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
-    createFileReadTool(workspace),
+    createFileReadTool(workspace, options.imageNormalizer),
     createFileGlobTool(workspace),
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
@@ -823,7 +848,10 @@ function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): str
   return undefined;
 }
 
-function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
+function createFileReadTool(
+  workspace: WorkspaceContext,
+  imageNormalizer?: AgentFileReadImageNormalizer,
+): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
     label: 'File Read',
@@ -837,7 +865,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     ].join('\n'),
     parameters: FILE_READ_PARAMETERS,
     executionMode: 'parallel',
-    execute: async (_toolCallId, rawParams: unknown) => {
+    execute: async (_toolCallId, rawParams: unknown, signal?: AbortSignal) => {
       const started = Date.now();
       let filePath: string | undefined;
       try {
@@ -853,15 +881,21 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         }
         const imageType = IMAGE_MEDIA_TYPES.get(ext);
         if (imageType) {
-          const buffer = await readFile(filePath);
+          const observation = await readImageObservation(
+            filePath,
+            fileStat.size,
+            imageType,
+            imageNormalizer,
+            signal,
+          );
           const data: FileReadImageData = {
             type: 'image',
             file: {
               filePath,
-              base64: buffer.toString('base64'),
-              type: imageType,
-              originalSize: buffer.byteLength,
-              dimensions: readAgentImageDimensions(buffer, imageType),
+              base64: observation.bytes.toString('base64'),
+              type: observation.mimeType,
+              originalSize: fileStat.size,
+              dimensions: observation.dimensions,
             },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
@@ -869,12 +903,26 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible, [{
             type: 'image',
             data: data.file.base64,
-            mimeType: imageType,
+            mimeType: observation.mimeType,
           }]);
         }
         if (ext === '.pdf') {
-          const buffer = await readFile(filePath);
-          const read = await ingestPdfFile(workspace, filePath, buffer, params.pages);
+          if (fileStat.size > PDF_MAX_EXTRACT_SIZE) {
+            throw new LocalToolFailure(
+              'pdf_too_large',
+              `PDF file exceeds maximum extraction size of ${formatBytes(PDF_MAX_EXTRACT_SIZE)}.`,
+              'Use a smaller PDF or split it first.',
+            );
+          }
+          const buffer = await readFile(filePath, signal ? { signal } : undefined);
+          const read = await ingestPdfFile(
+            workspace,
+            filePath,
+            buffer,
+            params.pages,
+            imageNormalizer,
+            signal,
+          );
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(read.data);
           return agentToolResult(successEnvelope('file_read', read.data, {
@@ -884,10 +932,10 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           }), visible, read.content);
         }
         if (ext === '.ipynb') {
-          const buffer = await readFile(filePath);
-          if (fileStat.size > MAX_TEXT_FILE_BYTES) {
+          if (fileStat.size > MAX_EDITABLE_TEXT_FILE_BYTES) {
             throw new LocalToolFailure('file_too_large', `Notebook is too large to read: ${filePath}`, 'Use file_grep to locate relevant content or read a smaller file.');
           }
+          const buffer = await readFile(filePath);
           const decoded = decodeTextBuffer(buffer);
           const content = decoded.content;
           workspace.readFileState.set(filePath, {
@@ -929,16 +977,6 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             metrics: metrics(started, read.data),
           }), visible, read.content);
         }
-        if (fileStat.size > MAX_TEXT_FILE_BYTES) {
-          throw new LocalToolFailure('file_too_large', `File is too large to read as text: ${filePath}`, 'Use file_grep to locate relevant content or read a smaller file.');
-        }
-        const buffer = await readFile(filePath);
-        if (looksBinary(buffer)) {
-          throw new LocalToolFailure('binary_unsupported', `Binary file is not supported by file_read: ${filePath}`, 'Use a text, image, PDF, notebook, or supported rich document file path.');
-        }
-        const decoded = decodeTextBuffer(buffer);
-        const content = decoded.content;
-        const lines = splitLines(content);
         const requestedOffset = clampInteger(params.offset, 0, Number.MAX_SAFE_INTEGER, 1);
         const lineOffset = requestedOffset === 0 ? 0 : requestedOffset - 1;
         const limit = clampInteger(params.limit, 1, MAX_FILE_READ_LIMIT, DEFAULT_FILE_READ_LIMIT);
@@ -963,41 +1001,50 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             metrics: metrics(started, data),
           }), visible);
         }
-        const selected = lines.slice(lineOffset, lineOffset + limit);
-        const partial = lineOffset > 0 || selected.length < lines.length;
-        const startLine = selected.length ? (requestedOffset === 0 ? 1 : requestedOffset) : 0;
+        const read = await readTextFileWindow(filePath, lineOffset + 1, limit, MAX_FILE_READ_CHARS, signal);
+        const partial = lineOffset > 0 || read.hasMore || read.lineTruncated;
+        const fullContent = !partial && lineOffset === 0 ? read.content : null;
         workspace.readFileState.set(filePath, {
-          content,
+          content: fullContent ?? read.content,
           mtimeMs: fileStat.mtimeMs,
           isPartialView: partial,
           accessedAt: Date.now(),
           offset: requestedOffset,
           limit,
-          encoding: decoded.encoding,
-          lineEndings: decoded.lineEndings,
-          hasBom: decoded.hasBom,
+          encoding: read.encoding,
+          lineEndings: read.lineEndings,
+          hasBom: read.hasBom,
         });
         const data: FileReadTextData = {
           type: 'text',
           file: {
             filePath,
-            content: selected.join('\n'),
-            numLines: selected.length,
-            startLine,
-            totalLines: lines.length,
+            content: read.content,
+            numLines: read.numLines,
+            startLine: read.startLine,
+            totalLines: read.totalLines,
+            hasMore: read.hasMore,
+            ...(read.lineTruncated ? { lineTruncated: true } : {}),
           },
         };
-        const nextOffset = startLine + selected.length;
+        const nextOffset = read.startLine + read.numLines;
         await notifySuccessfulFileTouch(workspace, filePath);
         const visible = visibleFileRead(data);
         return agentToolResult(successEnvelope('file_read', data, {
           // A partial read is `status: 'partial'` so the model gets a structured
           // truncation signal, not just prose it might skip.
           status: partial ? 'partial' : undefined,
-          instructions: partial ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.` : undefined,
+          instructions: read.lineTruncated
+            ? 'A single line exceeded the file_read character budget. Use file_grep to narrow the content or bash for an explicit byte range.'
+            : read.hasMore
+              ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.`
+              : lineOffset > 0
+                ? 'Reached the end of the file. Read from offset 1 before editing it.'
+                : undefined,
           metrics: { ...metrics(started, data), truncated: partial },
         }), visible);
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error;
         return localErrorResult('file_read', error, started, filePath);
       }
     },
@@ -2111,6 +2158,75 @@ export function readAgentImageDimensions(buffer: Buffer, mediaType: string): Ima
   return undefined;
 }
 
+async function readImageObservation(
+  filePath: string,
+  sourceBytes: number,
+  sourceMimeType: AgentImageMediaType,
+  normalizer: AgentFileReadImageNormalizer | undefined,
+  signal?: AbortSignal,
+): Promise<{ readonly bytes: Buffer; readonly mimeType: AgentImageMediaType; readonly dimensions?: ImageDimensions }> {
+  if (sourceBytes <= 0) {
+    throw new LocalToolFailure('image_decode_failed', `Image is empty: ${filePath}`);
+  }
+  if (sourceBytes > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
+    throw new LocalToolFailure(
+      'image_decode_budget_exceeded',
+      `Image exceeds the ${formatBytes(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} file_read decode budget: ${filePath}`,
+      'Use an image converter to resize or recompress the source, then read the derived image.',
+    );
+  }
+  signal?.throwIfAborted();
+  const observation = normalizer
+    ? await normalizer({ filePath, sourceMimeType, ...(signal ? { signal } : {}) })
+    : await readRawImageObservation(filePath, sourceBytes, sourceMimeType, signal);
+  signal?.throwIfAborted();
+  const bytes = Buffer.from(
+    observation.bytes.buffer,
+    observation.bytes.byteOffset,
+    observation.bytes.byteLength,
+  );
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_PROMPT_IMAGE_BYTES) {
+    throw new LocalToolFailure(
+      'image_output_budget_exceeded',
+      `Image file_read observation exceeds the ${formatBytes(MAX_PROMPT_IMAGE_BYTES)} model-input budget: ${filePath}`,
+      'Use an image converter to resize or recompress the source, then read the derived image.',
+    );
+  }
+  const dimensions = observation.dimensions ?? readAgentImageDimensions(bytes, observation.mimeType);
+  if (
+    dimensions
+    && (dimensions.width > MAX_PROMPT_IMAGE_DIMENSION || dimensions.height > MAX_PROMPT_IMAGE_DIMENSION)
+  ) {
+    throw new LocalToolFailure(
+      'image_dimension_budget_exceeded',
+      `Image file_read observation exceeds the ${MAX_PROMPT_IMAGE_DIMENSION} px model-input dimension budget: ${filePath}`,
+      'Use an image converter to resize the source, then read the derived image.',
+    );
+  }
+  return { bytes, mimeType: observation.mimeType, ...(dimensions ? { dimensions } : {}) };
+}
+
+async function readRawImageObservation(
+  filePath: string,
+  sourceBytes: number,
+  sourceMimeType: AgentImageMediaType,
+  signal?: AbortSignal,
+): Promise<AgentFileReadImageObservation> {
+  if (sourceBytes > MAX_PROMPT_IMAGE_BYTES) {
+    throw new LocalToolFailure(
+      'image_normalizer_unavailable',
+      `Image requires normalization before file_read can produce a bounded model input: ${filePath}`,
+      'Use an image converter to resize or recompress the source, then read the derived image.',
+    );
+  }
+  const bytes = await readFile(filePath, signal ? { signal } : undefined);
+  return {
+    bytes,
+    mimeType: sourceMimeType,
+    dimensions: readAgentImageDimensions(bytes, sourceMimeType),
+  };
+}
+
 function readJpegDimensions(buffer: Buffer): ImageDimensions | undefined {
   if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return undefined;
   let offset = 2;
@@ -2204,6 +2320,8 @@ async function ingestPdfFile(
   filePath: string,
   buffer: Buffer,
   requestedPages: string | undefined,
+  imageNormalizer?: AgentFileReadImageNormalizer,
+  signal?: AbortSignal,
 ): Promise<FileIngestionOutput<FileReadPdfData>> {
   const originalSize = buffer.byteLength;
   if (originalSize === 0) {
@@ -2227,7 +2345,9 @@ async function ingestPdfFile(
   });
   const shouldRenderInlineFallback = !requestedRendered && !extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD;
   const rendered = requestedRendered ?? (shouldRenderInlineFallback ? await renderPdfPages(workspace, filePath, range) : null);
-  const imageContent = rendered ? await readPdfPartImages(rendered.outputDir) : [];
+  const imageContent = rendered
+    ? await readPdfPartImages(rendered.outputDir, imageNormalizer, signal)
+    : [];
   const textContent = extractedText
     ? [{
         type: 'text' as const,
@@ -2462,13 +2582,30 @@ function parsePdfPageRange(pages: string): PdfPageRange | null {
   return { firstPage, lastPage };
 }
 
-async function readPdfPartImages(outputDir: string): Promise<Array<{ type: 'image'; data: string; mimeType: string }>> {
+async function readPdfPartImages(
+  outputDir: string,
+  imageNormalizer?: AgentFileReadImageNormalizer,
+  signal?: AbortSignal,
+): Promise<Array<{ type: 'image'; data: string; mimeType: string }>> {
   const imageFiles = (await readdir(outputDir)).filter((entry) => entry.endsWith('.jpg')).sort(naturalCompare);
-  return await Promise.all(imageFiles.map(async (fileName) => ({
-    type: 'image' as const,
-    data: (await readFile(path.join(outputDir, fileName))).toString('base64'),
-    mimeType: 'image/jpeg',
-  })));
+  const content: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+  for (const fileName of imageFiles) {
+    const filePath = path.join(outputDir, fileName);
+    const fileStat = await stat(filePath);
+    const observation = await readImageObservation(
+      filePath,
+      fileStat.size,
+      'image/jpeg',
+      imageNormalizer,
+      signal,
+    );
+    content.push({
+      type: 'image',
+      data: observation.bytes.toString('base64'),
+      mimeType: observation.mimeType,
+    });
+  }
+  return content;
 }
 
 function parseNotebook(content: string): NotebookCell[] {
@@ -2527,7 +2664,7 @@ async function readWorkspaceText(filePath: string): Promise<TextFileRead> {
     throw localFsError(error, filePath);
   }
   if (fileStat.isDirectory()) throw new LocalToolFailure('is_directory', `Path is a directory: ${filePath}`);
-  if (fileStat.size > MAX_TEXT_FILE_BYTES) throw new LocalToolFailure('file_too_large', `File is too large to edit: ${filePath}`);
+  if (fileStat.size > MAX_EDITABLE_TEXT_FILE_BYTES) throw new LocalToolFailure('file_too_large', `File is too large to edit: ${filePath}`);
   const buffer = await readFile(filePath);
   if (looksBinary(buffer)) throw new LocalToolFailure('binary_unsupported', `Binary file is not editable as text: ${filePath}`);
   return { ...decodeTextBuffer(buffer), mtimeMs: fileStat.mtimeMs };
@@ -2961,7 +3098,16 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
         },
       };
     case 'text':
-      return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
+      return {
+        file: {
+          filePath: data.file.filePath,
+          content: data.file.content,
+          startLine: data.file.startLine,
+          totalLines: data.file.totalLines,
+          hasMore: data.file.hasMore,
+          ...(data.file.lineTruncated ? { lineTruncated: true } : {}),
+        },
+      };
     case 'markdown':
       return {
         file: {
@@ -3263,6 +3409,170 @@ function errorMessage(error: unknown): string {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
+}
+
+interface TextFileWindow {
+  readonly content: string;
+  readonly encoding: TextEncoding;
+  readonly hasBom: boolean;
+  readonly hasMore: boolean;
+  readonly lineEndings: LineEndingType;
+  readonly lineTruncated: boolean;
+  readonly numLines: number;
+  readonly startLine: number;
+  readonly totalLines: number | null;
+}
+
+async function readTextFileWindow(
+  filePath: string,
+  requestedStartLine: number,
+  limit: number,
+  maxChars: number,
+  signal?: AbortSignal,
+): Promise<TextFileWindow> {
+  signal?.throwIfAborted();
+  const prefixHandle = await open(filePath, 'r');
+  let prefix: Buffer;
+  try {
+    const buffer = Buffer.alloc(TEXT_FILE_PREFIX_BYTES);
+    const { bytesRead } = await prefixHandle.read(buffer, 0, buffer.byteLength, 0);
+    prefix = buffer.subarray(0, bytesRead);
+  } finally {
+    await prefixHandle.close();
+  }
+  if (looksBinary(prefix)) {
+    throw new LocalToolFailure(
+      'binary_unsupported',
+      `Binary file is not supported by file_read: ${filePath}`,
+      'Use a text, image, PDF, notebook, or supported rich document file path.',
+    );
+  }
+
+  const encoding = detectTextEncoding(prefix);
+  const prefixText = prefix.toString(encoding);
+  const hasBom = prefixText.charCodeAt(0) === 0xfeff;
+  const lineEndings = detectLineEndings(hasBom ? prefixText.slice(1) : prefixText);
+  const decoder = new StringDecoder(encoding);
+  const selected: string[] = [];
+  const lastRequestedLine = requestedStartLine + limit - 1;
+  let currentLine = 1;
+  let currentLineContent = '';
+  let currentLineHasChars = false;
+  let captureStarted = false;
+  let outputChars = 0;
+  let completedLines = 0;
+  let pendingCarriageReturn = false;
+  let endedWithNewline = false;
+  let hasMore = false;
+  let lineTruncated = false;
+  let stopped = false;
+  let firstDecodedText = true;
+
+  const ensureCaptureStarted = (): boolean => {
+    if (captureStarted) return true;
+    const separatorChars = selected.length > 0 ? 1 : 0;
+    if (outputChars + separatorChars > maxChars) {
+      hasMore = true;
+      stopped = true;
+      return false;
+    }
+    outputChars += separatorChars;
+    captureStarted = true;
+    return true;
+  };
+  const consumeCharacter = (character: string) => {
+    endedWithNewline = false;
+    currentLineHasChars = true;
+    if (currentLine > lastRequestedLine) {
+      hasMore = true;
+      stopped = true;
+      return;
+    }
+    if (currentLine < requestedStartLine || !ensureCaptureStarted()) return;
+    if (outputChars + character.length > maxChars) {
+      if (currentLineContent.length > 0) selected.push(currentLineContent);
+      lineTruncated = true;
+      hasMore = true;
+      stopped = true;
+      return;
+    }
+    currentLineContent += character;
+    outputChars += character.length;
+  };
+  const consumeNewline = () => {
+    endedWithNewline = true;
+    if (currentLine > lastRequestedLine) {
+      hasMore = true;
+      stopped = true;
+      return;
+    }
+    if (currentLine >= requestedStartLine) {
+      if (!ensureCaptureStarted()) return;
+      selected.push(currentLineContent);
+    }
+    completedLines = currentLine;
+    currentLine += 1;
+    currentLineContent = '';
+    currentLineHasChars = false;
+    captureStarted = false;
+  };
+  const consumeDecodedText = (decoded: string) => {
+    let text = decoded;
+    if (firstDecodedText && text.length > 0) {
+      firstDecodedText = false;
+      if (hasBom && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    }
+    for (const character of text) {
+      if (pendingCarriageReturn) {
+        pendingCarriageReturn = false;
+        consumeNewline();
+        if (stopped) return;
+        if (character === '\n') continue;
+      }
+      if (character === '\r') {
+        pendingCarriageReturn = true;
+      } else if (character === '\n') {
+        consumeNewline();
+      } else {
+        consumeCharacter(character);
+      }
+      if (stopped) return;
+    }
+  };
+
+  signal?.throwIfAborted();
+  const stream = createReadStream(filePath, { highWaterMark: 64 * 1024, signal });
+  for await (const chunk of stream) {
+    consumeDecodedText(decoder.write(chunk as Buffer));
+    if (stopped) break;
+  }
+  if (!stopped) {
+    consumeDecodedText(decoder.end());
+    if (pendingCarriageReturn) {
+      pendingCarriageReturn = false;
+      consumeNewline();
+    }
+  }
+  if (!stopped && !endedWithNewline && currentLineHasChars) {
+    if (currentLine <= lastRequestedLine && currentLine >= requestedStartLine) {
+      if (ensureCaptureStarted()) selected.push(currentLineContent);
+    } else if (currentLine > lastRequestedLine) {
+      hasMore = true;
+    }
+    completedLines = currentLine;
+  }
+
+  return {
+    content: selected.join('\n'),
+    encoding,
+    hasBom,
+    hasMore,
+    lineEndings,
+    lineTruncated,
+    numLines: selected.length,
+    startLine: selected.length > 0 ? requestedStartLine : 0,
+    totalLines: stopped ? null : completedLines,
+  };
 }
 
 function decodeTextBuffer(buffer: Buffer): Pick<TextFileRead, 'content' | 'encoding' | 'lineEndings' | 'hasBom'> {
