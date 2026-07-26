@@ -319,9 +319,11 @@ confirmation. Tool, Skill, Plugin, and MCP capability configuration stays outsid
 the Automation form and is inherited at dispatch.
 
 The compact list keeps Search and New in one toolbar row. Its equal-width status
-filter and Automation rows share one horizontal content boundary; each row
-aligns a small state dot and label with the Automation title, while unread state
-is attached to the leading icon instead of creating a competing status column.
+filter and Automation row content share one reading column, while hover fills use
+the rail's concentric block inset. Each row aligns compact status text with the
+Automation title, while unread state is attached to the leading icon instead of
+creating a competing status column. Previous-run rows use one in-row unread slot
+and textual execution state rather than two adjacent dots.
 Time Picker columns use fixed-height seven-value wheels with no visible scrollbar
 and support pointer, wheel/trackpad, and keyboard selection.
 

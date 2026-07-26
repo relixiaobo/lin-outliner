@@ -230,7 +230,6 @@ export function AutomationsView(props: AutomationsViewProps) {
                 <span className="automation-list-heading">
                   <strong>{automation.name}</strong>
                   <span className={`automation-status is-${automation.status}`}>
-                    <span className="automation-status-dot" aria-hidden="true" />
                     {t.filters[automation.status]}
                   </span>
                 </span>

@@ -49,14 +49,18 @@ test.describe('Automation surface', () => {
     await expect(detailDrawer).toBeVisible();
     const automationRow = page.locator('.automation-list-row', { hasText: 'Daily repository review' });
     await expect(automationRow).toBeVisible();
-    await expect(automationRow.locator('.automation-status-dot')).toBeVisible();
-    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).toHaveCount(1);
-    const alignedLefts = await Promise.all([
+    await expect(automationRow.locator('.automation-status-dot')).toHaveCount(0);
+    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).not.toHaveClass(/is-visible/);
+    const [searchLeft, filterLeft, rowLeft, searchTextLeft, rowTextLeft] = await Promise.all([
       page.locator('.automations-search'),
       page.locator('.automations-filter'),
       automationRow,
+      page.locator('.automations-search .input-control'),
+      automationRow.locator('.automation-list-heading strong'),
     ].map((locator) => locator.evaluate((element) => element.getBoundingClientRect().left)));
-    expect(Math.max(...alignedLefts) - Math.min(...alignedLefts)).toBeLessThan(1);
+    expect(Math.abs(searchLeft - filterLeft)).toBeLessThan(1);
+    expect(rowLeft).toBeLessThan(searchLeft);
+    expect(Math.abs(searchTextLeft - rowTextLeft)).toBeLessThan(1);
     await expect(detailDrawer.getByRole('combobox', { name: 'Runs in' })).toHaveValue('standalone');
     const model = detailDrawer.getByRole('combobox', { name: 'Model' });
     await expect(model).toHaveValue('');
@@ -81,6 +85,9 @@ test.describe('Automation surface', () => {
     await page.getByRole('button', { name: 'Start now' }).click();
     const run = page.locator('.automation-run').first();
     await expect(run).toContainText('Started');
+    await expect(automationRow.locator('.automation-list-icon > .automation-unread')).toHaveClass(/is-visible/);
+    await expect(run.locator('.automation-run-state')).toHaveCount(0);
+    await expect(run.locator('.automation-run-unread')).toHaveClass(/is-visible/);
     await run.getByRole('button', { name: /Daily repository review/ }).click();
 
     await expect(page.locator('.thread-dock-title')).toHaveText('Daily repository review');

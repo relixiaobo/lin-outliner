@@ -81,7 +81,7 @@
 }
 
 .automations-list {
-  padding: 0 var(--agent-content-x) var(--space-6);
+  padding: 0 var(--rail-pad) var(--space-6);
 }
 
 .automation-list-row {
@@ -92,7 +92,7 @@
   gap: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: var(--space-3);
+  padding: var(--space-3) calc(var(--agent-content-x) + var(--space-3) - var(--rail-pad));
   text-align: left;
 }
 
@@ -154,7 +154,6 @@
   align-items: center;
   max-width: 72px;
   overflow: hidden;
-  gap: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-sm);
@@ -162,22 +161,9 @@
   white-space: nowrap;
 }
 
-.automation-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: var(--radius-pill);
-  background: var(--status-success);
-}
-
 .automation-status.is-paused,
 .automation-status.is-completed {
   color: var(--text-faint);
-}
-
-.automation-status.is-paused .automation-status-dot,
-.automation-status.is-completed .automation-status-dot {
-  background: var(--text-quaternary);
 }
 
 .automations-new-button {
@@ -665,21 +651,9 @@
 }
 
 .automation-run {
-  position: relative;
   min-width: 0;
   border-top: 1px solid var(--separator);
   padding: var(--space-2) 0;
-}
-
-.automation-run.is-unread::before {
-  position: absolute;
-  top: var(--space-5);
-  left: calc(-1 * var(--space-4));
-  width: 5px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  content: "";
 }
 
 .automation-run-main {
@@ -704,20 +678,22 @@
   opacity: 1;
 }
 
-.automation-run-state {
-  width: 7px;
-  height: 7px;
+.automation-run-unread {
+  width: 5px;
+  height: 5px;
+  align-self: start;
   border-radius: var(--radius-pill);
-  background: var(--text-quaternary);
-  margin-top: 5px;
+  background: var(--accent);
+  margin: 6px auto 0;
+  opacity: 0;
 }
 
-.automation-run-state.is-dispatched {
-  background: var(--status-success);
+.automation-run-unread.is-visible {
+  opacity: 1;
 }
 
-.automation-run-state.is-failed {
-  background: var(--status-danger);
+.automation-run-status.is-failed {
+  color: var(--status-danger);
 }
 
 .automation-run-copy {

@@ -19,18 +19,21 @@ export function AutomationRunsView(props: AutomationRunsViewProps) {
       {props.runs.map((run) => {
         const navigable = run.state === 'dispatched' && Boolean(run.threadId);
         return (
-          <article className={`automation-run${run.readAt === null ? ' is-unread' : ''}`} key={run.id}>
+          <article className="automation-run" key={run.id}>
             <button
               className="automation-run-main"
               disabled={!navigable}
               onClick={() => void props.onOpenThread(run)}
               type="button"
             >
-              <span className={`automation-run-state is-${run.state}`} aria-hidden="true" />
+              <span
+                className={`automation-run-unread${run.readAt === null ? ' is-visible' : ''}`}
+                aria-hidden="true"
+              />
               <span className="automation-run-copy">
                 <strong>{props.automationName}</strong>
                 <small>
-                  <span>{t.runStates[run.state]}</span>
+                  <span className={`automation-run-status is-${run.state}`}>{t.runStates[run.state]}</span>
                   <span aria-hidden="true"> · </span>
                   <time dateTime={new Date(run.scheduledFor).toISOString()} title={formatDate(run.scheduledFor)}>
                     {formatRelative(run.scheduledFor)}

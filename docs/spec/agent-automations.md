@@ -209,9 +209,11 @@ surface is loaded as a separate React chunk so the default Thread composer does
 not pay its editor and schedule cost. Its main surface is a compact searchable
 list with status filters, next occurrence, and unread state. Search and New share
 one aligned toolbar row; the equal-width status filter and list rows use the same
-horizontal content bounds. Each row presents status as a compact state dot and
-label aligned with its title; unread state sits on the row's leading icon instead
-of competing with the status slot. Selecting an
+reading column, while row hover fills use the rail's concentric `--rail-pad`
+boundary. Each row presents status as compact text aligned with its title;
+unread state sits on the row's leading icon instead of competing with the status
+slot. Previous-run rows likewise reserve one in-row leading slot for unread
+state and express execution state as text, never as a second adjacent dot. Selecting an
 Automation, or creating one, opens the same modal bottom drawer over the list.
 The drawer is bottom-aligned,
 defaults to 80% height with a 52px top gap, keeps a 360px minimum where the
