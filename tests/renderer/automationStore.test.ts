@@ -51,7 +51,7 @@ describe('renderer Automation store', () => {
     });
     await store.loadRunsForAutomation(first.id);
     expect(store.getSnapshot().runs).toEqual([firstRun]);
-    notify({ type: 'automationRuns/markedRead', automationId: first.id, readAt: 50 });
+    notify({ type: 'automationRuns/markedRead', automationId: first.id, eventSequence: 50, readAt: 50 });
     expect(store.getSnapshot().runs[0]?.readAt).toBe(50);
     expect(store.getSnapshot().unreadAutomationIds).not.toContain(first.id);
     notify({ type: 'automationRun/changed', run: firstRun });
@@ -128,7 +128,7 @@ describe('renderer Automation store', () => {
         if (method === 'startNow') return { runs: [started] };
         if (method === 'runMarkRead') return { run: { ...started, readAt: 31 } };
         if (method === 'runsMarkRead') {
-          return { automationId: created.id, readAt: 32, updatedCount: 201 };
+          return { automationId: created.id, eventSequence: 32, readAt: 32, updatedCount: 201 };
         }
         if (method === 'runPin') return { run: { ...started, pinned: true } };
         if (method === 'delete') return { deleted: true, id: created.id };
@@ -219,6 +219,57 @@ describe('renderer Automation store', () => {
     expect(store.getSnapshot().automations).toEqual([updated]);
     expect(store.getSnapshot().runs).toEqual([completedRun]);
     expect(store.getSnapshot().unreadAutomationIds).toEqual([first.id]);
+  });
+
+  test('keeps a same-millisecond Run transition after a bulk read boundary unread', async () => {
+    const owner = automation('01920000-0000-7000-8000-000000000001', 10);
+    const pending = {
+      ...run(owner, '01920000-0000-7000-8000-000000000101', 50),
+      eventSequence: 1,
+    };
+    const dispatched: AutomationRun = {
+      ...pending,
+      eventSequence: 3,
+      state: 'dispatched',
+      turnId: '01920000-0000-7000-8000-000000000301',
+      updatedAt: 50,
+    };
+    let notify: (notification: AutomationNotification) => void = () => undefined;
+    let resolveMarkedRead!: (response: {
+      automationId: string;
+      eventSequence: number;
+      readAt: number;
+      updatedCount: number;
+    }) => void;
+    const markedRead = new Promise<{
+      automationId: string;
+      eventSequence: number;
+      readAt: number;
+      updatedCount: number;
+    }>((resolve) => { resolveMarkedRead = resolve; });
+    const client = {
+      onAutomationNotification(listener: (notification: AutomationNotification) => void) {
+        notify = listener;
+        return () => undefined;
+      },
+      async automationRequest(method: string) {
+        if (method === 'list') return { data: [owner] };
+        if (method === 'runs') return { data: [] };
+        if (method === 'runsMarkRead') return markedRead;
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as AutomationStoreClient;
+    const store = new AutomationRendererStore(client);
+    await store.initialize();
+    notify({ type: 'automationRun/changed', run: pending });
+
+    const marking = store.markAutomationRunsRead(owner.id);
+    notify({ type: 'automationRun/changed', run: dispatched });
+    resolveMarkedRead({ automationId: owner.id, eventSequence: 2, readAt: 50, updatedCount: 0 });
+    await marking;
+
+    expect(store.getSnapshot().runs).toEqual([dispatched]);
+    expect(store.getSnapshot().unreadAutomationIds).toContain(owner.id);
   });
 
   test('ignores a prior mount reload that resolves after a reopened surface', async () => {
@@ -360,6 +411,7 @@ function run(owner: Automation, id: string, scheduledFor: number): AutomationRun
     id,
     automationId: owner.id,
     automationRevision: owner.revision,
+    eventSequence: scheduledFor,
     scheduledFor,
     projectBindingKey: 'no-project',
     snapshot: {

@@ -136,6 +136,7 @@ export class AutomationService {
         await this.publish({
           type: 'automationRuns/markedRead',
           automationId,
+          eventSequence: result.eventSequence,
           readAt: result.readAt,
         });
         return { automationId, ...result } as AutomationResponseByMethod[Method];

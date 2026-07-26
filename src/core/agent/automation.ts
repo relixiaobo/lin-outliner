@@ -88,6 +88,7 @@ export interface AutomationRun {
   readonly id: string;
   readonly automationId: string;
   readonly automationRevision: number;
+  readonly eventSequence: number;
   readonly scheduledFor: number;
   readonly projectBindingKey: string;
   readonly snapshot: AutomationRunConfigurationSnapshot;
@@ -139,7 +140,12 @@ export interface AutomationRunListInput {
 export type AutomationNotification =
   | { readonly type: 'automation/changed'; readonly automation: Automation | null; readonly automationId: string }
   | { readonly type: 'automationRun/changed'; readonly run: AutomationRun }
-  | { readonly type: 'automationRuns/markedRead'; readonly automationId: string; readonly readAt: number };
+  | {
+      readonly type: 'automationRuns/markedRead';
+      readonly automationId: string;
+      readonly eventSequence: number;
+      readonly readAt: number;
+    };
 
 export const AUTOMATION_REQUEST_CHANNEL = 'lin:automation:request';
 export const AUTOMATION_NOTIFICATION_CHANNEL = 'lin:automation:notification';
@@ -172,7 +178,12 @@ export type AutomationResponseByMethod = {
   readonly runs: { readonly data: readonly AutomationRun[] };
   readonly runRead: { readonly run: AutomationRun | null };
   readonly runMarkRead: { readonly run: AutomationRun };
-  readonly runsMarkRead: { readonly automationId: string; readonly readAt: number; readonly updatedCount: number };
+  readonly runsMarkRead: {
+    readonly automationId: string;
+    readonly eventSequence: number;
+    readonly readAt: number;
+    readonly updatedCount: number;
+  };
   readonly runPin: { readonly run: AutomationRun };
 };
 
@@ -274,9 +285,10 @@ export function decodeAutomationResponse<Method extends AutomationMethod>(
         run: decodeAutomationRun(record.run, `${path}.run`),
       }) as AutomationResponseByMethod[Method];
     case 'runsMarkRead':
-      exactKeys(record, ['automationId', 'readAt', 'updatedCount'], path);
+      exactKeys(record, ['automationId', 'eventSequence', 'readAt', 'updatedCount'], path);
       return Object.freeze({
         automationId: uuid(record.automationId, `${path}.automationId`),
+        eventSequence: positiveInteger(record.eventSequence, `${path}.eventSequence`),
         readAt: timestamp(record.readAt, `${path}.readAt`),
         updatedCount: nonNegativeInteger(record.updatedCount, `${path}.updatedCount`),
       }) as AutomationResponseByMethod[Method];
@@ -305,10 +317,11 @@ export function decodeAutomationNotification(value: unknown): AutomationNotifica
     });
   }
   if (record.type === 'automationRuns/markedRead') {
-    exactKeys(record, ['type', 'automationId', 'readAt'], path);
+    exactKeys(record, ['type', 'automationId', 'eventSequence', 'readAt'], path);
     return Object.freeze({
       type: record.type,
       automationId: uuid(record.automationId, `${path}.automationId`),
+      eventSequence: positiveInteger(record.eventSequence, `${path}.eventSequence`),
       readAt: timestamp(record.readAt, `${path}.readAt`),
     });
   }
@@ -345,7 +358,7 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
 export function decodeAutomationRun(value: unknown, path = 'automationRun'): AutomationRun {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'id', 'automationId', 'automationRevision', 'scheduledFor', 'projectBindingKey',
+    'id', 'automationId', 'automationRevision', 'eventSequence', 'scheduledFor', 'projectBindingKey',
     'snapshot', 'state', 'threadId', 'turnId', 'worktree', 'omission', 'error',
     'readAt', 'pinned', 'createdAt', 'updatedAt',
   ], path);
@@ -398,6 +411,7 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
     id: uuid(record.id, `${path}.id`),
     automationId: uuid(record.automationId, `${path}.automationId`),
     automationRevision: positiveInteger(record.automationRevision, `${path}.automationRevision`),
+    eventSequence: positiveInteger(record.eventSequence, `${path}.eventSequence`),
     scheduledFor: timestamp(record.scheduledFor, `${path}.scheduledFor`),
     projectBindingKey,
     snapshot,

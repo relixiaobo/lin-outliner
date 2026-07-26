@@ -273,7 +273,12 @@ header. Opening a navigable run marks it read automatically; individual run rows
 never carry a read-management action. Mark all as read is one host-side update
 over every unread dispatched or failed Run for the Automation, independent of
 the renderer's bounded recent-run page, and publishes one bounded aggregate
-notification for all open renderer surfaces.
+notification for all open renderer surfaces. Every Run insert and mutation gets
+a durable, server-side monotonic event sequence. The aggregate notification
+carries the sequence assigned to the bulk update, so renderer surfaces only
+normalize older Run projections. A pending Run that dispatches or fails after
+the update remains unread even when both changes share the same wall-clock
+millisecond.
 
 Renderer state stores canonical Automation and AutomationRun DTOs. Realtime
 notifications are merged monotonically with an in-flight initial read, including

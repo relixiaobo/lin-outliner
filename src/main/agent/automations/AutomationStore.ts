@@ -42,6 +42,7 @@ interface AutomationRunRow {
   id: string;
   automation_id: string;
   automation_revision: number;
+  event_sequence: number;
   scheduled_for: number;
   project_binding_key: string;
   snapshot_json: string;
@@ -109,10 +110,16 @@ export class AutomationStore {
         overlap_deferred INTEGER NOT NULL DEFAULT 0 CHECK (overlap_deferred IN (0, 1)),
         PRIMARY KEY (automation_id, binding_key)
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS automation_run_event_clock (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        sequence INTEGER NOT NULL CHECK (sequence >= 0)
+      ) STRICT;
+      INSERT OR IGNORE INTO automation_run_event_clock(id, sequence) VALUES (1, 0);
       CREATE TABLE IF NOT EXISTS automation_runs (
         id TEXT PRIMARY KEY,
         automation_id TEXT NOT NULL REFERENCES automations(id),
         automation_revision INTEGER NOT NULL CHECK (automation_revision > 0),
+        event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
         scheduled_for INTEGER NOT NULL,
         project_binding_key TEXT NOT NULL,
         snapshot_json TEXT NOT NULL,
@@ -404,11 +411,12 @@ export class AutomationStore {
   }
 
   markDispatched(id: string, threadId: string, turnId: string, now = Date.now()): AutomationRun {
+    const eventSequence = this.nextRunEventSequence();
     const result = this.db.prepare(`
       UPDATE automation_runs
-      SET state = 'dispatched', thread_id = ?, turn_id = ?, error = NULL, updated_at = ?
+      SET state = 'dispatched', thread_id = ?, turn_id = ?, error = NULL, event_sequence = ?, updated_at = ?
       WHERE id = ? AND state = 'pending'
-    `).run(threadId, turnId, now, id);
+    `).run(threadId, turnId, eventSequence, now, id);
     if (result.changes !== 1) {
       const current = this.requireRun(id);
       if (current.state === 'dispatched' && current.threadId === threadId && current.turnId === turnId) return current;
@@ -418,33 +426,38 @@ export class AutomationStore {
   }
 
   markFailed(id: string, error: string, now = Date.now()): AutomationRun {
+    const eventSequence = this.nextRunEventSequence();
     const result = this.db.prepare(`
-      UPDATE automation_runs SET state = 'failed', thread_id = NULL, error = ?, updated_at = ?
+      UPDATE automation_runs
+      SET state = 'failed', thread_id = NULL, error = ?, event_sequence = ?, updated_at = ?
       WHERE id = ? AND state = 'pending'
-    `).run(boundedError(error), now, id);
+    `).run(boundedError(error), eventSequence, now, id);
     if (result.changes !== 1) throw new Error(`AutomationRun cannot fail before dispatch: ${id}`);
     return this.requireRun(id);
   }
 
   recordPendingError(id: string, error: string, now = Date.now()): AutomationRun {
+    const eventSequence = this.nextRunEventSequence();
     this.db.prepare(`
-      UPDATE automation_runs SET error = ?, updated_at = ? WHERE id = ? AND state = 'pending'
-    `).run(boundedError(error), now, id);
+      UPDATE automation_runs SET error = ?, event_sequence = ?, updated_at = ? WHERE id = ? AND state = 'pending'
+    `).run(boundedError(error), eventSequence, now, id);
     return this.requireRun(id);
   }
 
   setThread(id: string, threadId: string, now = Date.now()): AutomationRun {
+    const eventSequence = this.nextRunEventSequence();
     this.db.prepare(`
-      UPDATE automation_runs SET thread_id = ?, updated_at = ?
+      UPDATE automation_runs SET thread_id = ?, event_sequence = ?, updated_at = ?
       WHERE id = ? AND state = 'pending' AND (thread_id IS NULL OR thread_id = ?)
-    `).run(threadId, now, id, threadId);
+    `).run(threadId, eventSequence, now, id, threadId);
     return this.requireRun(id);
   }
 
   setWorktree(id: string, worktree: AutomationWorktreeMetadata | null, now = Date.now()): AutomationRun {
+    const eventSequence = this.nextRunEventSequence();
     this.db.prepare(`
-      UPDATE automation_runs SET worktree_json = ?, updated_at = ? WHERE id = ?
-    `).run(worktree ? json(worktree) : null, now, id);
+      UPDATE automation_runs SET worktree_json = ?, event_sequence = ?, updated_at = ? WHERE id = ?
+    `).run(worktree ? json(worktree) : null, eventSequence, now, id);
     return this.requireRun(id);
   }
 
@@ -491,20 +504,24 @@ export class AutomationStore {
   }
 
   markRunRead(id: string, now = Date.now()): AutomationRun {
-    this.db.prepare('UPDATE automation_runs SET read_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+    const eventSequence = this.nextRunEventSequence();
+    this.db.prepare(`
+      UPDATE automation_runs SET read_at = ?, event_sequence = ?, updated_at = ? WHERE id = ?
+    `).run(now, eventSequence, now, id);
     return this.requireRun(id);
   }
 
   markAutomationRunsRead(
     automationId: string,
     now = Date.now(),
-  ): { readonly readAt: number; readonly updatedCount: number } {
+  ): { readonly eventSequence: number; readonly readAt: number; readonly updatedCount: number } {
     this.require(automationId, now);
+    const eventSequence = this.nextRunEventSequence();
     const result = this.db.prepare(`
-      UPDATE automation_runs SET read_at = ?, updated_at = ?
+      UPDATE automation_runs SET read_at = ?, event_sequence = ?, updated_at = ?
       WHERE automation_id = ? AND read_at IS NULL AND state IN ('dispatched', 'failed')
-    `).run(now, now, automationId);
-    return Object.freeze({ readAt: now, updatedCount: Number(result.changes) });
+    `).run(now, eventSequence, now, automationId);
+    return Object.freeze({ eventSequence, readAt: now, updatedCount: Number(result.changes) });
   }
 
   pinRun(id: string, pinned: boolean, now = Date.now()): AutomationRun {
@@ -512,8 +529,9 @@ export class AutomationStore {
     if (!current.worktree || current.worktree.removedAt !== null) {
       throw new Error(`AutomationRun has no retained worktree to pin: ${id}`);
     }
-    this.db.prepare('UPDATE automation_runs SET pinned = ?, updated_at = ? WHERE id = ?')
-      .run(pinned ? 1 : 0, now, id);
+    const eventSequence = this.nextRunEventSequence();
+    this.db.prepare('UPDATE automation_runs SET pinned = ?, event_sequence = ?, updated_at = ? WHERE id = ?')
+      .run(pinned ? 1 : 0, eventSequence, now, id);
     return this.requireRun(id);
   }
 
@@ -584,6 +602,7 @@ export class AutomationStore {
       SELECT * FROM automation_runs WHERE automation_id = ? AND state = 'pending'
     `).all(automationId) as AutomationRunRow[];
     for (const row of rows) {
+      const eventSequence = this.nextRunEventSequence();
       const omission: AutomationRunOmission = {
         from: row.scheduled_for,
         through: row.scheduled_for,
@@ -592,9 +611,9 @@ export class AutomationStore {
       };
       this.db.prepare(`
         UPDATE automation_runs
-        SET state = 'omitted', thread_id = NULL, error = NULL, omission_json = ?, updated_at = ?
+        SET state = 'omitted', thread_id = NULL, error = NULL, omission_json = ?, event_sequence = ?, updated_at = ?
         WHERE id = ? AND state = 'pending'
-      `).run(json(omission), now, row.id);
+      `).run(json(omission), eventSequence, now, row.id);
     }
   }
 
@@ -617,22 +636,25 @@ export class AutomationStore {
       const omission = parseJson<AutomationRunOmission>(previous.omission_json!, 'AutomationRun omission');
       if (omission.reason === reason && omission.through < from) {
         const merged = { ...omission, through, count: omission.count + count };
+        const eventSequence = this.nextRunEventSequence();
         this.db.prepare(`
-          UPDATE automation_runs SET scheduled_for = ?, omission_json = ?, updated_at = ? WHERE id = ?
-        `).run(through, json(merged), now, previous.id);
+          UPDATE automation_runs
+          SET scheduled_for = ?, omission_json = ?, event_sequence = ?, updated_at = ? WHERE id = ?
+        `).run(through, json(merged), eventSequence, now, previous.id);
         return this.requireRun(previous.id);
       }
     }
     const id = uuidV7(now);
+    const eventSequence = this.nextRunEventSequence();
     const snapshot = runSnapshot(automation, binding);
     const omission: AutomationRunOmission = { from, through, count, reason };
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, scheduled_for, project_binding_key,
+        id, automation_id, automation_revision, event_sequence, scheduled_for, project_binding_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
-    `).run(id, automation.id, automation.revision, through, key, json(snapshot), json(omission), now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
+    `).run(id, automation.id, automation.revision, eventSequence, through, key, json(snapshot), json(omission), now, now);
     return this.requireRun(id);
   }
 
@@ -645,17 +667,19 @@ export class AutomationStore {
     const existing = this.runForOccurrence(automation.id, scheduledFor, bindingKey(binding));
     if (existing) return existing;
     const id = uuidV7(now);
+    const eventSequence = this.nextRunEventSequence();
     const threadId = automation.destination.kind === 'standalone' ? uuidV7(now) : automation.destination.threadId;
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, scheduled_for, project_binding_key,
+        id, automation_id, automation_revision, event_sequence, scheduled_for, project_binding_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
     `).run(
       id,
       automation.id,
       automation.revision,
+      eventSequence,
       scheduledFor,
       bindingKey(binding),
       json(runSnapshot(automation, binding)),
@@ -672,6 +696,17 @@ export class AutomationStore {
       WHERE automation_id = ? AND scheduled_for = ? AND project_binding_key = ?
     `).get(automationId, scheduledFor, projectBindingKey) as AutomationRunRow | undefined;
     return row ? runFromRow(row) : null;
+  }
+
+  private nextRunEventSequence(): number {
+    this.db.prepare(`
+      UPDATE automation_run_event_clock SET sequence = sequence + 1 WHERE id = 1
+    `).run();
+    const row = this.db.prepare(`
+      SELECT sequence FROM automation_run_event_clock WHERE id = 1
+    `).get() as { sequence: number } | undefined;
+    if (!row) throw new Error('Automation Run event clock is unavailable');
+    return row.sequence;
   }
 
   private transaction<T>(operation: () => T): T {
@@ -718,6 +753,7 @@ function runFromRow(row: AutomationRunRow): AutomationRun {
     id: row.id,
     automationId: row.automation_id,
     automationRevision: row.automation_revision,
+    eventSequence: row.event_sequence,
     scheduledFor: row.scheduled_for,
     projectBindingKey: row.project_binding_key,
     snapshot: Object.freeze(parseJson<AutomationRunConfigurationSnapshot>(row.snapshot_json, 'AutomationRun snapshot')),

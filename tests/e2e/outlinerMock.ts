@@ -267,6 +267,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const nodes = new Map<string, MockNode>();
     let now = 1_800_000_000_000;
     let sequence = 0;
+    let automationRunEventSequence = 0;
     // The mock doesn't track per-command change sets, so every command/event ships
     // a `full` ProjectionUpdate (the renderer rebuilds from it). Revision advances
     // monotonically to mirror the real emit chain; the delta path is unit-tested
@@ -557,6 +558,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       id: string;
       automationId: string;
       automationRevision: number;
+      eventSequence: number;
       scheduledFor: number;
       projectBindingKey: string;
       snapshot: {
@@ -1707,6 +1709,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             id: automationRunId,
             automationId: automation.id,
             automationRevision: automation.revision,
+            eventSequence: ++automationRunEventSequence,
             scheduledFor: timestamp,
             projectBindingKey: 'no-project',
             snapshot: {
@@ -1737,6 +1740,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (method === 'runsMarkRead') {
           const readAt = ++now;
+          const eventSequence = ++automationRunEventSequence;
           let updatedCount = 0;
           for (const run of mockAutomationRuns) {
             if (
@@ -1745,21 +1749,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               || (run.state !== 'dispatched' && run.state !== 'failed')
             ) continue;
             run.readAt = readAt;
+            run.eventSequence = eventSequence;
             run.updatedAt = readAt;
             updatedCount += 1;
           }
           emitAutomationNotification({
             type: 'automationRuns/markedRead',
             automationId: String(input.automationId),
+            eventSequence,
             readAt,
           });
-          return clone({ automationId: input.automationId, readAt, updatedCount }) as T;
+          return clone({ automationId: input.automationId, eventSequence, readAt, updatedCount }) as T;
         }
         if (method === 'runMarkRead' || method === 'runPin') {
           const run = mockAutomationRuns.find((item) => item.id === input.id);
           if (!run) throw new Error(`AutomationRun not found: ${String(input.id)}`);
           if (method === 'runMarkRead') run.readAt = ++now;
           else run.pinned = input.pinned === true;
+          run.eventSequence = ++automationRunEventSequence;
           run.updatedAt = ++now;
           emitAutomationNotification({ type: 'automationRun/changed', run });
           return clone({ run }) as T;

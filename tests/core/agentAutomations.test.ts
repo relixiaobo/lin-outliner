@@ -94,14 +94,21 @@ describe('Automation protocol and schedule', () => {
     expect(decodeAutomationResponse('runs', { data: [run] }).data[0]).toEqual(run);
     expect(decodeAutomationResponse('runsMarkRead', {
       automationId: automation.id,
+      eventSequence: 10,
       readAt: 10,
       updatedCount: 201,
-    })).toEqual({ automationId: automation.id, readAt: 10, updatedCount: 201 });
+    })).toEqual({ automationId: automation.id, eventSequence: 10, readAt: 10, updatedCount: 201 });
     expect(decodeAutomationNotification({
       type: 'automationRuns/markedRead',
       automationId: automation.id,
+      eventSequence: 10,
       readAt: 10,
-    })).toEqual({ type: 'automationRuns/markedRead', automationId: automation.id, readAt: 10 });
+    })).toEqual({
+      type: 'automationRuns/markedRead',
+      automationId: automation.id,
+      eventSequence: 10,
+      readAt: 10,
+    });
     expect(() => decodeAutomationResponse('runs', {
       data: [{ ...run, state: 'dispatched', turnId: null }],
     })).toThrow('inconsistent');
@@ -495,11 +502,26 @@ describe('Automation durable scheduling', () => {
     expect(store.dispatchedRunsForReconciliation()).toHaveLength(501);
     expect(store.retainedWorktreeRunsForCleanup().map((run) => run.id)).toEqual([oldestRunId]);
     expect(store.listRuns({ automationId: automation.id, unreadOnly: true, limit: 1_000 })).toHaveLength(501);
-    expect(store.markAutomationRunsRead(automation.id, now + 1_000)).toEqual({
+    expect(store.markAutomationRunsRead(automation.id, now + 1_000)).toMatchObject({
       readAt: now + 1_000,
       updatedCount: 501,
     });
     expect(store.listRuns({ automationId: automation.id, unreadOnly: true, limit: 1_000 })).toHaveLength(0);
+  });
+
+  test('keeps a same-millisecond terminal transition newer than a bulk read boundary unread', () => {
+    const store = automationStore();
+    const now = Date.parse('2026-07-24T08:00:00Z');
+    const automation = store.create(definition('20260724T090000'), now);
+    const pending = store.claimNow(automation, null, now);
+    const boundary = store.markAutomationRunsRead(automation.id, now);
+    const failed = store.markFailed(pending.id, 'provider unavailable', now);
+
+    expect(boundary.updatedCount).toBe(0);
+    expect(failed.updatedAt).toBe(boundary.readAt);
+    expect(failed.eventSequence).toBeGreaterThan(boundary.eventSequence);
+    expect(failed.readAt).toBeNull();
+    expect(store.listRuns({ automationId: automation.id, unreadOnly: true })).toEqual([failed]);
   });
 });
 
