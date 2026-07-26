@@ -40,14 +40,13 @@ const MARKITDOWN_CACHE_EXTRACTOR = 'markitdown:v1';
 export const MARKITDOWN_RICH_DOCUMENT_EXTENSIONS = new Set([
   '.docx',
   '.epub',
-  '.pptx',
   '.xls',
   '.xlsx',
 ]);
 
 export const MARKITDOWN_RECOVERY_INSTRUCTIONS = [
   'MarkItDown is required to read this rich document as Markdown.',
-  'Use bash to inspect the local Python tooling, then install a minimal local backend with `python3 -m pip install --user \'markitdown[docx,pptx,xlsx,xls]\'` or `uv tool install \'markitdown[docx,pptx,xlsx,xls]\'` when uv is available.',
+  'Use bash to inspect the local Python tooling, then install a minimal local backend with `python3 -m pip install --user \'markitdown[docx,xlsx,xls]\'` or `uv tool install \'markitdown[docx,xlsx,xls]\'` when uv is available.',
   'Do not assume Homebrew is available.',
   'If MarkItDown is installed in a custom location, set LIN_AGENT_MARKITDOWN_COMMAND to the executable path or command, for example `python3 -m markitdown`.',
   'After installation, retry the same file_read call.',

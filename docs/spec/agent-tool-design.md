@@ -79,6 +79,25 @@ PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
 page images are normalized serially through the same bounded image path.
 
+PPTX is a dedicated in-process OOXML route rather than a MarkItDown route. It
+indexes the ZIP central directory lazily, validates the content-types and
+presentation relationship graph, and reads only selected presentation, slide,
+speaker-note, and directly related chart XML. Media, embedded packages, macros,
+and external relationship targets are not opened. Archive-entry, selected-part,
+selected-total, slide-count, elapsed-time, and final-output budgets bound the
+observation independently of the presentation container's total byte size, so a
+media-heavy presentation is not rejected merely for containing large images or
+video. The result identifies itself as structural text and explicitly excludes
+images, visual layout, animations, embedded files, and OCR. Missing or malformed
+OOXML fails as `invalid_pptx` before any optional converter probe.
+
+Office ownership files such as `.~Presentation.pptx` and `~$Workbook.xlsx` are
+not document content. Product file admission and `file_read` reject them with a
+stable `temporary_office_file` diagnosis and name the original document only
+when an exact same-directory sibling is verified; local search and recent-file
+suggestions omit them. Raw `file_glob` and `bash` remain complete filesystem
+views and do not hide these files.
+
 `bash` executes through the host shell, streams bounded output, records process
 identity, and may return a background handle. `bash_stop` addresses only a known
 live process handle. Native command exit and filesystem errors remain visible to

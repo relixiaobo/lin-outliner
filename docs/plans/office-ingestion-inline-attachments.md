@@ -61,13 +61,17 @@ canonical `ThreadUserContent[]` in sequence:
 
 - text, Node references, directories, and non-image file attachments share an
   inline wrapping run;
-- an image attachment flushes that run, renders one standalone preview block at
-  its exact position, and starts a new inline run for following content;
+- an image attachment flushes that run and renders outside the message bubble at
+  its exact position; consecutive images form one gallery before a new inline
+  run starts for following content;
 - multiple images and files preserve their submitted order during replay and
   message editing.
 
 The inline file reference keeps the existing Thread-scoped preview identity and
-does not add a second card wrapper inside the user-message surface.
+does not add a second card wrapper inside the user-message surface. Galleries use
+purpose-built one-, two-, three-, and four-image layouts. More than four images
+start as four thumbnails with a `+N` expansion control; expanded galleries show
+every image and can be collapsed again. A tile still opens the shared reader.
 
 ### Dependencies and ownership
 
@@ -80,7 +84,8 @@ this branch will rebase after that integration before becoming ready.
 ## Open Questions
 
 None. The PM ratified the one-PR scope, the dependency change, exact attachment
-ordering, inline non-image presentation, and block image presentation.
+ordering, inline non-image presentation, and expandable image galleries outside
+the message bubble.
 
 ## Verification
 

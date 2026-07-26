@@ -31,6 +31,7 @@ import {
   clearRipgrepCommandCacheForTests,
   getBundledRipgrepExecutablePath,
 } from '../../src/main/agent/capabilities/agentRipgrep';
+import { buildStoredZip, pptxFixtureEntries } from '../helpers/pptxFixture';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
@@ -1024,7 +1025,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_read returns a recoverable MarkItDown dependency error for rich documents', async () => {
+  test('file_read rejects malformed PPTX before probing MarkItDown', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
       process.env.LIN_AGENT_MARKITDOWN_COMMAND = path.join(workspaceRoot, 'missing-markitdown');
@@ -1035,10 +1036,57 @@ describe('agent local tools', () => {
         const read = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
 
         expect(read.ok).toBe(false);
-        expect(read.error?.code).toBe('markitdown_unavailable');
-        expect(read.instructions).toContain('python3 -m pip install --user');
-        expect(read.instructions).toContain('Do not assume Homebrew is available');
-        expect(read.instructions).toContain('retry the same file_read call');
+        expect(read.error?.code).toBe('invalid_pptx');
+        expect(read.instructions).toContain('valid .pptx presentation');
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+      }
+    });
+  });
+
+  test('file_read identifies an Office ownership file before PPTX validation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, '.~brief.pptx');
+      await writeFile(filePath, 'ownership metadata', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'brief.pptx'), 'original content', 'utf8');
+
+      const read = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('temporary_office_file');
+      expect(read.instructions).toContain('original document instead: brief.pptx');
+      expect(read.instructions).not.toContain('MarkItDown');
+    });
+  });
+
+  test('file_read extracts PPTX structural text without MarkItDown or a source-size cap', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'brief.pptx');
+      await writeFile(filePath, buildStoredZip(pptxFixtureEntries({
+        firstSlideText: 'Built-in PPTX reader',
+        extraEntries: [{ name: 'ppt/media/image1.bin', data: new Uint8Array(1024 * 1024) }],
+      })));
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      process.env.LIN_AGENT_MARKITDOWN_COMMAND = path.join(workspaceRoot, 'missing-markitdown');
+      try {
+        const read = await executeTool<{
+          type: 'markdown';
+          file: {
+            content: string;
+            converter: string;
+            coverage: { totalSlides: number };
+          };
+        }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+        expect(read.ok).toBe(true);
+        expect(read.data?.file.converter).toBe('pptx-structural');
+        expect(read.data?.file.coverage.totalSlides).toBe(1);
+        expect(read.data?.file.content).toContain('Built-in PPTX reader');
+        expect(read.instructions).not.toContain('MarkItDown');
       } finally {
         if (originalCommand === undefined) {
           delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
