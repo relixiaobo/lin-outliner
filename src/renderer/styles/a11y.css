@@ -18,16 +18,17 @@
    high-contrast) source order decides — this layer has to come last to win.
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* Shared opaque-material path. Both high-contrast and reduced-transparency drop
-   the translucency by swapping the material tokens to opaque surfaces and killing
-   the backdrop filter — defined once via the comma (OR) media query. */
+/* Shared opaque material / media-HUD path. Both high-contrast and
+   reduced-transparency replace translucent seeds and kill the backdrop filter —
+   defined once via the comma (OR) media query. */
 @media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
   :root {
     --material-sidebar: var(--bg-window);
     --material-popover: var(--bg-elevated);
     --material-backdrop: none;
-    --preview-action-bg: rgb(46 46 50);
-    --preview-action-hover-bg: rgb(31 31 35);
+    --media-hud-bg: rgb(46 46 50);
+    --media-hud-hover-bg: rgb(31 31 35);
+    --media-hud-active-bg: rgb(20 20 24);
   }
 }
 

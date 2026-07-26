@@ -87,15 +87,16 @@
   --material-popover: rgba(250, 250, 250, 0.80);
   --material-blur: 30px;
   --material-saturate: 112%;
-  /* File-preview HUD controls float over arbitrary document pixels (white PDFs,
-     images, failed backdrop-filter). They need their own contrast pair instead of
-     the app-surface --fill-* ladder, which can disappear over preview content. */
-  --preview-action-bg: rgba(46, 46, 50, 0.78);
-  --preview-action-hover-bg: rgba(31, 31, 35, 0.88);
-  --preview-action-fg: rgba(255, 255, 255, 0.94);
-  --preview-action-outline: rgba(255, 255, 255, 0.12);
-  --preview-action-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
-  --document-outline-marker-shadow: 0 0 0 1px var(--preview-action-outline);
+  /* Media HUD controls float over arbitrary document/image pixels. Their fixed
+     contrast pair stays legible where the app-surface --fill-* ladder cannot. */
+  --media-hud-bg: rgba(46, 46, 50, 0.78);
+  --media-hud-hover-bg: rgba(31, 31, 35, 0.88);
+  --media-hud-active-bg: rgba(20, 20, 24, 0.94);
+  --media-hud-fg: rgba(255, 255, 255, 0.94);
+  --media-hud-outline: rgba(255, 255, 255, 0.12);
+  --media-hud-compact-shadow: inset 0 0 0 1px var(--media-hud-outline);
+  --preview-action-shadow: var(--shadow-thumb-strong), var(--media-hud-compact-shadow);
+  --document-outline-marker-shadow: 0 0 0 1px var(--media-hud-outline);
   /* The shared backdrop-filter for every translucent material surface. Surfaces
      opt in with `background: var(--material-*)` + `backdrop-filter:
      var(--material-backdrop)`; the a11y layer (a11y.css) then swaps both tokens

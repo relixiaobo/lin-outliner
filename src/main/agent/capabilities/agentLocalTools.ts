@@ -42,6 +42,8 @@ import {
   MAX_PROMPT_IMAGE_BYTES,
   MAX_PROMPT_IMAGE_DIMENSION,
 } from '../../../core/agentAttachmentLimits';
+import { officeOwnershipFileInfo } from '../../../core/officeFiles';
+import { ingestPptxAsMarkdown, type PptxIngestionResult } from './agentPptxIngestion';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -143,10 +145,16 @@ interface FileReadMarkdownData {
   file: {
     filePath: string;
     content: string;
-    converter: 'markitdown';
+    converter: 'markitdown' | 'pptx-structural';
     contentChars: number;
     truncated: boolean;
     originalSize: number;
+    coverage?: {
+      totalSlides: number;
+      slidesWithoutText: number[];
+      notesSlides: number;
+      chartCount: number;
+    };
   };
 }
 
@@ -875,6 +883,17 @@ function createFileReadTool(
         if (fileStat.isDirectory()) {
           throw new LocalToolFailure('is_directory', `Path is a directory: ${filePath}`, 'Use file_glob to discover files under a directory.');
         }
+        const ownershipFile = officeOwnershipFileInfo(filePath);
+        if (ownershipFile) {
+          const suggestedName = await existingSiblingFileName(filePath, ownershipFile.suggestedName);
+          throw new LocalToolFailure(
+            'temporary_office_file',
+            `${ownershipFile.name} is a temporary Office ownership file, not the document content.`,
+            suggestedName
+              ? `Use the original document instead: ${suggestedName}.`
+              : 'Use the original document instead.',
+          );
+        }
         const ext = path.extname(filePath).toLowerCase();
         if (params.pages !== undefined && ext !== '.pdf') {
           throw new LocalToolFailure('invalid_args', 'The pages parameter is only valid for PDF files.', 'Remove pages or pass a .pdf file path.');
@@ -962,6 +981,16 @@ function createFileReadTool(
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(data);
           return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible);
+        }
+        if (ext === '.pptx') {
+          const read = await ingestPptxFile(filePath, fileStat.size, signal);
+          await notifySuccessfulFileTouch(workspace, filePath);
+          const visible = visibleFileRead(read.data);
+          return agentToolResult(successEnvelope('file_read', read.data, {
+            status: read.status,
+            instructions: read.instructions,
+            metrics: metrics(started, read.data),
+          }), visible, read.content);
         }
         if (MARKITDOWN_RICH_DOCUMENT_EXTENSIONS.has(ext)) {
           if (fileStat.size > MAX_MARKDOWN_SOURCE_BYTES) {
@@ -2445,6 +2474,46 @@ async function ingestRichDocumentFile(
   };
 }
 
+async function ingestPptxFile(
+  filePath: string,
+  originalSize: number,
+  signal?: AbortSignal,
+): Promise<FileIngestionOutput<FileReadMarkdownData>> {
+  const pptx = await ingestPptxAsMarkdown(filePath, signal);
+  const data: FileReadMarkdownData = {
+    type: 'markdown',
+    file: {
+      filePath,
+      content: pptx.content,
+      converter: pptx.converter,
+      contentChars: pptx.contentChars,
+      truncated: pptx.truncated,
+      originalSize,
+      coverage: pptxCoverage(pptx),
+    },
+  };
+  return {
+    data,
+    content: [{
+      type: 'text',
+      text: `Structural PPTX text from ${filePath}${pptx.truncated ? ' (truncated)' : ''}:\n\n${pptx.content}`,
+    }],
+    status: pptx.truncated ? 'partial' : undefined,
+    instructions: pptx.truncated
+      ? 'PPTX text was extracted locally without reading media, but the model-visible text was truncated. Split the presentation if later slides are required.'
+      : 'PPTX text was extracted locally from slide, speaker-note, and related-chart XML. Images, layout, animations, embedded files, and OCR were not observed.',
+  };
+}
+
+function pptxCoverage(result: PptxIngestionResult): NonNullable<FileReadMarkdownData['file']['coverage']> {
+  return {
+    totalSlides: result.totalSlides,
+    slidesWithoutText: result.slidesWithoutText,
+    notesSlides: result.notesSlides,
+    chartCount: result.chartCount,
+  };
+}
+
 async function renderPdfPages(workspace: WorkspaceContext, filePath: string, range: PdfPageRange): Promise<{ count: number; outputDir: string }> {
   const outputDir = path.join(toolOutputDir(workspace), `pdf-${randomUUID()}`);
   await mkdir(outputDir, { recursive: true });
@@ -3115,6 +3184,7 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
           converter: data.file.converter,
           truncated: data.file.truncated,
           originalSize: data.file.originalSize,
+          ...(data.file.coverage ? { coverage: data.file.coverage } : {}),
         },
       };
     case 'notebook':
@@ -3340,6 +3410,15 @@ function localPermissionError(filePath: string): LocalToolFailure {
     `Permission denied: ${filePath}`,
     'Check the path ownership and permissions and macOS Privacy & Security access for Tenon. Obtain any required native authorization or choose another path, then retry.',
   );
+}
+
+async function existingSiblingFileName(filePath: string, candidateName: string): Promise<string | null> {
+  const candidatePath = path.join(path.dirname(filePath), candidateName);
+  try {
+    return (await stat(candidatePath)).isFile() ? candidateName : null;
+  } catch {
+    return null;
+  }
 }
 
 function isNativeFilePermissionError(error: unknown): error is NodeJS.ErrnoException {

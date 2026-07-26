@@ -1261,6 +1261,9 @@ commandPalette: {
       noMentions: 'No references',
       noRecentMentions: 'No recent references',
       maxAttachments: ({ max }: { max: number }) => `You can attach up to ${max} files.`,
+      officeOwnershipFile: ({ name, suggestedName }: { name: string; suggestedName: string | null }) => suggestedName
+        ? `${name} is a temporary Office ownership file. Choose ${suggestedName} instead.`
+        : `${name} is a temporary Office ownership file. Choose the original document instead.`,
       skippedDuplicates: ({ count }: { count: number }) => count === 1
         ? "Skipped 1 file that's already attached."
         : `Skipped ${count} files that are already attached.`,
@@ -1294,6 +1297,9 @@ commandPalette: {
       save: 'Save',
       showMore: 'Show more',
       showLess: 'Show less',
+      imageGallery: ({ count }: { count: number }) => count === 1 ? '1 image' : `${count} images`,
+      showAllImages: ({ count }: { count: number }) => `Show all ${count} images`,
+      showFewerImages: 'Show fewer images',
       assistantResponding: 'Assistant is responding',
       details: 'Details',
       closeDetails: 'Close details',

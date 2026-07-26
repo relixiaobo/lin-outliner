@@ -1473,7 +1473,7 @@ test.describe('typography tokens', () => {
 
   test('keeps preview HUD action shadow routed through the shared contrast token', () => {
     const violations = collectCssTextViolations(
-      /box-shadow:\s*var\(--shadow-thumb-strong\),\s*inset 0 0 0 1px var\(--preview-action-outline\)/,
+      /box-shadow:\s*var\(--shadow-thumb-strong\),\s*var\(--media-hud-compact-shadow\)/,
     );
 
     expect(violations).toEqual([]);

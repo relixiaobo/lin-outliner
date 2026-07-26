@@ -99,6 +99,28 @@ final agent messages retain Copy, Continue in new chat, and Details. User messag
 retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
+User-message rendering consumes canonical `ThreadUserContent[]` in submitted
+order. Text, Node references, directories, and every attachment retain an inline
+marker inside a message bubble. Consecutive image attachments additionally form
+one external gallery immediately after their marker-bearing inline run and before
+the next canonical content run; the preview never replaces the image's message
+marker. The gallery uses dedicated
+layouts for one, two, three, and four images. More than four images initially
+show four thumbnails with a `+N` control; expanding shows every image and adds a
+collapse control. The overflow control is a compact bottom-right media-HUD badge:
+it uses the shared fixed-contrast palette and compact inset outline over arbitrary
+image pixels, exposes rest/hover/active/focus feedback, and does not add a
+backdrop filter or the file-preview action shadow. The ordinary file reference
+retains its Thread-scoped preview identity without a second attachment-card
+wrapper; every gallery tile retains the same scoped identity and opens the shared
+reader. Replay and fork consume the same canonical ordering rather than
+reconstructing attachment placement. Free-text editing is exposed only when
+canonical content contains at most one text part, and replacement preserves every
+non-text part in place. A split-text mixed message omits Edit until a structured
+content editor can represent each text boundary without flattening the sequence.
+Each inline bubble keeps the five-line measured disclosure independently, so
+the collapse mask never crops gallery content.
+
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Details as
 applicable. Continue in new chat is the only user-visible history fork action
@@ -236,6 +258,10 @@ produce transient feedback. Composer previews may use renderer-only object URLs
 or native thumbnails, but icons, thumbnails, object URLs, and upload state never
 enter `ThreadAttachmentContent`. Images receive their bounded immutable prompt
 snapshot during main-process admission, not in renderer canvas code.
+Office ownership files with `.~` or `~$` prefixes and Office document extensions
+are rejected before upload by picker, paste, and drop admission. A native picker
+names an exact original-file sibling when present but never silently substitutes
+it. Rejected ownership files do not consume the six accepted-attachment slots.
 
 `request_user_input` replaces the editor inside the existing composer surface
 with an in-dock form tied to one Item. It is a product-input surface, never a

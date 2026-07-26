@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Office ingestion and ordered inline attachments (PR #439, codex-3)** —
+  rejects Office ownership files before attachment or reading, adds a bounded
+  in-process PPTX structural-text reader with Strict OOXML support, and renders
+  files and image galleries at their canonical message positions without
+  losing filename markers. **Gate (main):** iterative review caught incomplete
+  PPTX package identity and exact relationship-type validation, split-text
+  editing that could destroy attachment order, and galleries that omitted
+  canonical image markers; all were fixed before merge. Final head `996f096a`
+  had no reportable findings; verification covered typecheck, full `test:core`
+  (1389 pass, 6 environment-dependent skips), full `test:renderer` (765 pass),
+  focused Core/renderer tests (15 pass), relevant Agent E2E (3 pass), docs, and
+  diff checks.
 - **Unified Agent execution interactions (PR #438, codex-4)** — made Plan
   updates transient Turn-local progress, navigates Run Details in the current
   workspace pane with Back history, and gives ordinary tools and Skills one

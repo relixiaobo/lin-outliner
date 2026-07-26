@@ -104,6 +104,7 @@ import {
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
+import { officeOwnershipFileInfo } from '../core/officeFiles';
 import {
   isUrlPageTranslationCommand,
   isUrlPageTranslationPreferences,
@@ -2271,14 +2272,30 @@ function registerIpc() {
       };
     }
     lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
-    const selectedPaths = result.filePaths.slice(0, maxFiles);
-    const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
-    const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
-      (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
-    );
+    let skippedCount = 0;
+    const files: NonNullable<Awaited<ReturnType<typeof localPickedFile>>>[] = [];
+    const rejectedFiles: Array<{
+      name: string;
+      reason: 'officeOwnershipFile';
+      suggestedName?: string;
+    }> = [];
+    for (const filePath of result.filePaths) {
+      const rejected = await rejectedOfficeOwnershipFile(filePath);
+      if (rejected) {
+        rejectedFiles.push(rejected);
+        continue;
+      }
+      if (files.length >= maxFiles) {
+        skippedCount += 1;
+        continue;
+      }
+      const file = await localPickedFile(filePath);
+      if (file) files.push(file);
+    }
     return {
       canceled: false,
       files,
+      ...(rejectedFiles.length > 0 ? { rejectedFiles } : {}),
       ...(skippedCount > 0 ? { skippedCount } : {}),
     };
   });
@@ -2860,6 +2877,7 @@ async function localFileMetadataResults(paths: string[], limit: number) {
   const files = [];
   for (const filePath of paths) {
     if (files.length >= limit) break;
+    if (officeOwnershipFileInfo(filePath)) continue;
     try {
       const fileStat = await stat(filePath);
       const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
@@ -2879,6 +2897,24 @@ async function localFileMetadataResults(paths: string[], limit: number) {
     }
   }
   return files;
+}
+
+async function rejectedOfficeOwnershipFile(filePath: string): Promise<{
+  name: string;
+  reason: 'officeOwnershipFile';
+  suggestedName?: string;
+} | null> {
+  const ownershipFile = officeOwnershipFileInfo(filePath);
+  if (!ownershipFile) return null;
+  const suggestedPath = join(dirname(filePath), ownershipFile.suggestedName);
+  const suggestedName = await stat(suggestedPath)
+    .then((candidate) => candidate.isFile() ? ownershipFile.suggestedName : undefined)
+    .catch(() => undefined);
+  return {
+    name: ownershipFile.name,
+    reason: 'officeOwnershipFile',
+    ...(suggestedName ? { suggestedName } : {}),
+  };
 }
 
 async function localFileReferencePreview(file: TrustedLocalFileReference) {

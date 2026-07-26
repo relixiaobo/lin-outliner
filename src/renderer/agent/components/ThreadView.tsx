@@ -21,6 +21,7 @@ import {
   MAX_MANAGED_ATTACHMENT_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import type { Messages } from '../../../core/i18n';
+import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import type {
   RequestUserInputAnswer,
   RequestUserInputRequest,
@@ -577,7 +578,13 @@ export function ThreadView({
           const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
           let skippedDuplicates = 0;
           let skippedOverflow = result.skippedCount ?? 0;
-          let failure: string | null = null;
+          const rejectedOwnershipFile = result.rejectedFiles?.find((file) => file.reason === 'officeOwnershipFile');
+          let failure: string | null = rejectedOwnershipFile
+            ? t.agent.composer.officeOwnershipFile({
+                name: rejectedOwnershipFile.name,
+                suggestedName: rejectedOwnershipFile.suggestedName ?? null,
+              })
+            : null;
           for (const file of result.files) {
             if (signal.aborted) return;
             if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
@@ -640,6 +647,14 @@ export function ThreadView({
     for (const file of files) {
       if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
         skippedOverflow += 1;
+        continue;
+      }
+      const ownershipFile = officeOwnershipFileInfo(file.name);
+      if (ownershipFile) {
+        failure ??= t.agent.composer.officeOwnershipFile({
+          name: ownershipFile.name,
+          suggestedName: null,
+        });
         continue;
       }
       try {

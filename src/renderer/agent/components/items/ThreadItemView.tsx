@@ -34,9 +34,7 @@ import {
   FileGrepToolIcon,
   FileImageIcon,
   FileReadToolIcon,
-  FileTextIcon,
   FileWriteToolIcon,
-  FolderIcon,
   GenericToolIcon,
   ICON_SIZE,
   LoaderIcon,
@@ -59,7 +57,7 @@ import {
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
-import { replaceUserContentText } from '../../threadInput';
+import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
 import {
   threadNodeReferenceDisplayLabel,
   threadNodeReferenceHref,
@@ -247,9 +245,11 @@ function UserMessageItem({
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
-  const originalText = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []).join('\n');
+  const textEditable = canEditUserContentText(item.content);
+  const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
+  const originalText = textParts.join('\n');
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(originalText);
+  const [text, setText] = useState(textParts[0] ?? '');
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -289,15 +289,19 @@ function UserMessageItem({
         </div>
       ) : (
         <>
-          <UserMessageCollapsibleContent
-            measureKey={item.id}
-            onDisclosureToggle={onDisclosureToggle}
-          >
-            {renderUserContent(item.content, index, onOpenNodeReference, threadId)}
-          </UserMessageCollapsibleContent>
+          <div className="thread-user-content-sequence">
+            {renderUserContent(
+              item.content,
+              index,
+              onOpenNodeReference,
+              threadId,
+              item.id,
+              onDisclosureToggle,
+            )}
+          </div>
           {showMessageActions ? (
             <div className="thread-message-actions">
-              {canEditUserMessage ? (
+              {canEditUserMessage && textEditable ? (
                 <IconButton
                   icon={PencilIcon}
                   iconSize={ICON_SIZE.menu}
@@ -324,17 +328,55 @@ function renderUserContent(
   index: DocumentIndex,
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
   threadId: string,
+  itemId: string,
+  onDisclosureToggle: () => void,
 ): ReactNode[] {
   const rendered: ReactNode[] = [];
   let inline: ReactNode[] = [];
+  let images: ThreadAttachmentContent[] = [];
   let groupIndex = 0;
   const flushInline = () => {
     if (inline.length === 0) return;
-    rendered.push(<div className="thread-user-inline-content" key={`inline-${groupIndex}`}>{inline}</div>);
+    rendered.push(
+      <UserMessageCollapsibleContent
+        key={`inline-${groupIndex}`}
+        measureKey={`${itemId}:inline:${groupIndex}`}
+        onDisclosureToggle={onDisclosureToggle}
+      >
+        <div className="thread-user-inline-content">{inline}</div>
+      </UserMessageCollapsibleContent>,
+    );
     inline = [];
     groupIndex += 1;
   };
+  const flushImages = () => {
+    if (images.length === 0) return;
+    rendered.push(
+      <ThreadImageGallery
+        contents={images}
+        key={`images-${groupIndex}`}
+        threadId={threadId}
+      />,
+    );
+    images = [];
+    groupIndex += 1;
+  };
   content.forEach((part, contentIndex) => {
+    if (part.type === 'attachment' && part.mimeType.startsWith('image/')) {
+      inline.push(
+        <ThreadInlineAttachment
+          content={part}
+          key={`attachment-${contentIndex}`}
+          threadId={threadId}
+        />,
+      );
+      images.push(part);
+      return;
+    }
+    if (images.length > 0) {
+      flushInline();
+      flushImages();
+    }
     if (part.type === 'text') {
       inline.push(<span key={`text-${contentIndex}`}>{part.text}</span>);
       return;
@@ -356,10 +398,16 @@ function renderUserContent(
       );
       return;
     }
-    flushInline();
-    rendered.push(<ThreadAttachment content={part} key={part.id} threadId={threadId} />);
+    inline.push(
+      <ThreadInlineAttachment
+        content={part}
+        key={`attachment-${contentIndex}`}
+        threadId={threadId}
+      />,
+    );
   });
   flushInline();
+  flushImages();
   return rendered;
 }
 
@@ -1080,7 +1128,90 @@ function ImageViewItem({ path }: { readonly path: string }) {
   );
 }
 
-function ThreadAttachment({
+function ThreadInlineAttachment({
+  content,
+  threadId,
+}: {
+  readonly content: ThreadAttachmentContent;
+  readonly threadId: string;
+}) {
+  const entryKind = content.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const;
+  const filePath = content.source.kind === 'localFile' ? content.source.path : content.name;
+  return (
+    <InlineFileReference
+      className="thread-message-file-ref"
+      file={{
+        entryKind,
+        mimeType: content.mimeType,
+        name: content.name,
+        path: filePath,
+        ref: content.name,
+        sizeBytes: content.sizeBytes,
+        threadId,
+        attachmentId: content.id,
+      }}
+    />
+  );
+}
+
+const MAX_COLLAPSED_GALLERY_IMAGES = 4;
+
+function ThreadImageGallery({
+  contents,
+  threadId,
+}: {
+  readonly contents: readonly ThreadAttachmentContent[];
+  readonly threadId: string;
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = !expanded && contents.length > MAX_COLLAPSED_GALLERY_IMAGES;
+  const visible = collapsed ? contents.slice(0, MAX_COLLAPSED_GALLERY_IMAGES) : contents;
+  const hiddenCount = contents.length - visible.length;
+  const layout = visible.length > MAX_COLLAPSED_GALLERY_IMAGES ? 'many' : String(visible.length);
+  return (
+    <div
+      aria-label={t.agent.message.imageGallery({ count: contents.length })}
+      className="thread-image-gallery"
+      data-layout-count={layout}
+      role="group"
+    >
+      <div className="thread-image-gallery-grid">
+        {visible.map((content, index) => {
+          const showMore = hiddenCount > 0 && index === visible.length - 1;
+          return (
+            <div className="thread-image-gallery-tile" key={content.id}>
+              <ThreadImageAttachment content={content} threadId={threadId} />
+              {showMore ? (
+                <ButtonControl
+                  aria-expanded="false"
+                  aria-label={t.agent.message.showAllImages({ count: contents.length })}
+                  className="thread-image-gallery-more"
+                  onClick={() => setExpanded(true)}
+                >
+                  +{hiddenCount}
+                </ButtonControl>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      {expanded && contents.length > MAX_COLLAPSED_GALLERY_IMAGES ? (
+        <IconButton
+          aria-expanded="true"
+          className="thread-image-gallery-collapse"
+          icon={ChevronDownIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={t.agent.message.showFewerImages}
+          onClick={() => setExpanded(false)}
+          variant="message"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ThreadImageAttachment({
   content,
   threadId,
 }: {
@@ -1091,45 +1222,25 @@ function ThreadAttachment({
     return {
       kind: 'local-file' as const,
       path: content.source.kind === 'localFile' ? content.source.path : content.name,
-      entryKind: content.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const,
+      entryKind: 'file' as const,
       label: content.name,
       threadId,
       attachmentId: content.id,
     };
-  }, [content.id, content.mimeType, content.name, content.source, threadId]);
-  const preview = usePreviewObjectUrl(content.mimeType.startsWith('image/') ? target : null, { mimeType: content.mimeType });
-  const imageSource = content.mimeType.startsWith('image/') ? preview.src : null;
-  const body = imageSource ? (
-    <img alt={content.name} loading="lazy" src={imageSource} />
-  ) : (
-    <span className="thread-attachment-chip">
-      {content.mimeType === 'inode/directory'
-        ? <FolderIcon size={ICON_SIZE.menu} />
-        : <FileTextIcon size={ICON_SIZE.menu} />}
-      <span>{content.name}</span>
-      <small>{formatBytes(content.sizeBytes)}</small>
-    </span>
+  }, [content.id, content.name, content.source, threadId]);
+  const preview = usePreviewObjectUrl(target, { mimeType: content.mimeType });
+  return (
+    <button
+      aria-label={content.name}
+      className="thread-attachment thread-image-gallery-preview"
+      onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })}
+      type="button"
+    >
+      {preview.src
+        ? <img alt={content.name} loading="lazy" src={preview.src} />
+        : <FileImageIcon size={ICON_SIZE.toolbar} />}
+    </button>
   );
-  if (!imageSource) {
-    return (
-      <div className="thread-attachment">
-        <InlineFileReference
-          className="thread-attachment-chip"
-          file={{
-            entryKind: content.mimeType === 'inode/directory' ? 'directory' : 'file',
-            mimeType: content.mimeType,
-            name: content.name,
-            path: target.path,
-            ref: content.name,
-            sizeBytes: content.sizeBytes,
-            threadId,
-            attachmentId: content.id,
-          }}
-        />
-      </div>
-    );
-  }
-  return <button className="thread-attachment" onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })} type="button">{body}</button>;
 }
 
 function ToolFileResult({ path, removable }: { readonly path: string; readonly removable: boolean }) {

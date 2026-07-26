@@ -593,6 +593,21 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByRole('status')).toContainText("Skipped 1 file that's already attached.");
   });
 
+  test('rejects Office ownership files before they enter the composer', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: '.~Quarterly review.pptx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      buffer: Buffer.from('ownership metadata'),
+    });
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(0);
+    await expect(page.getByRole('status')).toContainText(
+      '.~Quarterly review.pptx is a temporary Office ownership file. Choose the original document instead.',
+    );
+    expect((await commandCalls(page)).filter((call) => call.cmd.startsWith('attachment-upload/'))).toHaveLength(0);
+  });
+
   test('serializes overlapping attachment batches at the composer limit', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(() => {
@@ -633,6 +648,169 @@ test.describe('canonical agent Thread surface', () => {
       sizeBytes: 0,
       source: { kind: 'localFile', path: '/mock/local-root/workspace' },
     })]);
+  });
+
+  test('renders inline files and an expandable image gallery in canonical order', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ac01';
+      const itemId = '01910000-0000-7000-8000-00000000ac02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+            clientId: null,
+            content: [
+              { type: 'text', text: 'Before' },
+              {
+                type: 'attachment',
+                id: 'document-attachment',
+                name: 'agenda.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                source: { kind: 'localFile', path: '/mock/local-root/agenda.pdf' },
+              },
+              { type: 'text', text: 'middle' },
+              ...Array.from({ length: 6 }, (_, index) => ({
+                type: 'attachment' as const,
+                id: `image-attachment-${index + 1}`,
+                name: `reference-${index + 1}.png`,
+                mimeType: 'image/png',
+                sizeBytes: 68,
+                source: { kind: 'localFile' as const, path: `/mock/local-root/reference-${index + 1}.png` },
+              })),
+              { type: 'text', text: 'After' },
+            ],
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
+    });
+
+    const message = page.locator('.thread-user-message').last();
+    const sequence = message.locator('.thread-user-content-sequence');
+    const bubbles = sequence.locator(':scope > .thread-user-content-shell');
+    const gallery = sequence.locator(':scope > .thread-image-gallery');
+    await expect(sequence.locator(':scope > *')).toHaveCount(3);
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first().locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddle');
+    await expect(bubbles.last().locator('.thread-user-inline-content')).toHaveText('After');
+    await expect(gallery).toHaveAccessibleName('6 images');
+    await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
+    await expect(gallery.locator('.thread-image-gallery-preview').first()).toHaveAccessibleName('reference-1.png');
+    await expect(gallery.locator('.thread-image-gallery-preview img').first()).toHaveAttribute('alt', 'reference-1.png');
+    await expect(message.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
+    const showAll = gallery.getByRole('button', { name: 'Show all 6 images' });
+    await expect(showAll).toHaveText('+2');
+    await expect(showAll).toHaveAttribute('aria-expanded', 'false');
+    expect(await sequence.evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
+      'thread-user-content-shell',
+      'thread-image-gallery',
+      'thread-user-content-shell',
+    ]);
+    const firstRun = bubbles.first().locator('.thread-user-inline-content');
+    await expect(firstRun.locator('.thread-message-file-ref')).toHaveText([
+      'agenda.pdf',
+      'reference-1.png',
+      'reference-2.png',
+      'reference-3.png',
+      'reference-4.png',
+      'reference-5.png',
+      'reference-6.png',
+    ]);
+    expect(await firstRun.evaluate((element) => Array.from(element.children).map((child) => ({
+      className: child.className,
+      text: child.textContent,
+    })))).toEqual([
+      { className: '', text: 'Before' },
+      { className: 'inline-ref thread-message-file-ref', text: 'agenda.pdf' },
+      { className: '', text: 'middle' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-1.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-2.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-3.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-4.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-5.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
+    ]);
+
+    await showAll.click();
+    await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(6);
+    await expect(gallery).toHaveAttribute('data-layout-count', 'many');
+    await expect(showAll).toHaveCount(0);
+    const showFewer = gallery.getByRole('button', { name: 'Show fewer images' });
+    await expect(showFewer).toBeVisible();
+    await showFewer.click();
+    await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
+    await expect(gallery).toHaveAttribute('data-layout-count', '4');
+    await expect(gallery.getByRole('button', { name: 'Show all 6 images' })).toBeVisible();
+
+    await page.setViewportSize({ width: 420, height: 760 });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(gallery).toBeInViewport();
+    const overflowContrast = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+      const buttonStyle = getComputedStyle(element);
+      const rootStyle = getComputedStyle(document.documentElement);
+      return {
+        background: buttonStyle.backgroundColor,
+        backdropFilter: buttonStyle.backdropFilter,
+        foreground: buttonStyle.color,
+        expectedBackground: rootStyle.getPropertyValue('--media-hud-bg').trim(),
+        expectedForeground: rootStyle.getPropertyValue('--media-hud-fg').trim(),
+      };
+    });
+    expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
+    expect(overflowContrast.backdropFilter).toBe('none');
+    expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
+    const overflowGeometry = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+      const tile = element.closest('.thread-image-gallery-tile');
+      if (!tile) throw new Error('Overflow badge tile was not found');
+      const buttonRect = element.getBoundingClientRect();
+      const tileRect = tile.getBoundingClientRect();
+      const tileStyle = getComputedStyle(tile);
+      const cornerInset = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-4'));
+      return {
+        areaRatio: (buttonRect.width * buttonRect.height) / (tileRect.width * tileRect.height),
+        rightInset: tileRect.right - buttonRect.right,
+        bottomInset: tileRect.bottom - buttonRect.bottom,
+        expectedRightInset: cornerInset + Number.parseFloat(tileStyle.borderRightWidth),
+        expectedBottomInset: cornerInset + Number.parseFloat(tileStyle.borderBottomWidth),
+      };
+    });
+    expect(overflowGeometry.areaRatio).toBeLessThan(0.25);
+    expect(overflowGeometry.rightInset).toBe(overflowGeometry.expectedRightInset);
+    expect(overflowGeometry.bottomInset).toBe(overflowGeometry.expectedBottomInset);
+    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
+    const interactionBackgrounds = await overflowBadge.evaluate(() => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      return {
+        hover: rootStyle.getPropertyValue('--media-hud-hover-bg').trim(),
+        active: rootStyle.getPropertyValue('--media-hud-active-bg').trim(),
+      };
+    });
+    await overflowBadge.hover();
+    await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.hover);
+    await page.mouse.down();
+    await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.active);
+    await page.mouse.up();
   });
 
   test('keeps a native selected image as a canonical local-file reference', async ({ page }) => {
@@ -1973,6 +2151,8 @@ test.describe('terminal Thread history actions', () => {
     expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
     const userMessage = page.locator('.thread-user-message').last();
+    await expect(userMessage.locator('.thread-message-file-ref')).toHaveText('diagram.png');
+    await expect(userMessage.locator('.thread-image-gallery-preview')).toHaveAccessibleName('diagram.png');
     await userMessage.hover();
     await userMessage.getByRole('button', { name: 'Edit message' }).click();
     const editor = userMessage.getByRole('textbox', { name: 'Edit message' });

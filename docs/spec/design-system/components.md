@@ -130,9 +130,12 @@ File previews use one rounded viewport with a token inset on every side, an inse
 hairline edge, and concentric inner document-page corners. Preview pages scroll
 inside the viewport content box; pages never render into the frame inset. The
 bottom-center preview action bar is a fixed-width primary capsule plus a separate
-circular `...` action, never a segmented control. It uses `--preview-action-*`
-HUD tokens, including `--preview-action-shadow`, because it floats over
-arbitrary document/image pixels.
+circular `...` action, never a segmented control. It uses the shared
+`--media-hud-*` fixed-contrast pair plus the file-preview-only
+`--preview-action-shadow` because it floats over arbitrary document/image pixels.
+Only these registered preview actions add `--material-backdrop`; compact media-HUD
+consumers such as gallery count badges keep the shared contrast pair without blur
+or preview elevation.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview

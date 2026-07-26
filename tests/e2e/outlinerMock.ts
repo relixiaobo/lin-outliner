@@ -2593,6 +2593,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'preview_read_bytes') {
           const target = args.target as { kind?: string; assetId?: string; path?: string } | undefined;
+          if (target?.kind === 'local-file' && target.path?.toLowerCase().endsWith('.png')) {
+            return { bytes: previewPngBytes(), mimeType: 'image/png' } as T;
+          }
           if (
             (target?.kind === 'asset' && target.assetId && assets.get(target.assetId)?.mimeType === 'application/pdf')
             || (target?.kind === 'local-file' && target.path?.toLowerCase().endsWith('.pdf'))

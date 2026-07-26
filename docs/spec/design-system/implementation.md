@@ -204,8 +204,9 @@ Expected checks for design-system changes:
   shared `--material-backdrop` filter, scoped to registered chrome / overlay
   surfaces, and routed through the shared accessibility fallback path; backdrop
   filters stay scoped to those material surfaces plus the
-  registered preview-HUD exception, while preview HUD actions use
-  `--preview-action-shadow` and rail chrome uses the shared
+  registered preview-action-HUD exception; arbitrary-pixel HUD consumers use the
+  shared `--media-hud-*` contrast family, compact consumers remain blur-free,
+  preview actions use `--preview-action-shadow`, and rail chrome uses the shared
   `--rail-surface-shadow`. It also keeps level-2 focused overlays on the opaque
   elevated tier, not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,

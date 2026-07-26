@@ -1195,6 +1195,9 @@ commandPalette: {
       noMentions: '暂无引用',
       noRecentMentions: '暂无最近引用',
       maxAttachments: ({ max }) => `最多可添加 ${max} 个文件。`,
+      officeOwnershipFile: ({ name, suggestedName }) => suggestedName
+        ? `${name} 是 Office 临时所有权文件，请改选 ${suggestedName}。`
+        : `${name} 是 Office 临时所有权文件，请改选原始文档。`,
       skippedDuplicates: ({ count }) => `已跳过 ${count} 个重复文件。`,
       skippedOverflow: ({ count, max }) => `已跳过 ${count} 个超出 ${max} 个附件限制的文件。`,
       modelControlLabel: '模型与推理',
@@ -1224,6 +1227,9 @@ commandPalette: {
       save: '保存',
       showMore: '展开',
       showLess: '收起',
+      imageGallery: ({ count }) => `${count} 张图片`,
+      showAllImages: ({ count }) => `展开全部 ${count} 张图片`,
+      showFewerImages: '收起图片',
       assistantResponding: '智能体正在回复',
       details: '详情',
       closeDetails: '关闭详情',

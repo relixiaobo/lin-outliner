@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, and the Core interface sequence #428/#430–#433) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, office-ingestion-inline-attachments #439, and the Core interface sequence #428/#430–#433) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,7 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-26).** Open PR queue: none. Recently merged: #438
+**In flight (2026-07-26).** Open PR queue: none. Recently merged: #439
+(`codex-3/office-ingestion-inline-attachments`) after iterative main review;
+see *Recently completed*. #438
 (`codex-4/agent-execution-interaction-consistency`) after iterative main review;
 see *Recently completed*. #437
 (`codex-3/large-local-resources`) after iterative main review; see *Recently
@@ -582,6 +584,23 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **office-ingestion-inline-attachments**
+  (`codex-3/office-ingestion-inline-attachments`, PR #439, codex-3, merged
+  2026-07-26, plan-track) — rejects Office ownership files at attachment and
+  read boundaries, adds a bounded in-process PPTX structural-text reader, and
+  preserves canonical mixed attachment order with inline file markers and
+  expandable image galleries. The shipped design is folded into the current
+  Agent, thread-rendering, and design-system specs; the plan is archived at
+  `docs/plans/archive/office-ingestion-inline-attachments.md`.
+  **Gate (main):** iterative review caught incomplete PPTX package identity and
+  exact relationship-type validation, split-text editing that could destroy
+  attachment order, and image galleries that omitted canonical filename
+  markers. Codex-3 fixed all findings; final head `996f096a` had no reportable
+  findings. Verified with typecheck, `docs:check`, `git diff --check`, focused
+  Core/renderer tests (15 pass), full `test:core` (1389 pass, 6
+  environment-dependent skips), full `test:renderer` (765 pass), and relevant
+  Agent E2E (3 pass).
 
 - **agent-execution-interaction-consistency**
   (`codex-4/agent-execution-interaction-consistency`, PR #438, codex-4, merged

@@ -95,7 +95,14 @@ export interface LinPickedLocalFile {
 export interface LinPickLocalFilesResult {
   canceled: boolean;
   files: LinPickedLocalFile[];
+  rejectedFiles?: LinRejectedLocalFile[];
   skippedCount?: number;
+}
+
+export interface LinRejectedLocalFile {
+  name: string;
+  reason: 'officeOwnershipFile';
+  suggestedName?: string;
 }
 
 export interface LinPickLocalFilesOptions {
