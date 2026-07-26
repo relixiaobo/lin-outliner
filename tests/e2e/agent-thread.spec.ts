@@ -751,6 +751,18 @@ test.describe('canonical agent Thread surface', () => {
     await page.setViewportSize({ width: 420, height: 760 });
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(gallery).toBeInViewport();
+    const overflowContrast = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+      const buttonStyle = getComputedStyle(element);
+      const rootStyle = getComputedStyle(document.documentElement);
+      return {
+        background: buttonStyle.backgroundColor,
+        foreground: buttonStyle.color,
+        expectedBackground: rootStyle.getPropertyValue('--preview-action-bg').trim(),
+        expectedForeground: rootStyle.getPropertyValue('--preview-action-fg').trim(),
+      };
+    });
+    expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
+    expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
   });
 
   test('keeps a native selected image as a canonical local-file reference', async ({ page }) => {

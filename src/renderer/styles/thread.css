@@ -1588,11 +1588,11 @@ button.thread-inline-activity:focus-visible,
   align-items: center;
   justify-content: center;
   border: 0;
-  background: var(--fill-4);
-  color: var(--text-primary);
-  font-size: var(--font-content);
+  background: var(--preview-action-bg);
+  color: var(--preview-action-fg);
+  font-size: var(--title-section);
   font-weight: 600;
-  line-height: var(--line-content);
+  line-height: var(--line-heading-lg);
 }
 
 .thread-image-gallery-more:focus-visible {
