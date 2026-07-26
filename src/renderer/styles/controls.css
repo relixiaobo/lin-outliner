@@ -240,16 +240,10 @@
 }
 
 .time-picker-popover {
-  z-index: var(--z-popover);
   display: grid;
   overflow: hidden;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-  border-radius: var(--radius-overlay-sm);
-  background: var(--material-popover);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
 }
 
@@ -276,6 +270,8 @@
   overscroll-behavior: contain;
   border-radius: var(--radius-sm);
   outline: none;
+  padding-inline: var(--space-3);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scroll-snap-type: y proximity;
 }

@@ -205,7 +205,10 @@ Agent Dock header. The anchored Thread list contains only Thread navigation and
 management, so Automation is never presented as a Thread-list action. The
 surface is loaded as a separate React chunk so the default Thread composer does
 not pay its editor and schedule cost. Its main surface is a compact searchable
-list with status filters, next occurrence, and unread state. Selecting an
+list with status filters, next occurrence, and unread state. Search and New share
+one aligned toolbar row; the equal-width status filter and list rows use the same
+horizontal content bounds. Each row presents status as a compact state dot and
+label aligned with its title. Selecting an
 Automation, or creating one, opens the same modal bottom drawer over the list.
 The drawer is bottom-aligned,
 defaults to 80% height with a 52px top gap, keeps a 360px minimum where the
@@ -234,7 +237,9 @@ the provider-qualified model selection; timezone choices come from the runtime's
 supported IANA timezone catalog. Once reuses the Outliner calendar popover for
 date selection, including its month navigation, keyboard model, and Today action.
 Every schedule time field reuses the shared tokenized Time Picker, which supports
-direct `HH:mm` entry and complete hour/minute selection with keyboard navigation;
+direct `HH:mm` entry and complete hour/minute selection with keyboard navigation.
+Its independently scrolling columns reserve a stable gutter outside their
+centered option surfaces, so an overlay scrollbar never covers a selected value;
 weekday and month-day selectors are multi-select menus that cannot be emptied.
 Capability controls preserve inherit (`null`), explicitly none (`[]`), and exact
 allowlist states. Start now,

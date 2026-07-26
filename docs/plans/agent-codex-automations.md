@@ -315,6 +315,12 @@ footer. Closing or cancelling a dirty draft requires explicit discard
 confirmation. Saving never collapses `null`, `[]`, and non-empty capability
 selections: they remain inherit, explicitly none, and an exact allowlist.
 
+The compact list keeps Search and New in one toolbar row. Its equal-width status
+filter and Automation rows share one horizontal content boundary; each row
+aligns a small state dot and label with the Automation title. Time Picker columns
+reserve symmetric inline space and a stable scrollbar gutter so their centered
+selected surfaces never sit under an overlay scrollbar.
+
 The drawer uses task-oriented grouped rows instead of exposing the storage
 schema as a flat form. Its information order is:
 

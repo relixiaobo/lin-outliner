@@ -1,3 +1,12 @@
+.anchored-overlay-surface {
+  z-index: var(--z-popover);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+}
+
 .trigger-popover {
   position: absolute;
   z-index: var(--z-popover);

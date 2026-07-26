@@ -189,7 +189,7 @@ export const TimePickerControl = forwardRef<HTMLInputElement, TimePickerControlP
       {open ? createPortal(
         <MenuSurface
           aria-label={t.title}
-          className="time-picker-popover"
+          className="anchored-overlay-surface time-picker-popover"
           {...{ [DIALOG_NESTED_OVERLAY_ATTRIBUTE]: 'true' }}
           onKeyDown={onPopoverKeyDown}
           ref={popoverRef}

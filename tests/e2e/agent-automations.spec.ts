@@ -10,8 +10,14 @@ test.describe('Automation surface', () => {
   test('creates, pauses, resumes, starts, opens, and deletes an Automation', async ({ page }) => {
     await expect(page.locator('.thread-dock-title')).toHaveText('Automations');
     await expect(page.getByText('No Automations yet.')).toBeVisible();
+    const toolbar = page.locator('.automations-toolbar');
+    await expect(toolbar.locator('.automations-search')).toBeVisible();
+    await expect(toolbar.getByRole('button', { name: 'New Automation' })).toBeVisible();
+    const filterWidths = await page.locator('.automations-filter .segmented-control-option')
+      .evaluateAll((options) => options.map((option) => option.getBoundingClientRect().width));
+    expect(Math.max(...filterWidths) - Math.min(...filterWidths)).toBeLessThan(1);
 
-    await page.locator('.automations-toolbar').getByRole('button', { name: 'New Automation' }).click();
+    await toolbar.getByRole('button', { name: 'New Automation' }).click();
     const createDrawer = page.getByRole('dialog', { name: 'New Automation' });
     await expect(createDrawer).toBeVisible();
     await page.getByRole('textbox', { name: 'Name' }).fill('Daily repository review');
@@ -41,7 +47,15 @@ test.describe('Automation surface', () => {
 
     const detailDrawer = page.getByRole('dialog', { name: 'Daily repository review' });
     await expect(detailDrawer).toBeVisible();
-    await expect(page.locator('.automation-list-row', { hasText: 'Daily repository review' })).toBeVisible();
+    const automationRow = page.locator('.automation-list-row', { hasText: 'Daily repository review' });
+    await expect(automationRow).toBeVisible();
+    await expect(automationRow.locator('.automation-status-dot')).toBeVisible();
+    const alignedLefts = await Promise.all([
+      page.locator('.automations-search'),
+      page.locator('.automations-filter'),
+      automationRow,
+    ].map((locator) => locator.evaluate((element) => element.getBoundingClientRect().left)));
+    expect(Math.max(...alignedLefts) - Math.min(...alignedLefts)).toBeLessThan(1);
     await expect(detailDrawer.getByRole('combobox', { name: 'Runs in' })).toHaveValue('standalone');
     const model = detailDrawer.getByRole('combobox', { name: 'Model' });
     await expect(model).toHaveValue('');
@@ -140,7 +154,19 @@ test.describe('Automation surface', () => {
     await drawer.getByRole('button', { name: 'Choose time' }).click();
     const timePicker = page.getByRole('dialog', { name: 'Time picker' });
     await expect(timePicker).toBeVisible();
-    await timePicker.getByRole('listbox', { name: 'Hour' }).getByRole('option', { name: '10', exact: true }).click();
+    const hourList = timePicker.getByRole('listbox', { name: 'Hour' });
+    const scrollContract = await hourList.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        paddingInlineEnd: style.paddingInlineEnd,
+        paddingInlineStart: style.paddingInlineStart,
+        scrollbarGutter: style.scrollbarGutter,
+      };
+    });
+    expect(scrollContract.scrollbarGutter).toContain('stable');
+    expect(scrollContract.paddingInlineStart).toBe(scrollContract.paddingInlineEnd);
+    expect(Number.parseFloat(scrollContract.paddingInlineEnd)).toBeGreaterThan(0);
+    await hourList.getByRole('option', { name: '10', exact: true }).click();
     await timePicker.getByRole('listbox', { name: 'Minute' }).getByRole('option', { name: '17', exact: true }).click();
     await expect(timePicker).toHaveCount(0);
     await expect(dailyTime).toHaveValue('10:17');

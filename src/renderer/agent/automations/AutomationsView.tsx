@@ -151,37 +151,38 @@ export function AutomationsView(props: AutomationsViewProps) {
   return (
     <div className="automations-view">
       <div className="automations-controls">
-        <label className="automations-search">
-          <SearchIcon aria-hidden size={14} />
-          <Input
-            autoComplete="off"
-            label={t.search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t.searchPlaceholder}
-            size="sm"
-            type="search"
-            value={search}
-            variant="bare"
-          />
-        </label>
         <div className="automations-toolbar">
-          <SegmentedControl
-            className="automations-filter"
-            label={t.statusFilter}
-            onChange={(value) => automationStore.setStatusFilter(value)}
-            options={(['all', 'active', 'paused', 'completed'] as const).map((value) => ({
-              value,
-              label: t.filters[value],
-            }))}
-            value={snapshot.statusFilter}
-          />
+          <label className="automations-search">
+            <SearchIcon aria-hidden size={14} />
+            <Input
+              autoComplete="off"
+              label={t.search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t.searchPlaceholder}
+              size="sm"
+              type="search"
+              value={search}
+              variant="bare"
+            />
+          </label>
           <IconButton
+            className="automations-new-button"
             icon={AddIcon}
             label={t.new}
             onClick={(event) => openCreate(event.currentTarget)}
             variant="message"
           />
         </div>
+        <SegmentedControl
+          className="automations-filter"
+          label={t.statusFilter}
+          onChange={(value) => automationStore.setStatusFilter(value)}
+          options={(['all', 'active', 'paused', 'completed'] as const).map((value) => ({
+            value,
+            label: t.filters[value],
+          }))}
+          value={snapshot.statusFilter}
+        />
       </div>
 
       <div className="automations-list">
@@ -216,12 +217,17 @@ export function AutomationsView(props: AutomationsViewProps) {
             >
               <span className="automation-list-icon"><ClockIcon size={14} /></span>
               <span className="automation-list-copy">
-                <strong>{automation.name}</strong>
+                <span className="automation-list-heading">
+                  <strong>{automation.name}</strong>
+                  <span className={`automation-status is-${automation.status}`}>
+                    <span className="automation-status-dot" aria-hidden="true" />
+                    {t.filters[automation.status]}
+                  </span>
+                </span>
                 <small>{automation.nextOccurrenceAt === null
                   ? t.noNext
                   : t.next({ value: formatRelative(automation.nextOccurrenceAt) })}</small>
               </span>
-              <span className={`automation-status is-${automation.status}`}>{t.filters[automation.status]}</span>
               <span className={`automation-unread${unread ? ' is-visible' : ''}`} aria-hidden="true" />
             </button>
           );

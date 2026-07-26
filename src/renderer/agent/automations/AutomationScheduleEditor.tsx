@@ -369,7 +369,7 @@ function AutomationMultiSelect<Value extends string | number>(props: AutomationM
       {open ? createPortal(
         <MenuSurface
           aria-label={props.label}
-          className="automation-multi-select-menu"
+          className="anchored-overlay-surface automation-multi-select-menu"
           data-dialog-nested-overlay="true"
           onKeyDown={onKeyDown}
           ref={menuRef}
