@@ -43,7 +43,10 @@ dependencies. It lazily reads the ZIP central directory, validates the OOXML
 content type and presentation parts, resolves canonical slide order, and streams
 only selected XML entries. It extracts slide text, speaker-note text, and related
 chart text where present. Media bytes, embedded packages, macros, scripts, and
-external relationships are never opened.
+external relationships are never opened. Transitional and Strict OOXML use
+explicit namespace and relationship-type allowlists; every selected presentation,
+slide, note, or chart target must also match its declared package content type
+before the reader opens it.
 
 Budgets apply to archive entries, selected uncompressed XML bytes, individual
 parts, slide count, elapsed time, and final Markdown characters rather than the
@@ -64,8 +67,10 @@ canonical `ThreadUserContent[]` in sequence:
 - an image attachment flushes that run and renders outside the message bubble at
   its exact position; consecutive images form one gallery before a new inline
   run starts for following content;
-- multiple images and files preserve their submitted order during replay and
-  message editing.
+- multiple images and files preserve their submitted order during replay. Text
+  editing is available only when canonical content contains at most one text
+  part, so replacing that text cannot collapse attachment boundaries; split-text
+  mixed messages remain immutable until a structured editor exists.
 
 The inline file reference keeps the existing Thread-scoped preview identity and
 does not add a second card wrapper inside the user-message surface. Galleries use
@@ -93,9 +98,10 @@ the message bubble.
 
 ## Verification
 
-- Unit fixtures cover ownership-file classification, invalid OOXML, canonical
-  slide order, notes/charts, media-heavy sparse containers, every archive budget,
-  truncation, cancellation, and MarkItDown independence.
+- Unit fixtures cover ownership-file classification, invalid and Strict OOXML,
+  exact relationship types, selected-part content types, canonical slide order,
+  notes/charts, media-heavy sparse containers, every archive budget, truncation,
+  cancellation, and MarkItDown independence.
 - Renderer tests cover file references before, between, and after text plus image
   blocks at the same canonical positions.
 - Agent E2E covers rejecting an ownership file and sending a mixed attachment

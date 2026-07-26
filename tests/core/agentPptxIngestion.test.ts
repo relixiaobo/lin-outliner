@@ -8,6 +8,11 @@ import {
 } from '../../src/main/agent/capabilities/agentPptxIngestion';
 import { buildStoredZip, pptxFixtureEntries, type StoredZipEntry } from '../helpers/pptxFixture';
 
+const TRANSITIONAL_SLIDE_RELATIONSHIP = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide';
+const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+const NOTES_SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml';
+const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
+
 describe('PPTX structural ingestion', () => {
   test('follows presentation order and extracts slide, note, and chart text', async () => {
     await withPptx(pptxFixtureEntries({
@@ -38,6 +43,79 @@ describe('PPTX structural ingestion', () => {
       expect(result.slidesWithoutText).toEqual([1]);
       expect(result.content).toContain('## Slide 1\n\n[No structured text found. This slide may contain only visual content.]');
       expect(result.content).toContain('## Slide 2\n\nFirst slide');
+    });
+  });
+
+  test('supports Strict OOXML presentation, relationship, and DrawingML namespaces', async () => {
+    await withPptx(pptxFixtureEntries({
+      strict: true,
+      firstSlideText: 'Strict slide',
+      notesText: 'Strict notes',
+      chartValues: ['Strict chart', '7'],
+    }), async (filePath) => {
+      const result = await ingestPptxAsMarkdown(filePath);
+
+      expect(result.totalSlides).toBe(1);
+      expect(result.content).toContain('Strict slide');
+      expect(result.content).toContain('### Speaker notes\n\nStrict notes');
+      expect(result.content).toContain('### Chart 1\n\nStrict chart\n7');
+    });
+  });
+
+  test('rejects relationship types that only imitate a slide URI suffix', async () => {
+    const entries = replaceEntryData(
+      pptxFixtureEntries({
+        extraEntries: [{
+          name: 'ppt/embeddings/payload.xml',
+          data: '<a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:r><a:t>Leaked payload</a:t></a:r></a:p>',
+        }],
+      }),
+      'ppt/_rels/presentation.xml.rels',
+      (xml) => xml
+        .replace(TRANSITIONAL_SLIDE_RELATIONSHIP, 'https://attacker.invalid/slide')
+        .replace('slides/slide1.xml', 'embeddings/payload.xml'),
+    );
+
+    await withPptx(entries, async (filePath) => {
+      await expect(ingestPptxAsMarkdown(filePath)).rejects.toMatchObject({ code: 'invalid_pptx' });
+    });
+  });
+
+  test('rejects slide targets whose declared content type is not a slide', async () => {
+    const entries = replaceEntryData(
+      pptxFixtureEntries(),
+      '[Content_Types].xml',
+      (xml) => xml.replace(SLIDE_CONTENT_TYPE, 'application/xml'),
+    );
+
+    await withPptx(entries, async (filePath) => {
+      await expect(ingestPptxAsMarkdown(filePath)).rejects.toMatchObject({ code: 'invalid_pptx' });
+    });
+  });
+
+  test('rejects notes and chart targets with mismatched content types', async () => {
+    const baseEntries = pptxFixtureEntries({ notesText: 'Notes', chartValues: ['Chart'] });
+    for (const expectedContentType of [NOTES_SLIDE_CONTENT_TYPE, CHART_CONTENT_TYPE]) {
+      const entries = replaceEntryData(
+        baseEntries,
+        '[Content_Types].xml',
+        (xml) => xml.replace(expectedContentType, 'application/xml'),
+      );
+      await withPptx(entries, async (filePath) => {
+        await expect(ingestPptxAsMarkdown(filePath)).rejects.toMatchObject({ code: 'invalid_pptx' });
+      });
+    }
+  });
+
+  test('rejects a presentation part with an invalid root element', async () => {
+    const entries = replaceEntryData(
+      pptxFixtureEntries(),
+      'ppt/presentation.xml',
+      () => '<garbage/>',
+    );
+
+    await withPptx(entries, async (filePath) => {
+      await expect(ingestPptxAsMarkdown(filePath)).rejects.toMatchObject({ code: 'invalid_pptx' });
     });
   });
 
@@ -118,4 +196,16 @@ async function withRawFile(data: Uint8Array, fn: (filePath: string) => Promise<v
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+function replaceEntryData(
+  entries: StoredZipEntry[],
+  name: string,
+  replace: (data: string) => string,
+): StoredZipEntry[] {
+  return entries.map((entry) => {
+    if (entry.name !== name) return entry;
+    if (typeof entry.data !== 'string') throw new Error(`Expected text fixture entry ${name}.`);
+    return { ...entry, data: replace(entry.data) };
+  });
 }

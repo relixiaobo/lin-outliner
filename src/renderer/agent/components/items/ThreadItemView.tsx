@@ -57,7 +57,7 @@ import {
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
-import { replaceUserContentText } from '../../threadInput';
+import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
 import {
   threadNodeReferenceDisplayLabel,
   threadNodeReferenceHref,
@@ -245,9 +245,11 @@ function UserMessageItem({
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
-  const originalText = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []).join('\n');
+  const textEditable = canEditUserContentText(item.content);
+  const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
+  const originalText = textParts.join('\n');
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(originalText);
+  const [text, setText] = useState(textParts[0] ?? '');
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -299,7 +301,7 @@ function UserMessageItem({
           </div>
           {showMessageActions ? (
             <div className="thread-message-actions">
-              {canEditUserMessage ? (
+              {canEditUserMessage && textEditable ? (
                 <IconButton
                   icon={PencilIcon}
                   iconSize={ICON_SIZE.menu}

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { Turn } from '../../src/core/agent/protocol';
-import { replaceUserContentText, turnUserContent } from '../../src/renderer/agent/threadInput';
+import {
+  canEditUserContentText,
+  replaceUserContentText,
+  turnUserContent,
+} from '../../src/renderer/agent/threadInput';
 
 describe('renderer Thread structured input', () => {
   const attachment = {
@@ -13,17 +17,27 @@ describe('renderer Thread structured input', () => {
   };
   const reference = { type: 'nodeReference' as const, nodeId: 'node-1', note: 'Research' };
 
-  test('preserves attachments and Node references while editing message text', () => {
+  test('preserves attachments and Node references in place while editing one text part', () => {
     expect(replaceUserContentText([
       { type: 'text', text: 'Original' },
       attachment,
       reference,
-      { type: 'text', text: 'Follow-up text' },
     ], 'Edited')).toEqual([
       { type: 'text', text: 'Edited' },
       attachment,
       reference,
     ]);
+  });
+
+  test('refuses text editing when canonical content has multiple text parts', () => {
+    const content = [
+      { type: 'text' as const, text: 'Before' },
+      attachment,
+      { type: 'text' as const, text: 'After' },
+    ];
+
+    expect(canEditUserContentText(content)).toBe(false);
+    expect(() => replaceUserContentText(content, 'Combined')).toThrow('multiple text parts');
   });
 
   test('collects attachment-only and structured user input for retry and regeneration', () => {

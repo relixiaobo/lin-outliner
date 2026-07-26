@@ -8,13 +8,38 @@ import { throwIfAborted } from './agentAwaitWithAbort';
 const CONTENT_TYPES_PART = '[Content_Types].xml';
 const PRESENTATION_PART = 'ppt/presentation.xml';
 const PRESENTATION_RELS_PART = 'ppt/_rels/presentation.xml.rels';
-const DRAWINGML_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/main';
-const PRESENTATIONML_NAMESPACE = 'http://schemas.openxmlformats.org/presentationml/2006/main';
-const RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const TRANSITIONAL_DRAWINGML_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const STRICT_DRAWINGML_NAMESPACE = 'http://purl.oclc.org/ooxml/drawingml/main';
+const TRANSITIONAL_PRESENTATIONML_NAMESPACE = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+const STRICT_PRESENTATIONML_NAMESPACE = 'http://purl.oclc.org/ooxml/presentationml/main';
+const TRANSITIONAL_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const STRICT_RELATIONSHIPS_NAMESPACE = 'http://purl.oclc.org/ooxml/officeDocument/relationships';
 const PACKAGE_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const CONTENT_TYPES_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/content-types';
 const PPTX_PRESENTATION_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml';
+const PPTX_SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+const PPTX_NOTES_SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml';
+const PPTX_CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 const PPTX_TRUNCATION_MARKER = '\n\n[PPTX structural text output truncated]';
+
+const DRAWINGML_NAMESPACES = new Set<string>([
+  TRANSITIONAL_DRAWINGML_NAMESPACE,
+  STRICT_DRAWINGML_NAMESPACE,
+]);
+const PRESENTATION_RELATIONSHIP_NAMESPACES = new Map<string, string>([
+  [TRANSITIONAL_PRESENTATIONML_NAMESPACE, TRANSITIONAL_RELATIONSHIPS_NAMESPACE],
+  [STRICT_PRESENTATIONML_NAMESPACE, STRICT_RELATIONSHIPS_NAMESPACE],
+]);
+const SLIDE_RELATIONSHIP_TYPES = relationshipTypeSet('slide');
+const NOTES_SLIDE_RELATIONSHIP_TYPES = relationshipTypeSet('notesSlide');
+const CHART_RELATIONSHIP_TYPES = relationshipTypeSet('chart');
+
+function relationshipTypeSet(name: string): ReadonlySet<string> {
+  return new Set([
+    `${TRANSITIONAL_RELATIONSHIPS_NAMESPACE}/${name}`,
+    `${STRICT_RELATIONSHIPS_NAMESPACE}/${name}`,
+  ]);
+}
 
 export interface PptxIngestionBudgets {
   readonly maxArchiveEntries: number;
@@ -50,6 +75,11 @@ interface Relationship {
   readonly type: string;
   readonly target: string;
   readonly external: boolean;
+}
+
+interface ContentTypeManifest {
+  readonly defaults: ReadonlyMap<string, string>;
+  readonly overrides: ReadonlyMap<string, string>;
 }
 
 interface SlideObservation {
@@ -119,8 +149,8 @@ export async function ingestPptxAsMarkdown(
       activeStream: null,
     };
 
-    const contentTypes = await readRequiredXmlPart(context, CONTENT_TYPES_PART);
-    validateContentTypes(contentTypes);
+    const contentTypes = parseContentTypes(await readRequiredXmlPart(context, CONTENT_TYPES_PART));
+    assertPartContentType(contentTypes, PRESENTATION_PART, PPTX_PRESENTATION_CONTENT_TYPE, 'presentation');
     const presentationXml = await readRequiredXmlPart(context, PRESENTATION_PART);
     const presentationRelsXml = await readRequiredXmlPart(context, PRESENTATION_RELS_PART);
     const slideRelationshipIds = parsePresentationSlideIds(presentationXml);
@@ -131,10 +161,12 @@ export async function ingestPptxAsMarkdown(
     const presentationRelationships = relationshipsById(parseRelationships(presentationRelsXml));
     const slideParts = slideRelationshipIds.map((relationshipId) => {
       const relationship = presentationRelationships.get(relationshipId);
-      if (!relationship || relationship.external || !relationship.type.endsWith('/slide')) {
+      if (!relationship || relationship.external || !SLIDE_RELATIONSHIP_TYPES.has(relationship.type)) {
         throw invalidPptx(`Presentation slide relationship ${relationshipId} is missing or invalid.`);
       }
-      return resolveInternalTarget(PRESENTATION_PART, relationship.target);
+      const target = resolveInternalTarget(PRESENTATION_PART, relationship.target);
+      assertPartContentType(contentTypes, target, PPTX_SLIDE_CONTENT_TYPE, 'slide');
+      return target;
     });
 
     const slides: SlideObservation[] = [];
@@ -155,11 +187,19 @@ export async function ingestPptxAsMarkdown(
       const observedTargets = new Set<string>();
       for (const relationship of relationships) {
         if (relationship.external) continue;
-        if (!relationship.type.endsWith('/notesSlide') && !relationship.type.endsWith('/chart')) continue;
+        const isNotesSlide = NOTES_SLIDE_RELATIONSHIP_TYPES.has(relationship.type);
+        const isChart = CHART_RELATIONSHIP_TYPES.has(relationship.type);
+        if (!isNotesSlide && !isChart) continue;
         const target = resolveInternalTarget(slidePart, relationship.target);
+        assertPartContentType(
+          contentTypes,
+          target,
+          isNotesSlide ? PPTX_NOTES_SLIDE_CONTENT_TYPE : PPTX_CHART_CONTENT_TYPE,
+          isNotesSlide ? 'notes slide' : 'chart',
+        );
         if (observedTargets.has(target)) continue;
         observedTargets.add(target);
-        if (relationship.type.endsWith('/notesSlide')) {
+        if (isNotesSlide) {
           const noteText = extractDrawingText(await readRequiredXmlPart(context, target));
           notes.push(...noteText);
           if (noteText.length > 0) notesSlides += 1;
@@ -244,34 +284,90 @@ async function readOptionalXmlPart(context: ZipReadContext, part: string): Promi
   return xml;
 }
 
-function validateContentTypes(xml: string): void {
-  let validPresentation = false;
+function parseContentTypes(xml: string): ContentTypeManifest {
+  const defaults = new Map<string, string>();
+  const overrides = new Map<string, string>();
+  let rootSeen = false;
   parseXml(xml, CONTENT_TYPES_PART, (tag) => {
-    if (tag.uri !== CONTENT_TYPES_NAMESPACE || tag.local !== 'Override') return;
-    if (attribute(tag, 'PartName') === `/${PRESENTATION_PART}`
-      && attribute(tag, 'ContentType') === PPTX_PRESENTATION_CONTENT_TYPE) {
-      validPresentation = true;
+    if (!rootSeen) {
+      rootSeen = true;
+      if (tag.uri !== CONTENT_TYPES_NAMESPACE || tag.local !== 'Types') {
+        throw invalidPptx('The OOXML content-types part has an invalid root element.');
+      }
+      return;
+    }
+    if (tag.uri !== CONTENT_TYPES_NAMESPACE) return;
+    if (tag.local === 'Default') {
+      const extension = attribute(tag, 'Extension')?.toLowerCase();
+      const contentType = attribute(tag, 'ContentType');
+      if (!extension || extension.includes('.') || !contentType) {
+        throw invalidPptx('An OOXML default content type is invalid.');
+      }
+      if (defaults.has(extension)) throw invalidPptx(`Duplicate OOXML default content type for .${extension}.`);
+      defaults.set(extension, contentType);
+      return;
+    }
+    if (tag.local === 'Override') {
+      const partName = attribute(tag, 'PartName');
+      const contentType = attribute(tag, 'ContentType');
+      if (!partName?.startsWith('/') || partName.includes('\\') || !contentType) {
+        throw invalidPptx('An OOXML override content type is invalid.');
+      }
+      if (overrides.has(partName)) throw invalidPptx(`Duplicate OOXML content type override for ${partName}.`);
+      overrides.set(partName, contentType);
     }
   });
-  if (!validPresentation) {
-    throw invalidPptx('The OOXML content types do not identify a PPTX presentation part.');
+  if (!rootSeen) throw invalidPptx('The OOXML content-types part is empty.');
+  return { defaults, overrides };
+}
+
+function assertPartContentType(
+  manifest: ContentTypeManifest,
+  part: string,
+  expected: string,
+  role: string,
+): void {
+  const extension = path.posix.extname(part).slice(1).toLowerCase();
+  const actual = manifest.overrides.get(`/${part}`) ?? manifest.defaults.get(extension);
+  if (actual !== expected) {
+    throw invalidPptx(`PPTX ${role} part ${part} has an invalid content type.`);
   }
 }
 
 function parsePresentationSlideIds(xml: string): string[] {
   const relationshipIds: string[] = [];
+  let presentationNamespace: string | null = null;
+  let relationshipNamespace: string | null = null;
   parseXml(xml, PRESENTATION_PART, (tag) => {
-    if (tag.uri !== PRESENTATIONML_NAMESPACE || tag.local !== 'sldId') return;
-    const relationshipId = attribute(tag, 'id', RELATIONSHIPS_NAMESPACE);
+    if (presentationNamespace === null) {
+      const expectedRelationshipNamespace = PRESENTATION_RELATIONSHIP_NAMESPACES.get(tag.uri);
+      if (tag.local !== 'presentation' || !expectedRelationshipNamespace) {
+        throw invalidPptx('The OOXML presentation part has an invalid root element or namespace.');
+      }
+      presentationNamespace = tag.uri;
+      relationshipNamespace = expectedRelationshipNamespace;
+      return;
+    }
+    if (tag.uri !== presentationNamespace || tag.local !== 'sldId') return;
+    const relationshipId = attribute(tag, 'id', relationshipNamespace ?? undefined);
     if (!relationshipId) throw invalidPptx('A presentation slide is missing its relationship id.');
     relationshipIds.push(relationshipId);
   });
+  if (presentationNamespace === null) throw invalidPptx('The OOXML presentation part is empty.');
   return relationshipIds;
 }
 
 function parseRelationships(xml: string): Relationship[] {
   const relationships: Relationship[] = [];
+  let rootSeen = false;
   parseXml(xml, 'relationships part', (tag) => {
+    if (!rootSeen) {
+      rootSeen = true;
+      if (tag.uri !== PACKAGE_RELATIONSHIPS_NAMESPACE || tag.local !== 'Relationships') {
+        throw invalidPptx('An OOXML relationships part has an invalid root element.');
+      }
+      return;
+    }
     if (tag.uri !== PACKAGE_RELATIONSHIPS_NAMESPACE || tag.local !== 'Relationship') return;
     const id = attribute(tag, 'Id');
     const type = attribute(tag, 'Type');
@@ -284,6 +380,7 @@ function parseRelationships(xml: string): Relationship[] {
       external: attribute(tag, 'TargetMode')?.toLowerCase() === 'external',
     });
   });
+  if (!rootSeen) throw invalidPptx('An OOXML relationships part is empty.');
   return relationships;
 }
 
@@ -304,14 +401,14 @@ function extractDrawingText(xml: string): string[] {
     xml,
     'DrawingML part',
     (tag) => {
-      if (tag.uri !== DRAWINGML_NAMESPACE) return;
+      if (!DRAWINGML_NAMESPACES.has(tag.uri)) return;
       if (tag.local === 'p') paragraph = [];
       if (tag.local === 't') readingText = true;
       if (tag.local === 'br' && paragraph) paragraph.push('\n');
       if (tag.local === 'tab' && paragraph) paragraph.push('\t');
     },
     (tag) => {
-      if (tag.uri !== DRAWINGML_NAMESPACE) return;
+      if (!DRAWINGML_NAMESPACES.has(tag.uri)) return;
       if (tag.local === 't') readingText = false;
       if (tag.local === 'p' && paragraph) {
         const text = normalizeObservedText(paragraph.join(''));

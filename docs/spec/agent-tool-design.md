@@ -80,10 +80,13 @@ budgets; PDF source size is rejected before whole-file buffering, and rendered
 page images are normalized serially through the same bounded image path.
 
 PPTX is a dedicated in-process OOXML route rather than a MarkItDown route. It
-indexes the ZIP central directory lazily, validates the content-types and
-presentation relationship graph, and reads only selected presentation, slide,
-speaker-note, and directly related chart XML. Media, embedded packages, macros,
-and external relationship targets are not opened. Archive-entry, selected-part,
+indexes the ZIP central directory lazily and validates the package graph before
+opening selected content. The presentation root must use a supported Transitional
+or Strict PresentationML namespace, relationship types must exactly match the
+corresponding OOXML allowlist, and every presentation, slide, speaker-note, or
+chart target must have its expected package content type. It then reads only
+those selected XML parts. Media, embedded packages, macros, and external or
+lookalike relationship targets are not opened. Archive-entry, selected-part,
 selected-total, slide-count, elapsed-time, and final-output budgets bound the
 observation independently of the presentation container's total byte size, so a
 media-heavy presentation is not rejected merely for containing large images or

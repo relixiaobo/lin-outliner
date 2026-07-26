@@ -112,8 +112,11 @@ image pixels, exposes rest/hover/active/focus feedback, and does not add a
 backdrop filter or the file-preview action shadow. The ordinary file reference
 retains its Thread-scoped preview identity without a second attachment-card
 wrapper; every gallery tile retains the same scoped identity and opens the shared
-reader. Replay, fork, and edit use the same canonical ordering rather than
-reconstructing attachment placement.
+reader. Replay and fork consume the same canonical ordering rather than
+reconstructing attachment placement. Free-text editing is exposed only when
+canonical content contains at most one text part, and replacement preserves every
+non-text part in place. A split-text mixed message omits Edit until a structured
+content editor can represent each text boundary without flattening the sequence.
 Each inline bubble keeps the five-line measured disclosure independently, so
 the collapse mask never crops gallery content.
 

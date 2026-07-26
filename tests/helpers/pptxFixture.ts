@@ -1,12 +1,17 @@
 const CONTENT_TYPES_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/content-types';
-const PRESENTATIONML_NAMESPACE = 'http://schemas.openxmlformats.org/presentationml/2006/main';
-const DRAWINGML_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/main';
-const OFFICE_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const TRANSITIONAL_PRESENTATIONML_NAMESPACE = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+const STRICT_PRESENTATIONML_NAMESPACE = 'http://purl.oclc.org/ooxml/presentationml/main';
+const TRANSITIONAL_DRAWINGML_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const STRICT_DRAWINGML_NAMESPACE = 'http://purl.oclc.org/ooxml/drawingml/main';
+const TRANSITIONAL_OFFICE_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const STRICT_OFFICE_RELATIONSHIPS_NAMESPACE = 'http://purl.oclc.org/ooxml/officeDocument/relationships';
 const PACKAGE_RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/relationships';
-const CHART_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
-const PRESENTATION_RELATIONSHIP_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide';
-const NOTES_RELATIONSHIP_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide';
-const CHART_RELATIONSHIP_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
+const TRANSITIONAL_CHART_NAMESPACE = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+const STRICT_CHART_NAMESPACE = 'http://purl.oclc.org/ooxml/drawingml/chart';
+const PRESENTATION_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml';
+const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+const NOTES_SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml';
+const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 
 export interface StoredZipEntry {
   readonly name: string;
@@ -65,29 +70,46 @@ export function pptxFixtureEntries(options: {
   notesText?: string;
   chartValues?: string[];
   extraEntries?: StoredZipEntry[];
+  strict?: boolean;
 } = {}): StoredZipEntry[] {
+  const presentationNamespace = options.strict
+    ? STRICT_PRESENTATIONML_NAMESPACE
+    : TRANSITIONAL_PRESENTATIONML_NAMESPACE;
+  const drawingNamespace = options.strict ? STRICT_DRAWINGML_NAMESPACE : TRANSITIONAL_DRAWINGML_NAMESPACE;
+  const chartNamespace = options.strict ? STRICT_CHART_NAMESPACE : TRANSITIONAL_CHART_NAMESPACE;
+  const officeRelationshipsNamespace = options.strict
+    ? STRICT_OFFICE_RELATIONSHIPS_NAMESPACE
+    : TRANSITIONAL_OFFICE_RELATIONSHIPS_NAMESPACE;
+  const relationshipType = (name: string) => `${officeRelationshipsNamespace}/${name}`;
   const firstSlideText = options.firstSlideText ?? 'First slide';
   const hasSecondSlide = options.secondSlideText !== undefined;
   const presentationIds = hasSecondSlide
     ? '<p:sldId id="256" r:id="rIdSecond"/><p:sldId id="257" r:id="rIdFirst"/>'
     : '<p:sldId id="256" r:id="rIdFirst"/>';
   const presentationRelationships = [
-    relationship('rIdFirst', PRESENTATION_RELATIONSHIP_TYPE, 'slides/slide1.xml'),
-    ...(hasSecondSlide ? [relationship('rIdSecond', PRESENTATION_RELATIONSHIP_TYPE, 'slides/slide2.xml')] : []),
+    relationship('rIdFirst', relationshipType('slide'), 'slides/slide1.xml'),
+    ...(hasSecondSlide ? [relationship('rIdSecond', relationshipType('slide'), 'slides/slide2.xml')] : []),
   ].join('');
   const firstSlideRelationships = [
-    ...(options.notesText ? [relationship('rIdNotes', NOTES_RELATIONSHIP_TYPE, '../notesSlides/notesSlide1.xml')] : []),
-    ...(options.chartValues ? [relationship('rIdChart', CHART_RELATIONSHIP_TYPE, '../charts/chart1.xml')] : []),
+    ...(options.notesText ? [relationship('rIdNotes', relationshipType('notesSlide'), '../notesSlides/notesSlide1.xml')] : []),
+    ...(options.chartValues ? [relationship('rIdChart', relationshipType('chart'), '../charts/chart1.xml')] : []),
   ];
+  const contentTypeOverrides = [
+    contentTypeOverride('/ppt/presentation.xml', PRESENTATION_CONTENT_TYPE),
+    contentTypeOverride('/ppt/slides/slide1.xml', SLIDE_CONTENT_TYPE),
+    ...(hasSecondSlide ? [contentTypeOverride('/ppt/slides/slide2.xml', SLIDE_CONTENT_TYPE)] : []),
+    ...(options.notesText ? [contentTypeOverride('/ppt/notesSlides/notesSlide1.xml', NOTES_SLIDE_CONTENT_TYPE)] : []),
+    ...(options.chartValues ? [contentTypeOverride('/ppt/charts/chart1.xml', CHART_CONTENT_TYPE)] : []),
+  ].join('');
 
   return [
     {
       name: '[Content_Types].xml',
-      data: `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="${CONTENT_TYPES_NAMESPACE}"><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/></Types>`,
+      data: `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="${CONTENT_TYPES_NAMESPACE}">${contentTypeOverrides}</Types>`,
     },
     {
       name: 'ppt/presentation.xml',
-      data: `<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:p="${PRESENTATIONML_NAMESPACE}" xmlns:r="${OFFICE_RELATIONSHIPS_NAMESPACE}"><p:sldIdLst>${presentationIds}</p:sldIdLst></p:presentation>`,
+      data: `<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:p="${presentationNamespace}" xmlns:r="${officeRelationshipsNamespace}"><p:sldIdLst>${presentationIds}</p:sldIdLst></p:presentation>`,
     },
     {
       name: 'ppt/_rels/presentation.xml.rels',
@@ -95,7 +117,7 @@ export function pptxFixtureEntries(options: {
     },
     {
       name: 'ppt/slides/slide1.xml',
-      data: slideXml(firstSlideText),
+      data: slideXml(firstSlideText, presentationNamespace, drawingNamespace),
     },
     ...(firstSlideRelationships.length > 0 ? [{
       name: 'ppt/slides/_rels/slide1.xml.rels',
@@ -103,29 +125,33 @@ export function pptxFixtureEntries(options: {
     }] : []),
     ...(hasSecondSlide ? [{
       name: 'ppt/slides/slide2.xml',
-      data: slideXml(options.secondSlideText ?? ''),
+      data: slideXml(options.secondSlideText ?? '', presentationNamespace, drawingNamespace),
     }] : []),
     ...(options.notesText ? [{
       name: 'ppt/notesSlides/notesSlide1.xml',
-      data: slideXml(options.notesText),
+      data: slideXml(options.notesText, presentationNamespace, drawingNamespace),
     }] : []),
     ...(options.chartValues ? [{
       name: 'ppt/charts/chart1.xml',
-      data: chartXml(options.chartValues),
+      data: chartXml(options.chartValues, chartNamespace, drawingNamespace),
     }] : []),
     ...(options.extraEntries ?? []),
   ];
 }
 
-function slideXml(text: string): string {
+function slideXml(text: string, presentationNamespace: string, drawingNamespace: string): string {
   const paragraphs = text
     ? text.split('\n').map((line) => `<a:p><a:r><a:t>${escapeXml(line)}</a:t></a:r></a:p>`).join('')
     : '<a:p/>';
-  return `<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="${PRESENTATIONML_NAMESPACE}" xmlns:a="${DRAWINGML_NAMESPACE}"><p:cSld><p:spTree>${paragraphs}</p:spTree></p:cSld></p:sld>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="${presentationNamespace}" xmlns:a="${drawingNamespace}"><p:cSld><p:spTree>${paragraphs}</p:spTree></p:cSld></p:sld>`;
 }
 
-function chartXml(values: string[]): string {
-  return `<?xml version="1.0" encoding="UTF-8"?><c:chartSpace xmlns:c="${CHART_NAMESPACE}" xmlns:a="${DRAWINGML_NAMESPACE}"><c:chart>${values.map((value) => `<c:v>${escapeXml(value)}</c:v>`).join('')}</c:chart></c:chartSpace>`;
+function chartXml(values: string[], chartNamespace: string, drawingNamespace: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?><c:chartSpace xmlns:c="${chartNamespace}" xmlns:a="${drawingNamespace}"><c:chart>${values.map((value) => `<c:v>${escapeXml(value)}</c:v>`).join('')}</c:chart></c:chartSpace>`;
+}
+
+function contentTypeOverride(partName: string, contentType: string): string {
+  return `<Override PartName="${partName}" ContentType="${contentType}"/>`;
 }
 
 function relationshipsXml(content: string): string {

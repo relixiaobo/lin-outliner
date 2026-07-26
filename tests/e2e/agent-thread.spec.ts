@@ -718,6 +718,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
     await expect(gallery.locator('.thread-image-gallery-preview').first()).toHaveAccessibleName('reference-1.png');
     await expect(gallery.locator('.thread-image-gallery-preview img').first()).toHaveAttribute('alt', 'reference-1.png');
+    await expect(message.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     const showAll = gallery.getByRole('button', { name: 'Show all 6 images' });
     await expect(showAll).toHaveText('+2');
     await expect(showAll).toHaveAttribute('aria-expanded', 'false');
