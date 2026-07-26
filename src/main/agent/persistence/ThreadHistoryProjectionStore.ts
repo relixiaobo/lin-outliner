@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
 import type {
-  AgentCoreNotification,
+  AgentCoreRecordedNotification,
   ThreadId,
   ThreadItem,
   ThreadItemEntry,
@@ -355,7 +355,7 @@ export class ThreadHistoryProjectionStore {
     }
   }
 
-  private projectNotification(ordinal: number, notification: AgentCoreNotification): void {
+  private projectNotification(ordinal: number, notification: AgentCoreRecordedNotification): void {
     switch (notification.type) {
       case 'turn/started':
         if (this.readTurnRow(notification.threadId, notification.turnId)) {
@@ -496,7 +496,7 @@ export class ThreadHistoryProjectionStore {
     threadId: ThreadId,
     turnId: string,
     itemId: string,
-    delta: Extract<AgentCoreNotification, { type: 'item/delta' }>['delta'],
+    delta: Extract<AgentCoreRecordedNotification, { type: 'item/delta' }>['delta'],
   ): void {
     this.requireMutableTurnPosition(threadId, turnId);
     const row = this.readItemRow(threadId, itemId);

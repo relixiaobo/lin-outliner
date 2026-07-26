@@ -2,7 +2,7 @@ import type { EffectiveThreadConfiguration } from './configuration';
 import type { ModelToolContract, ModelToolIdentity } from './tools';
 import type {
   AdditionalContext,
-  AgentCoreNotification,
+  AgentCoreRecordedNotification,
   PrivilegedTurnStartRequest,
   Thread,
   ThreadId,
@@ -139,7 +139,7 @@ export interface AgentCoreExtension {
   onToolStarted?(context: ToolLifecycleContext): void | Promise<void>;
   onToolCompleted?(context: ToolLifecycleResult): void | Promise<void>;
   contributeTurnItems?(thread: Thread, turn: Turn): readonly OrderedTurnItemContribution[] | Promise<readonly OrderedTurnItemContribution[]>;
-  onNotification?(notification: AgentCoreNotification): void | Promise<void>;
+  onNotification?(notification: AgentCoreRecordedNotification): void | Promise<void>;
 }
 
 export interface ThreadServiceExtensionHost {

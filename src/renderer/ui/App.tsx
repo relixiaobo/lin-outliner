@@ -136,10 +136,6 @@ export function App() {
   const preparePanelCount = useCallback((nextPanelCount: number) => {
     reflowPanelCountRef.current(nextPanelCount);
   }, []);
-  const notifyPanelOpenRejected = useCallback(() => {
-    setError(t.shell.workspace.tooNarrowForNewPane);
-  }, [t.shell.workspace.tooNarrowForNewPane]);
-
   const {
     activeOutlinerPanel,
     activePanelId,
@@ -165,11 +161,10 @@ export function App() {
     canFitPanelCount,
     clearFocusAndSelection,
     focusNode,
-    onPanelOpenRejected: notifyPanelOpenRejected,
     preparePanelCount,
   });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
-  // history. Debug panes still no-op instead of navigating an unrelated pane.
+  // history, including Run Details and file previews.
   const pageHistoryPanel = activeWorkspacePanel;
 
   const {
@@ -261,9 +256,9 @@ export function App() {
     if (!currentIndex) return;
     const persistedRootIds = new Set<NodeId>();
     for (const panel of panels) {
-      const rootId = panel.type === 'workspace'
-        ? panel.view.kind === 'outliner' ? panel.view.rootId : panel.view.nodeId ?? null
-        : null;
+      const rootId = panel.view.kind === 'outliner'
+        ? panel.view.rootId
+        : panel.view.kind === 'file-preview' ? panel.view.nodeId ?? null : null;
       if (!rootId || persistedRootIds.has(rootId)) continue;
       persistedRootIds.add(rootId);
       persistOutlineViewState(rootId, currentIndex.byId, {
@@ -433,8 +428,8 @@ export function App() {
   }, [navigateRoot]);
 
   const openActiveRootInPanel = useCallback(() => {
-    // Cmd+M opens the *active* outliner pane's root in a new pane. When a debug
-    // pane is active there is no active outliner root, so this is a no-op rather
+    // Cmd+M opens the *active* outliner pane's root in a new pane. When another
+    // view is active there is no active outliner root, so this is a no-op rather
     // than reaching across to the ambient (first) outliner.
     const activeRootId = activeOutlinerPanel?.view.rootId;
     if (!activeRootId) return;

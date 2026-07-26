@@ -70,6 +70,7 @@ import {
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
+import { ToolCodeBlock } from '../ToolCodeBlock';
 
 export type ThreadToolItem = Extract<ThreadItem, {
   type:
@@ -91,6 +92,7 @@ interface ThreadItemViewProps {
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   readonly threadId: string;
+  readonly threadCwd: string;
   readonly onDisclosureToggle: () => void;
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
@@ -111,10 +113,6 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'dynamicToolCall'
     || item.type === 'collabAgentToolCall'
     || item.type === 'webSearch';
-}
-
-export function isCompactLoadedSkillItem(item: ThreadToolItem): boolean {
-  return loadedSkillDetails(item) !== null;
 }
 
 export function ThreadItemView(props: ThreadItemViewProps) {
@@ -138,17 +136,6 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           </div>
           {props.item.phase !== 'commentary' ? props.agentResponseTail : null}
         </article>
-      );
-    case 'plan':
-      return (
-        <TextDisclosure
-          disclosureId={`plan:${props.item.id}`}
-          expandState={props.expandState}
-          index={props.index}
-          label={t.agent.thread.item.plan}
-          onOpenNodeReference={props.onOpenNodeReference}
-          text={props.item.text}
-        />
       );
     case 'reasoning':
       return (
@@ -174,6 +161,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           item={props.item}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
+          threadCwd={props.threadCwd}
         />
       );
     case 'subAgentActivity': {
@@ -206,11 +194,13 @@ export function ThreadToolActivityGroup({
   items,
   onReadToolOutput,
   onOpenThread,
+  threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly items: readonly ThreadToolItem[];
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly threadCwd: string;
 }) {
   const t = useT();
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
@@ -237,6 +227,7 @@ export function ThreadToolActivityGroup({
               key={item.id}
               onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
+              threadCwd={threadCwd}
             />
           ))}
         </div>
@@ -496,55 +487,20 @@ function ReasoningDisclosure({
   );
 }
 
-function TextDisclosure({
-  disclosureId,
-  expandState,
-  index,
-  label,
-  onOpenNodeReference,
-  text,
-}: {
-  readonly disclosureId: string;
-  readonly expandState: ThreadDisclosureState;
-  readonly index: DocumentIndex;
-  readonly label: string;
-  readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
-  readonly text: string;
-}) {
-  const expanded = expandState.isExpanded(disclosureId, false);
-  return (
-    <div className="thread-item thread-text-disclosure">
-      <ButtonControl
-        aria-expanded={expanded}
-        className="thread-text-disclosure-toggle"
-        data-thread-disclosure-id={disclosureId}
-        onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
-      >
-        <DisclosureIndicator expanded={expanded} status={<GenericToolIcon size={ICON_SIZE.tiny} />} />
-        <span>{label}</span>
-      </ButtonControl>
-      {expanded ? (
-        <div className="thread-disclosure-content">
-          <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={text} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function ToolItemDisclosure({
   expandState,
   item,
   onReadOutput,
   onOpenThread,
+  threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly item: ThreadToolItem;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly threadCwd: string;
 }) {
   const t = useT();
-  const loadedSkill = loadedSkillDetails(item);
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const detail = toolDetail(item, t, onOpenThread);
@@ -559,7 +515,6 @@ function ToolItemDisclosure({
       cancelled = true;
     };
   }, [expanded, fullOutput, item, onReadOutput]);
-  if (loadedSkill) return <LoadedSkillAffordance details={loadedSkill} />;
   const output = fullOutput ?? detail.output;
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
@@ -576,9 +531,10 @@ function ToolItemDisclosure({
         <div className="thread-tool-body">
           {detail.input ? (
             <ToolDetailSection label={t.agent.thread.item.arguments}>
-              <ReadOnlyCodeBlock
+              <ToolCodeBlock
                 code={detail.input}
                 copyLabel={t.agent.thread.item.copyArguments}
+                cwd={threadCwd}
                 language={detail.inputLanguage}
               />
             </ToolDetailSection>
@@ -586,53 +542,16 @@ function ToolItemDisclosure({
           {detail.body}
           {output ? (
             <ToolDetailSection label={detail.outputLabel}>
-              <ReadOnlyCodeBlock
+              <ToolCodeBlock
                 code={output}
                 copyLabel={t.agent.thread.item.copyOutput}
+                cwd={threadCwd}
                 language={fullOutput ? outputLanguage(fullOutput) : detail.outputLanguage}
               />
             </ToolDetailSection>
           ) : null}
           {detail.error ? <p className="thread-inline-error">{detail.error}</p> : null}
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-interface LoadedSkillDetails {
-  readonly args: string | null;
-  readonly skill: string;
-}
-
-function loadedSkillDetails(item: ThreadToolItem): LoadedSkillDetails | null {
-  if (item.type !== 'dynamicToolCall'
-    || normalizedToolIdentity(item.namespace, item.tool) !== 'skill'
-    || item.status !== 'completed'
-    || item.success !== true) return null;
-  const text = (item.contentItems ?? [])
-    .flatMap((content) => content.type === 'text' ? [content.text] : [])
-    .join('\n');
-  const launched = /^Launching skill:\s*(.+)$/im.exec(text);
-  if (!launched) return null;
-  const argumentSkill = dynamicToolArgument(item, 'skill');
-  const skill = (launched[1] ?? '').trim()
-    || (typeof argumentSkill === 'string' ? argumentSkill.trim() : '');
-  if (!skill) return null;
-  const argumentArgs = dynamicToolArgument(item, 'args');
-  return {
-    args: typeof argumentArgs === 'string' && argumentArgs.trim() ? argumentArgs.trim() : null,
-    skill,
-  };
-}
-
-function LoadedSkillAffordance({ details }: { readonly details: LoadedSkillDetails }) {
-  return (
-    <div className="thread-item thread-loaded-skill">
-      <SkillIcon aria-hidden="true" className="thread-loaded-skill-icon" size={ICON_SIZE.menu} />
-      <span className="thread-loaded-skill-name" title={`/${details.skill}`}>/{details.skill}</span>
-      {details.args ? (
-        <span className="thread-loaded-skill-args" title={details.args}>{details.args}</span>
       ) : null}
     </div>
   );

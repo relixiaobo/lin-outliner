@@ -1075,6 +1075,7 @@ commandPalette: {
       goalUsage: ({ used, budget }) => `${used} / ${budget} token`,
       goalUnboundedUsage: ({ used }) => `${used} token`,
       inputNeeded: '需要你的输入',
+      planProgress: ({ current, total }) => `第 ${current} / ${total} 步`,
       inputProgress: ({ current, total }) => `第 ${current} / ${total} 题`,
       inputBack: '上一题',
       inputNext: '下一步',

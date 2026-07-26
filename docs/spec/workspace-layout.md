@@ -103,8 +103,8 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane hosts an outliner or file-preview view. Both tile identically and share
-the same per-pane navigation history.
+A pane hosts an outliner, file-preview, or Agent Run Details view. All tile
+identically and share the same per-pane navigation history.
 
 Agent dock:
 
@@ -236,26 +236,31 @@ File preview uses the same workspace panel host and the same history stack:
 }
 ```
 
-Agent Run Details is a workspace pane that stores only the canonical location
-needed to read the current data:
+Agent Run Details is a workspace panel view that stores only the canonical
+location needed to read the current data:
 
 ```ts
 {
-  type: 'thread-run-details',
-  threadId: ThreadId,
-  turnId: TurnId,
+  type: 'workspace',
+  view: {
+    kind: 'thread-run-details',
+    threadId: ThreadId,
+    turnId: TurnId,
+  },
+  backStack: [{ kind: 'outliner', rootId: NodeId }],
+  forwardStack: [],
 }
 ```
 
-The same Thread and Turn focus an existing pane. A different Turn reuses the
-existing Run Details pane before creating another one. The canvas always keeps
-an outliner anchor; opening diagnostics may replace only a pane whose removal
-leaves another outliner anchor.
+Opening Run Details replaces the active pane's current view and pushes that view
+onto its Back stack; it never adds a pane. A different Turn replaces the current
+Run Details target without adding another history entry. Back and the Details
+close action return to the originating view.
 
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v6`). It is UI state; document content remains in
+(`lin-outliner:workspace-layout:v7`). It is UI state; document content remains in
 the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
@@ -271,7 +276,7 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent Thread transcript, scroll, or input. A Run Details pane persists only
+- Agent Thread transcript, scroll, or input. A Run Details view persists only
   its canonical Thread and Turn IDs, never a second transcript projection.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
@@ -835,15 +840,15 @@ panels[2] -> next pane
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.
 
-Operations that act on "the active pane's outliner" — page-history Back/Forward
-(`Cmd+[` / `Cmd+]`) and "open the active root in a pane" (`Cmd+M`) — key off the
-active pane *only when it is an outliner*. When a debug pane is active they no-op
-rather than reaching across to another pane. Untargeted navigation
+Page-history Back/Forward (`Cmd+[` / `Cmd+]`) follows the active workspace pane's
+view history, including Run Details and file previews. "Open the active root in
+a pane" (`Cmd+M`) requires the active view to be an outliner; while another view
+is active it no-ops rather than reaching across to another pane. Untargeted navigation
 (`navigateRoot` — sidebar plain click, command palette, "go to root") targets the
 active outliner pane if there is one, else an existing outliner pane, else opens
 one; it never replaces the whole canvas. Ambient UI that merely needs "the
 outliner the user is looking at" (sidebar root highlight, drag-selection scope)
-falls back to the first outliner pane when a debug pane holds the active slot.
+falls back to the first outliner pane when Run Details holds the active slot.
 
 ## Tiled Layout
 

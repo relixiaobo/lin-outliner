@@ -144,3 +144,6 @@ Process summaries, tool-call disclosures, run activity rows, and similar compact
 status rows reserve one measured disclosure/status slot. Labels must not jump
 between rest, hover, focus, loading, and expansion. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
+Turn-local Plan progress uses the same compact status register above the
+composer; its level-1 checklist popover appears on hover or keyboard focus
+without moving the composer or transcript.

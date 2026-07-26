@@ -22,6 +22,12 @@ export interface FilePreviewPanelView {
   target: PreviewTarget;
 }
 
+export interface ThreadRunDetailsPanelView {
+  kind: 'thread-run-details';
+  threadId: string;
+  turnId: string;
+}
+
 export type FilePreviewPresentation = 'reader';
 
 export interface FilePreviewNavigationOptions {
@@ -30,7 +36,7 @@ export interface FilePreviewNavigationOptions {
   presentation?: FilePreviewPresentation;
 }
 
-export type PanelView = OutlinerPanelView | FilePreviewPanelView;
+export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadRunDetailsPanelView;
 
 export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -42,13 +48,7 @@ export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   forwardStack: PanelView[];
 }
 
-export interface ThreadRunDetailsPanelState extends WorkspacePanelBase {
-  type: 'thread-run-details';
-  threadId: string;
-  turnId: string;
-}
-
-export type WorkspacePanelState = WorkspaceContentPanelState | ThreadRunDetailsPanelState;
+export type WorkspacePanelState = WorkspaceContentPanelState;
 
 export interface WorkspaceLayout {
   activePanelId: string;

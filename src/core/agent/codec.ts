@@ -9,8 +9,10 @@ import {
   type AdditionalContextEntry,
   type AgentCoreMethod,
   type AgentCoreNotification,
+  type AgentCoreRecordedNotification,
   type AgentCoreRequestByMethod,
   type AgentCoreResponseByMethod,
+  type AgentCoreTransientNotification,
   type AgentMutationCausation,
   type CommandAction,
   type DynamicToolOutputContent,
@@ -199,10 +201,6 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         phase: nullableEnum(record.phase, ['commentary', 'final_answer'], 'item.phase'),
         memoryCitation: decodeMemoryCitation(record.memoryCitation),
       };
-      break;
-    case 'plan':
-      exactKeys(record, ['type', 'id', 'provenance', 'text'], 'item');
-      result = { ...base, type, text: stringValue(record.text, 'item.text', true) };
       break;
     case 'reasoning':
       exactKeys(record, ['type', 'id', 'provenance', 'summary', 'content'], 'item');
@@ -436,6 +434,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'item/completed',
     'turn/completed',
     'turn/providerRetry/changed',
+    'turn/plan/updated',
     'userInput/requested',
     'userInput/resolved',
     'goal/updated',
@@ -505,6 +504,34 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       if (result.status && result.status.attempt > result.status.maxRetries) {
         fail('notification.status.attempt', 'must not exceed maxRetries');
       }
+      break;
+    }
+    case 'turn/plan/updated': {
+      exactKeys(record, ['type', 'threadId', 'turnId', 'explanation', 'plan'], 'notification');
+      const plan = arrayValue(record.plan, 'notification.plan').map((entry, index) => {
+        const step = recordValue(entry, `notification.plan[${index}]`);
+        exactKeys(step, ['step', 'status'], `notification.plan[${index}]`);
+        return {
+          step: stringValue(step.step, `notification.plan[${index}].step`),
+          status: enumValue(
+            step.status,
+            ['pending', 'in_progress', 'completed'],
+            `notification.plan[${index}].status`,
+          ),
+        };
+      });
+      if (plan.filter((step) => step.status === 'in_progress').length > 1) {
+        fail('notification.plan', 'allows at most one in_progress step');
+      }
+      result = {
+        type,
+        threadId: uuidV7(record.threadId, 'notification.threadId'),
+        turnId: uuidV7(record.turnId, 'notification.turnId'),
+        ...(record.explanation === undefined
+          ? {}
+          : { explanation: stringValue(record.explanation, 'notification.explanation') }),
+        plan,
+      };
       break;
     }
     case 'item/started':
@@ -589,6 +616,30 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
   return deepFreeze(result);
 }
 
+export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRecordedNotification {
+  const notification = decodeAgentCoreNotification(value);
+  switch (notification.type) {
+    case 'thread/name/updated':
+    case 'turn/providerRetry/changed':
+    case 'turn/plan/updated':
+      fail('notification.type', `cannot record transient notification ${notification.type}`);
+    default:
+      return notification;
+  }
+}
+
+export function decodeAgentCoreTransientNotification(value: unknown): AgentCoreTransientNotification {
+  const notification = decodeAgentCoreNotification(value);
+  switch (notification.type) {
+    case 'thread/name/updated':
+    case 'turn/providerRetry/changed':
+    case 'turn/plan/updated':
+      return notification;
+    default:
+      fail('notification.type', `expected transient notification, received ${notification.type}`);
+  }
+}
+
 function executionStatusOf(item: ThreadItem): 'inProgress' | 'completed' | 'failed' | 'interrupted' | null {
   switch (item.type) {
     case 'commandExecution':
@@ -600,7 +651,6 @@ function executionStatusOf(item: ThreadItem): 'inProgress' | 'completed' | 'fail
       return item.status;
     case 'userMessage':
     case 'agentMessage':
-    case 'plan':
     case 'reasoning':
     case 'subAgentActivity':
     case 'imageView':
@@ -1532,7 +1582,7 @@ function decodeItemDelta(value: unknown): ThreadItemDelta {
   const record = recordValue(value, 'item.delta');
   const type = enumValue(
     record.type,
-    ['agentMessageText', 'planText', 'reasoningSummary', 'reasoningContent', 'commandOutput', 'dynamicToolOutput'],
+    ['agentMessageText', 'reasoningSummary', 'reasoningContent', 'commandOutput', 'dynamicToolOutput'],
     'item.delta.type',
   );
   if (type === 'dynamicToolOutput') {

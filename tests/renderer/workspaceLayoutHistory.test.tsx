@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
-  test('opens and reuses one canonical Thread Run Details pane', () => {
+  test('opens Thread Run Details in the current pane and preserves Back navigation', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
       panels: [{
@@ -36,57 +36,57 @@ describe('useWorkspaceLayout history focus', () => {
       h.api.openThreadRunDetailsPanel('thread-alpha', 'turn-one');
     });
 
-    const runDetailsPanel = h.api.panels.find((panel) => panel.type === 'thread-run-details');
-    expect(runDetailsPanel).toMatchObject({
-      type: 'thread-run-details',
-      threadId: 'thread-alpha',
-      turnId: 'turn-one',
+    expect(h.api.panels).toHaveLength(1);
+    expect(h.api.panels[0]).toMatchObject({
+      id: 'panel-test',
+      type: 'workspace',
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+      forwardStack: [],
     });
-    expect(h.api.activePanelId).toBe(runDetailsPanel?.id);
-    expect(h.api.panels).toHaveLength(2);
+    expect(h.api.activePanelId).toBe('panel-test');
 
     act(() => {
       h.api.openThreadRunDetailsPanel('thread-beta', 'turn-two');
     });
 
-    expect(h.api.panels).toHaveLength(2);
-    expect(h.api.panels.find((panel) => panel.id === runDetailsPanel?.id)).toMatchObject({
-      type: 'thread-run-details',
-      threadId: 'thread-beta',
-      turnId: 'turn-two',
+    expect(h.api.panels).toHaveLength(1);
+    expect(h.api.panels[0]).toMatchObject({
+      view: { kind: 'thread-run-details', threadId: 'thread-beta', turnId: 'turn-two' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
     });
     expect(h.clearFocusAndSelectionCalls).toBe(2);
+
+    act(() => {
+      h.api.navigatePanelBack('panel-test');
+    });
+    expect(h.api.panels[0]).toMatchObject({
+      view: { kind: 'outliner', rootId: 'today' },
+      forwardStack: [{ kind: 'thread-run-details', threadId: 'thread-beta', turnId: 'turn-two' }],
+    });
   });
 
-  test('restores a same-day Thread Run Details pane beside its outliner anchor', () => {
+  test('restores a same-day Thread Run Details view with its outliner history', () => {
     const h = renderLayout({
       activePanelId: 'panel-debug',
-      panels: [
-        {
-          id: 'panel-test',
-          type: 'workspace',
-          size: 1,
-          view: { kind: 'outliner', rootId: 'today' },
-          backStack: [],
-          forwardStack: [],
-        },
-        {
-          id: 'panel-debug',
-          type: 'thread-run-details',
-          size: 1,
-          threadId: 'thread-alpha',
-          turnId: 'turn-one',
-        },
-      ],
+      panels: [{
+        id: 'panel-debug',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
     });
 
     expect(h.api.activePanelId).toBe('panel-debug');
-    expect(h.api.panels[1]).toEqual({
+    expect(h.api.panels[0]).toEqual({
       id: 'panel-debug',
-      type: 'thread-run-details',
+      type: 'workspace',
       size: 1,
-      threadId: 'thread-alpha',
-      turnId: 'turn-one',
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+      forwardStack: [],
     });
   });
 
@@ -273,8 +273,8 @@ describe('useWorkspaceLayout history focus', () => {
 function renderLayout(layout: WorkspaceLayout) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const storage = new MemoryStorage();
-  storage.setItem('lin-outliner:workspace-layout:v6', JSON.stringify({
-    version: 6,
+  storage.setItem('lin-outliner:workspace-layout:v7', JSON.stringify({
+    version: 7,
     localDate: todayIsoLocalDate(),
     ...layout,
   }));

@@ -17,7 +17,7 @@ is active per Thread. A Turn is either `inProgress`, `completed`, `failed`, or
 
 A `ThreadItem` is the smallest persisted history fact. Canonical Item kinds are:
 
-- `userMessage`, `agentMessage`, `plan`, and `reasoning`
+- `userMessage`, `agentMessage`, and `reasoning`
 - `commandExecution`, `fileChange`, `mcpToolCall`, and `dynamicToolCall`
 - `collabAgentToolCall` and `subAgentActivity`
 - `webSearch`, `imageView`, and `contextCompaction`
@@ -107,6 +107,13 @@ Starting a Turn follows this order:
 6. Execute the Turn and persist Item events as they occur.
 7. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
+
+`update_plan` is a Turn-local control tool, not a history fact. Its normalized
+checklist is published as a transient `turn/plan/updated` notification for the
+active Turn. It creates neither a `ThreadItem` nor model-history text, and a
+terminal Turn never retains it. Recorded and transient notification types are
+separate protocol subsets; rollout decoding rejects transient notification
+types even if malformed storage contains one.
 
 Initial preview selection is deterministic: first non-empty text, then an
 attachment name, then a Node-reference note. Whitespace is normalized and the
@@ -252,6 +259,11 @@ All input and output crosses strict codecs. Unknown fields, invalid UUIDv7 IDs,
 invalid state transitions, and impossible terminal facts fail closed. Thread
 history mode is always paginated; renderer code does not negotiate another
 shape.
+
+Recorded lifecycle notifications are the only notifications accepted by
+rollout and history projection stores. `thread/name/updated`, provider-retry
+state, and `turn/plan/updated` are transient renderer synchronization events;
+they are never replayed from rollout history.
 
 ## Extension Boundary
 

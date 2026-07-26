@@ -60,12 +60,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           <WorkspacePanelSurface
             active={props.activePanelId === panel.id}
             onActivate={() => props.onActivatePanel(panel)}
-            onClose={() => props.onClosePanel(panel.id)}
             panel={panel}
-            showClose={activePanels.length > 1}
             size={panel.size}
           >
-            {panel.type === 'workspace' && panel.view.kind === 'outliner' ? (
+            {panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
                 rootId={panel.view.rootId}
@@ -87,7 +85,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />
-            ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
+            ) : panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
                 activePanel={props.activePanelId === panel.id}
                 panelId={panel.id}
@@ -114,12 +112,14 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 trigger={props.trigger}
                 ui={props.ui}
               />
-            ) : panel.type === 'thread-run-details' ? (
+            ) : panel.view.kind === 'thread-run-details' ? (
               <ThreadRunDetailsPanel
-                onClose={() => props.onClosePanel(panel.id)}
+                canGoBack={Boolean(panel.backStack.length)}
+                onBack={() => props.onNavigatePanelBack(panel.id)}
+                onClose={() => props.onNavigatePanelBack(panel.id)}
                 showClose={activePanels.length > 1}
-                threadId={panel.threadId}
-                turnId={panel.turnId}
+                threadId={panel.view.threadId}
+                turnId={panel.view.turnId}
               />
             ) : (
               null

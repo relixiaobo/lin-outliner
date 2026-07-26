@@ -1,6 +1,6 @@
 import { decodeThreadItem } from '../../../core/agent/codec';
 import type {
-  AgentCoreNotification,
+  AgentCoreRecordedNotification,
   ItemExecutionStatus,
   ItemProvenance,
   ThreadId,
@@ -11,7 +11,7 @@ import type {
 import { applyThreadItemDelta } from '../itemDelta';
 import { uuidV7 } from '../uuid';
 
-type NotificationWriter = (notification: AgentCoreNotification) => Promise<void>;
+type NotificationWriter = (notification: AgentCoreRecordedNotification) => Promise<void>;
 
 export class ItemRecorder {
   private readonly items = new Map<string, ThreadItem>();

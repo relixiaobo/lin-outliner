@@ -78,6 +78,7 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
+  ['src/renderer/styles/thread.css|.thread-plan-progress-popover', 'Turn-local Plan checklist overlay.'],
   ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
   ['src/renderer/styles/thread-run-details.css|.thread-run-details-usage-popover', 'Run Details usage overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],

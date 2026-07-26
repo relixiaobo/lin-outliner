@@ -4,10 +4,11 @@ import { previewTargetFromUnknown, previewTargetKey, type PreviewTarget } from '
 import type { NavigateRootOptions } from './shared';
 import type {
   FilePreviewNavigationOptions,
+  FilePreviewPanelView,
   FilePreviewPresentation,
   OutlinerPanelView,
   PanelView,
-  ThreadRunDetailsPanelState,
+  ThreadRunDetailsPanelView,
   WorkspaceContentPanelState,
   WorkspaceLayout,
   WorkspacePanelState,
@@ -15,12 +16,13 @@ import type {
 import { isRecord } from '../state/persistence';
 
 let nextWorkspaceId = 0;
-const STORAGE_KEY = 'lin-outliner:workspace-layout:v6';
-const STORAGE_VERSION = 6;
+const STORAGE_KEY = 'lin-outliner:workspace-layout:v7';
+const STORAGE_VERSION = 7;
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 
 type NodeLookup = Pick<ReadonlyMap<NodeId, unknown>, 'has'>;
+type ScrollablePanelView = OutlinerPanelView | FilePreviewPanelView;
 
 function nextId(prefix: string) {
   nextWorkspaceId += 1;
@@ -49,7 +51,7 @@ function normalizeScrollTop(value: unknown): number | undefined {
     : undefined;
 }
 
-function withScrollTop<T extends PanelView>(view: T, scrollTop: number | undefined): T {
+function withScrollTop<T extends ScrollablePanelView>(view: T, scrollTop: number | undefined): T {
   if (scrollTop === undefined) {
     const { scrollTop: _unused, ...rest } = view;
     return rest as T;
@@ -75,6 +77,10 @@ function filePreviewView(
   }, scrollTop);
 }
 
+function threadRunDetailsView(threadId: string, turnId: string): ThreadRunDetailsPanelView {
+  return { kind: 'thread-run-details', threadId, turnId };
+}
+
 function isWorkspacePanel(
   panel: WorkspacePanelState | null | undefined,
 ): panel is WorkspaceContentPanelState {
@@ -93,11 +99,12 @@ function isOutlinerPanel(
 
 function viewOutlineRootId(view: PanelView): NodeId | null {
   if (view.kind === 'outliner') return view.rootId;
-  return view.nodeId ?? null;
+  return view.kind === 'file-preview' ? view.nodeId ?? null : null;
 }
 
 function panelViewKey(view: PanelView): string {
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
+  if (view.kind === 'thread-run-details') return `thread-run-details:${view.threadId}:${view.turnId}`;
   if (view.nodeId) return `file-preview-node:${view.nodeId}:${view.presentation ?? 'node'}`;
   return `file-preview:${previewTargetKey(view.target)}:${view.presentation ?? 'default'}`;
 }
@@ -122,15 +129,6 @@ function filePreviewPanel(
   presentation?: FilePreviewPresentation,
 ): WorkspaceContentPanelState {
   return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
-}
-
-function threadRunDetailsPanel(
-  id: string,
-  threadId: string,
-  turnId: string,
-  size = 1,
-): ThreadRunDetailsPanelState {
-  return { id, type: 'thread-run-details', threadId, turnId, size };
 }
 
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
@@ -167,6 +165,12 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
     return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop, presentation) : null;
   }
+  if (value.kind === 'thread-run-details') {
+    return typeof value.threadId === 'string' && value.threadId.length > 0
+      && typeof value.turnId === 'string' && value.turnId.length > 0
+      ? threadRunDetailsView(value.threadId, value.turnId)
+      : null;
+  }
   return null;
 }
 
@@ -196,12 +200,6 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
   const size = sanitizeSize(value.size);
-  if (value.type === 'thread-run-details') {
-    return typeof value.threadId === 'string' && value.threadId.length > 0
-      && typeof value.turnId === 'string' && value.turnId.length > 0
-      ? threadRunDetailsPanel(value.id, value.threadId, value.turnId, size)
-      : null;
-  }
   if (value.type !== 'workspace') return null;
   const view = sanitizePanelView(value.view, nodeIds);
   if (!view) return null;
@@ -286,7 +284,6 @@ interface UseWorkspaceLayoutOptions {
   canFitPanelCount?: (nextPanelCount: number) => boolean;
   clearFocusAndSelection?: () => void;
   focusNode: (nodeId: NodeId | null) => void;
-  onPanelOpenRejected?: () => void;
   preparePanelCount?: (nextPanelCount: number) => void;
 }
 
@@ -303,7 +300,6 @@ export function useWorkspaceLayout({
   canFitPanelCount = allowPanelAdd,
   clearFocusAndSelection,
   focusNode,
-  onPanelOpenRejected,
   preparePanelCount = () => undefined,
 }: UseWorkspaceLayoutOptions) {
   const [panels, setPanels] = useState<WorkspacePanelState[]>([]);
@@ -325,13 +321,13 @@ export function useWorkspaceLayout({
   const activeWorkspacePanel = isWorkspacePanel(activePanel) ? activePanel : null;
   // Strict: the active pane, but only when its current view is an outliner.
   // Targeted operations that act on "the active pane's outliner" — like "open
-  // the active root in a pane" (Cmd+M) — key off this, so they no-op when a debug
-  // or file preview view is active rather than silently reaching across.
+  // the active root in a pane" (Cmd+M) — key off this, so they no-op when a
+  // non-outliner view is active rather than silently reaching across.
   const activeOutlinerPanel = isOutlinerPanel(activePanel) ? activePanel : null;
   // Ambient: the active outliner if any, else the first outliner on the canvas.
   // For non-targeted UI (sidebar root highlight, drag-selection scope) where "the
-  // outliner the user is looking at" is good enough even while a debug pane holds
-  // the active slot.
+  // outliner the user is looking at" is good enough even while a non-outliner
+  // view holds the active slot.
   const ambientOutlinerPanel = activeOutlinerPanel ?? panels.find(isOutlinerPanel) ?? null;
   const rootId = ambientOutlinerPanel?.view.rootId ?? null;
 
@@ -376,15 +372,15 @@ export function useWorkspaceLayout({
         panel.id === targetPanel.id && isWorkspacePanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )));
     } else if (panels.length < MAX_PERSISTED_PANELS && canFitPanelCount(panels.length + 1)) {
-      // No outliner pane (only debug panes) but room to add one: append rather
-      // than replace the whole canvas, so the debug panes survive.
+      // No outliner pane but room to add one: append rather than replace the
+      // whole canvas, so the other views survive.
       const panelId = nextId('panel');
       preparePanelCount(panels.length + 1);
       setActivePanelId(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     } else {
       // No outliner pane and no room: repurpose the active pane in place. Only the
-      // active pane is converted — every other (debug) pane is preserved.
+      // active pane is converted; every other pane is preserved.
       const replaceId = current?.id ?? panels.at(-1)?.id;
       if (!replaceId) return;
       setActivePanelId(replaceId);
@@ -419,9 +415,7 @@ export function useWorkspaceLayout({
       keepActive(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id
-          ? isWorkspacePanel(panel)
-            ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
-            : filePreviewPanel(panel.id, target, panel.size, nodeId, presentation)
+          ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
           : panel
       )));
     } else {
@@ -577,61 +571,23 @@ export function useWorkspaceLayout({
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
   const openThreadRunDetailsPanel = useCallback((threadId: string, turnId: string) => {
-    const exactPanel = panels.find((panel) => (
-      panel.type === 'thread-run-details' && panel.threadId === threadId && panel.turnId === turnId
-    ));
-    if (exactPanel) {
-      setActivePanelId(exactPanel.id);
-      clearPreviewNavigationState();
-      return;
-    }
-
-    const reusablePanel = panels.find((panel) => panel.type === 'thread-run-details');
-    if (reusablePanel) {
-      setActivePanelId(reusablePanel.id);
-      setPanels((prev) => prev.map((panel) => (
-        panel.id === reusablePanel.id
-          ? threadRunDetailsPanel(panel.id, threadId, turnId, panel.size)
-          : panel
-      )));
-      clearPreviewNavigationState();
-      return;
-    }
-
-    if (panels.length >= MAX_PERSISTED_PANELS) {
-      const replacePanel = [...panels].reverse().find((candidate) => (
-        panels.some((panel) => panel.id !== candidate.id && Boolean(panelOutlinerAnchor(panel)))
-      ));
-      if (!replacePanel) {
-        onPanelOpenRejected?.();
-        return;
+    const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
+    if (!targetPanel) return;
+    const nextView = threadRunDetailsView(threadId, turnId);
+    setActivePanelId(targetPanel.id);
+    setPanels((prev) => prev.map((panel) => {
+      if (panel.id !== targetPanel.id) return panel;
+      if (samePanelView(panel.view, nextView)) return panel;
+      if (panel.view.kind === 'thread-run-details') {
+        return { ...panel, view: nextView };
       }
-      setActivePanelId(replacePanel.id);
-      setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id
-          ? threadRunDetailsPanel(panel.id, threadId, turnId, panel.size)
-          : panel
-      )));
-      clearPreviewNavigationState();
-      return;
-    }
-
-    if (!canFitPanelCount(panels.length + 1)) {
-      onPanelOpenRejected?.();
-      return;
-    }
-
-    const panelId = nextId('panel');
-    preparePanelCount(panels.length + 1);
-    setActivePanelId(panelId);
-    setPanels((prev) => [...prev, threadRunDetailsPanel(panelId, threadId, turnId)]);
+      return navigateWorkspacePanel(panel, nextView);
+    }));
     clearPreviewNavigationState();
   }, [
-    canFitPanelCount,
+    activePanelId,
     clearPreviewNavigationState,
-    onPanelOpenRejected,
     panels,
-    preparePanelCount,
   ]);
 
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
@@ -684,6 +640,7 @@ export function useWorkspaceLayout({
     const nextScrollTop = normalizeScrollTop(scrollTop);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
+      if (panel.view.kind === 'thread-run-details') return panel;
       if (panel.view.scrollTop === nextScrollTop) return panel;
       return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
     }));

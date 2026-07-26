@@ -42,6 +42,7 @@ import {
 } from '../agentReveal';
 import {
   AttachmentIcon,
+  CheckIcon,
   ChevronRightIcon,
   GitForkIcon,
   ICON_SIZE,
@@ -65,7 +66,6 @@ import {
 } from './ThreadComposerEditor';
 import { isProviderUsable } from '../../ui/agent/providerUsability';
 import {
-  isCompactLoadedSkillItem,
   isThreadToolItem,
   summarizeThreadToolActivity,
   summarizeThreadToolItem,
@@ -82,6 +82,7 @@ import {
   threadDisclosureSnapshot,
 } from '../store/threadDisclosureStore';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
+import type { ActiveTurnPlan } from '../store/threadStore';
 import {
   captureDisclosureScrollAnchor,
   nearestScrollContainer,
@@ -101,10 +102,12 @@ interface ThreadViewProps {
   readonly providerSettingsLoaded: boolean;
   readonly slashCommands: readonly AgentSlashCommandView[];
   readonly threadModelProvider: string;
+  readonly threadCwd: string;
   readonly threadId: string;
   readonly turns: readonly Turn[];
   readonly inputRequest: RequestUserInputRequest | null;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
+  readonly plan: ActiveTurnPlan | null;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterrupt: () => Promise<void>;
@@ -190,7 +193,6 @@ function estimateTurnHeight(turn: Turn): number {
         ), 0);
         break;
       case 'agentMessage':
-      case 'plan':
         textLength += item.text.length;
         break;
       case 'reasoning':
@@ -273,7 +275,9 @@ export function ThreadView({
   index,
   providerSettings,
   providerSettingsLoaded,
+  plan,
   slashCommands,
+  threadCwd,
   threadModelProvider,
   threadId,
   turns,
@@ -343,6 +347,7 @@ export function ThreadView({
     },
   }), [capturePendingAnchor, disclosureOverrides, threadId]);
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
+  const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
   const hasDraft = !draft.empty;
   const itemCount = turns.reduce((count, turn) => count + turn.items.length, 0);
@@ -831,6 +836,7 @@ export function ThreadView({
                     onOpenTurnDetails={onOpenTurnDetails}
                     onReadToolOutput={onReadToolOutput}
                     threadId={threadId}
+                    threadCwd={threadCwd}
                     turn={turn}
                   />
                 </ThreadTranscriptTurnShell>
@@ -841,6 +847,7 @@ export function ThreadView({
         {providerRetry ? <ThreadProviderRetryStatus status={providerRetry.status} /> : null}
       </div>
       {composerEnabled ? <div className="thread-composer-region thread-composer">
+        {activePlan ? <ThreadPlanProgress plan={activePlan} /> : null}
         <div
           className={`thread-composer-surface${dragActive ? ' is-dragging' : ''}`}
           onDragEnter={handleDragEnter}
@@ -986,6 +993,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onOpenTurnDetails,
   onReadToolOutput,
   threadId,
+  threadCwd,
   turn,
 }: {
   readonly canEditUserMessage: boolean;
@@ -999,6 +1007,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
+  readonly threadCwd: string;
   readonly turn: Turn;
 }) {
   const responseItem = lastAgentResponse(turn);
@@ -1056,6 +1065,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
       threadId={threadId}
+      threadCwd={threadCwd}
     />
   );
   return (
@@ -1077,6 +1087,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
                   onReadToolOutput={readToolOutput}
+                  threadCwd={threadCwd}
                 />
               ) : renderItem(group.item, false))}
             </ThreadProcessBlock>
@@ -1148,7 +1159,11 @@ function ThreadResponseTail({
             iconSize={ICON_SIZE.menu}
             label={t.agent.message.details}
             onBlur={() => setUsageHoverOpen(false)}
-            onClick={onOpenDetails}
+            onClick={(event) => {
+              setUsageHoverOpen(false);
+              event.currentTarget.blur();
+              onOpenDetails();
+            }}
             onFocus={() => setUsageHoverOpen(true)}
             onMouseEnter={() => setUsageHoverOpen(true)}
             onMouseLeave={() => setUsageHoverOpen(false)}
@@ -1214,10 +1229,50 @@ function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryS
   );
 }
 
+function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
+  const t = useT();
+  const tooltipId = useId();
+  const total = plan.plan.length;
+  if (total === 0) return null;
+  const activeIndex = plan.plan.findIndex((step) => step.status === 'in_progress');
+  const pendingIndex = plan.plan.findIndex((step) => step.status === 'pending');
+  const current = activeIndex >= 0 ? activeIndex + 1 : pendingIndex >= 0 ? pendingIndex + 1 : total;
+  const complete = plan.plan.every((step) => step.status === 'completed');
+  return (
+    <div className="thread-plan-progress">
+      <div
+        aria-describedby={tooltipId}
+        className="thread-plan-progress-summary"
+        role="status"
+        tabIndex={0}
+      >
+        {complete
+          ? <CheckIcon aria-hidden size={ICON_SIZE.tiny} />
+          : <LoaderIcon aria-hidden className="thread-plan-progress-spinner" size={ICON_SIZE.tiny} />}
+        <span>{t.agent.thread.planProgress({ current, total })}</span>
+      </div>
+      <div className="thread-plan-progress-popover" id={tooltipId} role="tooltip">
+        {plan.explanation ? <p>{plan.explanation}</p> : null}
+        <ol>
+          {plan.plan.map((step, index) => (
+            <li className={`is-${step.status}`} key={`${index}:${step.step}`}>
+              <span aria-hidden className="thread-plan-step-status">
+                {step.status === 'completed' ? <CheckIcon size={ICON_SIZE.tiny} /> : null}
+                {step.status === 'in_progress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
+              </span>
+              <span>{step.step}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
 function hasTurnCopyContent(turn: Turn): boolean {
   return turn.items.some((item) => (
     item.type === 'agentMessage' && Boolean(item.text.trim())
-  ) || item.type === 'plan' || isThreadToolItem(item)) || Boolean(turn.error?.message);
+  ) || isThreadToolItem(item)) || Boolean(turn.error?.message);
 }
 
 async function buildTurnCopyText(
@@ -1226,7 +1281,7 @@ async function buildTurnCopyText(
 ): Promise<string> {
   const parts: string[] = [];
   for (const item of turn.items) {
-    if (item.type === 'agentMessage' || item.type === 'plan') {
+    if (item.type === 'agentMessage') {
       const text = item.text.trim();
       if (text) parts.push(text);
       continue;
@@ -1493,8 +1548,7 @@ export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
 export function isThreadProcessItem(item: ThreadItem): boolean {
   if (isThreadToolItem(item)) return true;
   if (item.type === 'agentMessage') return item.phase === 'commentary';
-  return item.type === 'plan'
-    || item.type === 'reasoning'
+  return item.type === 'reasoning'
     || item.type === 'subAgentActivity'
     || item.type === 'imageView';
 }
@@ -1513,16 +1567,9 @@ function groupTurnItems(items: readonly ThreadItem[]): ThreadItemGroup[] {
       index += 1;
       continue;
     }
-    if (isCompactLoadedSkillItem(item)) {
-      groups.push({ kind: 'item', item });
-      index += 1;
-      continue;
-    }
     const tools: ThreadToolItem[] = [item];
     index += 1;
-    while (index < items.length
-      && isThreadToolItem(items[index]!)
-      && !isCompactLoadedSkillItem(items[index] as ThreadToolItem)) {
+    while (index < items.length && isThreadToolItem(items[index]!)) {
       tools.push(items[index] as ThreadToolItem);
       index += 1;
     }

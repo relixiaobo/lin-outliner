@@ -83,6 +83,7 @@ export function ThreadDock({
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
+  const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
   useEffect(() => {
@@ -304,7 +305,9 @@ export function ThreadDock({
               providerSettings={providerSettings}
               providerSettingsLoaded={providerSettingsLoaded}
               providerRetry={providerRetry}
+              plan={plan}
               slashCommands={slashCommands}
+              threadCwd={thread.cwd}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}
               turns={turns}

@@ -9,7 +9,8 @@ argument/result interaction with clickable local paths.
 
 ## Non-goals
 
-- Do not change the Agent Core protocol or add a second execution projection.
+- Do not add a second durable execution projection or encode transient Plan
+  state as a canonical Thread Item.
 - Do not change tool permissions, trusted roots, attachment authorization, or
   local-file preview security.
 - Do not redesign Run Details content, the composer, or the process timeline.
@@ -27,10 +28,12 @@ consumers before changing the specifications and tests.
 - `gh pr list` found Draft PR #437, `large-local-resources`, which claims the
   Agent attachment protocol, Thread payload persistence, renderer/preload
   attachment IPC, local tools, and related consumers.
-- This change deliberately avoids `src/core/agent/protocol.ts`, attachment
-  materialization, preload IPC, and local-tool execution. It may overlap #437 in
-  `ThreadView.tsx`; this smaller interaction change should land first and #437
-  should rebase onto the resulting renderer contract.
+- This change deliberately avoids attachment materialization, preload IPC, and
+  local-tool execution. It overlaps #437 locally in
+  `src/core/agent/protocol.ts` and may overlap in `ThreadView.tsx`; the clean
+  transient Plan contract takes precedence over avoiding a mechanical merge.
+  This smaller interaction change should land first and #437 should rebase onto
+  the resulting protocol and renderer contracts.
 - `docs/TASKS.md` contains no active item for this interaction work.
 - This dev PR does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 
@@ -39,19 +42,23 @@ consumers before changing the specifications and tests.
 ### Transient Plan Projection
 
 Keep `update_plan` as a model control tool, but exclude its ordinary tool-call
-Item from the persisted Turn. `ThreadService` publishes the normalized Plan as a
-transient update for the active Turn instead of appending it to the rollout.
-Repeated calls replace the visible snapshot semantically; the renderer derives
-the latest snapshot from the active Turn rather than maintaining parallel Plan
-state.
+Item from the persisted Turn. Remove `PlanThreadItem` and its Item-delta/history
+paths, then add a structured `turn/plan/updated` notification carrying the
+normalized explanation and checklist. The protocol distinguishes transient from
+recorded notifications so `turn/plan/updated` cannot be passed to the rollout
+writer. `ThreadService` publishes the event only for the active Turn.
+
+The renderer stores the latest snapshot in its existing ephemeral Thread store,
+separate from canonical `Turn.items`. Repeated calls replace that snapshot.
+`turn/completed`, Thread deletion, and catalog reload clear it; application
+restart does not reconstruct it.
 
 The latest Plan appears as compact progress immediately above the composer. Its
-expanded state reveals the complete checklist. A terminal Turn snapshot contains
-neither the Plan nor the `update_plan` tool call, so completion, failure, and
-interruption all remove the progress UI. History reconstruction defensively
-ignores Plan Items, preventing legacy or transient data from entering later model
-context. Run Details remains an audit of canonical persisted Items and therefore
-does not show `update_plan`.
+hover/focus state reveals the complete checklist. A terminal Turn snapshot
+contains neither the Plan nor the `update_plan` tool call, so completion,
+failure, and interruption all remove the progress UI. Model history and Run
+Details consume canonical Items only and therefore have no Plan branch and do
+not show `update_plan`.
 
 ### Current-pane Run Details
 

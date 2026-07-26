@@ -27,6 +27,8 @@ import {
 } from './ThreadUsageBreakdown';
 
 interface ThreadRunDetailsPanelProps {
+  readonly canGoBack: boolean;
+  readonly onBack: () => void;
   readonly onClose: () => void;
   readonly showClose: boolean;
   readonly threadId: string;
@@ -39,6 +41,8 @@ interface ThreadRunDetailsData {
 }
 
 export function ThreadRunDetailsPanel({
+  canGoBack,
+  onBack,
   onClose,
   showClose,
   threadId,
@@ -51,11 +55,11 @@ export function ThreadRunDetailsPanel({
     <main className="main-panel thread-run-details-panel">
       <PanelStickyBreadcrumb
         breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
-        canGoBack={false}
+        canGoBack={canGoBack}
         closeLabel={t.nodePanel.closePanel}
         currentTitle={t.agent.runDetails.title}
         origin={null}
-        onBack={() => undefined}
+        onBack={onBack}
         onClose={onClose}
         previousPageLabel={t.nodePanel.previousPage}
         showClose={showClose}
@@ -382,7 +386,6 @@ function itemRole(item: ThreadItem): string {
   switch (item.type) {
     case 'userMessage': return 'user';
     case 'agentMessage': return 'asst';
-    case 'plan': return 'plan';
     case 'reasoning': return 'think';
     case 'commandExecution':
     case 'fileChange': return 'call';
@@ -403,7 +406,6 @@ function itemSummary(item: ThreadItem): string {
         content.type === 'text' ? [content.text] : content.type === 'attachment' ? [content.name] : [content.note ?? content.nodeId]
       )).join(' ') || item.type;
     case 'agentMessage': return item.text || item.type;
-    case 'plan': return item.text || item.type;
     case 'reasoning': return [...item.summary, ...item.content].find(Boolean) ?? item.type;
     case 'commandExecution': return item.command;
     case 'fileChange': return item.changes.map((change) => change.path).join(', ') || item.type;

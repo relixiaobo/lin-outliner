@@ -434,6 +434,56 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().providerRetryByThread.has(owner.id)).toBe(false);
   });
 
+  test('replaces transient Turn Plan snapshots and clears them at terminal state', async () => {
+    const owner = thread('thread-1', 1);
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const active = turn('turn-1', 'inProgress', 'partial');
+    notify({ type: 'turn/started', threadId: owner.id, turnId: active.id, turn: active });
+    notify({
+      type: 'turn/plan/updated',
+      threadId: owner.id,
+      turnId: active.id,
+      explanation: 'Initial plan',
+      plan: [{ step: 'Inspect', status: 'in_progress' }],
+    });
+    notify({
+      type: 'turn/plan/updated',
+      threadId: owner.id,
+      turnId: active.id,
+      plan: [
+        { step: 'Inspect', status: 'completed' },
+        { step: 'Implement', status: 'in_progress' },
+      ],
+    });
+
+    expect(store.getSnapshot().planByThread.get(owner.id)).toEqual({
+      turnId: active.id,
+      plan: [
+        { step: 'Inspect', status: 'completed' },
+        { step: 'Implement', status: 'in_progress' },
+      ],
+    });
+
+    const completed = turn(active.id, 'completed', 'done');
+    notify({ type: 'turn/completed', threadId: owner.id, turnId: active.id, turn: completed });
+    expect(store.getSnapshot().planByThread.has(owner.id)).toBe(false);
+  });
+
   test('deduplicates full tool output reads by immutable output identity', async () => {
     const owner = thread('thread-1', 1);
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];

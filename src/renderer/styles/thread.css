@@ -1329,39 +1329,6 @@
   line-height: var(--line-meta-tight);
 }
 
-.thread-loaded-skill {
-  display: flex;
-  max-width: min(100%, 520px);
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-.thread-loaded-skill-icon {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
-.thread-loaded-skill-name,
-.thread-loaded-skill-args {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-loaded-skill-name {
-  flex: 0 1 auto;
-}
-
-.thread-loaded-skill-args {
-  flex: 1 1 auto;
-  color: var(--text-faint);
-}
-
 .thread-tool-activity-members {
   display: flex;
   min-width: 0;
@@ -1650,6 +1617,114 @@ button.thread-inline-activity:focus-visible,
   position: relative;
   min-width: 0;
   flex: 0 0 auto;
+}
+
+.thread-plan-progress {
+  position: relative;
+  z-index: var(--z-raised);
+  display: flex;
+  min-width: 0;
+  padding: var(--space-2) var(--agent-content-x);
+}
+
+.thread-plan-progress-summary {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  outline: none;
+  user-select: none;
+}
+
+.thread-plan-progress-summary:focus-visible {
+  border-radius: var(--radius-xs);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.thread-plan-progress-summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-plan-progress-spinner,
+.thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg {
+  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
+}
+
+.thread-plan-progress-popover {
+  position: absolute;
+  right: var(--agent-content-x);
+  bottom: calc(100% + var(--space-2));
+  left: var(--agent-content-x);
+  z-index: var(--z-popover);
+  max-height: min(320px, 50vh);
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  box-shadow: var(--overlay-shadow-level-1);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  color: var(--text-secondary);
+  opacity: 0;
+  padding: var(--space-4);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.thread-plan-progress:hover .thread-plan-progress-popover,
+.thread-plan-progress:focus-within .thread-plan-progress-popover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.thread-plan-progress-popover p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-plan-progress-popover ol {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-plan-progress-popover li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-plan-step-status {
+  display: inline-flex;
+  width: 14px;
+  height: var(--line-ui-sm);
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.thread-plan-progress-popover li.is-pending .thread-plan-step-status::before {
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--text-faint);
+  border-radius: var(--radius-pill);
+  content: '';
+}
+
+.thread-plan-progress-popover li.is-completed {
+  color: var(--text-faint);
 }
 
 .thread-composer-surface {
@@ -2320,6 +2395,8 @@ button.thread-inline-activity:focus-visible,
 
   .thread-streaming-shape,
   .thread-streaming-shape path,
+  .thread-plan-progress-spinner,
+  .thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg,
   .thread-process-spinner,
   .thread-tool-inProgress .thread-disclosure-status svg {
     animation: none;
