@@ -363,11 +363,20 @@ function renderUserContent(
   };
   content.forEach((part, contentIndex) => {
     if (part.type === 'attachment' && part.mimeType.startsWith('image/')) {
-      flushInline();
+      inline.push(
+        <ThreadInlineAttachment
+          content={part}
+          key={`attachment-${contentIndex}`}
+          threadId={threadId}
+        />,
+      );
       images.push(part);
       return;
     }
-    flushImages();
+    if (images.length > 0) {
+      flushInline();
+      flushImages();
+    }
     if (part.type === 'text') {
       inline.push(<span key={`text-${contentIndex}`}>{part.text}</span>);
       return;

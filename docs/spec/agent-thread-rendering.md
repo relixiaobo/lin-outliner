@@ -100,10 +100,11 @@ retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
 User-message rendering consumes canonical `ThreadUserContent[]` in submitted
-order. Text, Node references, directories, and non-image attachments share an
-inline wrapping run inside a message bubble. An image attachment closes that
-run and renders outside the bubble at its exact position. Consecutive images
-form one gallery before the next inline run starts. The gallery uses dedicated
+order. Text, Node references, directories, and every attachment retain an inline
+marker inside a message bubble. Consecutive image attachments additionally form
+one external gallery immediately after their marker-bearing inline run and before
+the next canonical content run; the preview never replaces the image's message
+marker. The gallery uses dedicated
 layouts for one, two, three, and four images. More than four images initially
 show four thumbnails with a `+N` control; expanding shows every image and adds a
 collapse control. The overflow control is a compact bottom-right media-HUD badge:

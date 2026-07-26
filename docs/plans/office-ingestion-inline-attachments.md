@@ -62,11 +62,11 @@ remain for the other supported rich-document formats.
 The composer remains the ordering authority. Transcript rendering consumes the
 canonical `ThreadUserContent[]` in sequence:
 
-- text, Node references, directories, and non-image file attachments share an
-  inline wrapping run;
-- an image attachment flushes that run and renders outside the message bubble at
-  its exact position; consecutive images form one gallery before a new inline
-  run starts for following content;
+- text, Node references, directories, and every file attachment share an inline
+  wrapping run, so an image keeps the same filename marker as another file;
+- consecutive image attachments additionally form an external gallery immediately
+  after their marker-bearing run and before a new inline run starts for following
+  content; the preview never replaces canonical message content;
 - multiple images and files preserve their submitted order during replay. Text
   editing is available only when canonical content contains at most one text
   part, so replacing that text cannot collapse attachment boundaries; split-text
@@ -93,7 +93,7 @@ this branch will rebase after that integration before becoming ready.
 ## Open Questions
 
 None. The PM ratified the one-PR scope, the dependency change, exact attachment
-ordering, inline non-image presentation, and expandable image galleries outside
+ordering, inline markers for every file, and expandable image galleries outside
 the message bubble.
 
 ## Verification

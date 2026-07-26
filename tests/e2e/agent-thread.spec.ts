@@ -712,7 +712,7 @@ test.describe('canonical agent Thread surface', () => {
     const gallery = sequence.locator(':scope > .thread-image-gallery');
     await expect(sequence.locator(':scope > *')).toHaveCount(3);
     await expect(bubbles).toHaveCount(2);
-    await expect(bubbles.first().locator('.thread-user-inline-content')).toHaveText('Beforeagenda.pdfmiddle');
+    await expect(bubbles.first().locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddle');
     await expect(bubbles.last().locator('.thread-user-inline-content')).toHaveText('After');
     await expect(gallery).toHaveAccessibleName('6 images');
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
@@ -722,13 +722,21 @@ test.describe('canonical agent Thread surface', () => {
     const showAll = gallery.getByRole('button', { name: 'Show all 6 images' });
     await expect(showAll).toHaveText('+2');
     await expect(showAll).toHaveAttribute('aria-expanded', 'false');
-    await expect(message.locator('.thread-user-expand-button')).toHaveCount(0);
     expect(await sequence.evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
       'thread-user-content-shell',
       'thread-image-gallery',
       'thread-user-content-shell',
     ]);
     const firstRun = bubbles.first().locator('.thread-user-inline-content');
+    await expect(firstRun.locator('.thread-message-file-ref')).toHaveText([
+      'agenda.pdf',
+      'reference-1.png',
+      'reference-2.png',
+      'reference-3.png',
+      'reference-4.png',
+      'reference-5.png',
+      'reference-6.png',
+    ]);
     expect(await firstRun.evaluate((element) => Array.from(element.children).map((child) => ({
       className: child.className,
       text: child.textContent,
@@ -736,6 +744,12 @@ test.describe('canonical agent Thread surface', () => {
       { className: '', text: 'Before' },
       { className: 'inline-ref thread-message-file-ref', text: 'agenda.pdf' },
       { className: '', text: 'middle' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-1.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-2.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-3.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-4.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-5.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
     ]);
 
     await showAll.click();
@@ -2137,6 +2151,8 @@ test.describe('terminal Thread history actions', () => {
     expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
     const userMessage = page.locator('.thread-user-message').last();
+    await expect(userMessage.locator('.thread-message-file-ref')).toHaveText('diagram.png');
+    await expect(userMessage.locator('.thread-image-gallery-preview')).toHaveAccessibleName('diagram.png');
     await userMessage.hover();
     await userMessage.getByRole('button', { name: 'Edit message' }).click();
     const editor = userMessage.getByRole('textbox', { name: 'Edit message' });
