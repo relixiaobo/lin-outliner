@@ -208,6 +208,15 @@
 
 .automation-list-feedback {
   min-height: 100%;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-right: var(--agent-content-x);
+  padding-left: var(--agent-content-x);
+}
+
+.automation-list-feedback .feedback-state-copy {
+  max-width: 240px;
+  align-items: center;
 }
 
 .automation-list-error {

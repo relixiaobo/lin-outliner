@@ -13,6 +13,21 @@ test.describe('Automation surface', () => {
     const toolbar = page.locator('.automations-toolbar');
     await expect(toolbar.locator('.automations-search')).toBeVisible();
     await expect(toolbar.getByRole('button', { name: 'New Automation' })).toBeVisible();
+    const emptyState = page.locator('.automation-list-feedback');
+    const [emptyIconBox, emptyCopyBox, emptyActionBox] = await Promise.all([
+      emptyState.locator(':scope > svg').boundingBox(),
+      emptyState.locator('.feedback-state-copy').boundingBox(),
+      emptyState.locator('.feedback-state-action').boundingBox(),
+    ]);
+    expect(emptyIconBox).toBeTruthy();
+    expect(emptyCopyBox).toBeTruthy();
+    expect(emptyActionBox).toBeTruthy();
+    expect(emptyCopyBox!.y).toBeGreaterThanOrEqual(emptyIconBox!.y + emptyIconBox!.height);
+    expect(emptyActionBox!.y).toBeGreaterThanOrEqual(emptyCopyBox!.y + emptyCopyBox!.height);
+    expect(Math.abs(
+      emptyCopyBox!.x + emptyCopyBox!.width / 2
+      - (emptyActionBox!.x + emptyActionBox!.width / 2),
+    )).toBeLessThan(1);
     const filterWidths = await page.locator('.automations-filter .segmented-control-option')
       .evaluateAll((options) => options.map((option) => option.getBoundingClientRect().width));
     expect(Math.max(...filterWidths) - Math.min(...filterWidths)).toBeLessThan(1);
