@@ -206,6 +206,7 @@ raw model input
   -> capability preflight
   -> raw process execution
   -> result redaction
+  -> sanitized result or constant unknown-outcome result
   -> model result + Item/outputRef/hooks/history/Memory
 ```
 
@@ -243,11 +244,20 @@ completion hooks, history reconstruction, and the complete content-addressed
 tool-output store behind `outputRef`. No full-output or overflow path may retain
 the raw result as a fallback.
 
-If a command that resolves to `bp` cannot be parsed, classified, projected, or
-its result cannot be safely sanitized, the host fails closed: it does not spawn
-Browser Pilot, emits only a constant redacted failure projection, and discards
-the raw value. Generic secret-like regexes remain defense in depth; they are not
-the Browser persistence contract.
+Failure handling preserves the execution boundary:
+
+- If a command that resolves to `bp` cannot be parsed, classified, or projected,
+  the host fails before execution. It does not spawn Browser Pilot, emits only a
+  constant redacted rejection projection, and discards the raw input.
+- If result sanitization fails, Browser Pilot has already run and its external
+  outcome may be unknown. The host discards all raw stdout, stderr, details, and
+  errors, completes every model-visible and durable surface with the same
+  constant redacted `unknown outcome` result, and instructs the Agent not to
+  retry blindly. A later retry is permitted only after a fresh, separately
+  authorized observation establishes the current browser state.
+
+Generic secret-like regexes remain defense in depth; they are not the Browser
+persistence contract.
 
 ### Capability Classification And Audit
 
@@ -364,6 +374,9 @@ English error messages into stable codes.
 - Routine completion does not disconnect the Broker. Temporary managed tabs may
   be closed; user-owned tabs remain open.
 - A timed-out or uncertain mutating command is inspected before any retry.
+- A result-sanitization failure is an uncertain outcome, not evidence that the
+  command failed or was rolled back; it follows the same inspect-before-retry
+  rule.
 
 Stable machine-readable CLI error codes remain an upstream Browser Pilot
 improvement and are not required by this CLI-first plan. The pinned release must
@@ -427,8 +440,13 @@ URL Preview specs remain exclusively about internal preview behavior.
   result, started/completed Items, `commandActions`, rollout JSONL,
   history projection/replay, renderer notifications, forks, extension hooks,
   Memory evidence, diagnostics, logs, or content-addressed complete outputs.
-- Prove parse, projection, and result-sanitization failures do not spawn Browser
-  Pilot and produce only a constant redacted failed Item/result.
+- Prove parse, classification, and projection failures do not spawn Browser
+  Pilot and produce only a constant redacted rejection Item/result.
+- Force result sanitization to fail after a fake mutating CLI process exits;
+  prove the process ran exactly once, raw output is absent from every consumer
+  and persistence sink, and all surfaces receive the same constant redacted
+  `unknown outcome` with inspect-before-retry guidance. Prove no automatic retry
+  occurs.
 - Verify allowed calls record `external_system`, the shared durable command
   projection, and all action descriptors on the canonical `bash` Item.
 - Verify each Turn receives a distinct app-owned output directory, capture files
