@@ -38,6 +38,12 @@ const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abe';
 const CHILD_THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abf';
 const OUTPUT_ID = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const imageResourceRef = {
+  id: '9'.repeat(64),
+  mimeType: 'image/png',
+  byteLength: 12,
+  fileName: 'tool-output.png',
+};
 const contextRef = {
   id: 'a'.repeat(64),
   mimeType: 'application/vnd.tenon.agent-context+json' as const,
@@ -156,7 +162,10 @@ const allItems: readonly ThreadItem[] = [
     tool: 'node_read',
     arguments: { nodeId: 'node-1' },
     status: 'completed',
-    contentItems: [{ type: 'text', text: 'Node text' }],
+    contentItems: [
+      { type: 'text', text: 'Node text' },
+      { type: 'image', source: { kind: 'threadPayload', ref: imageResourceRef }, alt: 'Node image' },
+    ],
     success: true,
     durationMs: 3,
     outputRef: null,
@@ -312,6 +321,7 @@ describe('Codex Agent Core protocol codec', () => {
     const evidence = allItems.find((item) => item.type === 'contextEvidence')!;
     const reset = allItems.find((item) => item.type === 'contextReset')!;
     const compaction = allItems.find((item) => item.type === 'contextCompaction')!;
+    const dynamic = allItems.find((item) => item.type === 'dynamicToolCall')!;
 
     const { acceptedAt: _acceptedAt, ...missingAcceptedAt } = user;
     expect(() => decodeThreadItem(missingAcceptedAt)).toThrow('item.acceptedAt');
@@ -334,6 +344,10 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodeThreadItem({ ...evidence, outputRefs: [null] })).toThrow('expected an output reference');
     expect(() => decodeThreadItem({ ...evidence, contextRefs: [contextRef, contextRef] }))
       .toThrow('duplicate references');
+    expect(() => decodeThreadItem({
+      ...dynamic,
+      contentItems: [{ type: 'image', imageRef: '/tmp/legacy.png' }],
+    })).toThrow('unknown fields');
     expect(() => decodeThreadItem({
       ...reset,
       clearedThrough: { ...reset.clearedThrough, turnId: 'not-a-turn' },

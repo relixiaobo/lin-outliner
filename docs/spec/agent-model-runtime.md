@@ -134,14 +134,17 @@ content or an addressable observation is reserved for canonical
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image
-files retain their file path. Other provider images are written under the
-owning Thread's payload directory and the Item stores only that file reference.
+files retain a typed `localFile` source. Other provider images are written to the
+owning Thread's managed resource store and the Item keeps a content-addressed
+`threadPayload` reference.
 Base64 length is validated before decoding, with independent per-image and
 per-tool-call byte budgets. Invalid, oversized, over-count, and over-total image
 outputs produce one structured omission summary instead of bytes or unbounded
-Item entries. Forking rewrites Thread-owned image references to the fork's own
-payload directory while leaving external readable file paths unchanged.
-Deleting a Thread deletes only that Thread's payload directory.
+Item entries. Forking copies Thread-owned image bytes under the target Thread while
+preserving the same reference; external readable file paths remain unchanged. A
+Thread-scoped preview resolves managed images to disposable scratch copies rather than
+exposing canonical resource paths. Deleting a Thread deletes only that Thread's payload
+directory.
 
 ## Tools And Causation
 

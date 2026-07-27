@@ -1084,7 +1084,12 @@ function historyToolResultText(item: HistoryToolItem): string {
     case 'dynamicToolCall':
       return (item.contentItems ?? []).map((content) => {
         if (content.type === 'text') return content.text;
-        if (content.type === 'image') return `[Image output: ${content.imageRef}]`;
+        if (content.type === 'image') {
+          const label = content.source.kind === 'localFile'
+            ? content.source.path
+            : content.source.ref.fileName;
+          return `[Image output: ${label}]`;
+        }
         return JSON.stringify(content.value);
       }).join('\n') || JSON.stringify({ status: item.status, success: item.success });
     case 'collabAgentToolCall':
@@ -1154,8 +1159,10 @@ async function dynamicOutput(
       }
       const mimeType = typeof part.mimeType === 'string' ? part.mimeType : 'image/png';
       const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      let imageRef = existingPath;
-      if (!imageRef) {
+      let source: Extract<DynamicToolOutputContent, { type: 'image' }>['source'];
+      if (existingPath) {
+        source = { kind: 'localFile', path: existingPath };
+      } else {
         const measurement = measureToolPayloadImage(part.data);
         if (!measurement.ok) {
           omittedImages[measurement.reason] += 1;
@@ -1165,12 +1172,13 @@ async function dynamicOutput(
           omittedImages.callByteLimit += 1;
           continue;
         }
-        imageRef = await context.persistOutputImage(item.id, sourceImageIndex, part.data, mimeType);
+        const ref = await context.persistOutputImage(part.data, mimeType);
+        source = { kind: 'threadPayload', ref };
         persistedImageBytes += measurement.byteLength;
       }
       content.push({
         type: 'image',
-        imageRef,
+        source,
       });
       persistedImages += 1;
     }

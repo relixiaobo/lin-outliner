@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   MAX_MANAGED_ATTACHMENT_BYTES,
   MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
@@ -36,7 +36,6 @@ const TEXT_MIME_EXTENSIONS = {
   'application/json': '.json',
 } as const satisfies Readonly<Record<ThreadItemOutputReference['mimeType'], string>>;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
-const IMAGE_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:gif|jpg|png|webp|bin)$/;
 const CONTEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
 const TEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:txt|json)$/;
 const CONTEXT_DIR = 'context';
@@ -630,50 +629,23 @@ export class ToolPayloadStore {
 
   async writeImage(
     threadId: ThreadId,
-    itemId: string,
-    index: number,
     dataBase64: string,
     mimeType: string,
-  ): Promise<string> {
+  ): Promise<ThreadResourceReference> {
+    return (await this.writeImageWithStatus(threadId, dataBase64, mimeType)).ref;
+  }
+
+  async writeImageWithStatus(
+    threadId: ThreadId,
+    dataBase64: string,
+    mimeType: string,
+  ): Promise<WrittenThreadResource> {
     const measurement = measureToolPayloadImage(dataBase64);
     if (!measurement.ok) throw new Error(`Tool image payload rejected: ${measurement.reason}`);
     const bytes = Buffer.from(dataBase64, 'base64');
     if (bytes.length !== measurement.byteLength) throw new Error('Tool image payload decoded to an unexpected size');
-    const digest = createHash('sha256')
-      .update(itemId)
-      .update('\0')
-      .update(String(index))
-      .update('\0')
-      .update(bytes)
-      .digest('hex');
-    const directory = join(this.rootPath, threadId);
-    const path = join(directory, `${digest}${MIME_EXTENSIONS[mimeType.toLowerCase()] ?? '.bin'}`);
-    await mkdir(directory, { recursive: true });
-    await writeFile(path, bytes, { flag: 'wx' }).catch((error: unknown) => {
-      if (!isAlreadyExists(error)) throw error;
-    });
-    return path;
-  }
-
-  async copyImageToThread(
-    sourceThreadId: ThreadId,
-    targetThreadId: ThreadId,
-    imageRef: string,
-  ): Promise<string> {
-    const sourceDirectory = resolve(this.rootPath, sourceThreadId);
-    const sourcePath = resolve(imageRef);
-    if (dirname(sourcePath) !== sourceDirectory) return imageRef;
-    const filename = basename(sourcePath);
-    if (!IMAGE_PAYLOAD_FILENAME_PATTERN.test(filename)) {
-      throw new Error('Invalid tool image payload reference');
-    }
-    const targetDirectory = resolve(this.rootPath, targetThreadId);
-    const targetPath = join(targetDirectory, filename);
-    await mkdir(targetDirectory, { recursive: true });
-    await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL).catch((error: unknown) => {
-      if (!isAlreadyExists(error)) throw error;
-    });
-    return targetPath;
+    const extension = MIME_EXTENSIONS[mimeType.toLowerCase()] ?? '.bin';
+    return this.writeResourceWithStatus(threadId, bytes, mimeType, `tool-output${extension}`);
   }
 
   async deleteThread(threadId: ThreadId): Promise<void> {

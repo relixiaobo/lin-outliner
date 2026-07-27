@@ -186,15 +186,17 @@ export interface ThreadResourceReference {
   readonly fileName: string;
 }
 
+export type ThreadFileSource =
+  | { readonly kind: 'localFile'; readonly path: string }
+  | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
+
 export interface ThreadAttachmentContent {
   readonly type: 'attachment';
   readonly id: string;
   readonly name: string;
   readonly mimeType: string;
   readonly sizeBytes: number;
-  readonly source:
-    | { readonly kind: 'localFile'; readonly path: string }
-    | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
+  readonly source: ThreadFileSource;
   readonly promptImage?: ThreadResourceReference;
   readonly extractedText?: string;
 }
@@ -590,7 +592,7 @@ export interface McpToolCallThreadItem extends ThreadToolItemBase {
 
 export type DynamicToolOutputContent =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image'; readonly imageRef: string; readonly alt?: string }
+  | { readonly type: 'image'; readonly source: ThreadFileSource; readonly alt?: string }
   | { readonly type: 'json'; readonly value: JsonValue };
 
 export interface DynamicToolCallThreadItem extends ThreadToolItemBase {

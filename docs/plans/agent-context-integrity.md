@@ -252,6 +252,16 @@ before the source Thread can be deleted. Text-output reads and copies verify the
 reference MIME type, byte length, and digest rather than selecting a file by digest
 alone.
 
+Dynamic tool images use a typed source: a live readable file remains `localFile`, while
+provider image bytes are admitted as a content-addressed `threadPayload` resource.
+Managed image references inside inherited Turns are repeated in the owning context
+Item's `resourceRefs`, so lifecycle code copies the dependency without opening or
+rewriting the inherited payload. The same resource reference is valid under the target
+Thread's ownership; fork therefore preserves the context payload bytes, digest, and
+provider cache identity instead of creating a path-dependent payload variant. Preview
+resolves a referenced image through the current Thread into a disposable scratch copy;
+the canonical managed path never enters rollout JSON or renderer state.
+
 Every provider-visible text leaf inside a payload is classified as:
 
 - `application/instruction`: host-selected Role, Skill, or execution guidance;
@@ -663,10 +673,11 @@ Child Run Details expose the parent Thread ID, exact source cursor, selected Tur
 and payload hash.
 
 Copy every referenced managed payload into the child's ownership using the existing
-copy-on-write path and rewrite references before acceptance. Character-tail truncation
-is forbidden. The normal budget planner may compact the structured inherited segment,
-but must retain pairing, resource identity, and the source cursor. Parent deletion or
-corruption after child admission cannot invalidate the child.
+copy-on-write path before acceptance. Content-addressed references remain byte-stable;
+only local Turn/Item cursors are rewritten. Character-tail truncation is forbidden. The
+normal budget planner may compact the structured inherited segment, but must retain
+pairing, resource identity, and the source cursor. Parent deletion or corruption after
+child admission cannot invalidate the child.
 
 ### Provider controls and Role discovery
 
@@ -884,7 +895,9 @@ choices together:
       state.
 - [ ] **AC-12:** `fork_turns=none|N|all` preserves structured content, current active prefix,
       exact boundaries, tool pairs, images, attachments, reasoning summaries, and
-      child-owned resources without character truncation.
+      child-owned resources without character truncation. Deleting the source leaves a
+      nested inherited tool image readable from the child without changing the context
+      payload digest.
 - [ ] **AC-13:** Provider tests cover timeout, retry/backoff, cache retention, overflow
       classification, Anthropic breakpoint count/order, non-Anthropic cleanliness, and
       bounded Role discovery. Session affinity remains stable for one Thread/epoch, and

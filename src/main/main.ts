@@ -1980,7 +1980,16 @@ function registerIpc() {
               };
             }).catch(() => null)
           ),
-          threadAttachmentFileStreamUrl: async (filePath, mimeType) => {
+          threadResourceFile: async (threadId, ref) => (
+            threadService.resolveThreadResourceFile(threadId, ref).then((resolved) => {
+              if (!resolved) return null;
+              return {
+                ...resolved,
+                acceptedPathHints: [resolved.ref.fileName],
+              };
+            }).catch(() => null)
+          ),
+          threadManagedFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },

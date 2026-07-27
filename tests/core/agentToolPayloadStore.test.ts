@@ -43,13 +43,16 @@ describe('Agent tool payload store', () => {
     const threadId = uuidV7(1_720_000_000_000);
     const bytes = Buffer.from('binary image bytes');
 
-    const first = await store.writeImage(threadId, 'tool-call', 0, bytes.toString('base64'), 'image/png');
-    const second = await store.writeImage(threadId, 'tool-call', 0, bytes.toString('base64'), 'image/png');
-    expect(first).toBe(second);
-    expect(await readFile(first)).toEqual(bytes);
+    const first = await store.writeImageWithStatus(threadId, bytes.toString('base64'), 'image/png');
+    const second = await store.writeImageWithStatus(threadId, bytes.toString('base64'), 'image/png');
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(first.ref).toEqual(second.ref);
+    expect(first.ref).toMatchObject({ mimeType: 'image/png', fileName: 'tool-output.png' });
+    expect(await store.readResource(threadId, first.ref)).toEqual(bytes);
 
     await store.deleteThread(threadId);
-    await expect(stat(first)).rejects.toThrow();
+    expect(await store.readResource(threadId, first.ref)).toBeNull();
   });
 
   test('rejects invalid and oversized base64 before writing image bytes', async () => {
@@ -61,9 +64,9 @@ describe('Agent tool payload store', () => {
 
     expect(measureToolPayloadImage(oversized)).toEqual({ ok: false, reason: 'imageByteLimit' });
     expect(measureToolPayloadImage('not base64!')).toEqual({ ok: false, reason: 'invalidBase64' });
-    await expect(store.writeImage(threadId, 'tool-call', 0, oversized, 'image/png'))
+    await expect(store.writeImage(threadId, oversized, 'image/png'))
       .rejects.toThrow('imageByteLimit');
-    await expect(store.writeImage(threadId, 'tool-call', 0, 'not base64!', 'image/png'))
+    await expect(store.writeImage(threadId, 'not base64!', 'image/png'))
       .rejects.toThrow('invalidBase64');
   });
 

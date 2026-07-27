@@ -53,7 +53,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   the established Add to Today action without introducing an artifact DTO
 - every ordinary tool, including a loaded or isolated Skill, uses the same
   expandable row inside the counted activity group; tool-specific icons,
-  summaries, images, and child-Thread links remain supplemental affordances
+  summaries, images, and child-Thread links remain supplemental affordances;
+  managed tool images resolve from their typed resource reference through the owning
+  Thread and preview only a disposable scratch copy
 - local paths in tool arguments and results use the shared inline-file reference
   affordance; absolute paths link directly, while relative values in path-bearing
   JSON fields resolve against the Thread working directory. URL text is not

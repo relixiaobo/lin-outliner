@@ -1102,6 +1102,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
                   onReadToolOutput={readToolOutput}
+                  threadId={threadId}
                   threadCwd={threadCwd}
                 />
               ) : renderItem(group.item, false))}

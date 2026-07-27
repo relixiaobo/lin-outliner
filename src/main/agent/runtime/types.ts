@@ -29,11 +29,9 @@ export interface TurnExecutionContext {
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
-    itemId: string,
-    index: number,
     dataBase64: string,
     mimeType: string,
-  ): Promise<string>;
+  ): Promise<ThreadResourceReference>;
   persistOutputText(
     itemId: string,
     text: string,

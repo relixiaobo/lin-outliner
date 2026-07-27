@@ -105,8 +105,6 @@ class ForkPayloadExecutor extends ControlledExecutor {
       'Complete inherited output',
     );
     const imageRef = await context.persistOutputImage(
-      itemId,
-      0,
       Buffer.from('inherited image').toString('base64'),
       'image/png',
     );
@@ -114,11 +112,23 @@ class ForkPayloadExecutor extends ControlledExecutor {
       ...started,
       status: 'completed',
       outputRef,
-      contentItems: [{ type: 'image', imageRef }],
+      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
       success: true,
       durationMs: 1,
     });
     return completedExecutionResult();
+  }
+}
+
+class FailingImageExecutor extends ControlledExecutor {
+  imageRef: Awaited<ReturnType<TurnExecutionContext['persistOutputImage']>> | null = null;
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    this.imageRef = await context.persistOutputImage(
+      Buffer.from('orphaned image').toString('base64'),
+      'image/png',
+    );
+    throw new Error('Tool failed after persisting an image');
   }
 }
 
@@ -198,6 +208,67 @@ class ContextPayloadExecutor extends ControlledExecutor {
       contextRefs: [nestedPayloadRef],
       resourceRefs: [resourceRef],
       outputRefs: [outputRef],
+    });
+    const inheritedImageRef = await context.persistOutputImage(
+      Buffer.from('nested inherited image').toString('base64'),
+      'image/png',
+    );
+    const inheritedTurnId = uuidV7();
+    const inheritedItemId = uuidV7();
+    const inheritedTurn: Turn = {
+      id: inheritedTurnId,
+      items: [{
+        type: 'dynamicToolCall',
+        id: inheritedItemId,
+        provenance: {
+          originThreadId: context.thread.id,
+          originTurnId: inheritedTurnId,
+          originItemId: inheritedItemId,
+        },
+        namespace: 'test',
+        tool: 'nested_image',
+        arguments: {},
+        status: 'completed',
+        outputRef: null,
+        contentItems: [{
+          type: 'image',
+          source: { kind: 'threadPayload', ref: inheritedImageRef },
+        }],
+        success: true,
+        durationMs: 1,
+      }],
+      itemsView: 'full',
+      provenance: {
+        originThreadId: context.thread.id,
+        originTurnId: inheritedTurnId,
+        trigger: { kind: 'user' },
+      },
+      status: 'completed',
+      error: null,
+      execution: context.turn.execution,
+      startedAt: context.turn.startedAt,
+      completedAt: context.turn.startedAt + 1,
+      durationMs: 1,
+    };
+    const inheritedPayloadRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'inheritedContext',
+      sourceThreadId: context.thread.id,
+      coveredThrough: { turnId: inheritedTurnId, itemId: inheritedItemId },
+      requestedTurns: 'all',
+      turns: [inheritedTurn],
+    });
+    const inheritedEvidenceId = context.recorder.createItemId();
+    await context.recorder.completedImmediately({
+      type: 'contextEvidence',
+      id: inheritedEvidenceId,
+      provenance: context.recorder.localProvenance(inheritedEvidenceId),
+      kind: 'inheritedContext',
+      payloadRef: inheritedPayloadRef,
+      summary: 'Inherited context with a managed image',
+      contextRefs: [],
+      resourceRefs: [inheritedImageRef],
+      outputRefs: [],
     });
     const resetId = context.recorder.createItemId();
     await context.recorder.completedImmediately({
@@ -1030,7 +1101,8 @@ describe('ThreadService', () => {
     await service.waitForIdle(source.id);
     const sourceTurn = service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
     const sourceUser = sourceTurn.items.find((item) => item.type === 'userMessage')!;
-    const sourceEvidence = sourceTurn.items.find((item) => item.type === 'contextEvidence')!;
+    const sourceEvidence = sourceTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'turnEnvironment')!;
+    const sourceInherited = sourceTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'inheritedContext')!;
 
     const fork = (await service.forkThread({
       threadId: source.id,
@@ -1038,7 +1110,8 @@ describe('ThreadService', () => {
     })).thread;
     const forkTurn = service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
     const forkUser = forkTurn.items.find((item) => item.type === 'userMessage')!;
-    const forkEvidence = forkTurn.items.find((item) => item.type === 'contextEvidence')!;
+    const forkEvidence = forkTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'turnEnvironment')!;
+    const forkInherited = forkTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'inheritedContext')!;
     const forkReset = forkTurn.items.find((item) => item.type === 'contextReset')!;
     const forkCompaction = forkTurn.items.find((item) => item.type === 'contextCompaction')!;
 
@@ -1048,6 +1121,7 @@ describe('ThreadService', () => {
     expect(forkCompaction.coveredThrough).toEqual({ turnId: forkTurn.id, itemId: forkEvidence.id });
     expect(forkEvidence.payloadRef).toEqual(sourceEvidence.payloadRef);
     expect(forkEvidence.contextRefs).toEqual(sourceEvidence.contextRefs);
+    expect(forkInherited.payloadRef).toEqual(sourceInherited.payloadRef);
 
     await service.deleteThread(source.id);
     expect(await stores.payloads.readContext(fork.id, forkEvidence.payloadRef))
@@ -1063,6 +1137,21 @@ describe('ThreadService', () => {
       .toEqual(Buffer.from('context resource'));
     expect(await stores.payloads.readTextReference(fork.id, forkEvidence.outputRefs[0]!))
       .toBe('context-owned complete output');
+    const inheritedPayload = await stores.payloads.readContext(fork.id, forkInherited.payloadRef);
+    if (inheritedPayload?.kind !== 'inheritedContext') throw new Error('Fork inherited context payload missing');
+    const nestedImage = inheritedPayload.turns[0]?.items
+      .find((item) => item.type === 'dynamicToolCall')
+      ?.contentItems?.find((content) => content.type === 'image');
+    if (!nestedImage || nestedImage.source.kind !== 'threadPayload') {
+      throw new Error('Fork inherited context image reference missing');
+    }
+    expect(nestedImage.source.ref).toEqual(forkInherited.resourceRefs[0]);
+    expect(await stores.payloads.readResource(fork.id, nestedImage.source.ref))
+      .toEqual(Buffer.from('nested inherited image'));
+    const previewFile = await service.resolveThreadResourceFile(fork.id, nestedImage.source.ref);
+    if (!previewFile) throw new Error('Fork inherited context image preview missing');
+    expect(previewFile.path).not.toContain(join('payloads', fork.id));
+    expect(await readFile(previewFile.path, 'utf8')).toBe('nested inherited image');
     await service.close();
   });
 
@@ -1099,14 +1188,16 @@ describe('ThreadService', () => {
     if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
 
     expect(forkItem.provenance).toEqual(sourceItem.provenance);
-    expect(forkImage.imageRef).toContain(join('payloads', fork.id));
+    expect(forkImage.source).toEqual(sourceItem.contentItems?.find((content) => content.type === 'image')?.source);
     expect(await opened.service.readItemOutput({
       threadId: fork.id,
       turnId: forkTurn.id,
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
-    expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
+    if (forkImage.source.kind !== 'threadPayload') throw new Error('Fork image is not Thread-owned');
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
+      .toEqual(Buffer.from('inherited image'));
 
     await opened.service.deleteThread(source.id);
 
@@ -1117,7 +1208,8 @@ describe('ThreadService', () => {
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
-    expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
+      .toEqual(Buffer.from('inherited image'));
     const crashLeftover = await opened.stores.payloads.writeText(
       fork.id,
       'uncommitted-output',
@@ -1135,8 +1227,34 @@ describe('ThreadService', () => {
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
+    expect(await reopened.stores.payloads.readResource(fork.id, forkImage.source.ref))
+      .toEqual(Buffer.from('inherited image'));
     expect(await reopened.stores.payloads.readTextReference(fork.id, crashLeftover)).toBeNull();
     await reopened.service.close();
+  });
+
+  test('removes a newly written tool image when no canonical Item references it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const executor = new FailingImageExecutor();
+    const opened = await openFixture(root, executor, () => 1_720_000_000_000);
+    await opened.service.initialize();
+    const thread = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    await opened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Fail after writing an image' }],
+    });
+    await opened.service.waitForIdle(thread.id);
+
+    if (!executor.imageRef) throw new Error('Failing executor did not write its image');
+    expect(await opened.stores.payloads.readResource(thread.id, executor.imageRef)).toBeNull();
+    await opened.service.close();
   });
 
   test('copies inherited managed attachments and prompt snapshots into a fork', async () => {

@@ -32,6 +32,7 @@ import {
   type ThreadAttachmentContent,
   type ThreadContextPayload,
   type ThreadContextPayloadReference,
+  type ThreadFileSource,
   type ThreadItem,
   type ThreadItemDelta,
   type ThreadItemOutputReference,
@@ -1538,16 +1539,7 @@ function decodeUserContent(value: unknown): ThreadUserContent {
     });
   }
   exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'promptImage', 'extractedText'], 'userContent');
-  const source = recordValue(record.source, 'userContent.source');
-  const kind = enumValue(source.kind, ['localFile', 'threadPayload'], 'userContent.source.kind');
-  let decodedSource: ThreadAttachmentContent['source'];
-  if (kind === 'localFile') {
-    exactKeys(source, ['kind', 'path'], 'userContent.source');
-    decodedSource = { kind, path: stringValue(source.path, 'userContent.source.path') };
-  } else {
-    exactKeys(source, ['kind', 'ref'], 'userContent.source');
-    decodedSource = { kind, ref: decodeThreadResourceReference(source.ref, 'userContent.source.ref') };
-  }
+  const decodedSource = decodeThreadFileSource(record.source, 'userContent.source');
   return deepFreeze<ThreadAttachmentContent>({
     type,
     id: stringValue(record.id, 'userContent.id'),
@@ -1582,6 +1574,17 @@ export function decodeThreadResourceReference(
     byteLength,
     fileName,
   });
+}
+
+function decodeThreadFileSource(value: unknown, field: string): ThreadFileSource {
+  const source = recordValue(value, field);
+  const kind = enumValue(source.kind, ['localFile', 'threadPayload'], `${field}.kind`);
+  if (kind === 'localFile') {
+    exactKeys(source, ['kind', 'path'], field);
+    return deepFreeze({ kind, path: stringValue(source.path, `${field}.path`) });
+  }
+  exactKeys(source, ['kind', 'ref'], field);
+  return deepFreeze({ kind, ref: decodeThreadResourceReference(source.ref, `${field}.ref`) });
 }
 
 export function decodeThreadContextPayloadReference(
@@ -2260,10 +2263,10 @@ function decodeDynamicToolOutput(value: unknown): DynamicToolOutputContent {
     return deepFreeze({ type, text: stringValue(record.text, 'dynamicToolOutput.text', true) });
   }
   if (type === 'image') {
-    exactKeys(record, ['type', 'imageRef', 'alt'], 'dynamicToolOutput');
+    exactKeys(record, ['type', 'source', 'alt'], 'dynamicToolOutput');
     return deepFreeze({
       type,
-      imageRef: stringValue(record.imageRef, 'dynamicToolOutput.imageRef'),
+      source: decodeThreadFileSource(record.source, 'dynamicToolOutput.source'),
       ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
     });
   }

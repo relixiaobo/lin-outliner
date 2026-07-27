@@ -62,6 +62,10 @@ Every nested context payload, managed resource, or complete tool output named by
 context payload is also an explicit dependency on its owning context Item through
 `contextRefs`, `resourceRefs`, or `outputRefs`. Lifecycle operations use that canonical
 dependency graph instead of parsing payload-private JSON.
+Dynamic tool images carry a typed `localFile` or `threadPayload` source. A managed image
+nested inside inherited context is repeated in the owning context Item's `resourceRefs`.
+Fork and child ownership copy the content-addressed resource without rewriting the
+private payload, so its bytes and digest remain cache-stable after ownership changes.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
@@ -226,7 +230,8 @@ Forked user Items retain `acceptedAt`. Context cursors are rewritten to the copi
 Turn/Item identities. Every context payload and every dependency listed by the owning
 Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
 publication; failure deletes the staged fork. The copied Thread therefore remains
-readable after its source is deleted.
+readable after its source is deleted. Content-addressed resource references do not
+contain a Thread path and remain unchanged in the copied Items and payloads.
 
 ## Persistence
 
@@ -253,16 +258,19 @@ agent/
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
 owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
 the history source of truth. Complete textual tool outputs, managed attachment
-inputs, and semantic context payloads live in the Thread-owned payload directory;
-canonical Items retain typed content-addressed references. Context writes
+inputs, managed tool images, and semantic context payloads live in the Thread-owned
+payload directory; canonical Items retain typed content-addressed references.
+Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
 MIME type. Managed input admission reserves quota before
 writing, stages chunks under a non-canonical `.staging` directory, and publishes
 only a complete digest-verified resource. Failed content admission immediately
 removes prompt snapshots created by that attempt unless canonical history already
-references them; startup reconciliation handles crash leftovers. Every resource operation requires each
-managed path component to be a physical directory; symbolic-link substitution
+references them. A newly written tool image that no terminal Item references is
+reclaimed at Turn finalization; startup reconciliation handles crash leftovers. Every
+resource operation requires each managed path component to be a physical directory;
+symbolic-link substitution
 fails closed, including during quota scans, startup cleanup, and garbage
 collection. Successful writes cache file identity and digest in memory. A cold
 read or any inode, size, ctime, or mtime change streams SHA-256 again before the
@@ -270,7 +278,7 @@ resource is returned, so same-length replacement cannot bypass integrity checks.
 Canonical managed-resource paths stay private to the payload store. Consumers
 that need a filesystem path receive an independent scratch observation: model
 execution owns a Turn-scoped copy, while Preview/Open/Reveal share a stable
-detached copy per attachment identity, reclaimed by scratch TTL. Resource garbage
+detached copy per attachment or resource identity, reclaimed by scratch TTL. Resource garbage
 collection uses the physical key (content hash plus safe filename), independently
 of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which

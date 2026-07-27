@@ -8,18 +8,17 @@ import { api } from '../../api/client';
 // that it is the ingested state of the same unified file surface.
 
 /**
- * True when a non-node source can be copied into the asset store: a trusted local
- * file (full path ingest). An `asset` is already a node; a remote `url` is not
- * fetchable into an asset yet.
+ * True when a non-node source can be copied into the asset store: a trusted live local
+ * file (full path ingest). A Thread-managed resource has no renderer-visible source
+ * path, an `asset` is already a node, and a remote `url` is not fetchable yet.
  */
 export function canAddPreviewTargetToOutline(target: PreviewTarget): boolean {
-  return target.kind === 'local-file';
+  return target.kind === 'local-file' && !target.resourceRef;
 }
 
 /**
  * Copy a previewable non-node source into the asset store and return the committed
- * asset, or null when it is gone / out of policy / too large / unsupported. Anything
- * the preview can resolve, it can ingest — the same security boundary backs both.
+ * asset, or null when it is gone / out of policy / too large / unsupported.
  */
 export async function ingestPreviewTargetToAsset(target: PreviewTarget): Promise<AssetMetadata | null> {
   if (target.kind === 'local-file') {

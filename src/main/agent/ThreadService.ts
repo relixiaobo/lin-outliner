@@ -192,6 +192,13 @@ export interface ResolvedThreadAttachmentFile {
   readonly attachment: ThreadAttachmentContent;
 }
 
+export interface ResolvedThreadResourceFile {
+  readonly entryKind: 'file';
+  readonly path: string;
+  readonly stats: Stats;
+  readonly ref: ThreadResourceReference;
+}
+
 export interface FeatureRootThreadInput {
   readonly id: ThreadId;
   readonly name: string;
@@ -864,26 +871,26 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ? attachment.source.path
       : await this.detachedResourceObservationPath(
           threadId,
-          attachmentId,
+          `attachment:${attachmentId}`,
           attachment.source.ref,
         );
     if (!storedPath) return null;
     if (attachment.source.kind === 'threadPayload') {
       const storedStats = await lstat(storedPath).catch(() => null);
       if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
-        await this.discardDetachedResourceObservation(threadId, attachmentId);
+        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
         return null;
       }
     }
     const canonicalPath = await realpath(storedPath).catch(() => null);
     if (!canonicalPath) {
       if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, attachmentId);
+        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
       }
       return null;
     }
     if (attachment.source.kind === 'threadPayload' && canonicalPath !== storedPath) {
-      await this.discardDetachedResourceObservation(threadId, attachmentId);
+      await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
       return null;
     }
     if (attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) return null;
@@ -891,7 +898,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const entryKind = fileStats?.isFile() ? 'file' : fileStats?.isDirectory() ? 'directory' : null;
     if (!fileStats || !entryKind) {
       if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, attachmentId);
+        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
       }
       return null;
     }
@@ -899,17 +906,46 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { attachment, entryKind, path: canonicalPath, stats: fileStats };
   }
 
+  async resolveThreadResourceFile(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<ResolvedThreadResourceFile | null> {
+    this.requireThread(threadId);
+    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+      return null;
+    }
+    const identity = `resource:${ref.id}:${ref.fileName}`;
+    const storedPath = await this.detachedResourceObservationPath(threadId, identity, ref);
+    if (!storedPath) return null;
+    const storedStats = await lstat(storedPath).catch(() => null);
+    if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
+      await this.discardDetachedResourceObservation(threadId, identity);
+      return null;
+    }
+    const canonicalPath = await realpath(storedPath).catch(() => null);
+    if (!canonicalPath || canonicalPath !== storedPath) {
+      await this.discardDetachedResourceObservation(threadId, identity);
+      return null;
+    }
+    const fileStats = await stat(canonicalPath).catch(() => null);
+    if (!fileStats?.isFile()) {
+      await this.discardDetachedResourceObservation(threadId, identity);
+      return null;
+    }
+    return { entryKind: 'file', path: canonicalPath, stats: fileStats, ref };
+  }
+
   private async detachedResourceObservationPath(
     threadId: ThreadId,
-    attachmentId: string,
+    identity: string,
     ref: ThreadResourceReference,
   ): Promise<string | null> {
     const available = await this.payloads.useResourcePath(threadId, ref, async () => true);
     if (!available) {
-      await this.discardDetachedResourceObservation(threadId, attachmentId);
+      await this.discardDetachedResourceObservation(threadId, identity);
       return null;
     }
-    const key = `${threadId}\0${attachmentId}`;
+    const key = `${threadId}\0${identity}`;
     let entry = this.detachedResourceObservations.get(key);
     if (!entry) {
       const observation = this.createResourceObservation(threadId);
@@ -934,9 +970,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private async discardDetachedResourceObservation(
     threadId: ThreadId,
-    attachmentId: string,
+    identity: string,
   ): Promise<void> {
-    const key = `${threadId}\0${attachmentId}`;
+    const key = `${threadId}\0${identity}`;
     const entry = this.detachedResourceObservations.get(key);
     if (!entry) return;
     this.detachedResourceObservations.delete(key);
@@ -955,18 +991,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
-    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => (
-      item.type === 'userMessage'
-        ? item.content.flatMap((content) => content.type === 'attachment'
-          ? [
-              ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
-              ...(content.promptImage ? [content.promptImage] : []),
-            ]
-          : [])
-        : item.type === 'contextEvidence' || item.type === 'contextCompaction'
-          ? item.resourceRefs
-          : []
-    )));
+    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
   }
 
   private threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
@@ -996,12 +1021,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
       });
       return { content: resolved, createdResources };
     } catch (error) {
-      await this.discardCreatedAdmissionResources(thread.id, createdResources);
+      await this.discardUnreferencedCreatedResources(thread.id, createdResources);
       throw error;
     }
   }
 
-  private async discardCreatedAdmissionResources(
+  private async discardUnreferencedCreatedResources(
     threadId: ThreadId,
     resources: readonly ThreadResourceReference[],
   ): Promise<void> {
@@ -1187,7 +1212,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
           copiedTurns[index] = await this.copyForkedTurnPayloads(
             source.id,
             thread.id,
-            inherited[index]!,
             copiedTurns[index]!,
           );
         }
@@ -1210,34 +1234,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private async copyForkedTurnPayloads(
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
-    sourceTurn: Turn,
     copiedTurn: Turn,
   ): Promise<Turn> {
-    const items: ThreadItem[] = [];
-    for (let index = 0; index < copiedTurn.items.length; index += 1) {
-      const sourceItem = sourceTurn.items[index]!;
-      const item = copiedTurn.items[index]!;
-      if (item.type === 'userMessage') {
-        for (const content of item.content) {
-          if (content.type !== 'attachment') continue;
-          const refs = [
-            ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
-            ...(content.promptImage ? [content.promptImage] : []),
-          ];
-          for (const ref of refs) {
-            const copied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
-            if (!copied) throw new Error(`Missing attachment payload: ${ref.id}`);
-          }
-        }
+    for (const item of copiedTurn.items) {
+      for (const ref of itemResourceReferences(item)) {
+        const copied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
+        if (!copied) throw new Error(`Missing managed resource payload: ${ref.id}`);
       }
       if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
         for (const ref of contextPayloadReferences(item)) {
           const payloadCopied = await this.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
           if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
-        }
-        for (const ref of item.resourceRefs) {
-          const resourceCopied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
-          if (!resourceCopied) throw new Error(`Missing context resource payload: ${ref.id}`);
         }
         for (const ref of item.outputRefs) {
           const outputCopied = await this.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref);
@@ -1252,30 +1259,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         );
         if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
       }
-      if (item.type !== 'dynamicToolCall' || !item.contentItems) {
-        items.push(item);
-        continue;
-      }
-      const contentItems = [];
-      for (let contentIndex = 0; contentIndex < item.contentItems.length; contentIndex += 1) {
-        const content = item.contentItems[contentIndex]!;
-        const sourceContent = sourceItem.type === 'dynamicToolCall'
-          ? sourceItem.contentItems?.[contentIndex]
-          : null;
-        contentItems.push(content.type === 'image'
-          ? {
-              ...content,
-              imageRef: await this.payloads.copyImageToThread(
-                sourceThreadId,
-                targetThreadId,
-                sourceContent?.type === 'image' ? sourceContent.imageRef : content.imageRef,
-              ),
-            }
-          : content);
-      }
-      items.push({ ...item, contentItems });
     }
-    return decodeTurn({ ...copiedTurn, items });
+    return copiedTurn;
   }
 
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
@@ -1564,7 +1549,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         this.signalCollaborationActivity(request.threadId);
         return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
       } catch (error) {
-        await this.discardCreatedAdmissionResources(thread.id, admission.createdResources);
+        await this.discardUnreferencedCreatedResources(thread.id, admission.createdResources);
         throw error;
       }
     });
@@ -2019,7 +2004,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     try {
       return await this.commitAcceptedTurn(request, record, turnId, startedAt, admission.content);
     } catch (error) {
-      await this.discardCreatedAdmissionResources(record.thread.id, admission.createdResources);
+      await this.discardUnreferencedCreatedResources(record.thread.id, admission.createdResources);
       throw error;
     }
   }
@@ -2114,6 +2099,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const thread = this.requireThread(active.threadId).thread;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     const resourceObservation = this.createResourceObservation(active.threadId);
+    const createdOutputResources: ThreadResourceReference[] = [];
     try {
       const extensionContext = (hidden ? [] : await this.extensions.threadContext(thread))
         .map((contribution) => Object.entries(contribution.additionalContext)
@@ -2134,13 +2120,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         recorder: active.recorder,
         resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
         readResource: (ref) => this.payloads.readResource(active.threadId, ref),
-        persistOutputImage: (itemId, index, dataBase64, mimeType) => this.payloads.writeImage(
-          active.threadId,
-          itemId,
-          index,
-          dataBase64,
-          mimeType,
-        ),
+        persistOutputImage: async (dataBase64, mimeType) => {
+          const written = await this.payloads.writeImageWithStatus(active.threadId, dataBase64, mimeType);
+          if (written.created) createdOutputResources.push(written.ref);
+          return written.ref;
+        },
         persistOutputText: (itemId, text, mimeType, summary) => this.payloads.writeText(
           active.threadId,
           itemId,
@@ -2203,6 +2187,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         turnId: active.turnId,
         turn,
       });
+      await this.discardUnreferencedCreatedResources(active.threadId, createdOutputResources).catch(() => undefined);
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
     });
@@ -3200,6 +3185,27 @@ function rewriteForkedContextCursor(
 
 function contextCursorKey(cursor: ContextCursor): string {
   return `${cursor.turnId}\0${cursor.itemId}`;
+}
+
+function itemResourceReferences(item: ThreadItem): ThreadResourceReference[] {
+  if (item.type === 'userMessage') {
+    return item.content.flatMap((content) => content.type === 'attachment'
+      ? [
+          ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
+          ...(content.promptImage ? [content.promptImage] : []),
+        ]
+      : []);
+  }
+  if (item.type === 'dynamicToolCall') {
+    return (item.contentItems ?? []).flatMap((content) => (
+      content.type === 'image' && content.source.kind === 'threadPayload'
+        ? [content.source.ref]
+        : []
+    ));
+  }
+  return item.type === 'contextEvidence' || item.type === 'contextCompaction'
+    ? [...item.resourceRefs]
+    : [];
 }
 
 function contextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
