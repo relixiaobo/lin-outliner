@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import type { Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
+import type { RendererUserViewHints, Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
 import type { AgentProviderSettingsView, AgentSlashCommandView, SkillDefinition } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
@@ -37,6 +37,7 @@ export type ThreadRailState = 'collapsed' | 'open';
 interface ThreadDockProps {
   readonly index: DocumentIndex;
   readonly railState: ThreadRailState;
+  readonly userView: RendererUserViewHints;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails: (threadId: string, turnId: string) => void;
   readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
@@ -47,6 +48,7 @@ interface ThreadDockProps {
 export function ThreadDock({
   index,
   railState,
+  userView,
   onOpenNodeReference,
   onOpenTurnDetails,
   onResizeKeyDown,
@@ -290,7 +292,7 @@ export function ThreadDock({
               key={thread.id}
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
-                threadStore.rollbackAndSend(thread.id, content)
+                threadStore.rollbackAndSend(thread.id, content, userView)
               )}
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
@@ -298,7 +300,7 @@ export function ThreadDock({
               onOpenThread={(threadId) => threadStore.selectThread(threadId)}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
-              onSend={(content) => threadStore.send(content)}
+              onSend={(content) => threadStore.send(content, userView)}
               onSubmitUserInput={(answers) => userInput
                 ? threadStore.respondToUserInput(userInput, answers)
                 : Promise.resolve()}

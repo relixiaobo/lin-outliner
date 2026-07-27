@@ -1,6 +1,7 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Stats } from 'node:fs';
+import type { DocumentProjection } from '../../core/types';
 import {
   createHostRootTurnAdmissionBarrierSnapshot,
   createThreadAdmissionBarrierSnapshot,
@@ -78,9 +79,14 @@ import type {
   ThreadTurnsListResponse,
   ThreadUserContent,
   ThreadAttachmentContent,
+  ContextEvidenceThreadItem,
   ThreadContextPayloadReference,
+  ThreadContextReadRequest,
+  ThreadContextReadResponse,
   ThreadItemOutputReference,
   ThreadResourceReference,
+  SkillCatalogContextPayload,
+  SkillInvocationContextPayload,
   JsonValue,
   Turn,
   TurnId,
@@ -117,6 +123,15 @@ import {
   ToolPayloadStore,
 } from './persistence/ToolPayloadStore';
 import { ItemRecorder } from './runtime/ItemRecorder';
+import { admitContextEvidence, contextEvidenceItem } from './context/evidenceAdmission';
+import { observedSkillFilePaths, planSkillCatalogEvidence } from './context/SkillContextReducer';
+import { assertCanonicalUserContent } from './context/userContentIntegrity';
+import {
+  assertContextPayloadDependencies,
+  itemContextPayloadReferences,
+  itemResourceReferences,
+} from './context/contextDependencies';
+import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
   SteeredTurnInput,
@@ -124,7 +139,6 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './runtime/types';
-import { runtimeEnvironmentContext } from './runtime/runtimeEnvironmentContext';
 import { uuidV7 } from './uuid';
 import {
   BUILT_IN_AGENT_ROLE_DEFINITIONS,
@@ -169,9 +183,27 @@ export interface ThreadServiceOptions {
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
   ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
+  readonly getDocumentProjection?: () => DocumentProjection;
+  readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
+  readonly resolveSkillAdmission?: (
+    input: SkillAdmissionResolutionInput,
+  ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
+}
+
+export interface SkillAdmissionResolutionInput {
+  readonly thread: Thread;
+  readonly configuration: EffectiveThreadConfiguration;
+  readonly content: readonly ThreadUserContent[];
+  readonly acceptedAt: number;
+  readonly observedFilePaths: readonly string[];
+}
+
+export interface SkillAdmissionResolution {
+  readonly catalogSnapshot: SkillCatalogContextPayload | null;
+  readonly invocation: SkillInvocationContextPayload | null;
 }
 
 export interface RendererThreadStartDefaults {
@@ -268,10 +300,12 @@ interface ActiveTurn {
   readonly controller: AbortController;
   readonly recorder: ItemRecorder;
   readonly configuration: EffectiveThreadConfiguration;
-  readonly additionalContext?: AdditionalContext;
   readonly startedAt: number;
+  fatalError: Error | null;
+  finishing: boolean;
   steeringHandler: ((input: SteeredTurnInput) => void | Promise<void>) | null;
   readonly queuedSteering: SteeredTurnInput[];
+  steeringDelivery: Promise<void>;
   readonly completion: Promise<void>;
   readonly resolveCompletion: () => void;
 }
@@ -330,6 +364,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
   ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
+  private readonly getDocumentProjection: () => DocumentProjection | null;
+  private readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
+  private readonly resolveSkillAdmission: (
+    input: SkillAdmissionResolutionInput,
+  ) => Promise<SkillAdmissionResolution>;
   private readonly resolveRole: (name: string, cwd: string) => AgentRole;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
@@ -339,7 +378,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>();
   private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
   private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
-  private readonly mailbox = new Map<ThreadId, SteeredTurnInput[]>();
+  private readonly mailbox = new Map<ThreadId, Array<{ readonly content: readonly ThreadUserContent[] }>>();
   private readonly ephemeralSpawnEdges = new Map<ThreadId, {
     sessionId: string;
     parentThreadId: ThreadId;
@@ -378,6 +417,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
     this.validateRendererConfiguration = options.validateRendererConfiguration ?? (() => undefined);
     this.resolveUserContent = options.resolveUserContent ?? ((content) => content);
+    this.getDocumentProjection = options.getDocumentProjection ?? (() => null);
+    this.resolveReferencedAsset = options.resolveReferencedAsset;
+    this.resolveSkillAdmission = async (input) => await options.resolveSkillAdmission?.(input) ?? {
+      catalogSnapshot: null,
+      invocation: null,
+    };
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
@@ -516,8 +561,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null {
-    const binding = this.readClientBinding(threadId, clientId);
-    return binding ? this.readTurn(threadId, binding.turnId) : null;
+    return this.readCanonicalClientBinding(threadId, clientId)?.turn ?? null;
   }
 
   async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
@@ -712,6 +756,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.readItemOutput(
           decoded as AgentCoreRequestByMethod['thread/item/output/read'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/context/read':
+        return await this.readContextPayload(
+          decoded as AgentCoreRequestByMethod['thread/context/read'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/start':
         return await this.startRendererTurn(decoded as AgentCoreRequestByMethod['turn/start']) as AgentCoreResponseByMethod[Method];
       case 'turn/steer':
@@ -757,6 +805,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const text = await this.payloads.readTextReference(request.threadId, item.outputRef);
     if (text === null) return { output: null };
     return { output: { ref: item.outputRef, text } };
+  }
+
+  async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> {
+    const turn = this.readTurn(request.threadId, request.turnId);
+    if (!turn) return { context: null };
+    const item = turn.items.find((candidate) => candidate.id === request.itemId);
+    if (item?.type !== 'contextEvidence' || item.payloadRef.id !== request.contextId) {
+      return { context: null };
+    }
+    const payload = await this.payloads.readContext(request.threadId, item.payloadRef);
+    if (!payload) return { context: null };
+    assertContextPayloadDependencies(item, payload);
+    return { context: { ref: item.payloadRef, payload } };
   }
 
   async beginAttachmentUpload(input: {
@@ -990,7 +1051,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await entry.observation.dispose();
   }
 
-  private createResourceObservation(threadId: ThreadId): ManagedAttachmentObservation {
+  private createResourceObservation(
+    threadId: ThreadId,
+    stableProviderPath = false,
+  ): ManagedAttachmentObservation {
     return createManagedAttachmentObservation(
       this.attachmentScratchRoot,
       (ref, targetDirectory) => this.payloads.copyResourceForObservation(
@@ -998,6 +1062,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         ref,
         targetDirectory,
       ),
+      stableProviderPath ? { stableWorkspaceKey: threadId } : {},
     );
   }
 
@@ -1006,7 +1071,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
-    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(contextPayloadReferences));
+    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
   }
 
   private threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
@@ -1030,6 +1095,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         cwd: thread.cwd,
         recordCreatedResource: (ref) => createdResources.push(ref),
       });
+      assertCanonicalUserContent(resolved);
       return { content: resolved, createdResources };
     } catch (error) {
       await this.discardUnreferencedCreatedResources(thread.id, createdResources);
@@ -1253,7 +1319,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (!copied) throw new Error(`Missing managed resource payload: ${ref.id}`);
       }
       if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
-        for (const ref of contextPayloadReferences(item)) {
+        const directContextRefs = item.type === 'contextEvidence'
+          ? [item.payloadRef]
+          : [item.summaryRef, item.restoredStateRef, ...(item.instructionsRef ? [item.instructionsRef] : [])];
+        for (const ref of directContextRefs) {
+          const payload = await this.payloads.readContext(sourceThreadId, ref);
+          if (!payload) throw new Error(`Missing context payload: ${ref.id}`);
+          assertContextPayloadDependencies(item, payload);
+        }
+        for (const ref of itemContextPayloadReferences(item)) {
           const payloadCopied = await this.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
           if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
         }
@@ -1533,36 +1607,98 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async steerTurn(request: TurnSteerRequest): Promise<TurnSteerResponse> {
     return this.threadMutex.run(request.threadId, async () => {
-      const active = this.activeTurns.get(request.threadId);
-      if (!active || active.turnId !== request.expectedTurnId) throw new ThreadBusyError('Expected Turn is not active');
       const existing = request.clientUserMessageId
-        ? this.readClientBinding(request.threadId, request.clientUserMessageId)
+        ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
         : null;
       if (existing) {
-        return { turnId: existing.turnId, acceptedItemId: existing.itemId, deduplicated: true };
+        return { turnId: existing.turn.id, acceptedItemId: existing.itemId, deduplicated: true };
       }
+      const active = this.activeTurns.get(request.threadId);
+      if (!active || active.turnId !== request.expectedTurnId) throw new ThreadBusyError('Expected Turn is not active');
+      if (active.finishing || active.fatalError) throw new ThreadBusyError('Expected Turn is no longer accepting steering');
       const thread = this.requireThread(request.threadId).thread;
       const admission = await this.resolveAdmissionContent(request.input, thread);
+      const createdEvidenceResources: ThreadResourceReference[] = [];
+      const acceptedAt = this.now();
+      let item: ThreadItem;
+      let admittedItems: readonly ThreadItem[];
       try {
-        const acceptedAt = this.now();
-        const item = userMessage(
+        const extensionContext = this.hiddenEphemeralThreads.has(request.threadId)
+          ? []
+          : await this.extensions.threadContext(thread);
+        const canonicalTurns = this.allTurns(request.threadId);
+        const skillAdmission = this.hiddenEphemeralThreads.has(request.threadId)
+          ? { catalogSnapshot: null, invocation: null }
+          : await this.resolveSkillAdmission({
+              thread,
+              configuration: active.configuration,
+              content: admission.content,
+              acceptedAt,
+              observedFilePaths: observedSkillFilePaths(canonicalTurns),
+            });
+        const skillCatalog = await planSkillCatalogEvidence({
+          turns: canonicalTurns,
+          snapshot: skillAdmission.catalogSnapshot,
+          readContext: (ref) => this.payloads.readContext(thread.id, ref),
+        });
+        const evidence = await admitContextEvidence({
+          thread,
+          turnId: active.turnId,
+          acceptedAt,
+          content: admission.content,
+          userView: request.userView,
+          additionalContext: request.additionalContext,
+          extensionContext,
+          skillCatalog,
+          skillInvocation: skillAdmission.invocation,
+          includeHostContext: !this.hiddenEphemeralThreads.has(request.threadId),
+          projection: this.getDocumentProjection(),
+          createItemId: () => uuidV7(),
+          writeContext: (payload) => this.payloads.writeContext(thread.id, payload),
+          resolveAsset: this.resolveReferencedAsset,
+          writeResource: (bytes, mimeType, fileName) => this.payloads.writeResourceWithStatus(
+            thread.id,
+            bytes,
+            mimeType,
+            fileName,
+          ),
+          onResourceCreated: (ref) => createdEvidenceResources.push(ref),
+        });
+        item = userMessage(
           request.threadId,
           active.turnId,
           admission.content,
           request.clientUserMessageId ?? null,
           acceptedAt,
         );
-        await active.recorder.completedImmediately(item, acceptedAt);
-        if (request.clientUserMessageId) this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
-        const steered = { content: admission.content, additionalContext: request.additionalContext };
-        if (active.steeringHandler) await active.steeringHandler(steered);
-        else active.queuedSteering.push(steered);
-        this.signalCollaborationActivity(request.threadId);
-        return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
+        admittedItems = [...evidence.items, item];
+        await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
       } catch (error) {
-        await this.discardUnreferencedCreatedResources(thread.id, admission.createdResources);
+        await this.discardUnreferencedCreatedResources(
+          thread.id,
+          [...admission.createdResources, ...createdEvidenceResources],
+        );
+        await this.payloads.pruneUnreferencedContexts(
+          thread.id,
+          this.threadContextPayloadReferences(thread.id),
+        );
         throw error;
       }
+      try {
+        if (request.clientUserMessageId) {
+          this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
+        }
+        const steered = { items: admittedItems, acceptedAt };
+        if (active.steeringHandler) {
+          await this.enqueueSteeringDelivery(active, steered);
+        } else {
+          active.queuedSteering.push(steered);
+        }
+      } catch (error) {
+        this.failCommittedActiveTurn(active, error);
+      }
+      this.signalCollaborationActivity(request.threadId);
+      return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
     });
   }
 
@@ -1990,19 +2126,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<AcceptedTurn> {
     const record = this.requireThread(request.threadId);
     const existing = request.clientUserMessageId
-      ? this.readClientBinding(request.threadId, request.clientUserMessageId)
+      ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
       : null;
     if (existing) {
-      const turn = this.readTurn(request.threadId, existing.turnId);
-      if (!turn) {
-        if (!record.thread.ephemeral) this.metadata.deleteClientInput(request.threadId, request.clientUserMessageId!);
-      } else {
-        return {
-          response: { turn, acceptedItemId: existing.itemId, deduplicated: true },
-          thread: record.thread,
-          active: null,
-        };
-      }
+      return {
+        response: { turn: existing.turn, acceptedItemId: existing.itemId, deduplicated: true },
+        thread: record.thread,
+        active: null,
+      };
     }
     if (this.stoppingThreads.has(request.threadId)) throw new ThreadBusyError('Thread is stopping');
     if (record.archived) throw new ThreadBusyError('Thread is archived');
@@ -2012,10 +2143,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const startedAt = this.now();
     const turnId = request.turnId ?? uuidV7(startedAt);
     const admission = await this.resolveAdmissionContent(request.input, record.thread);
+    const createdEvidenceResources: ThreadResourceReference[] = [];
     try {
-      return await this.commitAcceptedTurn(request, record, turnId, startedAt, admission.content);
+      return await this.commitAcceptedTurn(
+        request,
+        record,
+        turnId,
+        startedAt,
+        admission.content,
+        (ref) => createdEvidenceResources.push(ref),
+      );
     } catch (error) {
-      await this.discardUnreferencedCreatedResources(record.thread.id, admission.createdResources);
+      await this.discardUnreferencedCreatedResources(
+        record.thread.id,
+        [...admission.createdResources, ...createdEvidenceResources],
+      );
+      await this.payloads.pruneUnreferencedContexts(
+        record.thread.id,
+        this.threadContextPayloadReferences(record.thread.id),
+      );
       throw error;
     }
   }
@@ -2026,18 +2172,20 @@ export class ThreadService implements ThreadServiceExtensionHost {
     turnId: TurnId,
     startedAt: number,
     input: readonly ThreadUserContent[],
+    recordCreatedEvidenceResource: (ref: ThreadResourceReference) => void,
   ): Promise<AcceptedTurn> {
     const preview = threadPreviewFromContent(input);
     const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null, startedAt);
-    const turn = decodeTurn({
+    const provenance = {
+      originThreadId: request.threadId,
+      originTurnId: turnId,
+      trigger: request.trigger,
+    } as const;
+    const provisionalTurn = decodeTurn({
       id: turnId,
       items: [item],
       itemsView: 'full',
-      provenance: {
-        originThreadId: request.threadId,
-        originTurnId: turnId,
-        trigger: request.trigger,
-      },
+      provenance,
       status: 'inProgress',
       error: null,
       execution: initialTurnExecution(record.thread, record.configuration),
@@ -2054,28 +2202,61 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await this.extensions.contributeAdmission({
         thread: record.thread,
         turnId,
-        provenance: turn.provenance,
+        provenance: provisionalTurn.provenance,
         configuration: record.configuration,
         threadBarrier,
         hostBarrier,
       });
     }
-
-    if (!record.thread.preview.trim() && preview) {
-      this.setInitialPreview(request.threadId, preview, startedAt);
-    }
-    await this.setStatus(request.threadId, { type: 'active', activeFlags: [] });
-    await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
+    const extensionContext = this.hiddenEphemeralThreads.has(request.threadId)
+      ? []
+      : await this.extensions.threadContext(record.thread);
+    const canonicalTurns = this.allTurns(request.threadId);
+    const skillAdmission = this.hiddenEphemeralThreads.has(request.threadId)
+      ? { catalogSnapshot: null, invocation: null }
+      : await this.resolveSkillAdmission({
+          thread: record.thread,
+          configuration: record.configuration,
+          content: input,
+          acceptedAt: startedAt,
+          observedFilePaths: observedSkillFilePaths(canonicalTurns),
+        });
+    const skillCatalog = await planSkillCatalogEvidence({
+      turns: canonicalTurns,
+      snapshot: skillAdmission.catalogSnapshot,
+      readContext: (ref) => this.payloads.readContext(record.thread.id, ref),
+    });
+    const evidence = await admitContextEvidence({
+      thread: record.thread,
+      turnId,
+      acceptedAt: startedAt,
+      content: input,
+      userView: request.userView,
+      additionalContext: request.additionalContext,
+      extensionContext,
+      skillCatalog,
+      skillInvocation: skillAdmission.invocation,
+      includeHostContext: !this.hiddenEphemeralThreads.has(request.threadId),
+      projection: this.getDocumentProjection(),
+      createItemId: () => uuidV7(),
+      writeContext: (payload) => this.payloads.writeContext(record.thread.id, payload),
+      resolveAsset: this.resolveReferencedAsset,
+      writeResource: (bytes, mimeType, fileName) => this.payloads.writeResourceWithStatus(
+        record.thread.id,
+        bytes,
+        mimeType,
+        fileName,
+      ),
+      onResourceCreated: recordCreatedEvidenceResource,
+    });
+    const initialItems = [...evidence.items, item];
+    const turn = decodeTurn({ ...provisionalTurn, items: initialItems });
     const recorder = new ItemRecorder(
       request.threadId,
       turnId,
-      [item],
+      initialItems,
       (notification) => this.recordNotification(notification),
     );
-    await recorder.completeInitial(item.id, startedAt);
-    if (request.clientUserMessageId) {
-      this.bindClientInput(request.threadId, request.clientUserMessageId, turnId, item.id);
-    }
     let resolveCompletion!: () => void;
     const completion = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
@@ -2086,14 +2267,37 @@ export class ThreadService implements ThreadServiceExtensionHost {
       controller: new AbortController(),
       recorder,
       configuration: record.configuration,
-      additionalContext: request.additionalContext,
       startedAt,
+      fatalError: null,
+      finishing: false,
       steeringHandler: null,
       queuedSteering: [],
+      steeringDelivery: Promise.resolve(),
       completion,
       resolveCompletion,
     };
+
+    await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
     this.activeTurns.set(request.threadId, active);
+    if (!record.thread.preview.trim() && preview) {
+      try {
+        this.setInitialPreview(request.threadId, preview, startedAt);
+      } catch (error) {
+        this.failCommittedActiveTurn(active, error);
+      }
+    }
+    try {
+      await this.setStatus(request.threadId, { type: 'active', activeFlags: [] });
+    } catch (error) {
+      this.failCommittedActiveTurn(active, error);
+    }
+    if (request.clientUserMessageId) {
+      try {
+        this.bindClientInput(request.threadId, request.clientUserMessageId, turnId, item.id);
+      } catch (error) {
+        this.failCommittedActiveTurn(active, error);
+      }
+    }
     return {
       response: { turn, acceptedItemId: item.id, deduplicated: false },
       thread: this.requireThread(request.threadId).thread,
@@ -2109,26 +2313,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
     const thread = this.requireThread(active.threadId).thread;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
-    const resourceObservation = this.createResourceObservation(active.threadId);
+    const resourceObservation = this.createResourceObservation(active.threadId, true);
     const createdOutputResources: ThreadResourceReference[] = [];
     try {
-      const extensionContext = (hidden ? [] : await this.extensions.threadContext(thread))
-        .map((contribution) => Object.entries(contribution.additionalContext)
-          .map(([key, entry]) => `${key}: ${entry.value}`)
-          .join('\n'))
-        .filter(Boolean);
-      const systemContext = hidden
-        ? []
-        : [runtimeEnvironmentContext(this.now()), ...extensionContext];
       result = await this.executor.execute({
         thread,
         turn: initialTurn,
         historyBeforeTurn: this.allTurns(active.threadId).filter((turn) => turn.id !== active.turnId),
         configuration: active.configuration,
-        additionalContext: active.additionalContext,
-        systemContext,
         signal: active.controller.signal,
         recorder: active.recorder,
+        readContext: (ref) => this.payloads.readContext(active.threadId, ref),
         resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
         readResource: (ref) => this.payloads.readResource(active.threadId, ref),
         persistOutputImage: async (dataBase64, mimeType) => {
@@ -2143,6 +2338,26 @@ export class ThreadService implements ThreadServiceExtensionHost {
           mimeType,
           summary,
         ),
+        persistContextEvidence: (payload, summary) => this.persistExecutionContextEvidence(
+          active,
+          thread,
+          payload,
+          summary,
+        ),
+        persistSkillCatalog: (snapshot) => this.threadMutex.run(active.threadId, async () => {
+          const catalog = await planSkillCatalogEvidence({
+            turns: this.allTurns(active.threadId),
+            snapshot,
+            readContext: (ref) => this.payloads.readContext(active.threadId, ref),
+          });
+          if (!catalog) return null;
+          return this.persistExecutionContextEvidenceLocked(
+            active,
+            thread,
+            catalog,
+            `Available Skills (${catalog.entries.length})`,
+          );
+        }),
         onProviderRetry: (retryStatus) => this.emitTransientNotification({
           type: 'turn/providerRetry/changed',
           threadId: active.threadId,
@@ -2152,10 +2367,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         onSteer: (handler) => {
           active.steeringHandler = handler;
           const queued = active.queuedSteering.splice(0);
-          void queued.reduce(
-            (chain, input) => chain.then(() => handler(input)),
-            Promise.resolve(),
-          );
+          for (const input of queued) this.enqueueSteeringDelivery(active, input);
         },
       });
     } catch (error) {
@@ -2164,10 +2376,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await resourceObservation.dispose().catch(() => undefined);
     }
 
+    await this.threadMutex.run(active.threadId, async () => {
+      if (this.activeTurns.get(active.threadId) === active) active.finishing = true;
+    });
+    await active.steeringDelivery;
     this.takePendingCollaborationActivity(active.threadId);
     await this.flushPendingSubagentActivities(active.threadId, active.turnId);
     const aborted = active.controller.signal.aborted;
-    const status = aborted ? 'interrupted' : thrown ? 'failed' : result.status ?? 'completed';
+    const executionError = active.fatalError ?? thrown;
+    const status = executionError ? 'failed' : aborted ? 'interrupted' : result.status ?? 'completed';
     await active.recorder.finishOpenItems(status === 'completed' ? 'failed' : status);
     const completedAt = this.now();
     let turn = decodeTurn({
@@ -2176,8 +2393,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       itemsView: 'full',
       provenance: initialTurn.provenance,
       status,
-      error: thrown
-        ? { message: thrown.message }
+      error: executionError
+        ? { message: executionError.message }
         : result.error ?? null,
       execution: result.execution ?? initialTurn.execution,
       startedAt: active.startedAt,
@@ -2199,6 +2416,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         turn,
       });
       await this.discardUnreferencedCreatedResources(active.threadId, createdOutputResources).catch(() => undefined);
+      await this.payloads.pruneUnreferencedContexts(
+        active.threadId,
+        this.threadContextPayloadReferences(active.threadId),
+      ).catch(() => undefined);
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
     });
@@ -2215,11 +2436,68 @@ export class ThreadService implements ThreadServiceExtensionHost {
         active.turnId,
       );
       if (status === 'interrupted') await this.extensions.turnAborted(thread, turn);
-      else if (thrown) await this.extensions.turnError(thread, turn, thrown);
+      else if (executionError) await this.extensions.turnError(thread, turn, executionError);
       else await this.extensions.turnStopped(thread, turn);
     }
     this.queueChildTurnActivity(thread, status);
     if (!hidden) await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
+  }
+
+  private persistExecutionContextEvidence(
+    active: ActiveTurn,
+    thread: Thread,
+    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    summary: string,
+  ): Promise<ContextEvidenceThreadItem> {
+    return this.threadMutex.run(active.threadId, () => this.persistExecutionContextEvidenceLocked(
+      active,
+      thread,
+      payload,
+      summary,
+    ));
+  }
+
+  private async persistExecutionContextEvidenceLocked(
+    active: ActiveTurn,
+    thread: Thread,
+    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    summary: string,
+  ): Promise<ContextEvidenceThreadItem> {
+    const payloadRef = await this.payloads.writeContext(active.threadId, payload);
+    try {
+      const item = contextEvidenceItem({
+        thread,
+        turnId: active.turnId,
+        createItemId: () => active.recorder.createItemId(),
+      }, payload.kind, payloadRef, summary, []);
+      assertContextPayloadDependencies(item, payload);
+      return await active.recorder.completedImmediately(item, this.now()) as ContextEvidenceThreadItem;
+    } catch (error) {
+      await this.payloads.pruneUnreferencedContexts(
+        active.threadId,
+        this.threadContextPayloadReferences(active.threadId),
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private enqueueSteeringDelivery(active: ActiveTurn, input: SteeredTurnInput): Promise<void> {
+    const handler = active.steeringHandler;
+    if (!handler) throw new Error('Steering handler is not registered');
+    active.steeringDelivery = active.steeringDelivery
+      .then(async () => {
+        if (!active.fatalError) await handler(input);
+      })
+      .catch((error) => {
+        this.failCommittedActiveTurn(active, error);
+      });
+    return active.steeringDelivery;
+  }
+
+  private failCommittedActiveTurn(active: ActiveTurn, value: unknown): void {
+    if (active.fatalError) return;
+    active.fatalError = value instanceof Error ? value : new Error(String(value));
+    active.controller.abort();
   }
 
   private async failActiveTurn(active: ActiveTurn, error: Error): Promise<void> {
@@ -2252,6 +2530,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.extensions.turnError(this.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
       }
     }
+    await this.threadMutex.run(active.threadId, () => this.payloads.pruneUnreferencedContexts(
+      active.threadId,
+      this.threadContextPayloadReferences(active.threadId),
+    )).catch(() => undefined);
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
@@ -2489,11 +2771,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.applyEphemeralNotification(decoded);
     } else {
       const entry = await this.rollout.append(decoded.threadId, decoded);
-      this.history.apply(entry);
+      try {
+        this.history.apply(entry);
+      } catch (error) {
+        try {
+          this.history.rebuildThread(decoded.threadId, await this.rollout.read(decoded.threadId));
+        } catch {
+          throw error;
+        }
+      }
     }
     if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
-      for (const listener of this.listeners) listener(decoded);
-      await this.extensions.notification(decoded);
+      for (const listener of this.listeners) {
+        try {
+          listener(decoded);
+        } catch (error) {
+          console.error('[agent] recorded notification listener failed', error);
+        }
+      }
+      await this.extensions.notification(decoded).catch((error) => {
+        console.error('[agent] recorded notification observer failed', error);
+      });
     }
   }
 
@@ -2501,7 +2799,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const decoded = decodeAgentCoreTransientNotification(notification);
     this.requireThread(decoded.threadId);
     if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
-      for (const listener of this.listeners) listener(decoded);
+      for (const listener of this.listeners) {
+        try {
+          listener(decoded);
+        } catch (error) {
+          console.error('[agent] transient notification listener failed', error);
+        }
+      }
     }
   }
 
@@ -2514,6 +2818,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           throw new Error(`Turn was already started: ${notification.turnId}`);
         }
         state.turns.push(notification.turn);
+        for (const item of notification.turn.items) state.completedItemIds.add(item.id);
         return;
       case 'item/started': {
         const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
@@ -2539,6 +2844,31 @@ export class ThreadService implements ThreadServiceExtensionHost {
         items[itemIndex] = notification.item;
         state.turns[index] = decodeTurn({ ...turn, items });
         state.completedItemIds.add(notification.itemId);
+        return;
+      }
+      case 'items/completed': {
+        const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
+        if (index < 0) throw new Error(`Item lifecycle precedes Turn start: ${notification.turnId}`);
+        const turn = state.turns[index]!;
+        if (turn.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
+        const items = [...turn.items];
+        for (const item of notification.items) {
+          const itemIndex = items.findIndex((candidate) => candidate.id === item.id);
+          const owner = state.turns.find((candidate) => candidate.items.some((existing) => existing.id === item.id));
+          if (owner && owner.id !== notification.turnId) {
+            throw new Error(`Thread Item does not belong to Turn: ${item.id}`);
+          }
+          if (state.completedItemIds.has(item.id)) {
+            throw new Error(`Completed Thread Item is immutable: ${item.id}`);
+          }
+          if (itemIndex >= 0) {
+            items[itemIndex] = item;
+          } else {
+            items.push(item);
+          }
+          state.completedItemIds.add(item.id);
+        }
+        state.turns[index] = decodeTurn({ ...turn, items });
         return;
       }
       case 'item/delta': {
@@ -2614,6 +2944,32 @@ export class ThreadService implements ThreadServiceExtensionHost {
       return null;
     }
     return this.metadata.readClientInput(threadId, clientId);
+  }
+
+  private readCanonicalClientBinding(
+    threadId: ThreadId,
+    clientId: string,
+  ): { turn: Turn; itemId: string } | null {
+    const binding = this.readClientBinding(threadId, clientId);
+    if (binding) {
+      const turn = this.readTurn(threadId, binding.turnId);
+      const item = turn?.items.find((candidate) => (
+        candidate.id === binding.itemId
+        && candidate.type === 'userMessage'
+        && candidate.clientId === clientId
+      ));
+      if (turn && item) return { turn, itemId: item.id };
+      if (!this.ephemeral.has(threadId)) this.metadata.deleteClientInput(threadId, clientId);
+    }
+    for (const turn of this.allTurns(threadId)) {
+      const item = turn.items.find((candidate) => (
+        candidate.type === 'userMessage' && candidate.clientId === clientId
+      ));
+      if (!item) continue;
+      this.bindClientInput(threadId, clientId, turn.id, item.id);
+      return { turn, itemId: item.id };
+    }
+    return null;
   }
 
   private bindClientInput(threadId: ThreadId, clientId: string, turnId: string, itemId: string): void {
@@ -3196,38 +3552,6 @@ function rewriteForkedContextCursor(
 
 function contextCursorKey(cursor: ContextCursor): string {
   return `${cursor.turnId}\0${cursor.itemId}`;
-}
-
-function itemResourceReferences(item: ThreadItem): ThreadResourceReference[] {
-  if (item.type === 'userMessage') {
-    return item.content.flatMap((content) => content.type === 'attachment'
-      ? [
-          ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
-          ...(content.promptImage ? [content.promptImage] : []),
-        ]
-      : []);
-  }
-  if (item.type === 'dynamicToolCall') {
-    return (item.contentItems ?? []).flatMap((content) => (
-      content.type === 'image' && content.source.kind === 'threadPayload'
-        ? [content.source.ref]
-        : []
-    ));
-  }
-  return item.type === 'contextEvidence' || item.type === 'contextCompaction'
-    ? [...item.resourceRefs]
-    : [];
-}
-
-function contextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
-  if (item.type === 'contextEvidence') return [item.payloadRef, ...item.contextRefs];
-  if (item.type !== 'contextCompaction') return [];
-  return [
-    item.summaryRef,
-    item.restoredStateRef,
-    ...(item.instructionsRef ? [item.instructionsRef] : []),
-    ...item.contextRefs,
-  ];
 }
 
 function copyItem(source: ThreadItem, now: number): ThreadItem {

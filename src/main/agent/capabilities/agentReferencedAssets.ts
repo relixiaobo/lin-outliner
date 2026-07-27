@@ -1,106 +1,226 @@
-import type { DocumentProjection } from '../../../core/types';
-import { xmlAttrs } from './agentReminderXml';
+import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { basename } from 'node:path';
+import type {
+  ReferencedResourceSnapshot,
+  ReferencedResourcesContextPayload,
+  ThreadResourceReference,
+} from '../../../core/agent/protocol';
+import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../../core/types';
+import { nodeBreadcrumb, nodeTitle, outlineText } from '../context/userView';
 
-export interface ReferencedAssetNode {
-  nodeId: string;
-  title: string;
-  assetId: string;
-  /** True for image nodes — their bytes are an image even when asset metadata is absent. */
-  isImageNode: boolean;
-  /** Attachment-node fallbacks used when the asset metadata sidecar is missing. */
-  nodeMimeType?: string;
-  nodeFileName?: string;
-  nodeFileSize?: number;
+const MAX_RESOURCE_CONTENT_CHARS = 16_000;
+const MAX_INLINE_IMAGES = 8;
+export const MAX_REFERENCED_RESOURCE_BYTES = 50 * 1024 * 1024;
+const INLINE_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+export interface ReferencedAssetResolution {
+  readonly path: string;
+  readonly metadata: AssetMetadata | null;
 }
 
-export interface MaterializedReferencedFile {
-  nodeId: string;
-  title: string;
-  mimeType: string;
-  sizeBytes: number;
-  /** Absolute path of the copy inside the agent scratch root. */
-  path: string;
-  /** True when the same bytes are also inlined as an image block for vision. */
-  inlineImage: boolean;
+export interface ReferencedResourceAdmission {
+  readonly payload: ReferencedResourcesContextPayload;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly createdResourceRefs: readonly ThreadResourceReference[];
 }
 
-// Collapse whitespace so a stray newline/tab in a free-text title can never break the
-// single-line `<file ... />` tag the reminder emits.
-function compactTitle(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
+export async function admitReferencedResources(input: {
+  readonly projection: DocumentProjection | null;
+  readonly references: readonly { readonly nodeId: string; readonly note?: string }[];
+  readonly resolveAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
+  readonly writeResource: (
+    bytes: Uint8Array,
+    mimeType: string,
+    fileName: string,
+  ) => Promise<{ readonly ref: ThreadResourceReference; readonly created: boolean }>;
+}): Promise<ReferencedResourceAdmission | null> {
+  if (input.references.length === 0) return null;
+  const byId = new Map(input.projection?.nodes.map((node) => [node.id, node]) ?? []);
+  const resources: ReferencedResourceSnapshot[] = [];
+  const resourceRefs: ThreadResourceReference[] = [];
+  const createdResourceRefs: ThreadResourceReference[] = [];
+  const admittedAssets = new Map<string, ThreadResourceReference>();
+  const dependencyKeys = new Set<string>();
+  let inlineImages = 0;
 
-/**
- * Pick the user-referenced nodes whose bytes the agent can be given: image /
- * attachment nodes carrying an `assetId`. Only nodes the user explicitly
- * referenced are eligible — the explicit reference is the authorization, so an
- * asset that merely sits in the document (and was never referenced) is never
- * copied. De-duped by `assetId` (so two nodes pointing at the same bytes, or one
- * node referenced twice, are materialized once); non-asset references are dropped.
- */
-export function selectReferencedAssetNodes(
-  projection: DocumentProjection,
-  referencedNodes: ReadonlyArray<{ nodeId: string; title?: string }> | undefined,
-): ReferencedAssetNode[] {
-  if (!referencedNodes || referencedNodes.length === 0) return [];
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const seenAssets = new Set<string>();
-  const out: ReferencedAssetNode[] = [];
-  for (const ref of referencedNodes) {
-    const node = byId.get(ref.nodeId);
-    if (!node) continue;
-    if (node.type === 'image') {
-      if (!node.assetId || seenAssets.has(node.assetId)) continue;
-      seenAssets.add(node.assetId);
-      out.push({
-        nodeId: ref.nodeId,
-        assetId: node.assetId,
-        isImageNode: true,
-        title: compactTitle(ref.title || node.mediaAlt || node.content.text || ''),
+  for (const reference of uniqueReferences(input.references)) {
+    const node = byId.get(reference.nodeId);
+    if (!node) {
+      resources.push(unavailable(reference.nodeId, reference.note ?? reference.nodeId, 'unknown', 'missing'));
+      continue;
+    }
+    const content = resourceContent(node, byId);
+    const base = {
+      nodeId: node.id,
+      nodeType: node.type ?? 'outline',
+      title: nodeTitle(node),
+      breadcrumb: nodeBreadcrumb(node, byId),
+      content: content.text,
+      contentTruncated: content.truncated,
+    };
+    const assetId = node.type === 'attachment' || node.type === 'image' ? node.assetId : undefined;
+    if (!assetId) {
+      resources.push({
+        ...base,
+        resourceRef: null,
+        inlineImage: false,
+        unavailableReason: node.type === 'attachment' || node.type === 'image' ? 'missing' : null,
       });
-    } else if (node.type === 'attachment') {
-      if (!node.assetId || seenAssets.has(node.assetId)) continue;
-      seenAssets.add(node.assetId);
-      out.push({
-        nodeId: ref.nodeId,
-        assetId: node.assetId,
-        isImageNode: false,
-        // Prefer the node's current text (the display name, kept in sync on rename)
-        // over originalFilename, which is the immutable import-time disk name and goes
-        // stale after a rename. nodeFileName below keeps originalFilename for the path
-        // basename (it preserves the extension); the title is the user-facing name.
-        title: compactTitle(ref.title || node.content.text || node.originalFilename || ''),
-        nodeMimeType: node.mimeType,
-        nodeFileName: node.originalFilename,
-        nodeFileSize: node.fileSize,
+      continue;
+    }
+    const admitted = admittedAssets.get(assetId);
+    if (admitted) {
+      resources.push({ ...base, resourceRef: admitted, inlineImage: false, unavailableReason: null });
+      continue;
+    }
+    try {
+      const resolved = await input.resolveAsset?.(assetId) ?? null;
+      if (!resolved) {
+        resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'missing' });
+        continue;
+      }
+      if ((resolved.metadata?.byteSize ?? 0) > MAX_REFERENCED_RESOURCE_BYTES) {
+        resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'quotaExceeded' });
+        continue;
+      }
+      const handle = await open(
+        resolved.path,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      ).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (!handle) {
+        resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'missing' });
+        continue;
+      }
+      let bytes: Buffer;
+      try {
+        const file = await handle.stat();
+        if (!file.isFile()) {
+          resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'corrupt' });
+          continue;
+        }
+        if (file.size > MAX_REFERENCED_RESOURCE_BYTES) {
+          resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'quotaExceeded' });
+          continue;
+        }
+        bytes = await handle.readFile();
+        if (bytes.byteLength > MAX_REFERENCED_RESOURCE_BYTES) {
+          resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'quotaExceeded' });
+          continue;
+        }
+        if (resolved.metadata && (
+          bytes.byteLength !== resolved.metadata.byteSize
+          || createHash('sha256').update(bytes).digest('hex') !== resolved.metadata.sha256
+        )) {
+          resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'corrupt' });
+          continue;
+        }
+      } finally {
+        await handle.close();
+      }
+      const mimeType = normalizedMimeType(resolved.metadata?.mimeType, node);
+      const fileName = resolved.metadata?.originalFilename
+        || (node.type === 'attachment' ? node.originalFilename : undefined)
+        || basename(resolved.path)
+        || 'resource';
+      const written = await input.writeResource(bytes, mimeType, fileName);
+      admittedAssets.set(assetId, written.ref);
+      const dependencyKey = resourceDependencyKey(written.ref);
+      const newDependency = !dependencyKeys.has(dependencyKey);
+      const inlineImage = newDependency
+        && inlineImages < MAX_INLINE_IMAGES
+        && INLINE_IMAGE_MIME_TYPES.has(mimeType);
+      if (inlineImage) inlineImages += 1;
+      if (newDependency) {
+        dependencyKeys.add(dependencyKey);
+        resourceRefs.push(written.ref);
+        if (written.created) createdResourceRefs.push(written.ref);
+      }
+      resources.push({ ...base, resourceRef: written.ref, inlineImage, unavailableReason: null });
+    } catch (error) {
+      resources.push({
+        ...base,
+        resourceRef: null,
+        inlineImage: false,
+        unavailableReason: resourceFailureReason(error),
       });
     }
   }
-  return out;
+
+  return {
+    payload: { schemaVersion: 1, kind: 'referencedResources', resources },
+    resourceRefs,
+    createdResourceRefs,
+  };
 }
 
-/**
- * A hidden, model-only reminder that tells the agent where the referenced files
- * landed so it can `file_read` them. Images are additionally inlined as image
- * blocks; this block records their path too so the agent can re-read or process
- * the raw bytes. Returns null when there is nothing to surface.
- */
-export function buildReferencedFilesReminder(files: ReadonlyArray<MaterializedReferencedFile>): string | null {
-  if (files.length === 0) return null;
-  const lines = [
-    '<referenced-files>',
-    'The user referenced these outliner files. Their bytes are available at the local paths below — use file_read to read a file (image files are also shown inline as image blocks in this message).',
-  ];
-  for (const file of files) {
-    lines.push(`  <file${xmlAttrs({
-      node_id: file.nodeId,
-      title: file.title,
-      mime: file.mimeType,
-      size_bytes: file.sizeBytes > 0 ? String(file.sizeBytes) : null,
-      path: file.path,
-      inline_image: file.inlineImage ? 'true' : null,
-    })} />`);
-  }
-  lines.push('</referenced-files>');
-  return lines.join('\n');
+function resourceDependencyKey(ref: ThreadResourceReference): string {
+  return `${ref.id}\0${ref.mimeType}\0${ref.byteLength}\0${ref.fileName}`;
+}
+
+function resourceContent(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): { readonly text: string; readonly truncated: boolean } {
+  const children = node.children.flatMap((childId) => {
+    const child = byId.get(childId);
+    return child ? [`- ${outlineText(child, byId)}`] : [];
+  });
+  const raw = [outlineText(node, byId), ...children].filter(Boolean).join('\n');
+  if (raw.length <= MAX_RESOURCE_CONTENT_CHARS) return { text: raw, truncated: false };
+  return { text: raw.slice(0, MAX_RESOURCE_CONTENT_CHARS), truncated: true };
+}
+
+function unavailable(
+  nodeId: string,
+  title: string,
+  nodeType: string,
+  unavailableReason: ReferencedResourceSnapshot['unavailableReason'],
+): ReferencedResourceSnapshot {
+  return {
+    nodeId,
+    nodeType,
+    title,
+    breadcrumb: [],
+    content: '',
+    contentTruncated: false,
+    resourceRef: null,
+    inlineImage: false,
+    unavailableReason,
+  };
+}
+
+function normalizedMimeType(value: string | undefined, node: NodeProjection): string {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === 'image/jpg') return 'image/jpeg';
+  if (normalized) return normalized;
+  if (node.type === 'image') return 'image/png';
+  if (node.type === 'attachment' && node.mimeType) return node.mimeType;
+  return 'application/octet-stream';
+}
+
+function resourceFailureReason(error: unknown): ReferencedResourceSnapshot['unavailableReason'] {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (message.includes('quota') || message.includes('budget') || message.includes('large')) return 'quotaExceeded';
+  if (message.includes('unsupported')) return 'unsupported';
+  return 'corrupt';
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
+}
+
+function uniqueReferences(
+  references: readonly { readonly nodeId: string; readonly note?: string }[],
+): Array<{ readonly nodeId: string; readonly note?: string }> {
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    if (seen.has(reference.nodeId)) return false;
+    seen.add(reference.nodeId);
+    return true;
+  });
 }

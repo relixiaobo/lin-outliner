@@ -230,14 +230,29 @@ describe('Agent Core persistence', () => {
     const incrementalItems = incremental.listItems({ threadId, limit: 1 });
     expect(incrementalTurns.data).toHaveLength(1);
     expect(incrementalTurns.data[0]?.status).toBe('completed');
-    expect(incrementalTurns.data[0]?.items.map((item) => item.type)).toEqual(['userMessage', 'agentMessage']);
+    expect(incrementalTurns.data[0]?.items.map((item) => item.type)).toEqual([
+      'userMessage',
+      'userMessage',
+      'agentMessage',
+    ]);
     expect(incrementalItems.nextCursor).not.toBeNull();
     const secondItemPage = incremental.listItems({
       threadId,
       limit: 1,
       cursor: incrementalItems.nextCursor,
     });
-    expect(secondItemPage.data[0]?.item).toMatchObject({ type: 'agentMessage', text: 'Done' });
+    expect(secondItemPage.data[0]?.item).toMatchObject({
+      type: 'userMessage',
+      content: [{ type: 'text', text: 'Steer' }],
+    });
+    expect(secondItemPage.nextCursor).not.toBeNull();
+    const thirdItemPage = incremental.listItems({
+      threadId,
+      limit: 1,
+      cursor: secondItemPage.nextCursor,
+    });
+    expect(thirdItemPage.data[0]?.item).toMatchObject({ type: 'agentMessage', text: 'Done' });
+    expect(thirdItemPage.nextCursor).toBeNull();
 
     const rebuiltPath = join(root, 'thread_history_rebuilt.sqlite');
     const rebuilt = new ThreadHistoryProjectionStore(rebuiltPath, testDatabase(rebuiltPath));
@@ -441,6 +456,18 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
     phase: 'final_answer',
     memoryCitation: null,
   };
+  const steeredUserItem: ThreadItem = {
+    type: 'userMessage',
+    id: `item-steer-${seed}`,
+    provenance: {
+      originThreadId: threadId,
+      originTurnId: turnId,
+      originItemId: `item-steer-${seed}`,
+    },
+    clientId: null,
+    acceptedAt: 4_005,
+    content: [{ type: 'text', text: 'Steer' }],
+  };
   const completedAgentItem: ThreadItem = { ...startedAgentItem, text: 'Done' };
   const startedTurn: Turn = {
     id: turnId,
@@ -460,7 +487,7 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
   };
   const completedTurn: Turn = {
     ...startedTurn,
-    items: [userItem, completedAgentItem],
+    items: [userItem, steeredUserItem, completedAgentItem],
     status: 'completed',
     completedAt: 4_100,
     durationMs: 100,
@@ -468,12 +495,11 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
   return [
     { type: 'turn/started', threadId, turnId, turn: startedTurn },
     {
-      type: 'item/completed',
+      type: 'items/completed',
       threadId,
       turnId,
-      itemId: userItem.id,
-      item: userItem,
-      completedAt: 4_000,
+      items: [steeredUserItem],
+      completedAt: 4_005,
     },
     {
       type: 'item/started',
@@ -550,14 +576,6 @@ function interruptedLifecycle(
   };
   const prefix: AgentCoreNotification[] = [
     { type: 'turn/started', threadId, turnId, turn: startedTurn },
-    {
-      type: 'item/completed',
-      threadId,
-      turnId,
-      itemId: userItem.id,
-      item: userItem,
-      completedAt: 4_500,
-    },
     {
       type: 'item/started',
       threadId,

@@ -1,5 +1,10 @@
 import path from 'node:path';
-import { type AgentSkillContentTarget, parseSkillMarkdown, skillContentHash } from './agentSkills';
+import {
+  type AgentSkillContentTarget,
+  parseSkillExecutionContract,
+  parseSkillMarkdown,
+  skillContentHash,
+} from './agentSkills';
 import { containsSecretLikeContent } from './agentSecretRedaction';
 
 export interface AgentSkillWriteAudit {
@@ -124,10 +129,15 @@ function validateSkillMarkdown(content: string): void {
       'Add a concise description field that explains when the skill should be used.',
     );
   }
-
-  // No policy checks here: model-invocability and allowed-tools escalation are
-  // enforced by the ratification gate at listing/invocation time, not at write time.
-  // The write boundary only validates validity and safety.
+  try {
+    parseSkillExecutionContract(parsed.frontmatter, parsed.body);
+  } catch (error) {
+    throw new AgentSkillAuthoringError(
+      'invalid_skill_execution_contract',
+      error instanceof Error ? error.message : String(error),
+      'Keep inline Skills instruction-only, or set execution: isolated for shell expansion, allowed-tools, model, or effort overrides.',
+    );
+  }
 }
 
 function validateSupportFile(target: AgentSkillContentTarget, content: string): void {

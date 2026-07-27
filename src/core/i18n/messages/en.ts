@@ -1243,6 +1243,8 @@ commandPalette: {
       turnExecution: 'Turn execution',
       executionDetails: 'Execution usage',
       noUserInput: 'No user input was recorded.',
+      loadingContext: 'Loading context evidence...',
+      contextUnavailable: 'Context evidence is unavailable.',
       threadId: 'Thread ID',
       turnId: 'Turn ID',
       sessionId: 'Session ID',

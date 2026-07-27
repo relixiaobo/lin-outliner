@@ -29,7 +29,7 @@ const DEFAULT_PROFILE: ConfigurationProfile = Object.freeze({
   model: 'inherit',
   reasoningEffort: 'medium',
   tools: Object.freeze(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
-  skills: Object.freeze([]),
+  skills: Object.freeze(['*']),
   plugins: Object.freeze([]),
   mcpServers: Object.freeze([]),
 });

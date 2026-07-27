@@ -6,10 +6,12 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Message, TextContent, UserMessage } from '@earendil-works/pi-ai';
-import type { TurnStatus } from '../../../core/agent/protocol';
+import type {
+  SkillCatalogContextPayload,
+  SkillInvocationContextPayload,
+  TurnStatus,
+} from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
-import { systemReminder } from '../../../core/agentAttachments';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
@@ -28,14 +30,9 @@ import { runAgentToolProcess } from './agentToolProcess';
 export const SKILL_TOOL_NAME = 'skill';
 
 const SKILL_FILE_NAME = 'SKILL.md';
-const SKILL_LISTING_CONTEXT_PERCENT = 0.01;
-const CHARS_PER_TOKEN = 4;
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
 const MIN_NON_EMPTY_DESCRIPTION_CHARS = 20;
-const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
-const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
-const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
 const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'skillify',
@@ -58,7 +55,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Never edit built-in skills.',
     '',
     '3. Draft the supported `SKILL.md` shape.',
-    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `execution`, and `paths`.',
+    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `execution`, `shell`, and `paths`.',
     '   - Write a concise `description` and a precise `when_to_use` that includes positive examples and negative guidance for when not to auto-invoke.',
     '   - Add arguments only when future invocations need variable input.',
     '   - Default to `execution: inline`. Use `execution: isolated` only for self-contained work that benefits from context isolation.',
@@ -72,7 +69,8 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '5. Treat `allowed-tools` as an authored runtime contract.',
     '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated child Thread.',
     '   - For `execution: isolated`, list every tool the child Thread needs; omitted `allowed-tools` creates a tool-free child Thread.',
-    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Turn catalog unchanged.',
+    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Turn catalog unchanged and cannot contain embedded shell expansion.',
+    '   - Embedded shell expansion is isolated execution only and supports `shell: bash` (the default).',
     '   - Flag broad `allowed-tools` in the preview summary.',
     '',
     '6. Resolve ambiguity, then write.',
@@ -171,17 +169,10 @@ const SKILL_TOOL_PARAMETERS = {
 
 
 
-export interface InvokedSkillRecord {
-  skillName: string;
-  skillPath: string;
-  skillRoot?: string;
-  content: string;
-  invokedAt: number;
-}
-
 export interface SkillLoadOptions {
   localRoot?: string;
   includeUserSkills?: boolean;
+  enabledSkills?: readonly string[];
   additionalSkillDirectories?: string[];
   builtInSkillDirectories?: string[];
   builtInSkillRoots?: string[];
@@ -274,15 +265,8 @@ interface InvokeSkillInput {
   args?: string;
   trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
+  invokedAt?: number;
   signal?: AbortSignal;
-}
-
-export interface UserSkillPromptOptions {
-  onIsolatedSkillStart?: (input: {
-    args: string;
-    originalInput: string;
-    skill: SkillDefinition;
-  }) => Promise<void> | void;
 }
 
 export interface SkillIsolatedExecutionInput {
@@ -304,24 +288,13 @@ export interface SkillIsolatedExecutionResult {
 
 export type SkillIsolatedExecutor = (input: SkillIsolatedExecutionInput) => Promise<SkillIsolatedExecutionResult>;
 
-export interface SkillListingReservation {
-  text: string;
-  skillNames: string[];
-  entries: SkillListingStateEntry[];
-}
-
-export interface SkillListingStateEntry {
-  name: string;
-  identity?: string;
-}
-
-type SkillInvocationResult =
+export type SkillInvocationResult =
   | {
     ok: true;
     execution: 'inline' | 'isolated';
     skill: SkillDefinition;
     renderedContent: string;
-    message: UserMessage;
+    evidence: SkillInvocationContextPayload;
     isolated?: SkillIsolatedExecutionResult;
   }
   | {
@@ -334,6 +307,7 @@ type SkillInvocationResult =
 export interface SkillToolData {
   success: boolean;
   skill: string;
+  invocationEvidence?: SkillInvocationContextPayload;
   status?: 'loaded' | 'isolated';
   allowedTools?: string[];
   model?: string;
@@ -344,75 +318,15 @@ export interface SkillToolData {
   error?: string;
 }
 
-export interface SkillTurnEffect {
-  skill: string;
-  model?: string;
-  effort?: string;
-}
-
-class SkillListingState {
-  private readonly entriesByName = new Map<string, string | null>();
-
-  clear(): void {
-    this.entriesByName.clear();
-  }
-
-  has(skill: SkillDefinition): boolean {
-    const current = this.entriesByName.get(skill.name);
-    if (current === undefined) return false;
-    return current === null || current === skillListingIdentity(skill);
-  }
-
-  reserve(skills: readonly SkillDefinition[]): SkillListingStateEntry[] {
-    const entries = skills.map((skill): SkillListingStateEntry => ({
-      name: skill.name,
-      identity: skillListingIdentity(skill),
-    }));
-    for (const entry of entries) {
-      this.entriesByName.set(entry.name, entry.identity ?? null);
-    }
-    return entries;
-  }
-
-  release(entries: readonly SkillListingStateEntry[]): void {
-    for (const entry of entries) {
-      const normalized = normalizeSkillName(entry.name);
-      if (!normalized) continue;
-      const expectedIdentity = entry.identity ?? null;
-      const current = this.entriesByName.get(normalized);
-      if (current === expectedIdentity || expectedIdentity === null) {
-        this.entriesByName.delete(normalized);
-      }
-    }
-  }
-
-  restore(entry: SkillListingStateEntry): void {
-    const normalized = normalizeSkillName(entry.name);
-    if (!normalized) return;
-    const identity = entry.identity?.trim() || null;
-    const current = this.entriesByName.get(normalized);
-    if (current && !identity) return;
-    this.entriesByName.set(normalized, identity);
-  }
-
-  entries(): SkillListingStateEntry[] {
-    return [...this.entriesByName.entries()]
-      .map(([name, identity]) => ({ name, identity: identity ?? undefined }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }
-}
-
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
   private readonly threadId: string;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly assertManagedSkillInvocable?: SkillLoadOptions['assertManagedSkillInvocable'];
-  private readonly listedSkills = new SkillListingState();
-  private readonly pendingSteeringMessages: UserMessage[] = [];
-  private pendingTurnEffect: SkillTurnEffect | null = null;
-  private readonly invokedSkills = new Map<string, InvokedSkillRecord>();
-  private readonly transientSkillReadRoots = new Map<string, number>();
+  private readonly enabledSkills: ReadonlySet<string> | null;
+  private catalogRefreshVersion = 0;
+  private catalogRefreshAcknowledgedVersion = 0;
   private disabledSkills: string[] = [];
 
   constructor(options: SkillLoadOptions = {}) {
@@ -421,121 +335,81 @@ export class AgentSkillRuntime {
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
     this.assertManagedSkillInvocable = options.assertManagedSkillInvocable;
+    this.enabledSkills = options.enabledSkills === undefined || options.enabledSkills.includes('*')
+      ? null
+      : new Set(options.enabledSkills.map(normalizeSkillName).filter(Boolean));
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
-    this.registry.updateAdditionalSkillDirectories(directories);
+    if (this.registry.updateAdditionalSkillDirectories(directories)) {
+      this.requestCatalogRefresh();
+    }
   }
 
   updateDisabledSkills(disabledSkills: string[]): void {
-    this.disabledSkills = disabledSkills;
+    const normalized = [...new Set(disabledSkills)].sort(compareStableText);
+    if (sameStringList(this.disabledSkills, normalized)) return;
+    this.disabledSkills = normalized;
+    this.requestCatalogRefresh();
   }
 
-  resetThreadState(): void {
-    this.listedSkills.clear();
-    this.pendingSteeringMessages.length = 0;
-    this.pendingTurnEffect = null;
-    this.invokedSkills.clear();
-    this.transientSkillReadRoots.clear();
-  }
-
-  async getActiveSkillReadRoots(): Promise<string[]> {
-    if (this.invokedSkills.size === 0 && this.transientSkillReadRoots.size === 0) return [];
-    const trustedRootsBySkill = new Map<string, string>();
-    for (const skill of await this.registry.listAllSkills()) {
-      const skillRoot = skillDirectoryForPrompt(skill);
-      const skillName = normalizeSkillName(skill.name);
-      if (skillRoot && skillName) trustedRootsBySkill.set(skillName, skillRoot);
-    }
-    const roots = new Set<string>(this.transientSkillReadRoots.keys());
-    for (const skill of this.invokedSkills.values()) {
-      const skillName = normalizeSkillName(skill.skillName);
-      const expectedRoot = skillName ? trustedRootsBySkill.get(skillName) : undefined;
-      if (expectedRoot && skill.skillRoot === expectedRoot) roots.add(expectedRoot);
-    }
-    return [...roots];
-  }
-
-  restoreInvokedSkillsFromMessages(messages: readonly Message[]): void {
-    for (const message of messages) {
-      for (const text of messageTextParts(message)) {
-        for (const skillName of parseListedSkillNamesFromText(text)) {
-          this.listedSkills.restore({ name: skillName });
-        }
-        for (const entry of parseListedSkillStateEntriesFromText(text)) {
-          this.listedSkills.restore(entry);
-        }
-        for (const skill of parseInvokedSkillsFromText(text)) {
-          this.invokedSkills.set(skill.skillName, skill);
-        }
-        const loaded = parseLoadedSkillFromText(text);
-        if (loaded) this.invokedSkills.set(loaded.skillName, loaded);
-      }
-    }
-  }
-
-  async buildSkillListingMessage(contextWindowTokens?: number | null): Promise<UserMessage | null> {
-    const text = await this.buildSkillListingReminderText(contextWindowTokens);
-    return text ? createHiddenUserMessage(text) : null;
-  }
-
-  async buildSkillListingReminderText(contextWindowTokens?: number | null): Promise<string | null> {
-    return (await this.reserveSkillListingReminderText(contextWindowTokens))?.text ?? null;
-  }
-
-  async reserveSkillListingReminderText(contextWindowTokens?: number | null): Promise<SkillListingReservation | null> {
-    const skills = await this.registry.getModelInvocableSkills();
-    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill) && !this.isDisabledByRuntimeSettings(skill));
-    if (newSkills.length === 0) return null;
-
-    const content = formatSkillListing(newSkills, contextWindowTokens ?? undefined);
-    if (!content) return null;
-
-    const entries = this.listedSkills.reserve(newSkills);
+  async buildSkillCatalogSnapshot(): Promise<SkillCatalogContextPayload> {
+    this.registry.reloadAll();
+    const skills = (await this.registry.getModelInvocableSkills())
+      .filter((skill) => this.isEnabledByConfiguration(skill) && !this.isDisabledByRuntimeSettings(skill))
+      .sort((left, right) => compareStableText(left.name, right.name));
+    const descriptions = boundedSkillCatalogDescriptions(skills);
+    const entries = skills.map((skill) => ({
+      change: 'available' as const,
+      name: skill.name,
+      displayName: skill.displayName?.trim() || skill.name,
+      source: skill.source,
+      identity: skillListingIdentity(skill),
+      contentHash: skill.contentHash ?? codeRegisteredSkillContentHash(skill),
+      description: descriptions.get(skill.name) ?? '',
+    }));
+    const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
+      name: entry.name,
+      displayName: entry.displayName,
+      source: entry.source,
+      identity: entry.identity,
+      contentHash: entry.contentHash,
+      description: entry.description,
+    })))).digest('hex');
     return {
-      text: `The following skills are available for use with the ${SKILL_TOOL_NAME} tool:\n\n${content}`,
-      skillNames: entries.map((entry) => entry.name),
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+      catalogHash,
       entries,
     };
   }
 
-  releaseSkillListingReservation(reservation: SkillListingReservation): void {
-    this.listedSkills.release(reservation.entries);
-  }
-
-  async buildSkillListingContent(contextWindowTokens?: number | null): Promise<TextContent | null> {
-    const message = await this.buildSkillListingMessage(contextWindowTokens);
-    const first = Array.isArray(message?.content) ? message.content[0] : null;
-    return first?.type === 'text' ? first : null;
-  }
-
-  enqueueSteeringMessage(message: UserMessage): void {
-    this.pendingSteeringMessages.push(message);
-  }
-
-  drainSteeringMessages(): UserMessage[] {
-    const messages = this.pendingSteeringMessages.slice();
-    this.pendingSteeringMessages.length = 0;
-    return messages;
-  }
-
-  consumePendingTurnEffect(): SkillTurnEffect | null {
-    const effect = this.pendingTurnEffect;
-    this.pendingTurnEffect = null;
-    return effect;
-  }
-
   async notifyFileTouched(filePaths: string[]): Promise<void> {
     const changed = await this.registry.activateForFilePaths(filePaths);
-    if (!changed) return;
-    const listing = await this.buildSkillListingMessage();
-    if (listing) this.enqueueSteeringMessage(listing);
+    if (changed) this.requestCatalogRefresh();
   }
 
   async notifySkillContentWritten(_filePaths: string[]): Promise<void> {
     this.registry.reloadAll();
-    const listing = await this.buildSkillListingMessage();
-    if (listing) this.enqueueSteeringMessage(listing);
+    this.requestCatalogRefresh();
+  }
+
+  catalogRefreshCheckpoint(): number | null {
+    return this.catalogRefreshVersion > this.catalogRefreshAcknowledgedVersion
+      ? this.catalogRefreshVersion
+      : null;
+  }
+
+  acknowledgeCatalogRefresh(checkpoint: number): void {
+    if (!Number.isSafeInteger(checkpoint) || checkpoint <= 0 || checkpoint > this.catalogRefreshVersion) {
+      throw new Error('Invalid Skill catalog refresh checkpoint.');
+    }
+    this.catalogRefreshAcknowledgedVersion = Math.max(
+      this.catalogRefreshAcknowledgedVersion,
+      checkpoint,
+    );
   }
 
   resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
@@ -565,12 +439,11 @@ export class AgentSkillRuntime {
   /**
    * Re-derive trust from the persisted store after a trust change made through a
    * different runtime (the Settings panel runs outside a Thread). A freshly ratified
-   * skill is steered into the Thread's model listing like any skill write.
+   * Skill schedules a canonical catalog refresh before the next provider request.
    */
   async refreshTrustRecords(): Promise<void> {
     this.registry.refreshTrustRecords();
-    const listing = await this.buildSkillListingMessage();
-    if (listing) this.enqueueSteeringMessage(listing);
+    this.requestCatalogRefresh();
   }
 
   async getSkill(name: string): Promise<SkillDefinition | null> {
@@ -579,7 +452,9 @@ export class AgentSkillRuntime {
 
   async listUserInvocableSkills(): Promise<SkillDefinition[]> {
     const skills = await this.registry.getUserInvocableSkills();
-    return skills.filter((skill) => !this.isDisabledByRuntimeSettings(skill));
+    return skills.filter((skill) => (
+      this.isEnabledByConfiguration(skill) && !this.isDisabledByRuntimeSettings(skill)
+    ));
   }
 
   async listAllSkills(): Promise<SkillDefinition[]> {
@@ -595,6 +470,14 @@ export class AgentSkillRuntime {
     let skill = await this.registry.resolveSkill(requestedName);
     if (!skill) {
       return { ok: false, code: 'unknown_skill', message: `Unknown skill: ${requestedName}` };
+    }
+    if (!this.isEnabledByConfiguration(skill)) {
+      return {
+        ok: false,
+        code: 'skill_not_enabled',
+        message: `Skill ${skill.name} is outside this Thread's configured Skill ceiling.`,
+        skill,
+      };
     }
     if (this.isDisabledByRuntimeSettings(skill)) {
       return { ok: false, code: 'skill_disabled', message: `Skill ${skill.name} is currently disabled in settings.` };
@@ -657,7 +540,6 @@ export class AgentSkillRuntime {
           skill,
         };
       }
-      const releaseReadRoot = this.retainTransientSkillReadRoot(skill);
       try {
         const isolated = await this.executeIsolatedSkill({
           skill,
@@ -672,7 +554,7 @@ export class AgentSkillRuntime {
           execution: 'isolated',
           skill,
           renderedContent,
-          message: createIsolatedSkillResultMessage(skill, isolated, input.trigger === 'slash'),
+          evidence: skillInvocationEvidence(skill, renderedContent, input),
           isolated,
         };
       } catch (error) {
@@ -683,83 +565,15 @@ export class AgentSkillRuntime {
           message,
           skill,
         };
-      } finally {
-        releaseReadRoot();
       }
     }
 
-    this.recordInvokedSkill(skill, renderedContent);
-    this.recordTurnEffect(skill);
     return {
       ok: true,
       execution: 'inline',
       skill,
       renderedContent,
-      message: createSkillLoadedMessage(skill, renderedContent, input.trigger === 'slash'),
-    };
-  }
-
-  createSlashPromptMessage(
-    originalInput: string,
-    invocation: Extract<SkillInvocationResult, { ok: true }>,
-    turnReminder?: string | null,
-    options: { includeOriginalInput?: boolean } = {},
-  ): UserMessage {
-    const hidden = messageText(invocation.message);
-    const content: TextContent[] = [{ type: 'text', text: hidden }];
-    if (turnReminder) {
-      content.push({ type: 'text', text: systemReminder(turnReminder) });
-    }
-    if (options.includeOriginalInput !== false) {
-      content.push({ type: 'text', text: originalInput.trim() });
-    }
-    return {
-      role: 'user',
-      timestamp: Date.now(),
-      content,
-    };
-  }
-
-  createInvokedSkillsReminder(): UserMessage | null {
-    const skills = buildInvokedSkillsForReminder(this.invokedSkills);
-    if (skills.length === 0) return null;
-    const content = skills
-      .map((skill) => `### Skill: ${skill.name}\nPath: ${skill.path}\n\n${skill.content}`)
-      .join('\n\n---\n\n');
-    return createHiddenUserMessage(
-      `The following skills were invoked in this session. Continue to follow these guidelines:\n\n${content}`,
-    );
-  }
-
-  createSkillListingStateReminder(): UserMessage | null {
-    const entries = this.listedSkills.entries();
-    if (entries.length === 0) return null;
-    return createHiddenUserMessage([
-      SKILL_LISTING_STATE_MARKER,
-      '',
-      ...entries.map(formatPersistedListingStateEntry),
-    ].join('\n'));
-  }
-
-  private recordInvokedSkill(skill: SkillDefinition, renderedContent: string): void {
-    const skillRoot = skillDirectoryForPrompt(skill) ?? undefined;
-    this.invokedSkills.set(skill.name, {
-      skillName: skill.name,
-      skillPath: skillPathForPrompt(skill),
-      ...(skillRoot ? { skillRoot } : {}),
-      content: renderedContent,
-      invokedAt: Date.now(),
-    });
-  }
-
-  private retainTransientSkillReadRoot(skill: SkillDefinition): () => void {
-    const root = skillDirectoryForPrompt(skill);
-    if (!root) return () => undefined;
-    this.transientSkillReadRoots.set(root, (this.transientSkillReadRoots.get(root) ?? 0) + 1);
-    return () => {
-      const remaining = (this.transientSkillReadRoots.get(root) ?? 1) - 1;
-      if (remaining > 0) this.transientSkillReadRoots.set(root, remaining);
-      else this.transientSkillReadRoots.delete(root);
+      evidence: skillInvocationEvidence(skill, renderedContent, input),
     };
   }
 
@@ -767,23 +581,42 @@ export class AgentSkillRuntime {
     return skill.source !== 'managed' && this.disabledSkills.includes(skill.name);
   }
 
-  private recordTurnEffect(skill: SkillDefinition): void {
-    if (!skill.model && !skill.effort) return;
-    this.pendingTurnEffect = mergeSkillTurnEffects(this.pendingTurnEffect, {
-      skill: skill.name,
-      model: skill.model,
-      effort: skill.effort,
-    });
+  private isEnabledByConfiguration(skill: SkillDefinition): boolean {
+    return this.enabledSkills === null || this.enabledSkills.has(normalizeSkillName(skill.name));
+  }
+
+  private requestCatalogRefresh(): void {
+    this.catalogRefreshVersion += 1;
   }
 
 }
 
-function mergeSkillTurnEffects(previous: SkillTurnEffect | null, next: SkillTurnEffect): SkillTurnEffect {
-  if (!previous) return { ...next };
+function skillInvocationEvidence(
+  skill: SkillDefinition,
+  renderedContent: string,
+  input: InvokeSkillInput,
+): SkillInvocationContextPayload {
   return {
-    skill: next.skill,
-    model: next.model ?? previous.model,
-    effort: next.effort ?? previous.effort,
+    schemaVersion: 1,
+    kind: 'skillInvocation',
+    name: skill.name,
+    displayName: skill.displayName?.trim() || skill.name,
+    source: skill.source,
+    identity: skillListingIdentity(skill),
+    resourceRoot: skillDirectoryForPrompt(skill),
+    contentHash: skill.contentHash ?? codeRegisteredSkillContentHash(skill),
+    instructions: renderedContent,
+    arguments: input.args ?? '',
+    execution: skill.execution,
+    invocationSource: input.trigger === 'agent' ? 'model' : input.trigger === 'slash' ? 'user' : 'runtime',
+    constraints: skill.execution === 'isolated'
+      ? {
+          allowedTools: [...skill.allowedTools],
+          model: skill.model ?? null,
+          effort: skill.effort ?? null,
+        }
+      : { allowedTools: [], model: null, effort: null },
+    invokedAt: input.invokedAt ?? Date.now(),
   };
 }
 
@@ -802,12 +635,12 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       '  - `skill: "commit", args: "-m \'Fix bug\'"` - invoke with arguments',
       '  - `skill: "review-pr", args: "123"` - invoke with arguments',
       'Important:',
-      '- Available skills are listed in system-reminder messages in the Thread.',
+      '- Available skills are listed in the current Skill catalog context.',
       `- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant ${SKILL_TOOL_NAME} tool BEFORE generating any other response about the task.`,
       '- NEVER mention a skill without actually calling this tool.',
       '- Do not invoke a skill that is already running.',
       '- Do not use this tool for built-in commands.',
-      '- If you see a <skill-name> tag in the current Turn, the Skill has already been loaded. Follow the loaded instructions instead of calling this tool again.',
+      '- If the current context already contains a matching Skill invocation, follow the loaded instructions instead of calling this tool again.',
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
@@ -826,7 +659,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
           content: [{ type: 'text', text: invocation.message }],
           details: errorEnvelope<SkillToolData>(SKILL_TOOL_NAME, invocation.code, invocation.message, {
             data: { success: false, skill: normalizeSkillName(params.skill) || params.skill },
-            instructions: 'Use only skills listed in the current skill listing reminder, or continue without a skill.',
+            instructions: 'Use only Skills listed in the current Skill catalog context, or continue without a Skill.',
           }),
         };
       }
@@ -834,6 +667,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       const data: SkillToolData = {
         success: true,
         skill: invocation.skill.name,
+        invocationEvidence: invocation.evidence,
         status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
         allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
         model: invocation.skill.model,
@@ -851,9 +685,8 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         };
       }
 
-      runtime.enqueueSteeringMessage(invocation.message);
       return {
-        content: [{ type: 'text', text: `Launching skill: ${invocation.skill.name}` }],
+        content: [{ type: 'text', text: `Loaded Skill: ${invocation.skill.name}` }],
         details: successEnvelope(SKILL_TOOL_NAME, data),
       };
     },
@@ -871,60 +704,27 @@ export function parseSkillSlashCommand(input: string): { skill: string; args: st
   };
 }
 
-export async function createSlashSkillPrompt(
+export async function resolveUserSkillInvocation(
   runtime: AgentSkillRuntime,
   input: string,
-  turnReminder?: string | null,
-  options: UserSkillPromptOptions = {},
-): Promise<UserMessage | null> {
-  const parsed = parseSkillSlashCommand(input);
-  if (!parsed) return null;
-  const skill = await runtime.getSkill(parsed.skill);
-  if (!skill) return null;
-  let isolatedStarted = false;
-  if (skill.execution === 'isolated') {
-    await options.onIsolatedSkillStart?.({
-      args: parsed.args,
-      originalInput: input,
-      skill,
-    });
-    isolatedStarted = Boolean(options.onIsolatedSkillStart);
-  }
-
+  options: { readonly invokedAt?: number } = {},
+): Promise<SkillInvocationResult | null> {
+  const slash = parseSkillSlashCommand(input);
+  const requested = slash ?? parseNaturalLanguageSkillifyRequest(input);
+  if (!requested) return null;
+  const skill = await runtime.getSkill(requested.skill);
+  if (!skill || skill.execution === 'isolated') return null;
   const invocation = await runtime.invokeSkill({
-    skill: parsed.skill,
-    args: parsed.args,
+    skill: requested.skill,
+    args: requested.args,
     trigger: 'slash',
+    invokedAt: options.invokedAt,
   });
   if (!invocation.ok) {
-    throw new Error(invocation.message);
-  }
-  return runtime.createSlashPromptMessage(input, invocation, turnReminder, {
-    includeOriginalInput: !isolatedStarted,
-  });
-}
-
-export async function createUserSkillPrompt(
-  runtime: AgentSkillRuntime,
-  input: string,
-  turnReminder?: string | null,
-  options: UserSkillPromptOptions = {},
-): Promise<UserMessage | null> {
-  const slashPrompt = await createSlashSkillPrompt(runtime, input, turnReminder, options);
-  if (slashPrompt || input.trim().startsWith('/')) return slashPrompt;
-
-  const naturalLanguageSkill = parseNaturalLanguageSkillifyRequest(input);
-  if (!naturalLanguageSkill) return null;
-
-  const invocation = await runtime.invokeSkill({
-    skill: naturalLanguageSkill.skill,
-    args: naturalLanguageSkill.args,
-    trigger: 'slash',
-  });
-  if (!invocation.ok) {
+    if (slash) throw new Error(invocation.message);
     return null;
   }
-  return runtime.createSlashPromptMessage(input, invocation, turnReminder);
+  return invocation;
 }
 
 export function parseNaturalLanguageSkillifyRequest(input: string): { skill: 'skillify'; args: string } | null {
@@ -966,6 +766,8 @@ class SkillRegistry {
   private loaded = false;
   private readonly skills = new Map<string, SkillDefinition>();
   private readonly conditionalSkills = new Map<string, SkillDefinition>();
+  private readonly activatedConditionalSkillIds = new Set<string>();
+  private readonly dynamicSkillDirectories = new Set<string>();
   private readonly checkedDynamicSkillDirs = new Set<string>();
   private readonly seenSkillFileIds = new Set<string>();
   private loadPromise: Promise<void> | null = null;
@@ -1180,11 +982,12 @@ class SkillRegistry {
     }
   }
 
-  updateAdditionalSkillDirectories(directories: readonly string[]): void {
+  updateAdditionalSkillDirectories(directories: readonly string[]): boolean {
     const normalized = normalizeAdditionalSkillDirectories(directories, this.root);
-    if (sameStringList(this.additionalSkillDirectories, normalized)) return;
+    if (sameStringList(this.additionalSkillDirectories, normalized)) return false;
     this.additionalSkillDirectories = normalized;
     this.reloadAll();
+    return true;
   }
 
   resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
@@ -1220,7 +1023,7 @@ class SkillRegistry {
   async listAllSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
     return [...this.skills.values(), ...this.conditionalSkills.values()]
-      .sort((left, right) => left.name.localeCompare(right.name));
+      .sort((left, right) => compareStableText(left.name, right.name));
   }
 
   async resolveSkill(name: string): Promise<SkillDefinition | null> {
@@ -1249,6 +1052,7 @@ class SkillRegistry {
       if (filePaths.some((filePath) => skillMatchesPath(skill, filePath, this.root))) {
         this.conditionalSkills.delete(skill.name);
         this.skills.set(skill.name, skill);
+        if (skill.identity) this.activatedConditionalSkillIds.add(skill.identity);
         changed = true;
       }
     }
@@ -1304,6 +1108,12 @@ class SkillRegistry {
           await this.addLoadedSkill(skill);
         }
       }
+      for (const dir of this.dynamicSkillDirectories) {
+        const loaded = await loadSkillsFromDir(dir, 'project');
+        for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
+      }
       if (this.loadGeneration === loadGeneration) {
         this.loaded = true;
       }
@@ -1345,7 +1155,11 @@ class SkillRegistry {
         && record.agentHash !== undefined
         && record.agentHash === skill.contentHash,
     };
-    if (skill.paths?.length && skill.source !== 'built-in') {
+    if (
+      skill.paths?.length
+      && skill.source !== 'built-in'
+      && !this.activatedConditionalSkillIds.has(skillWithIdentity.identity)
+    ) {
       this.conditionalSkills.set(skill.name, skillWithIdentity);
     } else {
       this.skills.set(skill.name, skillWithIdentity);
@@ -1364,6 +1178,7 @@ class SkillRegistry {
           if (await directoryExists(skillDir)) {
             this.checkedDynamicSkillDirs.add(skillDir);
             if (!(await isGitIgnored(this.root, skillDir))) {
+              this.dynamicSkillDirectories.add(skillDir);
               discovered.push(skillDir);
             }
           }
@@ -1602,6 +1417,10 @@ function createSkillDefinition(input: {
   const argumentNames = parseArgumentNames(input.frontmatter.arguments);
   const whenToUse = coerceString(input.frontmatter.when_to_use)
     ?? coerceString(input.frontmatter['when-to-use']);
+  const { execution, allowedTools, model, effort, shell } = parseSkillExecutionContract(
+    input.frontmatter,
+    input.body,
+  );
   return {
     name: input.name,
     displayName: input.source === 'built-in' ? undefined : coerceString(input.frontmatter.name),
@@ -1618,21 +1437,51 @@ function createSkillDefinition(input: {
     ratified: true,
     contentHash: input.contentHash,
     managedContentHash: input.managedContentHash,
-    allowedTools: parseToolListFromFrontmatter(input.frontmatter['allowed-tools']),
+    allowedTools,
     argumentHint: coerceString(input.frontmatter['argument-hint']),
     argumentNames,
     version: coerceString(input.frontmatter.version)
       ?? (isPlainRecord(input.frontmatter.metadata) ? coerceString(input.frontmatter.metadata.version) : undefined),
-    model: coerceString(input.frontmatter.model) === 'inherit'
-      ? undefined
-      : coerceString(input.frontmatter.model),
-    effort: coerceString(input.frontmatter.effort),
-    shell: coerceString(input.frontmatter.shell),
-    execution: parseSkillExecutionFrontmatter(input.frontmatter),
+    model,
+    effort,
+    shell,
+    execution,
     paths: parsePathsFrontmatter(input.frontmatter.paths),
     contentLength: input.body.length,
     body: input.body,
   };
+}
+
+export function parseSkillExecutionContract(frontmatter: Record<string, unknown>, body = ''): {
+  readonly execution: 'inline' | 'isolated';
+  readonly allowedTools: string[];
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
+  readonly shell: string | undefined;
+} {
+  const execution = parseSkillExecutionFrontmatter(frontmatter);
+  const allowedTools = parseToolListFromFrontmatter(frontmatter['allowed-tools']);
+  const model = coerceString(frontmatter.model) === 'inherit'
+    ? undefined
+    : coerceString(frontmatter.model);
+  const effort = coerceString(frontmatter.effort);
+  const shell = coerceString(frontmatter.shell)?.trim().toLowerCase();
+  if (
+    execution === 'inline'
+    && (
+      allowedTools.length > 0
+      || model !== undefined
+      || effort !== undefined
+      || shell !== undefined
+      || containsEmbeddedSkillShell(body)
+    )
+  ) {
+    throw new Error('Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands; use execution: isolated.');
+  }
+  if (shell !== undefined && shell !== 'bash') {
+    throw new Error(`Unsupported Skill shell "${shell}". Tenon supports shell: bash only.`);
+  }
+  return { execution, allowedTools, model, effort, shell };
 }
 
 function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition {
@@ -1692,6 +1541,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 const SKILL_SHELL_BLOCK_PATTERN = /```!\s*\n?([\s\S]*?)\n?```/g;
 const SKILL_SHELL_INLINE_PATTERN = /(?<=^|\s)!`([^`]+)`/gm;
+
+function containsEmbeddedSkillShell(content: string): boolean {
+  return collectSkillShellMatches(content).length > 0;
+}
 
 async function renderSkillContent(
   skill: SkillDefinition,
@@ -1785,43 +1638,6 @@ function collectSkillShellMatches(content: string): Array<{ raw: string; command
   return nonOverlapping;
 }
 
-function createSkillLoadedMessage(skill: SkillDefinition, renderedContent: string, includeMetadata: boolean): UserMessage {
-  const includeIdentityMetadata = includeMetadata || isResourceBackedBuiltInSkill(skill);
-  if (!includeIdentityMetadata) return createHiddenUserMessage(renderedContent);
-  const metadata = [
-    ...(includeMetadata ? [`<skill-message>${skill.name}</skill-message>`] : []),
-    `<skill-name>${skill.name}</skill-name>`,
-    ...(includeMetadata ? ['<skill-format>true</skill-format>'] : []),
-    `<skill-path>${skillPathForPrompt(skill)}</skill-path>`,
-  ].join('\n');
-  return createHiddenUserMessage(`${metadata}\n\n${renderedContent}`);
-}
-
-function createIsolatedSkillResultMessage(
-  skill: SkillDefinition,
-  result: SkillIsolatedExecutionResult,
-  includeMetadata: boolean,
-): UserMessage {
-  const metadata = includeMetadata
-    ? [
-        `<skill-message>${skill.name}</skill-message>`,
-        `<skill-name>${skill.name}</skill-name>`,
-        '<skill-format>true</skill-format>',
-      ].join('\n')
-    : '';
-  const body = [
-    metadata,
-    `Skill ${skill.name} ran in an isolated child Thread.`,
-    `threadId: ${result.threadId}`,
-    `agentRole: ${result.agentRole}`,
-    '',
-    '<skill-result>',
-    result.result || result.error || 'Skill execution completed without a text result.',
-    '</skill-result>',
-  ].filter(Boolean).join('\n');
-  return createHiddenUserMessage(body);
-}
-
 function formatIsolatedSkillToolResult(
   skill: SkillDefinition,
   result: SkillIsolatedExecutionResult | undefined,
@@ -1837,156 +1653,6 @@ function formatIsolatedSkillToolResult(
   ].filter(Boolean).join('\n');
 }
 
-function createHiddenUserMessage(text: string): UserMessage {
-  return {
-    role: 'user',
-    timestamp: Date.now(),
-    content: [{ type: 'text', text: systemReminder(text) }],
-  };
-}
-
-function messageText(message: UserMessage): string {
-  if (typeof message.content === 'string') return message.content;
-  return message.content
-    .filter((part): part is TextContent => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
-}
-
-function messageTextParts(message: Message): string[] {
-  if (message.role === 'assistant') {
-    return message.content
-      .filter((part): part is TextContent => part.type === 'text')
-      .map((part) => part.text);
-  }
-  if (typeof message.content === 'string') return [message.content];
-  return message.content
-    .filter((part): part is TextContent => part.type === 'text')
-    .map((part) => part.text);
-}
-
-function parseInvokedSkillsFromText(text: string): InvokedSkillRecord[] {
-  const body = unwrapSystemReminder(text);
-  const marker = 'The following skills were invoked in this session. Continue to follow these guidelines:';
-  const start = body.indexOf(marker);
-  if (start < 0) return [];
-  return body
-    .slice(start + marker.length)
-    .trim()
-    .split(/\n\n---\n\n/g)
-    .flatMap((section): InvokedSkillRecord[] => {
-      const match = /^### Skill: ([^\n]+)\nPath: ([^\n]+)\n\n([\s\S]*)$/.exec(section.trim());
-      if (!match) return [];
-      const skillRoot = skillRootFromRenderedContent(match[3]!);
-      return [{
-        skillName: match[1]!.trim(),
-        skillPath: match[2]!.trim(),
-        ...(skillRoot ? { skillRoot } : {}),
-        content: match[3]!.trim(),
-        invokedAt: Date.now(),
-      }];
-    });
-}
-
-function parseListedSkillNamesFromText(text: string): string[] {
-  const body = unwrapSystemReminder(text);
-  return [
-    ...parsePersistedListingStateEntries(body).map((entry) => entry.name),
-    ...parseLiveSkillListing(body),
-  ];
-}
-
-function parseListedSkillStateEntriesFromText(text: string): SkillListingStateEntry[] {
-  return parsePersistedListingStateEntries(unwrapSystemReminder(text));
-}
-
-function parsePersistedListingStateEntries(body: string): SkillListingStateEntry[] {
-  const start = body.indexOf(SKILL_LISTING_STATE_MARKER);
-  if (start < 0) return [];
-  const section = body.slice(start + SKILL_LISTING_STATE_MARKER.length);
-  return section
-    .split(/\r?\n/)
-    .map(parsePersistedListingStateLine)
-    .filter((entry): entry is SkillListingStateEntry => entry !== null);
-}
-
-function parsePersistedListingStateLine(line: string): SkillListingStateEntry | null {
-  const match = /^-\s+([^\s\[]+)(?:\s+\[skill-file:\s*([^\]]+)\])?\s*$/.exec(line.trim());
-  const name = normalizeSkillName(match?.[1] ?? '');
-  if (!name) return null;
-  const identity = match?.[2]?.trim();
-  return identity ? { name, identity } : { name };
-}
-
-function parseLiveSkillListing(body: string): string[] {
-  if (!body.includes('The following skills are available for use with the skill tool')
-    && !body.includes('The following skills are available for use with the Skill tool')) {
-    return [];
-  }
-  return body
-    .split(/\r?\n/)
-    .map((line) => /^-\s+([^:\s]+)(?::|\s|$)/.exec(line)?.[1]?.trim() ?? '')
-    .map(normalizeSkillName)
-    .filter((skillName): skillName is string => Boolean(skillName));
-}
-
-function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
-  const body = unwrapSystemReminder(text);
-  if (body.includes('<skill-result>')) return null;
-  const explicitName = /<skill-name>([^<]+)<\/skill-name>/.exec(body)?.[1]?.trim();
-  const explicitPath = /<skill-path>([^<]+)<\/skill-path>/.exec(body)?.[1]?.trim();
-  const baseDir = /^Base directory for this skill:\s*(.+)$/m.exec(body)?.[1]?.trim();
-  if (!explicitName && !baseDir) return null;
-  const skillName = normalizeSkillName(explicitName || (baseDir ? path.basename(baseDir) : ''));
-  if (!skillName) return null;
-  return {
-    skillName,
-    skillPath: explicitPath || baseDir || `built-in:${skillName}`,
-    ...(baseDir ? { skillRoot: baseDir } : {}),
-    content: body.trim(),
-    invokedAt: Date.now(),
-  };
-}
-
-function skillRootFromRenderedContent(content: string): string | null {
-  return /^Base directory for this skill:\s*(.+)$/m.exec(content)?.[1]?.trim() ?? null;
-}
-
-function unwrapSystemReminder(text: string): string {
-  const trimmed = text.trim();
-  const start = '<system-reminder>';
-  const end = '</system-reminder>';
-  if (!trimmed.startsWith(start)) return trimmed;
-  const endIndex = trimmed.lastIndexOf(end);
-  return (endIndex >= 0 ? trimmed.slice(start.length, endIndex) : trimmed.slice(start.length)).trim();
-}
-
-function formatSkillListing(skills: SkillDefinition[], contextWindowTokens?: number): string {
-  if (skills.length === 0) return '';
-  const budget = getSkillListingCharBudget(contextWindowTokens);
-  const entries = skills.map((skill) => ({
-    skill,
-    full: `- ${skill.name}: ${formatSkillDescription(skill)}`,
-  }));
-  const fullTotal = entries.reduce((sum, entry) => sum + entry.full.length, 0) + entries.length - 1;
-  if (fullTotal <= budget) return entries.map((entry) => entry.full).join('\n');
-
-  const nameOverhead = skills.reduce((sum, skill) => sum + skill.name.length + 4, 0) + skills.length - 1;
-  const maxDescription = Math.floor((budget - nameOverhead) / skills.length);
-  if (maxDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS) {
-    return skills.map((skill) => `- ${skill.name}`).join('\n');
-  }
-  return skills
-    .map((skill) => `- ${skill.name}: ${truncate(formatSkillDescription(skill), maxDescription)}`)
-    .join('\n');
-}
-
-function formatPersistedListingStateEntry(entry: SkillListingStateEntry): string {
-  return entry.identity
-    ? `- ${entry.name} [skill-file: ${entry.identity}]`
-    : `- ${entry.name}`;
-}
-
 function skillListingIdentity(skill: SkillDefinition): string {
   return skill.identity ?? skillPathForPrompt(skill);
 }
@@ -1998,42 +1664,42 @@ function formatSkillDescription(skill: SkillDefinition): string {
   return truncate(description, MAX_LISTING_DESCRIPTION_CHARS);
 }
 
-function getSkillListingCharBudget(contextWindowTokens?: number): number {
-  const override = Number(process.env.AGENT_SKILL_LISTING_CHAR_BUDGET);
-  if (Number.isFinite(override) && override > 0) return override;
-  if (!contextWindowTokens) return DEFAULT_SKILL_LISTING_CHAR_BUDGET;
-  return Math.floor(contextWindowTokens * CHARS_PER_TOKEN * SKILL_LISTING_CONTEXT_PERCENT);
+function boundedSkillCatalogDescriptions(skills: readonly SkillDefinition[]): ReadonlyMap<string, string> {
+  if (skills.length === 0) return new Map();
+  const full = skills.map((skill) => [skill.name, formatSkillDescription(skill)] as const);
+  const fullLength = full.reduce((total, [name, description]) => total + name.length + description.length + 4, 0);
+  if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
+  const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
+  const perDescription = Math.floor((DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead) / skills.length);
+  return new Map(full.map(([name, description]) => [
+    name,
+    perDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? '' : truncate(description, perDescription),
+  ]));
 }
 
-function buildInvokedSkillsForReminder(records: Map<string, InvokedSkillRecord>): Array<{ name: string; path: string; content: string }> {
-  let usedTokens = 0;
-  return [...records.values()]
-    .sort((a, b) => b.invokedAt - a.invokedAt)
-    .map((skill) => ({
-      name: skill.skillName,
-      path: skill.skillPath,
-      content: truncateToTokens(skill.content, POST_COMPACT_MAX_TOKENS_PER_SKILL),
-    }))
-    .filter((skill) => {
-      const tokens = estimateTokens(skill.content);
-      if (usedTokens + tokens > POST_COMPACT_SKILLS_TOKEN_BUDGET) return false;
-      usedTokens += tokens;
-      return true;
-    });
+function codeRegisteredSkillContentHash(skill: SkillDefinition): string {
+  return createHash('sha256').update(JSON.stringify({
+    name: skill.name,
+    displayName: skill.displayName ?? null,
+    description: skill.description,
+    whenToUse: skill.whenToUse ?? null,
+    allowedTools: skill.allowedTools,
+    argumentHint: skill.argumentHint ?? null,
+    argumentNames: skill.argumentNames,
+    model: skill.model ?? null,
+    effort: skill.effort ?? null,
+    execution: skill.execution,
+    body: skill.body,
+  })).digest('hex');
+}
+
+function compareStableText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 3))}...`;
-}
-
-function truncateToTokens(value: string, maxTokens: number): string {
-  const maxChars = maxTokens * CHARS_PER_TOKEN;
-  return value.length <= maxChars ? value : value.slice(0, maxChars);
-}
-
-function estimateTokens(value: string): number {
-  return Math.ceil(value.length / CHARS_PER_TOKEN);
 }
 
 function normalizeAdditionalSkillDirectories(value: readonly string[] | undefined, root: string): string[] {

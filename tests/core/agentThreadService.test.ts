@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,7 @@ import type {
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
 import type { AgentCoreNotification, ThreadItem, Turn } from '../../src/core/agent/protocol';
+import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
@@ -27,9 +29,15 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from '../../src/main/agent/runtime/types';
+import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { Core } from '../../src/core/core';
 import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
+import {
+  AgentSkillRuntime,
+  createSkillTool,
+  resolveUserSkillInvocation,
+} from '../../src/main/agent/capabilities/agentSkills';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -41,7 +49,11 @@ afterEach(async () => {
 class ControlledExecutor implements TurnExecutor {
   readonly contexts: TurnExecutionContext[] = [];
   readonly steered: string[] = [];
+  steeringFailure: Error | null = null;
   private readonly completions: Array<(result: TurnExecutionResult) => void> = [];
+  private steeringCalls = 0;
+  private steeringBlock: Promise<void> | null = null;
+  private releaseSteeringBlock: (() => void) | null = null;
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     this.contexts.push(context);
@@ -55,8 +67,17 @@ class ControlledExecutor implements TurnExecutor {
       memoryCitation: null,
     };
     await context.recorder.started(started);
-    context.onSteer((input) => {
-      this.steered.push(input.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n'));
+    context.onSteer(async (input) => {
+      this.steeringCalls += 1;
+      if (this.steeringBlock) await this.steeringBlock;
+      if (this.steeringFailure) {
+        const error = this.steeringFailure;
+        this.steeringFailure = null;
+        throw error;
+      }
+      this.steered.push(input.items.flatMap((item) => item.type === 'userMessage'
+        ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
+        : []).join('\n'));
     });
     const result = await new Promise<TurnExecutionResult>((resolve) => {
       this.completions.push(resolve);
@@ -78,6 +99,22 @@ class ControlledExecutor implements TurnExecutor {
 
   async waitUntilWaiting(index = 0): Promise<void> {
     while (!this.completions[index]) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  blockSteering(): void {
+    this.steeringBlock = new Promise<void>((resolve) => {
+      this.releaseSteeringBlock = resolve;
+    });
+  }
+
+  releaseSteering(): void {
+    this.releaseSteeringBlock?.();
+    this.releaseSteeringBlock = null;
+    this.steeringBlock = null;
+  }
+
+  async waitUntilSteering(callCount = 1): Promise<void> {
+    while (this.steeringCalls < callCount) await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }
 
@@ -120,6 +157,67 @@ class ForkPayloadExecutor extends ControlledExecutor {
   }
 }
 
+class ForkLocalImageExecutor implements TurnExecutor {
+  private finishExecution: (() => void) | null = null;
+  private executionError: Error | null = null;
+
+  async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    try {
+      const itemId = context.recorder.createItemId();
+      const promptImage = await context.persistOutputImage(
+        Buffer.from('local image provider snapshot').toString('base64'),
+        'image/png',
+      );
+      const started: ThreadItem = {
+        type: 'dynamicToolCall',
+        id: itemId,
+        provenance: context.recorder.localProvenance(itemId),
+        status: 'inProgress',
+        outputRef: null,
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: '/workspace/local.png' },
+        contentItems: null,
+        success: null,
+        durationMs: null,
+      };
+      await context.recorder.started(started);
+      await context.recorder.completed({
+        ...started,
+        status: 'completed',
+        contentItems: [{
+          type: 'image',
+          source: { kind: 'localFile', path: '/workspace/local.png' },
+          promptImage,
+        }],
+        success: true,
+        durationMs: 1,
+      });
+      await new Promise<void>((resolve) => {
+        this.finishExecution = resolve;
+      });
+      return completedExecutionResult();
+    } catch (error) {
+      this.executionError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    }
+  }
+
+  finish(): void {
+    if (!this.finishExecution) throw new Error('Local image executor is not waiting');
+    this.finishExecution();
+  }
+
+  async waitUntilWaiting(): Promise<void> {
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (this.executionError) throw this.executionError;
+      if (this.finishExecution) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    throw new Error('Local image executor did not reach its completion barrier');
+  }
+}
+
 class FailingImageExecutor extends ControlledExecutor {
   imageRef: Awaited<ReturnType<TurnExecutionContext['persistOutputImage']>> | null = null;
 
@@ -129,6 +227,29 @@ class FailingImageExecutor extends ControlledExecutor {
       'image/png',
     );
     throw new Error('Tool failed after persisting an image');
+  }
+}
+
+class FailingContextPayloadExecutor extends ControlledExecutor {
+  contextRef: Awaited<ReturnType<ToolPayloadStore['writeContext']>> | null = null;
+
+  constructor(private readonly payloads: ToolPayloadStore) {
+    super();
+  }
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    this.contextRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      entries: [{
+        key: 'orphaned-runtime-context',
+        source: 'test',
+        authority: 'application',
+        purpose: 'observation',
+        text: 'This payload never reached a canonical Item.',
+      }],
+    });
+    throw new Error('Runtime failed after persisting context');
   }
 }
 
@@ -423,6 +544,31 @@ describe('ThreadService', () => {
       threadId: thread.id,
       threadName: 'Canonical Agent runtime',
     });
+    await fixture.service.close();
+  });
+
+  test('keeps a committed transient mutation authoritative when notification listeners fail', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    fixture.service.subscribe((notification) => {
+      if (notification.type === 'thread/name/updated') throw new Error('listener delivery failed');
+    });
+
+    const loggedErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    console.error = (...args: unknown[]) => { loggedErrors.push(args); };
+    await fixture.service.setThreadName(thread.id, 'Committed name').finally(() => {
+      console.error = previousConsoleError;
+    });
+
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.name).toBe('Committed name');
+    expect(loggedErrors).toHaveLength(1);
+    expect(loggedErrors[0]?.[0]).toBe('[agent] transient notification listener failed');
     await fixture.service.close();
   });
 
@@ -782,8 +928,8 @@ describe('ThreadService', () => {
         mcpServers: [],
       },
       historyBeforeTurn: [],
-      systemContext: [],
     });
+    expect(fixture.executor.contexts[0]!.turn.items.some((item) => item.type === 'contextEvidence')).toBe(false);
     expect(await fixture.service.extensionToolContributions(fixture.executor.contexts[0]!.thread.id)).toEqual([]);
     expect(extensionEvents).toEqual([]);
     expect(notifications).toEqual([]);
@@ -892,8 +1038,10 @@ describe('ThreadService', () => {
     expect(stored.turns).toHaveLength(1);
     expect(stored.turns?.[0]).toMatchObject({ status: 'completed', id: accepted.turn.id });
     expect(stored.turns?.[0]?.items.map((item) => item.type)).toEqual([
+      'contextEvidence',
       'userMessage',
       'agentMessage',
+      'contextEvidence',
       'userMessage',
     ]);
     expect(notifications.map((notification) => notification.type)).toContain('turn/completed');
@@ -903,6 +1051,755 @@ describe('ThreadService', () => {
     await reopened.service.initialize();
     expect(reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toEqual(stored.turns);
     await reopened.service.close();
+  });
+
+  test('rebuilds a missing client-input sidecar from canonical history during runtime', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const request = {
+      threadId: thread.id,
+      clientUserMessageId: 'crash-window-initial',
+      input: [{ type: 'text' as const, text: 'Admit this exactly once' }],
+    };
+    const accepted = await fixture.service.startRendererTurn(request);
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    reopened.stores.metadata.deleteClientInput(thread.id, request.clientUserMessageId);
+    expect(reopened.stores.metadata.readClientInput(thread.id, request.clientUserMessageId)).toBeNull();
+    await expect(reopened.service.startRendererTurn(request)).resolves.toEqual({
+      ...accepted,
+      turn: expect.objectContaining({ id: accepted.turn.id, status: 'completed' }),
+      deduplicated: true,
+    });
+    expect(reopened.stores.metadata.readClientInput(thread.id, request.clientUserMessageId)).toMatchObject({
+      turnId: accepted.turn.id,
+      itemId: accepted.acceptedItemId,
+    });
+    expect(reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toHaveLength(1);
+    await reopened.service.close();
+  });
+
+  test('admits Skill catalogs for start and steer and authorizes explicit context detail reads', async () => {
+    let catalogVersion = 1;
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: () => ({
+        invocation: null,
+        catalogSnapshot: {
+          schemaVersion: 1,
+          kind: 'skillCatalog',
+          mode: 'baseline',
+          previousCatalogHash: null,
+          catalogHash: String(catalogVersion).repeat(64),
+          entries: [{
+            change: 'available',
+            name: catalogVersion === 1 ? 'review' : 'new-review',
+            displayName: catalogVersion === 1 ? 'Review' : 'New Review',
+            source: 'project',
+            identity: `/workspace/.agents/skills/review-v${catalogVersion}/SKILL.md`,
+            contentHash: String(catalogVersion + 1).repeat(64),
+            description: 'Review the current change.',
+          }],
+        },
+      }),
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Start with the current catalog' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{ type: 'text', text: 'The catalog is unchanged' }],
+    });
+    catalogVersion = 2;
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{ type: 'text', text: 'Use the newly added Skill too' }],
+    });
+
+    const turn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const admitted = turn.items.filter((item) => item.type === 'contextEvidence' || item.type === 'userMessage');
+    expect(admitted.map((item) => item.type === 'contextEvidence' ? item.kind : item.type)).toEqual([
+      'turnEnvironment',
+      'skillCatalog',
+      'userMessage',
+      'turnEnvironment',
+      'userMessage',
+      'turnEnvironment',
+      'skillCatalog',
+      'userMessage',
+    ]);
+    const catalogs = admitted.filter((item) => item.type === 'contextEvidence' && item.kind === 'skillCatalog');
+    expect(catalogs).toHaveLength(2);
+    const latest = catalogs[1]!;
+    const detail = await fixture.service.request('thread/context/read', {
+      threadId: thread.id,
+      turnId: turn.id,
+      itemId: latest.id,
+      contextId: latest.payloadRef.id,
+    });
+    expect(detail.context?.payload).toMatchObject({
+      kind: 'skillCatalog',
+      mode: 'delta',
+      previousCatalogHash: '1'.repeat(64),
+      entries: [
+        { name: 'new-review', change: 'added' },
+        { name: 'review', change: 'removed' },
+      ],
+    });
+    expect(await fixture.service.request('thread/context/read', {
+      threadId: thread.id,
+      turnId: turn.id,
+      itemId: turn.items.find((item) => item.type === 'userMessage')!.id,
+      contextId: latest.payloadRef.id,
+    })).toEqual({ context: null });
+    expect(await fixture.service.request('thread/context/read', {
+      threadId: thread.id,
+      turnId: turn.id,
+      itemId: latest.id,
+      contextId: 'f'.repeat(64),
+    })).toEqual({ context: null });
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('publishes steering evidence and user input as one atomic Item batch', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Wait for steering' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const recorder = fixture.executor.contexts[0]!.recorder;
+    const beforeItemIds = recorder.orderedItems().map((item) => item.id);
+    const payloadRoot = join(fixture.root, 'agent', 'payloads');
+    const beforePayloads = await storageFiles(payloadRoot);
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let rejectBatch = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (rejectBatch && notification.type === 'items/completed') {
+        rejectBatch = false;
+        throw new Error('steering batch publication failed');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+
+    await expect(fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'atomic-steering',
+      input: [{ type: 'text', text: 'This steering must not partially survive' }],
+    })).rejects.toThrow('steering batch publication failed');
+
+    fixture.stores.rollout.append = append;
+    expect(recorder.orderedItems().map((item) => item.id)).toEqual(beforeItemIds);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items.map((item) => item.id))
+      .toEqual(beforeItemIds);
+    expect(await storageFiles(payloadRoot)).toEqual(beforePayloads);
+
+    const retry = await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'atomic-steering',
+      input: [{ type: 'text', text: 'This steering must not partially survive' }],
+    });
+    expect(retry.deduplicated).toBe(false);
+    const retryItems = recorder.orderedItems().slice(beforeItemIds.length);
+    expect(retryItems.map((item) => item.type === 'contextEvidence' ? item.kind : item.type)).toEqual([
+      'turnEnvironment',
+      'userMessage',
+    ]);
+    const rolloutEntries = await fixture.stores.rollout.read(thread.id);
+    expect(rolloutEntries.filter((entry) => entry.event.type === 'items/completed')).toHaveLength(1);
+    expect(rolloutEntries.at(-1)?.event).toMatchObject({
+      type: 'items/completed',
+      items: retryItems.map((item) => ({ id: item.id })),
+    });
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('keeps committed steering accepted and fails the Turn when provider delivery fails', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Wait for steering' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.steeringFailure = new Error('provider steering projection failed');
+
+    const steered = await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'committed-steering-failure',
+      input: [{ type: 'text', text: 'Keep this accepted input' }],
+    });
+    expect(steered.deduplicated).toBe(false);
+    await fixture.service.waitForIdle(thread.id);
+
+    const stored = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0];
+    expect(stored).toMatchObject({
+      status: 'failed',
+      error: { message: 'provider steering projection failed' },
+    });
+    expect(stored?.items.some((item) => (
+      item.type === 'userMessage'
+      && item.id === steered.acceptedItemId
+      && item.content.some((part) => part.type === 'text' && part.text === 'Keep this accepted input')
+    ))).toBe(true);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'items/completed'
+      && entry.event.items.some((item) => item.id === steered.acceptedItemId)
+    ))).toBe(true);
+    await fixture.service.close();
+  });
+
+  test('deduplicates committed steering after the Turn terminates and after restart', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Wait for steering' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const request = {
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'terminal-steering-retry',
+      input: [{ type: 'text' as const, text: 'Commit this steering once' }],
+    };
+    const steered = await fixture.service.steerTurn(request);
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    await expect(fixture.service.steerTurn(request)).resolves.toEqual({
+      ...steered,
+      deduplicated: true,
+    });
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    reopened.stores.metadata.deleteClientInput(thread.id, request.clientUserMessageId);
+    reopened.stores.metadata.bindClientInput({
+      threadId: thread.id,
+      clientId: request.clientUserMessageId,
+      turnId: 'stale-turn',
+      itemId: 'stale-item',
+      createdAt: 0,
+    });
+    await expect(reopened.service.steerTurn(request)).resolves.toEqual({
+      ...steered,
+      deduplicated: true,
+    });
+    expect(reopened.stores.metadata.readClientInput(thread.id, request.clientUserMessageId)).toMatchObject({
+      turnId: accepted.turn.id,
+      itemId: steered.acceptedItemId,
+    });
+    expect(reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items.filter((item) => (
+      item.type === 'userMessage' && item.clientId === request.clientUserMessageId
+    ))).toHaveLength(1);
+    await reopened.service.close();
+  });
+
+  test('closes steering admission before terminalization freezes the final Item list', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Wait for the terminal race' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.blockSteering();
+
+    const committedSteering = fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'committed-before-terminalization',
+      input: [{ type: 'text', text: 'Commit this before closing admission' }],
+    });
+    await fixture.executor.waitUntilSteering();
+    const threadMutex = Reflect.get(fixture.service, 'threadMutex') as {
+      run<T>(key: string, operation: () => Promise<T>): Promise<T>;
+    };
+    const runWithThreadMutex = threadMutex.run.bind(threadMutex);
+    let resolveTerminalClosure!: () => void;
+    const terminalClosureQueued = new Promise<void>((resolve) => {
+      resolveTerminalClosure = resolve;
+    });
+    threadMutex.run = <T>(key: string, operation: () => Promise<T>): Promise<T> => {
+      threadMutex.run = runWithThreadMutex;
+      resolveTerminalClosure();
+      return runWithThreadMutex(key, operation);
+    };
+    fixture.executor.finish();
+    await terminalClosureQueued;
+
+    const lateSteering = fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'late-terminal-steering',
+      input: [{ type: 'text', text: 'Do not admit this after execution ends' }],
+    }).then(
+      (response) => ({ response, error: null }),
+      (error: unknown) => ({ response: null, error }),
+    );
+    fixture.executor.releaseSteering();
+
+    expect((await committedSteering).deduplicated).toBe(false);
+    const rejectedSteering = await lateSteering;
+    expect(rejectedSteering.response).toBeNull();
+    expect(rejectedSteering.error).toBeInstanceOf(Error);
+    expect((rejectedSteering.error as Error).message).toBe('Expected Turn is no longer accepting steering');
+    await fixture.service.waitForIdle(thread.id);
+
+    const stored = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0];
+    expect(stored?.items.some((item) => (
+      item.type === 'userMessage'
+      && item.content.some((part) => part.type === 'text' && part.text === 'Commit this before closing admission')
+    ))).toBe(true);
+    expect(stored?.items.some((item) => (
+      item.type === 'userMessage'
+      && item.content.some((part) => part.type === 'text' && part.text === 'Do not admit this after execution ends')
+    ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('does not retain a partial initial admission when Turn publication fails', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const payloadRoot = join(fixture.root, 'agent', 'payloads');
+    mkdirSync(payloadRoot, { recursive: true });
+    const beforePayloads = await storageFiles(payloadRoot);
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let rejectStart = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (rejectStart && notification.type === 'turn/started') {
+        rejectStart = false;
+        throw new Error('initial Turn publication failed');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+
+    await expect(fixture.service.startRendererTurn({
+      threadId: thread.id,
+      clientUserMessageId: 'atomic-initial',
+      input: [{ type: 'text', text: 'Do not retain this failed admission' }],
+    })).rejects.toThrow('initial Turn publication failed');
+
+    fixture.stores.rollout.append = append;
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread).toMatchObject({
+      preview: '',
+      status: { type: 'idle' },
+      turns: [],
+    });
+    expect(await storageFiles(payloadRoot)).toEqual(beforePayloads);
+
+    const retry = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      clientUserMessageId: 'atomic-initial',
+      input: [{ type: 'text', text: 'Do not retain this failed admission' }],
+    });
+    expect(retry.deduplicated).toBe(false);
+    expect((await fixture.stores.rollout.read(thread.id)).filter((entry) => (
+      entry.event.type === 'turn/started'
+    ))).toHaveLength(1);
+
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('keeps a published initial admission accepted when post-commit status publication fails', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let rejectActiveStatus = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (
+        rejectActiveStatus
+        && notification.type === 'thread/status/changed'
+        && notification.status.type === 'active'
+      ) {
+        rejectActiveStatus = false;
+        throw new Error('active status publication failed');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      clientUserMessageId: 'committed-initial-status-failure',
+      input: [{ type: 'text', text: 'Keep the canonical admission' }],
+    });
+    await fixture.service.waitForIdle(thread.id);
+    fixture.stores.rollout.append = append;
+
+    const stored = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0];
+    expect(stored).toMatchObject({
+      id: accepted.turn.id,
+      status: 'failed',
+      error: { message: 'active status publication failed' },
+    });
+    const retry = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      clientUserMessageId: 'committed-initial-status-failure',
+      input: [{ type: 'text', text: 'Keep the canonical admission' }],
+    });
+    expect(retry).toMatchObject({
+      acceptedItemId: accepted.acceptedItemId,
+      deduplicated: true,
+      turn: { id: accepted.turn.id, status: 'failed' },
+    });
+    expect((await fixture.stores.rollout.read(thread.id)).filter((entry) => (
+      entry.event.type === 'turn/started' && entry.event.turnId === accepted.turn.id
+    ))).toHaveLength(1);
+    await fixture.service.close();
+  });
+
+  test('keeps a committed admission authoritative when notification observers fail', async () => {
+    const extensions = new ExtensionRegistry();
+    let observerFailures = 0;
+    extensions.register({
+      id: 'failing-notification-observer',
+      onNotification: (notification) => {
+        if (notification.type !== 'turn/started') return;
+        observerFailures += 1;
+        throw new Error('observer delivery failed');
+      },
+    });
+    const fixture = await createFixture(extensions);
+    let listenerFailures = 0;
+    fixture.service.subscribe((notification) => {
+      if (notification.type !== 'turn/started') return;
+      listenerFailures += 1;
+      throw new Error('listener delivery failed');
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    const loggedErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    console.error = (...args: unknown[]) => { loggedErrors.push(args); };
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Commit before observer delivery' }],
+    }).finally(() => {
+      console.error = previousConsoleError;
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    expect(listenerFailures).toBe(1);
+    expect(observerFailures).toBe(1);
+    expect(loggedErrors).toHaveLength(2);
+    const stored = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0];
+    expect(stored?.id).toBe(accepted.turn.id);
+    expect(stored?.items.map((item) => item.type === 'contextEvidence' ? item.kind : item.type)).toEqual([
+      'turnEnvironment',
+      'userMessage',
+      'agentMessage',
+    ]);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'turn/started'
+      && entry.event.turn.items.some((item) => item.type === 'userMessage')
+    ))).toBe(true);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('resolves renderer hints and referenced assets through main-owned admission authority', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-context-authority-'));
+    roots.push(root);
+    const validPath = join(root, 'valid.png');
+    const corruptPath = join(root, 'corrupt.png');
+    const validBytes = Buffer.from('valid-image');
+    const corruptBytes = Buffer.from('corrupt-image');
+    await Promise.all([
+      writeFile(validPath, validBytes),
+      writeFile(corruptPath, corruptBytes),
+    ]);
+    const projection = contextProjection([
+      contextNode('root', 'Authoritative root', { children: ['focus', 'valid', 'corrupt', 'missing'] }),
+      contextNode('focus', 'Authoritative title', { parentId: 'root' }),
+      contextNode('valid', 'Authoritative image', {
+        parentId: 'root',
+        type: 'image',
+        assetId: 'asset-valid',
+      }),
+      contextNode('corrupt', 'Corrupt image', {
+        parentId: 'root',
+        type: 'image',
+        assetId: 'asset-corrupt',
+      }),
+      contextNode('missing', 'Missing image', {
+        parentId: 'root',
+        type: 'image',
+        assetId: 'asset-missing',
+      }),
+    ]);
+    const metadata = (id: string, bytes: Buffer, fileName: string): AssetMetadata => ({
+      schemaVersion: 1,
+      id,
+      mimeType: 'image/png',
+      byteSize: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      originalFilename: fileName,
+      createdAt: 1,
+    });
+    const fixture = await createFixture(undefined, {
+      getDocumentProjection: () => projection,
+      resolveReferencedAsset: async (assetId) => {
+        if (assetId === 'asset-valid') {
+          return { path: validPath, metadata: metadata(assetId, validBytes, 'valid.png') };
+        }
+        if (assetId === 'asset-corrupt') {
+          return {
+            path: corruptPath,
+            metadata: { ...metadata(assetId, corruptBytes, 'corrupt.png'), sha256: '0'.repeat(64) },
+          };
+        }
+        return null;
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    const malformed = {
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Injected request' }],
+      userView: {
+        activePanelId: 'panel-1',
+        focusedPanelId: 'panel-1',
+        focusSurface: 'row',
+        focusedNodeId: 'focus',
+        selectedNodeIds: [],
+        panels: [{
+          panelId: 'panel-1',
+          rootNodeId: 'root',
+          order: 1,
+          active: true,
+          focused: true,
+          visibleNodes: [{ nodeId: 'focus', depth: 1, expanded: false, title: 'Injected title' }],
+          visibleOutlineTruncated: false,
+        }],
+        truncated: false,
+      },
+    };
+    await expect(fixture.service.request('turn/start', malformed as never))
+      .rejects.toThrow('unknown fields');
+
+    await fixture.service.request('turn/start', {
+      threadId: thread.id,
+      input: [
+        { type: 'text', text: 'Inspect these Nodes' },
+        { type: 'nodeReference', nodeId: 'valid', note: 'Injected image title' },
+        { type: 'nodeReference', nodeId: 'corrupt' },
+        { type: 'nodeReference', nodeId: 'missing' },
+      ],
+      additionalContext: {
+        renderer_note: { kind: 'untrusted', value: 'Renderer observation' },
+      },
+      userView: {
+        activePanelId: 'panel-1',
+        focusedPanelId: 'panel-1',
+        focusSurface: 'row',
+        focusedNodeId: 'focus',
+        selectedNodeIds: ['focus'],
+        panels: [{
+          panelId: 'panel-1',
+          rootNodeId: 'root',
+          order: 1,
+          active: true,
+          focused: true,
+          visibleNodes: [
+            { nodeId: 'root', depth: 0, expanded: true },
+            { nodeId: 'focus', depth: 1, expanded: false },
+          ],
+          visibleOutlineTruncated: false,
+        }],
+        truncated: false,
+      },
+    });
+    await fixture.executor.waitUntilWaiting();
+    const turn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const payloads = await Promise.all(turn.items.flatMap((item) => item.type === 'contextEvidence'
+      ? [fixture.stores.payloads.readContext(thread.id, item.payloadRef)]
+      : []));
+    const userView = payloads.find((payload) => payload?.kind === 'userView');
+    expect(userView).toMatchObject({
+      focusedNode: { nodeId: 'focus', title: 'Authoritative title' },
+      selectedNodes: [{ nodeId: 'focus', title: 'Authoritative title' }],
+      panels: [{
+        rootNodeId: 'root',
+        rootTitle: 'Authoritative root',
+        visibleOutline: [
+          { nodeId: 'root', title: 'Authoritative root' },
+          { nodeId: 'focus', title: 'Authoritative title' },
+        ],
+      }],
+    });
+    expect(payloads.find((payload) => payload?.kind === 'additionalContext')).toMatchObject({
+      entries: [{
+        key: 'renderer_note',
+        source: 'renderer',
+        authority: 'untrusted',
+        purpose: 'observation',
+        text: 'Renderer observation',
+      }],
+    });
+    const resources = payloads.find((payload) => payload?.kind === 'referencedResources');
+    expect(resources).toMatchObject({
+      resources: [
+        {
+          nodeId: 'valid',
+          title: 'Authoritative image',
+          resourceRef: { fileName: 'valid.png' },
+          unavailableReason: null,
+        },
+        { nodeId: 'corrupt', resourceRef: null, unavailableReason: 'corrupt' },
+        { nodeId: 'missing', resourceRef: null, unavailableReason: 'missing' },
+      ],
+    });
+    if (resources?.kind !== 'referencedResources' || !resources.resources[0]?.resourceRef) {
+      throw new Error('Expected admitted resource');
+    }
+    expect(await fixture.stores.payloads.readResource(thread.id, resources.resources[0].resourceRef))
+      .toEqual(validBytes);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('preserves privileged and extension context source authority', async () => {
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'context-probe',
+      contributeThreadContext: () => ({
+        extensionId: 'context-probe',
+        additionalContext: {
+          extension_instruction: { kind: 'application', value: 'Extension guidance' },
+          extension_observation: { kind: 'untrusted', value: 'External observation' },
+        },
+      }),
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'automation',
+      threadSource: 'automation',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startPrivilegedTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Run scheduled work' }],
+      additionalContext: {
+        automation_info: { kind: 'application', value: 'Host schedule guidance' },
+      },
+      trigger: { kind: 'feature', feature: 'automation', ref: 'automation-1' },
+    });
+    await fixture.executor.waitUntilWaiting();
+    const evidence = fixture.executor.contexts[0]?.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'additionalContext'
+    ));
+    if (!evidence || evidence.type !== 'contextEvidence') throw new Error('Additional context evidence missing');
+    const payload = await fixture.stores.payloads.readContext(thread.id, evidence.payloadRef);
+    expect(payload).toMatchObject({
+      kind: 'additionalContext',
+      entries: expect.arrayContaining([
+        {
+          key: 'automation_info',
+          source: 'main',
+          authority: 'application',
+          purpose: 'instruction',
+          text: 'Host schedule guidance',
+        },
+        {
+          key: 'context-probe:extension_instruction',
+          source: 'extension:context-probe',
+          authority: 'application',
+          purpose: 'instruction',
+          text: 'Extension guidance',
+        },
+        {
+          key: 'context-probe:extension_observation',
+          source: 'extension:context-probe',
+          authority: 'untrusted',
+          purpose: 'observation',
+          text: 'External observation',
+        },
+      ]),
+    });
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
   });
 
   test('creates only the declared Agent Core storage tree from fresh userData', async () => {
@@ -925,6 +1822,7 @@ describe('ThreadService', () => {
     const files = await storageFiles(join(fixture.root, 'agent'));
     expect(files.filter((file) => !file.endsWith('-shm') && !file.endsWith('-wal'))).toEqual([
       'goals.sqlite',
+      expect.stringMatching(new RegExp(`^payloads/${thread.id}/context/[a-f0-9]{64}\\.json$`)),
       `rollouts/${thread.id}.jsonl`,
       'state.sqlite',
       'thread_history.sqlite',
@@ -1001,14 +1899,6 @@ describe('ThreadService', () => {
     for (const notification of [
       { type: 'turn/started', threadId: thread.id, turnId, turn: startedTurn },
       {
-        type: 'item/completed',
-        threadId: thread.id,
-        turnId,
-        itemId: userItem.id,
-        item: userItem,
-        completedAt: fixture.clock(),
-      },
-      {
         type: 'item/started',
         threadId: thread.id,
         turnId,
@@ -1068,9 +1958,11 @@ describe('ThreadService', () => {
     expect(fork.parentThreadId).toBeNull();
     expect(copied.id).not.toBe(sourceTurn.id);
     expect(copied.provenance).toEqual(sourceTurn.provenance);
-    expect(copied.items[0]?.id).not.toBe(sourceTurn.items[0]?.id);
-    expect(copied.items[0]?.provenance).toEqual(sourceTurn.items[0]?.provenance);
-    expect(copied.items[0]).toMatchObject({ type: 'userMessage', clientId: null });
+    const sourceUser = sourceTurn.items.find((item) => item.type === 'userMessage')!;
+    const copiedUser = copied.items.find((item) => item.type === 'userMessage')!;
+    expect(copiedUser.id).not.toBe(sourceUser.id);
+    expect(copiedUser.provenance).toEqual(sourceUser.provenance);
+    expect(copiedUser).toMatchObject({ type: 'userMessage', clientId: null });
     await fixture.service.close();
   });
 
@@ -1101,7 +1993,11 @@ describe('ThreadService', () => {
     await service.waitForIdle(source.id);
     const sourceTurn = service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
     const sourceUser = sourceTurn.items.find((item) => item.type === 'userMessage')!;
-    const sourceEvidence = sourceTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'turnEnvironment')!;
+    const sourceEvidence = sourceTurn.items.find((item) => (
+      item.type === 'contextEvidence'
+      && item.kind === 'turnEnvironment'
+      && item.contextRefs.length > 0
+    ))!;
     const sourceInherited = sourceTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'inheritedContext')!;
 
     const fork = (await service.forkThread({
@@ -1110,7 +2006,11 @@ describe('ThreadService', () => {
     })).thread;
     const forkTurn = service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
     const forkUser = forkTurn.items.find((item) => item.type === 'userMessage')!;
-    const forkEvidence = forkTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'turnEnvironment')!;
+    const forkEvidence = forkTurn.items.find((item) => (
+      item.type === 'contextEvidence'
+      && item.kind === 'turnEnvironment'
+      && item.payloadRef.id === sourceEvidence.payloadRef.id
+    ))!;
     const forkInherited = forkTurn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'inheritedContext')!;
     const forkReset = forkTurn.items.find((item) => item.type === 'contextReset')!;
     const forkCompaction = forkTurn.items.find((item) => item.type === 'contextCompaction')!;
@@ -1233,6 +2133,42 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('copies local tool image provider snapshots into a fork', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const executor = new ForkLocalImageExecutor();
+    const opened = await openFixture(root, executor, () => 1_720_000_000_000);
+    await opened.service.initialize();
+    const source = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    const accepted = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Read the image' }],
+    });
+    await executor.waitUntilWaiting();
+    executor.finish();
+    await opened.service.waitForIdle(source.id);
+
+    const fork = (await opened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkItem = opened.service.readThread({ threadId: fork.id, includeTurns: true })
+      .thread.turns![0]!.items.find((item) => item.type === 'dynamicToolCall');
+    const forkImage = forkItem?.contentItems?.find((content) => content.type === 'image');
+    if (!forkImage || !('promptImage' in forkImage)) throw new Error('Fork local image snapshot missing');
+
+    await opened.service.deleteThread(source.id);
+    expect(forkImage.source).toEqual({ kind: 'localFile', path: '/workspace/local.png' });
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.promptImage))
+      .toEqual(Buffer.from('local image provider snapshot'));
+    await opened.service.close();
+  });
+
   test('removes a newly written tool image when no canonical Item references it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
@@ -1255,6 +2191,36 @@ describe('ThreadService', () => {
     if (!executor.imageRef) throw new Error('Failing executor did not write its image');
     expect(await opened.stores.payloads.readResource(thread.id, executor.imageRef)).toBeNull();
     await opened.service.close();
+  });
+
+  test('removes execution-time context payloads that never reach a canonical Item', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const stores = createStores(root);
+    const executor = new FailingContextPayloadExecutor(stores.payloads);
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      now: () => 1_720_000_000_000,
+    });
+    await service.initialize();
+    const thread = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    await service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Fail after writing context' }],
+    });
+    await service.waitForIdle(thread.id);
+
+    if (!executor.contextRef) throw new Error('Failing executor did not write its context payload');
+    expect(await stores.payloads.readContext(thread.id, executor.contextRef)).toBeNull();
+    await service.close();
   });
 
   test('copies inherited managed attachments and prompt snapshots into a fork', async () => {
@@ -2325,6 +3291,153 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('waits for the Turn Skill registry before assembling runtime tools', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Initialize tools' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    let resolveSkillRuntime!: (runtime: AgentSkillRuntime) => void;
+    const skillRuntime = new Promise<AgentSkillRuntime>((resolve) => {
+      resolveSkillRuntime = resolve;
+    });
+    let assembled = false;
+    const runtime = new ToolRuntime(fixture.service, {
+      skillRuntime: () => skillRuntime,
+      capabilityTools: () => {
+        assembled = true;
+        return [];
+      },
+      capabilityConfig: { blocks: [] },
+    });
+
+    const tools = runtime.createTools(context);
+    await Promise.resolve();
+    expect(assembled).toBe(false);
+    resolveSkillRuntime(new AgentSkillRuntime({
+      localRoot: fixture.root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+    }));
+    await tools;
+    expect(assembled).toBe(true);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('serializes concurrent Skill catalog publication against the canonical journal', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Refresh Skills' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const snapshot = {
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+      catalogHash: 'a'.repeat(64),
+      entries: [],
+    } as const;
+
+    const published = await Promise.all([
+      context.persistSkillCatalog(snapshot),
+      context.persistSkillCatalog(snapshot),
+    ]);
+
+    expect(published.filter(Boolean)).toHaveLength(1);
+    const stored = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread;
+    expect(stored.turns?.[0]?.items.filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ))).toHaveLength(1);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('rolls back execution-time context payloads when Item publication fails', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Publish Skill evidence' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const payloadRoot = join(fixture.root, 'agent', 'payloads');
+    const before = await storageFiles(payloadRoot);
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let rejectPublication = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (
+        rejectPublication
+        && notification.type === 'items/completed'
+        && notification.items.some((item) => (
+          item.type === 'contextEvidence' && item.kind === 'skillInvocation'
+        ))
+      ) {
+        rejectPublication = false;
+        throw new Error('context Item publication failed');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+
+    await expect(context.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'skillInvocation',
+      name: 'publication-failure',
+      displayName: 'Publication Failure',
+      source: 'project',
+      identity: '/workspace/.agents/skills/publication-failure/SKILL.md',
+      resourceRoot: '/workspace/.agents/skills/publication-failure',
+      contentHash: 'f'.repeat(64),
+      instructions: 'This guidance must not survive failed publication.',
+      arguments: '',
+      execution: 'inline',
+      invocationSource: 'model',
+      constraints: { allowedTools: [], model: null, effort: null },
+      invokedAt: fixture.clock(),
+    }, 'Invoked Skill: Publication Failure')).rejects.toThrow('context Item publication failed');
+
+    fixture.stores.rollout.append = append;
+    expect(context.recorder.orderedItems().some((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillInvocation'
+    ))).toBe(false);
+    expect(await storageFiles(payloadRoot)).toEqual(before);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items.some((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillInvocation'
+    ))).toBe(false);
+    await fixture.service.close();
+  });
+
   test('scopes collaboration waits and preserves child activity that arrived before waiting', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -2502,6 +3615,251 @@ describe('ThreadService', () => {
     executor.finish();
     await reopened.service.waitForIdle(thread.id);
     await reopened.service.close();
+  });
+
+  test('admits direct inline Skill guidance as typed evidence without changing user input', async () => {
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: async ({ thread, content, acceptedAt }) => {
+        const runtime = new AgentSkillRuntime({
+          localRoot: thread.cwd,
+          threadId: thread.id,
+          includeUserSkills: false,
+        });
+        const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+        const invocation = await resolveUserSkillInvocation(runtime, text, { invokedAt: acceptedAt });
+        return {
+          catalogSnapshot: await runtime.buildSkillCatalogSnapshot(),
+          invocation: invocation?.ok ? invocation.evidence : null,
+        };
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const input = '/skillify turn this workflow into a reusable Skill';
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: input }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const turn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const invocationItem = turn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'skillInvocation');
+    const userItem = turn.items.find((item) => item.type === 'userMessage');
+    expect(invocationItem).toBeDefined();
+    expect(userItem?.content).toEqual([{ type: 'text', text: input }]);
+    const detail = await fixture.service.request('thread/context/read', {
+      threadId: thread.id,
+      turnId: turn.id,
+      itemId: invocationItem!.id,
+      contextId: invocationItem!.payloadRef.id,
+    });
+    expect(detail.context?.payload).toMatchObject({
+      kind: 'skillInvocation',
+      name: 'skillify',
+      invocationSource: 'user',
+      execution: 'inline',
+      invokedAt: userItem?.acceptedAt,
+    });
+    expect(detail.context?.payload.kind === 'skillInvocation' ? detail.context.payload.instructions : '')
+      .toContain('Skillify v2 workflow');
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('persists model Skill invocation after its tool Item and journals registry deltas', async () => {
+    let skillRuntime: AgentSkillRuntime;
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: async () => ({
+        catalogSnapshot: await skillRuntime.buildSkillCatalogSnapshot(),
+        invocation: null,
+      }),
+    });
+    const alphaFile = join(fixture.root, '.agents', 'skills', 'alpha', 'SKILL.md');
+    mkdirSync(join(fixture.root, '.agents', 'skills', 'alpha'), { recursive: true });
+    await writeFile(alphaFile, [
+      '---',
+      'description: Alpha integration Skill',
+      '---',
+      'Follow alpha instructions.',
+      '',
+    ].join('\n'), 'utf8');
+    skillRuntime = new AgentSkillRuntime({
+      localRoot: fixture.root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+    });
+
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Use alpha' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const runtime = new ToolRuntime(fixture.service, {
+      skillRuntime,
+      capabilityConfig: { blocks: [] },
+      capabilityTools: () => [createSkillTool(skillRuntime)],
+    });
+    const skillContext = {
+      ...context,
+      configuration: { ...context.configuration, tools: ['skill'] },
+    };
+    const tools = await runtime.createTools(skillContext);
+    const toolId = context.recorder.createItemId();
+    const startedTool: Extract<ThreadItem, { type: 'dynamicToolCall' }> = {
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: context.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'skill',
+      arguments: { skill: 'alpha' },
+      status: 'inProgress',
+      outputRef: null,
+      contentItems: null,
+      success: null,
+      durationMs: null,
+    };
+    await context.recorder.started(startedTool);
+    const result = await executeTool(tools, 'skill', toolId, { skill: 'alpha' });
+    const completedTool = await context.recorder.completed({
+      ...startedTool,
+      status: 'completed',
+      contentItems: result.content.map((content) => content.type === 'text'
+        ? { type: 'text' as const, text: content.text }
+        : { type: 'json' as const, value: null }),
+      success: true,
+      durationMs: 1,
+    });
+    await persistCompletedToolContext(context, completedTool, result, false);
+
+    const afterInvocation = context.recorder.orderedItems();
+    const toolIndex = afterInvocation.findIndex((item) => item.id === toolId);
+    const invocationIndex = afterInvocation.findIndex((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillInvocation'
+    ));
+    expect(toolIndex).toBeGreaterThanOrEqual(0);
+    expect(invocationIndex).toBeGreaterThan(toolIndex);
+    const invocationEvents = (await fixture.stores.rollout.read(thread.id)).map((entry) => entry.event);
+    expect(invocationEvents.findIndex((event) => event.type === 'item/completed' && event.itemId === toolId))
+      .toBeLessThan(invocationEvents.findIndex((event) => (
+        event.type === 'item/completed'
+          ? false
+          : event.type === 'items/completed' && event.items.some((item) => (
+            item.type === 'contextEvidence' && item.kind === 'skillInvocation'
+          ))
+      )));
+    const invocationItem = afterInvocation[invocationIndex];
+    expect(invocationItem?.type).toBe('contextEvidence');
+    if (invocationItem?.type !== 'contextEvidence') throw new Error('Skill invocation evidence missing');
+    expect(await context.readContext(invocationItem.payloadRef)).toMatchObject({
+      kind: 'skillInvocation',
+      name: 'alpha',
+      invocationSource: 'model',
+      execution: 'inline',
+      instructions: expect.stringContaining('Follow alpha instructions.'),
+    });
+    expect(fixture.executor.steered).toEqual([]);
+
+    const betaFile = join(fixture.root, '.agents', 'skills', 'beta', 'SKILL.md');
+    mkdirSync(join(fixture.root, '.agents', 'skills', 'beta'), { recursive: true });
+    await writeFile(betaFile, [
+      '---',
+      'description: Beta integration Skill',
+      '---',
+      'Follow beta instructions.',
+      '',
+    ].join('\n'), 'utf8');
+    await skillRuntime.notifySkillContentWritten([betaFile]);
+    let failCatalogPublication = true;
+    await expect(runtime.prepareProviderContext({
+      ...skillContext,
+      persistSkillCatalog: async () => {
+        if (failCatalogPublication) {
+          failCatalogPublication = false;
+          throw new Error('catalog publication failed');
+        }
+        return skillContext.persistSkillCatalog(await skillRuntime.buildSkillCatalogSnapshot());
+      },
+    })).rejects.toThrow('catalog publication failed');
+    expect(context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ))).toHaveLength(1);
+    await runtime.prepareProviderContext({
+      ...context,
+      configuration: { ...context.configuration, tools: [] },
+    });
+    expect(context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ))).toHaveLength(1);
+    await runtime.prepareProviderContext(skillContext);
+    const catalogItems = context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ));
+    expect(catalogItems).toHaveLength(2);
+    const deltaItem = catalogItems[1]!;
+    if (deltaItem.type !== 'contextEvidence') throw new Error('Skill catalog delta missing');
+    expect(await context.readContext(deltaItem.payloadRef)).toMatchObject({
+      kind: 'skillCatalog',
+      mode: 'delta',
+      entries: [expect.objectContaining({ name: 'beta', change: 'added' })],
+    });
+
+    await skillRuntime.notifySkillContentWritten([betaFile]);
+    await runtime.prepareProviderContext(skillContext);
+    expect(context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ))).toHaveLength(2);
+
+    await writeFile(alphaFile, [
+      '---',
+      'description: Updated alpha integration Skill',
+      '---',
+      'Follow updated alpha instructions.',
+      '',
+    ].join('\n'), 'utf8');
+    await skillRuntime.notifySkillContentWritten([alphaFile]);
+    await runtime.prepareProviderContext(skillContext);
+    const changedCatalog = context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    )).at(-1);
+    if (changedCatalog?.type !== 'contextEvidence') throw new Error('Changed Skill catalog delta missing');
+    expect(await context.readContext(changedCatalog.payloadRef)).toMatchObject({
+      kind: 'skillCatalog',
+      mode: 'delta',
+      entries: [expect.objectContaining({ name: 'alpha', change: 'changed' })],
+    });
+
+    await rm(betaFile);
+    await skillRuntime.notifySkillContentWritten([betaFile]);
+    await runtime.prepareProviderContext(skillContext);
+    const removedCatalog = context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    )).at(-1);
+    if (removedCatalog?.type !== 'contextEvidence') throw new Error('Removed Skill catalog delta missing');
+    expect(await context.readContext(removedCatalog.payloadRef)).toMatchObject({
+      kind: 'skillCatalog',
+      mode: 'delta',
+      entries: [expect.objectContaining({ name: 'beta', change: 'removed' })],
+    });
+    expect(context.recorder.orderedItems().filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'skillCatalog'
+    ))).toHaveLength(4);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
   });
 
   test('assembles extension and capability tools through one executable registry', async () => {
@@ -2715,8 +4073,11 @@ async function createFixture(
   options: Pick<
     ConstructorParameters<typeof ThreadService>[0],
     | 'resolveConfiguration'
+    | 'getDocumentProjection'
+    | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
@@ -2741,8 +4102,11 @@ async function openFixture(
   options: Pick<
     ConstructorParameters<typeof ThreadService>[0],
     | 'resolveConfiguration'
+    | 'getDocumentProjection'
+    | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
@@ -2783,6 +4147,39 @@ function createStores(root: string): ThreadServiceStores {
 
 function database(path: string): SqliteDatabase {
   return new Database(path, { create: true }) as unknown as SqliteDatabase;
+}
+
+function contextNode(
+  id: string,
+  text: string,
+  patch: Partial<NodeProjection> = {},
+): NodeProjection {
+  return {
+    id,
+    children: [],
+    content: { text, marks: [], inlineRefs: [] },
+    tags: [],
+    createdAt: 1,
+    updatedAt: 1,
+    locked: false,
+    autoCollected: false,
+    ...patch,
+  } as NodeProjection;
+}
+
+function contextProjection(nodes: NodeProjection[]): DocumentProjection {
+  return {
+    workspaceId: 'workspace',
+    rootId: 'root',
+    libraryId: 'root',
+    dailyNotesId: 'daily-notes',
+    schemaId: 'schema',
+    searchesId: 'searches',
+    recentsId: 'recents',
+    trashId: 'trash',
+    todayId: 'root',
+    nodes,
+  };
 }
 
 async function storageFiles(root: string, prefix = ''): Promise<string[]> {

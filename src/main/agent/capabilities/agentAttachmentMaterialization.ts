@@ -18,6 +18,7 @@ export function createManagedAttachmentObservation(
     ref: ThreadResourceReference,
     targetDirectory: string,
   ) => Promise<string | null>,
+  options: { readonly stableWorkspaceKey?: string } = {},
 ): ManagedAttachmentObservation {
   let disposed = false;
   let workspacePromise: Promise<string> | null = null;
@@ -28,7 +29,10 @@ export function createManagedAttachmentObservation(
     workspacePromise = (async () => {
       const root = path.join(path.resolve(scratchRoot), AGENT_ATTACHMENT_DIR);
       await mkdir(root, { recursive: true });
-      const target = path.join(root, randomUUID());
+      const target = options.stableWorkspaceKey
+        ? path.join(root, `provider-${safeWorkspaceKey(options.stableWorkspaceKey)}`)
+        : path.join(root, randomUUID());
+      if (options.stableWorkspaceKey) await rm(target, { recursive: true, force: true });
       await mkdir(target);
       return target;
     })();
@@ -42,8 +46,11 @@ export function createManagedAttachmentObservation(
       const existing = resources.get(key);
       if (existing) return existing;
       const pending = (async () => {
-        const targetDirectory = path.join(await workspace(), randomUUID());
-        await mkdir(targetDirectory);
+        const targetDirectory = path.join(
+          await workspace(),
+          options.stableWorkspaceKey ? ref.id : randomUUID(),
+        );
+        await mkdir(targetDirectory, { recursive: true });
         const copied = await copyResource(ref, targetDirectory);
         if (!copied) await rm(targetDirectory, { recursive: true, force: true });
         return copied ? realpath(copied) : null;
@@ -60,6 +67,12 @@ export function createManagedAttachmentObservation(
       resources.clear();
     },
   };
+}
+
+function safeWorkspaceKey(value: string): string {
+  const safe = value.replace(/[^a-zA-Z0-9_-]/gu, '_').slice(0, 160);
+  if (!safe) throw new Error('Managed attachment observation workspace key is empty.');
+  return safe;
 }
 
 // Bound the whole scratch root by age. Scratch is app-owned ephemeral data (attachment

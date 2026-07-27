@@ -24,10 +24,12 @@ A `ThreadItem` is the smallest persisted history fact. Canonical Item kinds are:
 - `contextEvidence`, `contextReset`, and `contextCompaction`
 
 Items with execution status start as `inProgress` and complete with a terminal
-status. Every started Item, including streamed messages and reasoning without an
-execution-status field, receives exactly one `item/completed` fact before its
-Turn becomes terminal. `item/completed` never accepts an `inProgress` executable
-Item. Completed Items and terminal Turns are immutable.
+status. A new `turn/started` event atomically carries its already-complete initial
+evidence and user Items. Later streamed and executable Items use `item/started`,
+optional `item/delta`, and exactly one `item/completed`; later already-complete facts
+use one `items/completed` event, which may publish one or more Items in canonical
+order. No initial or completion event accepts an `inProgress` executable Item.
+Completed Items and terminal Turns are immutable.
 
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
@@ -54,18 +56,26 @@ the user-view baseline, and active file/Node observations. Each observation reta
 stable key, tool identity, untrusted subject, complete output reference, and frozen
 projection reference; it stores neither scratch paths nor another copy of observed
 text. Inherited context accepts only complete terminal Turns and requires its
-covered-through cursor to resolve inside that snapshot. These protocol types are
-available before the unified context planner; their presence does not imply that the
-current executor already projects them.
+covered-through cursor to resolve inside that snapshot. The canonical projector
+consumes admitted environment, user-view, additional-context, referenced-resource,
+and Skill evidence at every provider boundary. The Skill reducer already plans
+baseline/delta catalog evidence and validates Skill compaction checkpoints.
+Role reduction, tool-output selection, compacted epoch projection, `/clear` command
+consumption, and inherited-context planning remain separate consumers of the same
+protocol rather than alternate message stores.
 
 Every nested context payload, managed resource, or complete tool output named by a
 context payload is also an explicit dependency on its owning context Item through
 `contextRefs`, `resourceRefs`, or `outputRefs`. Lifecycle operations use that canonical
 dependency graph instead of parsing payload-private JSON.
 Dynamic tool images carry a typed `localFile` or `threadPayload` source. A managed image
-nested inside inherited context is repeated in the owning context Item's `resourceRefs`.
-Fork and child ownership copy the content-addressed resource without rewriting the
-private payload, so its bytes and digest remain cache-stable after ownership changes.
+uses that Thread-owned reference as its provider snapshot. A local image retains its
+live path for user actions and also carries a mandatory Thread-owned `promptImage`
+snapshot for exact provider replay. The owning Item lists every managed source or
+prompt snapshot in `resourceRefs`, including images nested inside inherited context.
+Fork and child ownership copy those content-addressed resources without rewriting the
+private payload, so provider-visible bytes and digests remain cache-stable after source
+Thread deletion.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
@@ -93,6 +103,11 @@ reasoning effort values fail closed.
 Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
 root snapshot or completed Turns.
+
+The built-in default Profile uses the `*` Skill ceiling so existing discovered
+Skills remain available. A configured Skill list is an allow-list, while an
+explicit empty list disables Skills for that Thread. A child Role may retain or
+narrow the parent list but cannot widen an explicit parent ceiling.
 
 The renderer may read or atomically replace only the execution selection of a
 root user Thread: `modelProvider`, provider-qualified `model`, and
@@ -141,11 +156,44 @@ Starting a Turn follows this order:
 2. Resolve structured user content, derive the Thread's bounded initial preview
    when it is still empty, and allocate the Turn and initial user Item identities.
 3. Commit extension admission snapshots under the relevant barriers.
-4. Persist `turn/started` and the completed user Item.
-5. Return acceptance before starting model side effects.
-6. Execute the Turn and persist Item events as they occur.
-7. Finish every remaining open Item, persist the terminal Turn, and set the
+4. Resolve main-owned environment, user view, Skill discovery, additional context,
+   and explicitly referenced Node resources into Thread-owned payloads.
+5. Persist one `turn/started` event containing every already-complete evidence Item
+   followed by the user Item in canonical order.
+6. Return acceptance before starting model side effects.
+7. Execute the Turn and persist Item events as they occur.
+8. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
+
+Steering uses the same evidence admission path. Its evidence and user Item become
+durable before the live executor is notified, so queued and immediate steering have
+the same canonical history and provider projection.
+
+`clientUserMessageId` is a Thread-scoped idempotency key for both initial and
+steering admission. A retry that resolves to an existing canonical `userMessage`
+returns the original Turn and Item acceptance before checking active-Turn state,
+including after terminalization or process restart. A sidecar binding that no longer
+resolves to that exact canonical Item is stale, is removed, and grants no acceptance.
+The sidecar is a rebuildable index rather than authority: a missing or stale entry
+causes a scan of reachable canonical Turns, and an exact matching user Item is
+re-indexed before its original acceptance is returned.
+
+`turn/started` is the atomic publication boundary for initial evidence plus user input;
+`items/completed` provides the same boundary for later immediate Item groups such as
+steering. One rollout event carries each complete ordered group; the persistent
+projection applies the group in one SQLite transaction, ephemeral history applies it in
+one state replacement, and the renderer merges it in one snapshot. A failed append
+leaves the recorder uncommitted and admission cleanup reclaims newly published payloads. Renderer
+listeners and extension notification observers run only after canonical persistence;
+their failures are logged and cannot turn a committed admission into a reported failure.
+`item/started` and `item/completed` remain the sole lifecycle for real streaming or
+execution Items and are not a legacy compatibility path.
+
+Once either admission event is durable, later status bookkeeping or live steering
+delivery cannot reject that input. Such a failure aborts and fails the already-accepted
+Turn. One serialized steering-delivery chain preserves admission order, and
+terminalization closes steering under the Thread mutex before freezing the final Item
+list.
 
 `update_plan` is a Turn-local control tool, not a history fact. Its normalized
 checklist is published as a transient `turn/plan/updated` notification for the
@@ -267,8 +315,11 @@ MIME type. Managed input admission reserves quota before
 writing, stages chunks under a non-canonical `.staging` directory, and publishes
 only a complete digest-verified resource. Failed content admission immediately
 removes prompt snapshots created by that attempt unless canonical history already
-references them. A newly written tool image that no terminal Item references is
-reclaimed at Turn finalization; startup reconciliation handles crash leftovers. Every
+references them. Execution-time context publication writes the payload and its Item
+under the Thread mutex; failed publication and Turn terminalization prune any context
+payload not reachable from the canonical Item graph. A newly written tool image that
+no terminal Item references is reclaimed at Turn finalization; startup reconciliation
+handles crash leftovers. Every
 resource operation requires each managed path component to be a physical directory;
 symbolic-link substitution
 fails closed, including during quota scans, startup cleanup, and garbage
@@ -304,8 +355,8 @@ path.
 The renderer uses one request channel and one notification channel. Methods are
 grouped by the concept they own:
 
-- `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, and paged
-  Turn or Item reads
+- `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
+  Turn/Item reads, exact full-output reads, and exact context-evidence reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -314,6 +365,11 @@ All input and output crosses strict codecs. Unknown fields, invalid UUIDv7 IDs,
 invalid state transitions, and impossible terminal facts fail closed. Thread
 history mode is always paginated; renderer code does not negotiate another
 shape.
+
+`thread/context/read` authorizes the exact `(threadId, turnId, itemId, contextId)`
+tuple and only returns the primary payload of that `contextEvidence` Item. A digest
+alone cannot probe another Item or Thread, and nested dependencies are not exposed by
+this audit method.
 
 Recorded lifecycle notifications are the only notifications accepted by
 rollout and history projection stores. `thread/name/updated`, provider-retry

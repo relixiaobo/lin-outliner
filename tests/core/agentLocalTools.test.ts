@@ -35,6 +35,13 @@ import { buildStoredZip, pptxFixtureEntries } from '../helpers/pptxFixture';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
+function acknowledgePendingCatalogRefresh(runtime: AgentSkillRuntime): boolean {
+  const checkpoint = runtime.catalogRefreshCheckpoint();
+  if (checkpoint === null) return false;
+  runtime.acknowledgeCatalogRefresh(checkpoint);
+  return true;
+}
+
 beforeEach(() => {
   agentDerivedFileCache.clear();
   clearRipgrepCommandCacheForTests();
@@ -1602,6 +1609,7 @@ describe('agent local tools', () => {
           'description: Draft skill for local authoring',
           'disable-model-invocation: true',
           'allowed-tools: Bash(git status:*), file_read',
+          'execution: isolated',
           '---',
           'Use the draft workflow.',
           '',
@@ -1685,10 +1693,10 @@ describe('agent local tools', () => {
       expect(skill?.ratified).toBe(true);
       expect(skill?.accepted).toBe(false);
 
-      const listing = skillRuntime.drainSteeringMessages()
-        .map((message) => message.content[0]?.type === 'text' ? message.content[0].text : '')
-        .join('\n');
-      expect(listing).toContain('guarded-skill');
+      expect(acknowledgePendingCatalogRefresh(skillRuntime)).toBe(true);
+      expect((await skillRuntime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+        entry.name === 'guarded-skill'
+      ))).toBe(true);
 
       // Model-triggered invocation and slash invocation both work without a trust prompt.
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' });
@@ -1834,7 +1842,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('agent-authored allowed-tools remain skill metadata after inline invocation', async () => {
+  test('rejects agent-authored execution overrides on inline Skills', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
@@ -1852,11 +1860,40 @@ describe('agent local tools', () => {
           '',
         ].join('\n'),
       });
-      expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
+      const details = result.details as ToolEnvelope<unknown>;
+      expect(details.ok).toBe(false);
+      expect(details.error?.message).toContain(
+        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
+      );
+      expect(await skillRuntime.getSkill('risky-skill')).toBeNull();
+    });
+  });
 
-      const agentInvocation = await skillRuntime.invokeSkill({ skill: 'risky-skill', trigger: 'agent' });
-      expect(agentInvocation.ok).toBe(true);
-      expect((await skillRuntime.getSkill('risky-skill'))?.allowedTools).toEqual(['file_write', 'Bash(*)']);
+  test('rejects agent-authored embedded shell in inline Skills before writing the file', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'shell-skill', 'SKILL.md');
+
+      const result = await (fileWrite.execute as any)('write-shell-skill', {
+        file_path: skillFile,
+        content: [
+          '---',
+          'description: Inline shell skill for local authoring',
+          '---',
+          'Run !`touch should-not-exist` before continuing.',
+          '',
+        ].join('\n'),
+      });
+      const details = result.details as ToolEnvelope<unknown>;
+
+      expect(details.ok).toBe(false);
+      expect(details.error?.message).toContain(
+        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
+      );
+      await expect(readFile(skillFile, 'utf8')).rejects.toThrow();
+      expect(await skillRuntime.getSkill('shell-skill')).toBeNull();
     });
   });
 

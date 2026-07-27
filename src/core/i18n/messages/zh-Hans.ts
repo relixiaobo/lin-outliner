@@ -1177,6 +1177,8 @@ commandPalette: {
       turnExecution: '轮次执行',
       executionDetails: '执行用量',
       noUserInput: '未记录用户输入。',
+      loadingContext: '正在加载上下文证据……',
+      contextUnavailable: '无法获取上下文证据。',
       threadId: '线程 ID',
       turnId: '轮次 ID',
       sessionId: '会话 ID',

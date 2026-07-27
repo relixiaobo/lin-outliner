@@ -20,6 +20,7 @@ import { PanelStickyBreadcrumb } from '../../ui/PanelShared';
 import { ReadOnlyCodeBlock } from '../../ui/editor/CodeBlockSurface';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
 import { IconButton } from '../../ui/primitives/IconButton';
+import { Button } from '../../ui/primitives/Button';
 import {
   ThreadUsageBreakdown,
   formatCachedShare,
@@ -192,7 +193,7 @@ function ThreadRunDetailsView({ detail }: { readonly detail: ThreadRunDetailsDat
         className="thread-run-details-execution-section"
         title={t.agent.runDetails.execution({ count: 1 })}
       >
-        <TurnExecutionCard turn={turn} />
+        <TurnExecutionCard threadId={thread.id} turn={turn} />
       </RunDetailsSection>
     </div>
   );
@@ -248,7 +249,7 @@ function RunSummaryHeader({ turn }: { readonly turn: Turn }) {
   );
 }
 
-function TurnExecutionCard({ turn }: { readonly turn: Turn }) {
+function TurnExecutionCard({ threadId, turn }: { readonly threadId: string; readonly turn: Turn }) {
   const t = useT();
   const [open, setOpen] = useState(true);
   return (
@@ -291,17 +292,57 @@ function TurnExecutionCard({ turn }: { readonly turn: Turn }) {
       </summary>
       {open ? (
         <div className="thread-run-details-execution-list">
-          {turn.items.map((item) => <ExecutionItemRow item={item} key={item.id} />)}
+          {turn.items.map((item) => (
+            <ExecutionItemRow item={item} key={item.id} threadId={threadId} turnId={turn.id} />
+          ))}
         </div>
       ) : null}
     </details>
   );
 }
 
-function ExecutionItemRow({ item }: { readonly item: ThreadItem }) {
+function ExecutionItemRow({
+  item,
+  threadId,
+  turnId,
+}: {
+  readonly item: ThreadItem;
+  readonly threadId: string;
+  readonly turnId: string;
+}) {
+  const t = useT();
   const encoded = jsonText(item);
+  const [contextPayload, setContextPayload] = useState<string | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const loadContext = useCallback(async () => {
+    if (item.type !== 'contextEvidence' || contextLoading || contextPayload !== null) return;
+    setContextLoading(true);
+    setContextError(null);
+    try {
+      const response = await api.agentCoreRequest('thread/context/read', {
+        threadId,
+        turnId,
+        itemId: item.id,
+        contextId: item.payloadRef.id,
+      });
+      if (!response.context) throw new Error(t.agent.runDetails.contextUnavailable);
+      setContextPayload(jsonText(response.context.payload));
+    } catch (caught) {
+      setContextError(caught instanceof Error && caught.message
+        ? caught.message
+        : t.agent.runDetails.contextUnavailable);
+    } finally {
+      setContextLoading(false);
+    }
+  }, [contextLoading, contextPayload, item, t.agent.runDetails.contextUnavailable, threadId, turnId]);
   return (
-    <details className="thread-run-details-part-details thread-run-details-execution-event">
+    <details
+      className="thread-run-details-part-details thread-run-details-execution-event"
+      onToggle={(event) => {
+        if (event.currentTarget.open) void loadContext();
+      }}
+    >
       <summary className="thread-run-details-part-head thread-run-details-message-head">
         <ChevronDownIcon className="thread-run-details-summary-chevron" size={ICON_SIZE.tiny} />
         <span className="thread-run-details-role-label">{itemRole(item)}</span>
@@ -313,6 +354,26 @@ function ExecutionItemRow({ item }: { readonly item: ThreadItem }) {
         code={encoded}
         language="json"
       />
+      {item.type === 'contextEvidence' ? (
+        <div className="thread-run-details-context-payload">
+          {contextLoading ? <span className="is-muted">{t.agent.runDetails.loadingContext}</span> : null}
+          {contextError ? (
+            <div className="thread-run-details-context-error">
+              <span>{contextError}</span>
+              <Button onClick={() => void loadContext()} size="sm" variant="ghost">
+                {t.agent.runDetails.retry}
+              </Button>
+            </div>
+          ) : null}
+          {contextPayload ? (
+            <ReadOnlyCodeBlock
+              className="thread-run-details-code-block"
+              code={contextPayload}
+              language="json"
+            />
+          ) : null}
+        </div>
+      ) : null}
     </details>
   );
 }

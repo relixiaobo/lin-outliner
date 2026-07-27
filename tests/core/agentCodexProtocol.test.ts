@@ -344,9 +344,49 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodeThreadItem({ ...evidence, outputRefs: [null] })).toThrow('expected an output reference');
     expect(() => decodeThreadItem({ ...evidence, contextRefs: [contextRef, contextRef] }))
       .toThrow('duplicate references');
+    expect(decodeThreadItem({
+      ...evidence,
+      resourceRefs: [
+        imageResourceRef,
+        { ...imageResourceRef, mimeType: 'application/octet-stream' },
+      ],
+    })).toMatchObject({
+      resourceRefs: [
+        imageResourceRef,
+        { ...imageResourceRef, mimeType: 'application/octet-stream' },
+      ],
+    });
     expect(() => decodeThreadItem({
       ...dynamic,
       contentItems: [{ type: 'image', imageRef: '/tmp/legacy.png' }],
+    })).toThrow('dynamicToolOutput.source');
+    expect(decodeThreadItem({
+      ...dynamic,
+      contentItems: [{
+        type: 'image',
+        source: { kind: 'localFile', path: '/tmp/current.png' },
+        promptImage: imageResourceRef,
+      }],
+    })).toMatchObject({
+      contentItems: [{
+        source: { kind: 'localFile', path: '/tmp/current.png' },
+        promptImage: imageResourceRef,
+      }],
+    });
+    expect(() => decodeThreadItem({
+      ...dynamic,
+      contentItems: [{
+        type: 'image',
+        source: { kind: 'localFile', path: '/tmp/missing-snapshot.png' },
+      }],
+    })).toThrow('dynamicToolOutput.promptImage');
+    expect(() => decodeThreadItem({
+      ...dynamic,
+      contentItems: [{
+        type: 'image',
+        source: { kind: 'threadPayload', ref: imageResourceRef },
+        promptImage: imageResourceRef,
+      }],
     })).toThrow('unknown fields');
     expect(() => decodeThreadItem({
       ...reset,
@@ -681,6 +721,29 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('managed resource budget');
   });
 
+  test('requires canonical dynamic tool images to use image MIME references', () => {
+    const dynamic = allItems.find((item) => item.type === 'dynamicToolCall');
+    if (!dynamic || dynamic.type !== 'dynamicToolCall') throw new Error('Missing dynamic tool fixture');
+    expect(() => decodeThreadItem({
+      ...dynamic,
+      contentItems: [{
+        type: 'image',
+        source: {
+          kind: 'threadPayload',
+          ref: { ...imageResourceRef, mimeType: 'text/plain' },
+        },
+      }],
+    })).toThrow('expected an image MIME type');
+    expect(() => decodeThreadItem({
+      ...dynamic,
+      contentItems: [{
+        type: 'image',
+        source: { kind: 'localFile', path: '/tmp/output.png' },
+        promptImage: { ...imageResourceRef, mimeType: 'application/octet-stream' },
+      }],
+    })).toThrow('expected an image MIME type');
+  });
+
   test('rejects legacy history, invalid lineage, and approval state', () => {
     expect(() => decodeThread({ ...thread, historyMode: 'legacy' })).toThrow('only paginated history');
     expect(() => decodeThread({ ...thread, parentThreadId: CHILD_THREAD_ID, forkedFromId: CHILD_THREAD_ID }))
@@ -733,6 +796,49 @@ describe('Codex Agent Core protocol codec', () => {
     }).additionalContext?.automation_info?.kind).toBe('application');
   });
 
+  test('accepts only bounded structural renderer user-view hints', () => {
+    const userView = {
+      activePanelId: 'panel-1',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      focusedNodeId: 'node-1',
+      selectedNodeIds: ['node-1'],
+      panels: [{
+        panelId: 'panel-1',
+        rootNodeId: 'root',
+        order: 1,
+        active: true,
+        focused: true,
+        visibleNodes: [{ nodeId: 'node-1', depth: 1, expanded: false }],
+        visibleOutlineTruncated: false,
+      }],
+      truncated: false,
+    };
+    expect(decodeRendererTurnStartRequest({
+      threadId: THREAD_ID,
+      input: [{ type: 'text', text: 'Inspect the view' }],
+      userView,
+    }).userView).toEqual(userView);
+
+    expect(() => decodeRendererTurnStartRequest({
+      threadId: THREAD_ID,
+      input: [{ type: 'text', text: 'Inspect the view' }],
+      userView: {
+        ...userView,
+        panels: [{
+          ...userView.panels[0],
+          visibleNodes: [{ ...userView.panels[0]!.visibleNodes[0], title: 'Injected title' }],
+        }],
+      },
+    })).toThrow('unknown fields: title');
+
+    expect(() => decodeRendererTurnStartRequest({
+      threadId: THREAD_ID,
+      input: [{ type: 'text', text: 'Inspect the view' }],
+      userView: { ...userView, focusedNodeId: 'x'.repeat(64 * 1024) },
+    })).toThrow('exceeds the 64 KiB serialized limit');
+  });
+
   test('keeps Memory citations Node-backed and rejects artifact coordinates', () => {
     const agentMessage = allItems[1];
     expect(agentMessage?.type).toBe('agentMessage');
@@ -777,6 +883,45 @@ describe('Codex Agent Core protocol codec', () => {
         completedAt: null,
       },
     })).toThrow('requires a terminal Turn');
+    const executableItem = allItems.find((item) => 'status' in item);
+    if (!executableItem) throw new Error('Missing executable Item fixture');
+    expect(() => decodeAgentCoreNotification({
+      type: 'turn/started',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      turn: {
+        ...completedTurn,
+        status: 'inProgress',
+        completedAt: null,
+        durationMs: null,
+        items: [{ ...executableItem, status: 'inProgress' }],
+      },
+    })).toThrow('initial Items must already be complete');
+
+    expect(decodeAgentCoreNotification({
+      type: 'items/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      items: [allItems[0], allItems[1]],
+      completedAt: 200,
+    })).toMatchObject({
+      type: 'items/completed',
+      items: [{ id: allItems[0]!.id }, { id: allItems[1]!.id }],
+    });
+    expect(() => decodeAgentCoreNotification({
+      type: 'items/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      items: [allItems[0], allItems[0]],
+      completedAt: 200,
+    })).toThrow('must not contain duplicate Item ids');
+    expect(() => decodeAgentCoreNotification({
+      type: 'items/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      items: [],
+      completedAt: 200,
+    })).toThrow('must not be empty');
 
     expect(decodeAgentCoreNotification({
       type: 'turn/providerRetry/changed',
@@ -899,6 +1044,13 @@ describe('Codex Agent Core protocol codec', () => {
         completedAt: 200,
       })).toThrow('requires a terminal executable Item');
       expect(() => decodeAgentCoreNotification({
+        type: 'items/completed',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        items: [inProgressItem],
+        completedAt: 200,
+      })).toThrow('requires terminal executable Items');
+      expect(() => decodeAgentCoreNotification({
         type: 'item/started',
         threadId: THREAD_ID,
         turnId: TURN_ID,
@@ -935,6 +1087,26 @@ describe('Codex Agent Core protocol codec', () => {
   });
 
   test('validates every canonical RPC request and response through one method map', () => {
+    const rpcContextPayload: ThreadContextPayload = {
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: 100,
+      utcInstant: '2024-01-01T00:00:00.000Z',
+      localDate: '2024-01-01',
+      localTime: '00:00:00',
+      timeZone: 'UTC',
+      utcOffsetMinutes: 0,
+      locale: 'en-US',
+      workingDirectory: '/tmp/project',
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: 'Neva',
+      todayNodeId: 'today',
+    };
+    const rpcContextRef = {
+      ...contextRef,
+      byteLength: new TextEncoder().encode(encodeThreadContextPayload(rpcContextPayload)).byteLength,
+    };
     const goal = {
       threadId: THREAD_ID,
       objective: 'Replace Agent Core',
@@ -970,6 +1142,12 @@ describe('Codex Agent Core protocol codec', () => {
         turnId: TURN_ID,
         itemId: 'item-5',
         outputId: OUTPUT_ID,
+      },
+      'thread/context/read': {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'item-13',
+        contextId: contextRef.id,
       },
       'turn/start': {
         threadId: THREAD_ID,
@@ -1023,6 +1201,9 @@ describe('Codex Agent Core protocol codec', () => {
           ref: allItems[3]?.type === 'commandExecution' ? allItems[3].outputRef : null,
           text: 'ok',
         },
+      },
+      'thread/context/read': {
+        context: { ref: rpcContextRef, payload: rpcContextPayload },
       },
       'turn/start': { turn: completedTurn, acceptedItemId: 'item-1', deduplicated: false },
       'turn/steer': { turnId: TURN_ID, acceptedItemId: 'item-1', deduplicated: true },

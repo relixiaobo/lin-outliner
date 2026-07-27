@@ -363,7 +363,15 @@ export class ThreadHistoryProjectionStore {
         }
         this.upsertTurn(notification.threadId, ordinal, notification.turn);
         notification.turn.items.forEach((item, index) => {
-          this.upsertItem(notification.threadId, notification.turnId, ordinal, index, item, null, null);
+          this.upsertItem(
+            notification.threadId,
+            notification.turnId,
+            ordinal,
+            index,
+            item,
+            notification.turn.startedAt,
+            notification.turn.startedAt,
+          );
         });
         return;
       case 'turn/completed': {
@@ -420,6 +428,29 @@ export class ThreadHistoryProjectionStore {
           null,
           notification.completedAt,
         );
+        return;
+      }
+      case 'items/completed': {
+        const turnPosition = this.requireMutableTurnPosition(notification.threadId, notification.turnId);
+        for (const item of notification.items) {
+          const existing = this.readItemRow(notification.threadId, item.id);
+          if (existing?.turn_id !== undefined && existing.turn_id !== notification.turnId) {
+            throw new Error(`Thread Item does not belong to Turn: ${item.id}`);
+          }
+          if (existing?.completed_at !== null && existing?.completed_at !== undefined) {
+            throw new Error(`Completed Thread Item is immutable: ${item.id}`);
+          }
+          const itemIndex = this.nextItemIndex(notification.threadId, notification.turnId, item.id);
+          this.upsertItem(
+            notification.threadId,
+            notification.turnId,
+            turnPosition,
+            itemIndex,
+            item,
+            notification.completedAt,
+            notification.completedAt,
+          );
+        }
         return;
       }
       case 'item/delta':

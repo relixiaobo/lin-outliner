@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
   AgentSkillRuntime,
-  createSlashSkillPrompt,
-  createUserSkillPrompt,
   parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
+  resolveUserSkillInvocation,
   resolveBuiltInSkillResourceRoot,
   resolveSkillContentTarget,
   skillContentHash,
@@ -17,6 +17,13 @@ import {
   type AgentSkillProvenanceStore,
 } from '../../src/main/agent/capabilities/agentSkills';
 const execFile = promisify(execFileCallback);
+
+function acknowledgePendingCatalogRefresh(runtime: AgentSkillRuntime): boolean {
+  const checkpoint = runtime.catalogRefreshCheckpoint();
+  if (checkpoint === null) return false;
+  runtime.acknowledgeCatalogRefresh(checkpoint);
+  return true;
+}
 
 describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
   const root = path.join(path.sep, 'work', 'project');
@@ -342,6 +349,34 @@ describe('skill ratification provenance', () => {
     expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: true });
   });
 
+  test('refreshTrustRecords reloads externally restored Skill bytes and schedules a catalog delta', async () => {
+    const { root, skillFile, content: firstContent } = await writeAuthoredSkill('shared-undo', 'First workflow.');
+    const store = createMemoryProvenanceStore();
+    const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    const conversationRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+    await settingsRuntime.recordAgentSkillWrite(skillFile, skillContentHash(firstContent), null);
+    await settingsRuntime.notifySkillContentWritten([skillFile]);
+
+    const secondContent = skillMarkdown('Second workflow.');
+    await writeFile(skillFile, secondContent, 'utf8');
+    await settingsRuntime.recordAgentSkillWrite(
+      skillFile,
+      skillContentHash(secondContent),
+      { hash: skillContentHash(firstContent), content: firstContent },
+    );
+    await settingsRuntime.notifySkillContentWritten([skillFile]);
+    const before = await conversationRuntime.buildSkillCatalogSnapshot();
+    expect(before.entries.find((entry) => entry.name === 'shared-undo'))
+      .toMatchObject({ contentHash: skillContentHash(secondContent) });
+
+    await settingsRuntime.undoLastAgentSkillEdit('shared-undo');
+    await conversationRuntime.refreshTrustRecords();
+    expect(acknowledgePendingCatalogRefresh(conversationRuntime)).toBe(true);
+    const after = await conversationRuntime.buildSkillCatalogSnapshot();
+    expect(after.entries.find((entry) => entry.name === 'shared-undo'))
+      .toMatchObject({ contentHash: skillContentHash(firstContent) });
+  });
+
   test('undo back to an earlier agent version keeps default ratification', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
     const skillFile = path.join(root, '.agents', 'skills', 'agent-born', 'SKILL.md');
@@ -369,40 +404,86 @@ describe('skill ratification provenance', () => {
 });
 
 describe('agent skills', () => {
-  test('lists model-invocable skills once per Thread', async () => {
+  test('builds deterministic admission-time catalogs and refreshes existing Threads', async () => {
     const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'when_to_use: Use for demo work',
-      ],
+      frontmatter: ['description: Demo skill', 'when_to_use: Use for demo work'],
       body: 'Follow demo instructions.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     await acceptSkillForTest(runtime, 'demo');
 
-    const first = await runtime.buildSkillListingReminderText(200_000);
-    const second = await runtime.buildSkillListingReminderText(200_000);
+    const first = await runtime.buildSkillCatalogSnapshot();
+    const replay = await runtime.buildSkillCatalogSnapshot();
+    expect(replay).toEqual(first);
+    expect(first).toMatchObject({
+      kind: 'skillCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+    });
+    expect(first.entries.find((entry) => entry.name === 'demo')).toMatchObject({
+      change: 'available',
+      description: 'Demo skill - Use for demo work',
+      source: 'project',
+    });
+    expect(first.catalogHash).toBe(createHash('sha256').update(JSON.stringify(first.entries.map((entry) => ({
+      name: entry.name,
+      displayName: entry.displayName,
+      source: entry.source,
+      identity: entry.identity,
+      contentHash: entry.contentHash,
+      description: entry.description,
+    })))).digest('hex'));
 
-    expect(first).toContain('The following skills are available');
-    expect(first).toContain('- demo: Demo skill - Use for demo work');
-    expect(second).toBeNull();
+    const skillFile = path.join(root, '.agents', 'skills', 'demo', 'SKILL.md');
+    await writeFile(skillFile, [
+      '---',
+      'description: Updated demo skill',
+      '---',
+      'Follow updated instructions.',
+    ].join('\n'), 'utf8');
+    const changed = await runtime.buildSkillCatalogSnapshot();
+    expect(changed.catalogHash).not.toBe(first.catalogHash);
+    expect(changed.entries.find((entry) => entry.name === 'demo')?.contentHash)
+      .not.toBe(first.entries.find((entry) => entry.name === 'demo')?.contentHash);
+
+    await createSkillInRoot(root, 'late-skill', {
+      frontmatter: ['description: Added after the first admission'],
+      body: 'Follow late instructions.',
+    });
+    const withLateSkill = await runtime.buildSkillCatalogSnapshot();
+    expect(withLateSkill.entries.find((entry) => entry.name === 'late-skill')).toMatchObject({
+      change: 'available',
+      description: 'Added after the first admission',
+    });
   });
 
-  test('can release reserved skill listings that were not sent', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: ['description: Demo skill'],
-      body: 'Follow demo instructions.',
+  test('applies the Thread Skill ceiling to catalogs, slash choices, and invocation', async () => {
+    const root = await createSkillFixture('enabled', {
+      frontmatter: ['description: Enabled integration Skill'],
+      body: 'Follow enabled instructions.',
     });
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
+    await createSkillInRoot(root, 'blocked', {
+      frontmatter: ['description: Blocked integration Skill'],
+      body: 'Follow blocked instructions.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+      enabledSkills: ['enabled'],
+    });
 
-    const reserved = await runtime.reserveSkillListingReminderText(200_000);
-    expect(reserved?.text).toContain('demo');
-    expect(await runtime.buildSkillListingReminderText(200_000)).toBeNull();
-
-    if (reserved) runtime.releaseSkillListingReservation(reserved);
-
-    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('demo');
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.map((entry) => entry.name))
+      .toEqual(['enabled']);
+    expect((await runtime.listUserInvocableSkills()).map((skill) => skill.name)).toEqual(['enabled']);
+    expect(await runtime.invokeSkill({ skill: 'blocked', trigger: 'agent' })).toMatchObject({
+      ok: false,
+      code: 'skill_not_enabled',
+    });
+    await expect(resolveUserSkillInvocation(runtime, '/blocked')).rejects.toThrow(
+      "outside this Thread's configured Skill ceiling",
+    );
   });
 
   test('parses YAML frontmatter block scalars and arrays', async () => {
@@ -414,6 +495,7 @@ describe('agent skills', () => {
         'allowed-tools:',
         '  - Bash(git status:*)',
         '  - file_read',
+        'execution: isolated',
         'paths:',
         '  - src/**',
         '  - docs/**/*.md',
@@ -425,14 +507,14 @@ describe('agent skills', () => {
 
     await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')]);
     const skill = await runtime.getSkill('demo');
-    const listing = runtime.drainSteeringMessages()
-      .map((message) => message.content[0]?.type === 'text' ? message.content[0].text : '')
-      .join('\n');
+    const listing = await runtime.buildSkillCatalogSnapshot();
 
     expect(skill?.description).toBe('Demo skill with wrapped text');
     expect(skill?.allowedTools).toEqual(['Bash(git status:*)', 'file_read']);
     expect(skill?.paths).toEqual(['src/**', 'docs/**/*.md']);
-    expect(listing).toContain('Demo skill');
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    expect(listing.entries.find((entry) => entry.name === 'demo')?.description)
+      .toBe('Demo skill with wrapped text');
   });
 
   test('renders skill content with base directory and standard arguments', async () => {
@@ -459,16 +541,15 @@ describe('agent skills', () => {
     expect(invocation.renderedContent).toContain('First=hello world');
     expect(invocation.renderedContent).toContain('All="hello world" file.ts');
     expect(invocation.renderedContent).toContain('/.agents/skills/demo');
-    const messageText = invocation.message.content[0]?.type === 'text'
-      ? invocation.message.content[0].text
-      : '';
-    expect(messageText).not.toContain('<skill-name>');
+    expect(invocation.evidence.instructions).toBe(invocation.renderedContent);
+    expect(invocation.evidence.identity).toContain('demo');
   });
 
-  test('executes embedded shell blocks and inline commands during skill invocation', async () => {
+  test('executes embedded shell blocks and inline commands only for isolated Skills', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
         'description: Demo skill',
+        'execution: isolated',
         'shell: bash',
       ],
       body: [
@@ -487,6 +568,11 @@ describe('agent skills', () => {
         calls.push({ skill: skill.name, command, shell });
         return command.includes('block') ? 'BLOCK_OUTPUT' : 'INLINE_OUTPUT';
       },
+      executeIsolatedSkill: async () => ({
+        threadId: 'isolated-thread-test',
+        agentRole: 'worker',
+        status: 'completed',
+      }),
     });
     await acceptSkillForTest(runtime, 'demo');
 
@@ -504,10 +590,11 @@ describe('agent skills', () => {
     ]);
   });
 
-  test('rejects unsupported skill shell frontmatter before recording invocation state', async () => {
+  test('rejects unsupported skill shell frontmatter at load time', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
         'description: Demo skill',
+        'execution: isolated',
         'shell: powershell',
       ],
       body: 'Inline !`Write-Output nope`.',
@@ -517,7 +604,7 @@ describe('agent skills', () => {
       includeUserSkills: false,
       executeSkillShell: async () => 'NOPE',
     });
-    await acceptSkillForTest(runtime, 'demo');
+    expect(await runtime.getSkill('demo')).toBeNull();
 
     const invocation = await runtime.invokeSkill({
       skill: 'demo',
@@ -526,12 +613,30 @@ describe('agent skills', () => {
 
     expect(invocation.ok).toBe(false);
     if (invocation.ok) return;
-    expect(invocation.code).toBe('skill_shell_failed');
-    expect(invocation.message).toContain('unsupported shell');
-    expect(runtime.createInvokedSkillsReminder()).toBeNull();
+    expect(invocation.code).toBe('unknown_skill');
   });
 
-  test('supports composer slash adapter for user-invocable skills', async () => {
+  test('rejects embedded shell in inline Skills before direct admission', async () => {
+    const root = await createSkillFixture('demo', {
+      frontmatter: ['description: Demo skill'],
+      body: 'Inline !`echo should-not-run`.',
+    });
+    let shellCalls = 0;
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeSkillShell: async () => {
+        shellCalls += 1;
+        return 'NOPE';
+      },
+    });
+
+    expect(await runtime.getSkill('demo')).toBeNull();
+    expect(await resolveUserSkillInvocation(runtime, '/demo')).toBeNull();
+    expect(shellCalls).toBe(0);
+  });
+
+  test('resolves composer slash input as typed invocation evidence', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: ['description: Demo skill'],
       body: 'Loaded by slash.',
@@ -539,15 +644,20 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
     expect(parseSkillSlashCommand('/demo arg one')).toEqual({ skill: 'demo', args: 'arg one' });
-    const prompt = await createSlashSkillPrompt(runtime, '/demo arg one', '<turn-context>visible node</turn-context>');
-    const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
-    const reminderText = prompt?.content[1]?.type === 'text' ? prompt.content[1].text : '';
+    const invocation = await resolveUserSkillInvocation(runtime, '/demo arg one', { invokedAt: 42 });
 
-    expect(prompt).not.toBeNull();
-    expect(text).toContain('<system-reminder>');
-    expect(text).toContain('<skill-name>demo</skill-name>');
-    expect(text).toContain('Loaded by slash.');
-    expect(reminderText).toContain('<turn-context>visible node</turn-context>');
+    expect(invocation?.ok).toBe(true);
+    if (!invocation?.ok) return;
+    expect(invocation.evidence).toMatchObject({
+      kind: 'skillInvocation',
+      name: 'demo',
+      arguments: 'arg one',
+      invocationSource: 'user',
+      execution: 'inline',
+      invokedAt: 42,
+    });
+    expect(invocation.evidence.instructions).toContain('Loaded by slash.');
+    expect(invocation.evidence.instructions).not.toContain('<system-reminder>');
   });
 
   test('ships skillify as a built-in model-invocable authoring workflow', async () => {
@@ -556,11 +666,14 @@ describe('agent skills', () => {
 
     // Model-invocable: a conversational "save this as a skill" picks up the curated
     // skillify guidance instead of ad-hoc file writes.
-    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
     const skill = await runtime.getSkill('skillify');
-    const prompt = await createSlashSkillPrompt(runtime, '/skillify turn this workflow into a reusable skill', null);
+    const invocation = await resolveUserSkillInvocation(
+      runtime,
+      '/skillify turn this workflow into a reusable skill',
+    );
 
-    expect(automaticListing).toContain('- skillify:');
+    expect(catalog.entries.some((entry) => entry.name === 'skillify')).toBe(true);
     expect(skill).toMatchObject({
       name: 'skillify',
       source: 'built-in',
@@ -568,7 +681,7 @@ describe('agent skills', () => {
       userInvocable: true,
       ratified: true,
     });
-    const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
+    const text = invocation?.ok ? invocation.evidence.instructions : '';
     expect(text).not.toContain('Base directory for this skill:');
     expect(text).not.toContain('built-in/skillify/SKILL.md');
     expect(text).toContain('Skillify v2 workflow');
@@ -607,8 +720,8 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     runtime.updateDisabledSkills(['skillify']);
 
-    await expect(createSlashSkillPrompt(runtime, '/skillify this workflow', null)).rejects.toThrow('currently disabled');
-    expect(await createUserSkillPrompt(runtime, 'Save this workflow as a skill', null)).toBeNull();
+    await expect(resolveUserSkillInvocation(runtime, '/skillify this workflow')).rejects.toThrow('currently disabled');
+    expect(await resolveUserSkillInvocation(runtime, 'Save this workflow as a skill')).toBeNull();
   });
 
   test('pins skillify v2 Tenon authoring invariants', async () => {
@@ -657,32 +770,32 @@ describe('agent skills', () => {
     expect(invocation.renderedContent).not.toContain('Base directory for this skill:');
     expect(invocation.renderedContent).not.toContain('built-in/skillify/SKILL.md');
 
-    const reminder = runtime.createInvokedSkillsReminder();
-    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
-
-    expect(text).toContain('### Skill: skillify');
-    expect(text).toContain('Path: built-in:skillify');
-    expect(text).not.toContain('built-in/skillify/SKILL.md');
+    expect(invocation.evidence).toMatchObject({
+      kind: 'skillInvocation',
+      name: 'skillify',
+      source: 'built-in',
+      identity: 'built-in:skillify',
+      resourceRoot: null,
+    });
+    expect(invocation.evidence.instructions).not.toContain('built-in/skillify/SKILL.md');
   });
 
-  test('persists built-in skill listing state without pseudo file paths', async () => {
+  test('represents built-in Skills in the catalog without pseudo file paths', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const skillify = catalog.entries.find((entry) => entry.name === 'skillify');
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- skillify:');
-    const reminder = runtime.createSkillListingStateReminder();
-    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
-
-    expect(text).toContain('- skillify [skill-file: built-in:skillify]');
-    expect(text).not.toContain('built-in/skillify/SKILL.md');
+    expect(skillify).toMatchObject({ identity: 'built-in:skillify', source: 'built-in' });
+    expect(JSON.stringify(skillify)).not.toContain('built-in/skillify/SKILL.md');
   });
 
   test('keeps optional general-purpose skills outside the built-in floor', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
 
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       expect(await runtime.getSkill(name)).toBeNull();
-      expect(listing).not.toContain(`- ${name}:`);
+      expect(catalog.entries.some((entry) => entry.name === name)).toBe(false);
     }
     for (const name of ['skillify', 'research', 'data-cleanup']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
@@ -694,7 +807,6 @@ describe('agent skills', () => {
       frontmatter: [
         'description: Bundled demo skill',
         'when_to_use: Use for bundled resource tests',
-        'allowed-tools: file_read',
         'arguments: target',
       ],
       body: 'Read ${AGENT_SKILL_DIR}/references/details.md for $target.',
@@ -707,7 +819,7 @@ describe('agent skills', () => {
     });
 
     const skill = await runtime.getSkill('bundled-demo');
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
     const invocation = await runtime.invokeSkill({
       skill: 'bundled-demo',
       args: 'deck.md',
@@ -724,25 +836,24 @@ describe('agent skills', () => {
       ratified: true,
       accepted: false,
       canUndoLastAgentEdit: false,
-      allowedTools: ['file_read'],
+      allowedTools: [],
     });
     expect(typeof skill?.contentHash).toBe('string');
-    expect(listing).toContain('- bundled-demo: Bundled demo skill - Use for bundled resource tests');
+    expect(catalog.entries.find((entry) => entry.name === 'bundled-demo')?.description)
+      .toBe('Bundled demo skill - Use for bundled resource tests');
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skillDir}`);
     expect(invocation.renderedContent).toContain(`Read ${skillDir}/references/details.md for deck.md.`);
-    expect(await runtime.getActiveSkillReadRoots()).toEqual([skillDir]);
-
-    const reminder = runtime.createInvokedSkillsReminder();
-    const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
-    expect(reminderText).toContain('### Skill: bundled-demo');
-    expect(reminderText).toContain('Path: built-in:bundled-demo');
-    expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
-    expect(reminderText).not.toContain(path.join(skillDir, 'SKILL.md'));
+    expect(invocation.evidence).toMatchObject({
+      identity: 'built-in:bundled-demo',
+      resourceRoot: skillDir,
+      instructions: invocation.renderedContent,
+    });
+    expect(invocation.evidence.instructions).not.toContain(path.join(skillDir, 'SKILL.md'));
   });
 
-  test('restores resource-backed built-in skill identity from loaded messages', async () => {
+  test('resolves stable resource-backed built-in identity after runtime restart', async () => {
     const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
       frontmatter: ['description: Bundled demo skill'],
       body: 'Use bundled instructions from ${AGENT_SKILL_DIR}.',
@@ -759,14 +870,14 @@ describe('agent skills', () => {
       includeUserSkills: false,
       builtInSkillDirectories: [skillsDir],
     });
-    restored.restoreInvokedSkillsFromMessages([invocation.message]);
-    const reminder = restored.createInvokedSkillsReminder();
-    const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
+    const replay = await restored.invokeSkill({ skill: 'bundled-demo', trigger: 'agent' });
+    expect(replay.ok).toBe(true);
+    if (!replay.ok) return;
 
-    expect(reminderText).toContain('Path: built-in:bundled-demo');
-    expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
-    expect(await restored.getActiveSkillReadRoots()).toEqual([skillDir]);
-    expect(reminderText).not.toContain(`Path: ${skillDir}`);
+    expect(replay.evidence.identity).toBe(invocation.evidence.identity);
+    expect(replay.evidence.contentHash).toBe(invocation.evidence.contentHash);
+    expect(replay.evidence.resourceRoot).toBe(skillDir);
+    expect(replay.evidence.instructions).toContain(`Base directory for this skill: ${skillDir}`);
   });
 
   test('does not resolve bundled built-in files as writable skill targets', async () => {
@@ -835,15 +946,15 @@ describe('agent skills', () => {
     });
 
     const skill = await runtime.getSkill('floor-skill');
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
 
     expect(skill).toMatchObject({
       name: 'floor-skill',
       source: 'built-in',
     });
     expect(skill?.body).toContain('Use bundled instructions.');
-    expect(listing).toContain('Bundled floor skill');
-    expect(listing).not.toContain('Mutable shadow skill');
+    expect(catalog.entries.find((entry) => entry.name === 'floor-skill')?.description)
+      .toBe('Bundled floor skill');
   });
 
   test('keeps path-scoped bundled built-ins available as the immutable floor', async () => {
@@ -861,14 +972,14 @@ describe('agent skills', () => {
     });
 
     const skill = await runtime.getSkill('path-built-in');
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
 
     expect(skill).toMatchObject({
       name: 'path-built-in',
       source: 'built-in',
       paths: ['docs/**/*.md'],
     });
-    expect(listing).toContain('path-built-in');
+    expect(catalog.entries.some((entry) => entry.name === 'path-built-in')).toBe(true);
   });
 
   test('ignores name frontmatter aliases for bundled built-ins', async () => {
@@ -906,7 +1017,7 @@ describe('agent skills', () => {
     });
 
     await expect(runtime.getSkill('skillify')).rejects.toThrow('Duplicate built-in skill "skillify"');
-    await expect(runtime.buildSkillListingReminderText(200_000)).rejects.toThrow('Duplicate built-in skill "skillify"');
+    await expect(runtime.buildSkillCatalogSnapshot()).rejects.toThrow('Duplicate built-in skill "skillify"');
   });
 
   test('shares the first skill load across concurrent callers', async () => {
@@ -915,7 +1026,7 @@ describe('agent skills', () => {
       runtime.getSkill('skillify'),
       runtime.getSkill('research'),
       runtime.listAllSkills(),
-      runtime.buildSkillListingReminderText(200_000),
+      runtime.buildSkillCatalogSnapshot(),
     ]);
 
     expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
@@ -959,10 +1070,10 @@ describe('agent skills', () => {
       }),
     });
 
-    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
     const skill = await runtime.getSkill('research');
 
-    expect(automaticListing).toContain('- research:');
+    expect(catalog.entries.some((entry) => entry.name === 'research')).toBe(true);
     expect(skill).toMatchObject({
       name: 'research',
       source: 'built-in',
@@ -1003,8 +1114,11 @@ describe('agent skills', () => {
   test('disabled skill gates apply to built-in research', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     runtime.updateDisabledSkills(['research']);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    runtime.updateDisabledSkills(['research']);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('- research:');
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => entry.name === 'research')).toBe(false);
     const invocation = await runtime.invokeSkill({ skill: 'research', trigger: 'agent' });
 
     expect(invocation.ok).toBe(false);
@@ -1012,7 +1126,7 @@ describe('agent skills', () => {
     expect(invocation.code).toBe('skill_disabled');
   });
 
-  test('records model and effort effects for slash and agent-invoked skills', async () => {
+  test('rejects execution overrides on inline Skills', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
         'description: Demo skill',
@@ -1022,27 +1136,14 @@ describe('agent skills', () => {
       body: 'Use a stronger model.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
-
-    await createSlashSkillPrompt(runtime, '/demo');
-    expect(runtime.consumePendingTurnEffect()).toEqual({
-      skill: 'demo',
-      model: 'openai/gpt-5.2',
-      effort: 'high',
-    });
+    expect(await runtime.getSkill('demo')).toBeNull();
 
     const invocation = await runtime.invokeSkill({
       skill: 'demo',
       trigger: 'agent',
     });
 
-    expect(invocation.ok).toBe(true);
-    expect(runtime.consumePendingTurnEffect()).toEqual({
-      skill: 'demo',
-      model: 'openai/gpt-5.2',
-      effort: 'high',
-    });
-    expect(runtime.consumePendingTurnEffect()).toBeNull();
+    expect(invocation).toMatchObject({ ok: false, code: 'unknown_skill' });
   });
 
   test('lists isolated-execution skills and routes them through an isolated executor', async () => {
@@ -1069,7 +1170,8 @@ describe('agent skills', () => {
     });
     await acceptSkillForTest(runtime, 'isolated');
 
-    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('- isolated: Isolated skill');
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => entry.name === 'isolated')?.description)
+      .toBe('Isolated skill');
     const invocation = await runtime.invokeSkill({
       skill: 'isolated',
       args: 'demo',
@@ -1081,11 +1183,14 @@ describe('agent skills', () => {
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.threadId).toBe('isolated-thread-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
-    expect(runtime.consumePendingTurnEffect()).toBeNull();
-    const messageText = invocation.message.content[0]?.type === 'text'
-      ? invocation.message.content[0].text
-      : '';
-    expect(messageText).toContain('isolated result:');
+    expect(invocation.evidence).toMatchObject({
+      execution: 'isolated',
+      constraints: {
+        allowedTools: ['Bash(git status:*)'],
+        model: 'gpt-5.2',
+        effort: 'high',
+      },
+    });
   });
 
   test('does not retain the legacy context-fork execution alias', async () => {
@@ -1116,7 +1221,7 @@ describe('agent skills', () => {
     expect(invocation.execution).toBe('inline');
   });
 
-  test('does not restore slash isolated skill results as reusable skill guidance', async () => {
+  test('keeps isolated slash Skills out of direct admission', async () => {
     const root = await createSkillFixture('isolated', {
       frontmatter: [
         'description: Isolated skill',
@@ -1136,11 +1241,12 @@ describe('agent skills', () => {
     });
     await acceptSkillForTest(runtime, 'isolated');
 
-    const prompt = await createSlashSkillPrompt(runtime, '/isolated demo', null);
-    const restored = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    if (prompt) restored.restoreInvokedSkillsFromMessages([prompt]);
-
-    expect(restored.createInvokedSkillsReminder()).toBeNull();
+    expect(await resolveUserSkillInvocation(runtime, '/isolated demo')).toBeNull();
+    const invocation = await runtime.invokeSkill({ skill: 'isolated', args: 'demo', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.execution).toBe('isolated');
+    expect(invocation.evidence.execution).toBe('isolated');
   });
 
   test('rejects isolated-execution skills when no isolated executor is available', async () => {
@@ -1184,53 +1290,6 @@ describe('agent skills', () => {
     expect(invocation).toMatchObject({ ok: false, code: 'unknown_skill' });
   });
 
-  test('restores invoked skills from post-compact reminders', async () => {
-    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    runtime.restoreInvokedSkillsFromMessages([{
-      role: 'user',
-      timestamp: 1,
-      content: [{
-        type: 'text',
-        text: [
-          '<system-reminder>',
-          'The following skills were invoked in this session. Continue to follow these guidelines:',
-          '',
-          '### Skill: demo',
-          'Path: project:demo',
-          '',
-          'Base directory for this skill: /tmp/demo',
-          '',
-          'Follow demo instructions.',
-          '</system-reminder>',
-        ].join('\n'),
-      }],
-    }]);
-
-    const reminder = runtime.createInvokedSkillsReminder();
-    const text = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
-
-    expect(text).toContain('### Skill: demo');
-    expect(text).toContain('Follow demo instructions.');
-    expect(await runtime.getActiveSkillReadRoots()).toEqual([]);
-  });
-
-  test('persists listed skill names across compact restore without relisting them', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: ['description: Demo skill'],
-      body: 'Follow demo instructions.',
-    });
-    const store = createMemoryProvenanceStore();
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    await acceptSkillForTest(runtime, 'demo');
-
-    expect(await runtime.buildSkillListingReminderText(200_000)).toContain('demo');
-    const listingState = runtime.createSkillListingStateReminder();
-    const restored = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    restored.restoreInvokedSkillsFromMessages([listingState!]);
-
-    expect(await restored.buildSkillListingReminderText(200_000)).toBeNull();
-  });
-
   test('loads skills from configured additional directories after default dirs', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-root-'));
     const extraRoot = await mkdtemp(path.join(tmpdir(), 'lin-skills-extra-'));
@@ -1249,8 +1308,8 @@ describe('agent skills', () => {
       additionalSkillDirectories: [extraDir],
     });
 
-    const listing = await runtime.buildSkillListingReminderText(200_000);
-    expect(listing).toContain('external-demo');
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    expect(catalog.entries.some((entry) => entry.name === 'external-demo')).toBe(true);
   });
 
   test('loads code-registered built-in skills before mutable local skills', async () => {
@@ -1269,7 +1328,7 @@ describe('agent skills', () => {
     });
 
     const skill = await runtime.getSkill('floor-skill');
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
 
     expect(skill).toMatchObject({
       name: 'floor-skill',
@@ -1277,8 +1336,8 @@ describe('agent skills', () => {
       skillFile: 'built-in/floor-skill/SKILL.md',
     });
     expect(skill?.body).toBe('Use built-in instructions.');
-    expect(listing).toContain('Built-in floor skill');
-    expect(listing).not.toContain('Mutable shadow skill');
+    expect(catalog.entries.find((entry) => entry.name === 'floor-skill')?.description)
+      .toBe('Built-in floor skill');
   });
 
   test('re-lists a same-name skill when its resolved file identity changes', async () => {
@@ -1295,12 +1354,17 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     await acceptSkillForTest(runtime, 'demo');
 
-    const projectListing = await runtime.buildSkillListingReminderText(200_000);
+    const projectCatalog = await runtime.buildSkillCatalogSnapshot();
     runtime.updateAdditionalSkillDirectories([extraDir]);
-    const externalListing = await runtime.buildSkillListingReminderText(200_000);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    runtime.updateAdditionalSkillDirectories([extraDir]);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
+    const externalCatalog = await runtime.buildSkillCatalogSnapshot();
 
-    expect(projectListing).toContain('Project demo skill');
-    expect(externalListing).toContain('External demo skill');
+    expect(projectCatalog.entries.find((entry) => entry.name === 'demo')?.description)
+      .toBe('Project demo skill');
+    expect(externalCatalog.entries.find((entry) => entry.name === 'demo')?.description)
+      .toBe('External demo skill');
   });
 
   test('deduplicates the same skill file loaded through symlinked directories', async () => {
@@ -1319,10 +1383,10 @@ describe('agent skills', () => {
     });
     await acceptSkillForTest(runtime, 'demo');
 
-    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const catalog = await runtime.buildSkillCatalogSnapshot();
 
-    expect(listing).toContain('demo');
-    expect(listing).not.toContain('alias');
+    expect(catalog.entries.filter((entry) => entry.name === 'demo')).toHaveLength(1);
+    expect(catalog.entries.some((entry) => entry.name === 'alias')).toBe(false);
   });
 
   test('activates path-conditional skills after matching file paths are touched', async () => {
@@ -1337,14 +1401,15 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     await acceptSkillForTest(runtime, 'typescript-review');
 
-    // Drain the initial listing (built-in skillify) so only activation remains.
-    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('typescript-review');
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+      entry.name === 'typescript-review'
+    ))).toBe(false);
     await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')]);
-    const [message] = runtime.drainSteeringMessages();
-    const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 
-    expect(text).toContain('typescript-review');
-    expect(await runtime.buildSkillListingReminderText(200_000)).toBeNull();
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+      entry.name === 'typescript-review'
+    ))).toBe(true);
   });
 
   test('matches directory path-conditional patterns', async () => {
@@ -1370,17 +1435,18 @@ describe('agent skills', () => {
     await acceptSkillForTest(runtime, 'src-directory');
     await acceptSkillForTest(runtime, 'src-globstar');
 
-    // Drain the initial listing (built-in skillify) so only activation remains.
-    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('src-directory');
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+      entry.name === 'src-directory'
+    ))).toBe(false);
     await runtime.notifyFileTouched([path.join(root, 'src')]);
-    const [directoryMessage] = runtime.drainSteeringMessages();
-    const directoryText = directoryMessage?.content[0]?.type === 'text' ? directoryMessage.content[0].text : '';
 
-    expect(directoryText).toContain('src-directory');
-    expect(directoryText).toContain('src-globstar');
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    const active = await runtime.buildSkillCatalogSnapshot();
+    expect(active.entries.some((entry) => entry.name === 'src-directory')).toBe(true);
+    expect(active.entries.some((entry) => entry.name === 'src-globstar')).toBe(true);
 
     await runtime.notifyFileTouched([path.join(root, 'src', 'app', 'main.ts')]);
-    expect(runtime.drainSteeringMessages()).toEqual([]);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
   });
 
   test('skips dynamically discovered skill directories ignored by git', async () => {
@@ -1396,7 +1462,7 @@ describe('agent skills', () => {
 
     await runtime.notifyFileTouched([path.join(root, 'ignored', 'pkg', 'file.ts')]);
 
-    expect(runtime.drainSteeringMessages()).toEqual([]);
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
   });
 
   test('discovers dynamic skill directories created after an earlier miss', async () => {
@@ -1406,19 +1472,22 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
     await runtime.notifyFileTouched([touchedFile]);
-    expect(runtime.drainSteeringMessages()).toEqual([]);
-    expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('late-dynamic');
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+      entry.name === 'late-dynamic'
+    ))).toBe(false);
 
     await createSkillInRoot(root, 'late-dynamic', {
       frontmatter: ['description: Late dynamic skill'],
       body: 'Use late dynamic instructions.',
     }, nestedSkillsDir);
     await runtime.notifyFileTouched([touchedFile]);
-    const [message] = runtime.drainSteeringMessages();
-    const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 
     expect((await runtime.getSkill('late-dynamic'))?.ratified).toBe(true);
-    expect(text).toContain('late-dynamic');
+    expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
+      entry.name === 'late-dynamic'
+    ))).toBe(true);
   });
 });
 

@@ -68,6 +68,8 @@ describe('Agent tool payload store', () => {
       .rejects.toThrow('imageByteLimit');
     await expect(store.writeImage(threadId, 'not base64!', 'image/png'))
       .rejects.toThrow('invalidBase64');
+    await expect(store.writeImage(threadId, Buffer.from('bytes').toString('base64'), 'text/plain'))
+      .rejects.toThrow('MIME type must be an image');
   });
 
   test('round-trips content-addressed text output and rejects invalid digests', async () => {

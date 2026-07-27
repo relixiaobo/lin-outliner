@@ -1,5 +1,4 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import type { UserMessage } from '@earendil-works/pi-ai';
 import type { TSchema } from 'typebox';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -21,7 +20,7 @@ import type {
   AgentLocalWorkspaceContext,
 } from '../capabilities/agentLocalTools';
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
-import { createUserSkillPrompt, type AgentSkillRuntime } from '../capabilities/agentSkills';
+import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
@@ -31,7 +30,9 @@ export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
   readonly imageNormalizer?: AgentFileReadImageNormalizer;
-  readonly skillRuntime?: AgentSkillRuntime | ((context: TurnExecutionContext) => AgentSkillRuntime);
+  readonly skillRuntime?: AgentSkillRuntime | (
+    (context: TurnExecutionContext) => AgentSkillRuntime | Promise<AgentSkillRuntime>
+  );
   readonly imageGeneration?: AgentImageGenerationRuntime | ((context: TurnExecutionContext) => AgentImageGenerationRuntime);
   readonly capabilityTools?: (
     context: TurnExecutionContext,
@@ -67,7 +68,7 @@ export class ToolRuntime {
   }
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
-    const skillRuntime = this.skillRuntime(context);
+    const skillRuntime = await this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
       : this.options.localWorkspace;
@@ -143,29 +144,17 @@ export class ToolRuntime {
     return [...unique.values()];
   }
 
-  skillListing(context: TurnExecutionContext): Promise<string | null> {
-    return this.skillRuntime(context)?.buildSkillListingReminderText() ?? Promise.resolve(null);
+  async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
+    if (!context.configuration.tools.includes('skill')) return;
+    const runtime = await this.skillRuntime(context);
+    const checkpoint = runtime?.catalogRefreshCheckpoint() ?? null;
+    if (!runtime || checkpoint === null) return;
+    const snapshot = await runtime.buildSkillCatalogSnapshot();
+    await context.persistSkillCatalog(snapshot);
+    runtime.acknowledgeCatalogRefresh(checkpoint);
   }
 
-  async prepareUserPrompt(context: TurnExecutionContext, prompt: UserMessage): Promise<UserMessage> {
-    const input = directSkillInput(context);
-    const runtime = this.skillRuntime(context);
-    if (!input || !runtime) return prompt;
-    const prepared = await createUserSkillPrompt(runtime, input, null, {
-      onIsolatedSkillStart: async () => undefined,
-    });
-    if (!prepared) return prompt;
-    const preparedContent = typeof prepared.content === 'string'
-      ? [{ type: 'text' as const, text: prepared.content }]
-      : prepared.content;
-    return {
-      ...prepared,
-      timestamp: prompt.timestamp,
-      content: [...preparedContent, ...additionalContextContent(context)],
-    };
-  }
-
-  private skillRuntime(context: TurnExecutionContext): AgentSkillRuntime | undefined {
+  private async skillRuntime(context: TurnExecutionContext): Promise<AgentSkillRuntime | undefined> {
     return typeof this.options.skillRuntime === 'function'
       ? this.options.skillRuntime(context)
       : this.options.skillRuntime;
@@ -406,29 +395,6 @@ export class ToolRuntime {
     const { readAgentCapabilityConfig } = await import('../capabilities/agentCapabilityStore');
     return readAgentCapabilityConfig();
   }
-}
-
-function directSkillInput(context: TurnExecutionContext): string | null {
-  const content = context.turn.items
-    .filter((item) => item.type === 'userMessage')
-    .flatMap((item) => item.content);
-  if (content.some((part) => part.type === 'attachment')) return null;
-  const text = content.flatMap((part): string[] => {
-    if (part.type === 'text') return [part.text];
-    if (part.type === 'nodeReference') {
-      return [`[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}`];
-    }
-    return [];
-  }).join('\n').trim();
-  return text || null;
-}
-
-function additionalContextContent(context: TurnExecutionContext): Array<{ type: 'text'; text: string }> {
-  if (!context.additionalContext) return [];
-  return Object.entries(context.additionalContext).map(([key, entry]) => ({
-    type: 'text',
-    text: `[${entry.kind} context: ${key}]\n${entry.value}`,
-  }));
 }
 
 function outlinerWithCausation(

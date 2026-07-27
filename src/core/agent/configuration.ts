@@ -77,6 +77,9 @@ function constrainChildCapabilities(
   parent: readonly string[],
   requested: readonly string[] | undefined,
 ): readonly string[] {
+  if (!requested) return Object.freeze([...new Set(parent)]);
+  if (parent.includes('*')) return Object.freeze([...new Set(requested)]);
+  if (requested.includes('*')) return Object.freeze([...new Set(parent)]);
   const parentCeiling = new Set(parent);
-  return Object.freeze([...new Set(requested ?? parent)].filter((capability) => parentCeiling.has(capability)));
+  return Object.freeze([...new Set(requested)].filter((capability) => parentCeiling.has(capability)));
 }

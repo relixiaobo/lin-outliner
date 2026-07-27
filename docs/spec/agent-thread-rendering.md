@@ -163,10 +163,12 @@ split. Opening another Turn while Details is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
 
 Run Details includes context evidence/reset/compaction in its exhaustive Item list.
-Evidence uses its bounded canonical summary; the renderer does not read private payload
-files or expose full untrusted context. Dedicated reset presentation and explicit
-payload inspection arrive with the context planner and command consumer rather than
-being inferred from protocol presence.
+Evidence uses its bounded canonical summary while collapsed. Expanding an evidence
+row issues one exact `(threadId, turnId, itemId, contextId)` audit read and renders the
+decoded semantic payload; it never receives a canonical payload path or gains digest-only
+read authority. Missing, corrupt, rolled-back, or mismatched evidence remains explicitly
+unavailable. Dedicated reset/compaction presentation arrives with their command and
+planner consumers rather than being inferred from protocol presence.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item
@@ -240,7 +242,11 @@ creation requires any usable active provider. The unavailable empty state opens
 the Providers settings category, and settings-change broadcasts refresh the dock
 without discarding an existing draft.
 
-The composer submits `ThreadUserContent[]` directly. Text, attachments, and
+The composer submits `ThreadUserContent[]` directly together with one bounded
+structural user-view hint snapshot. The hint contains panel, root, focused, selected,
+visible Node identities, depth, and expansion state, but never renderer-authored Node
+titles or content. It is globally capped at 80 visible Nodes, depth 5, 50 selected
+Nodes, and 64 KiB; main resolves current authoritative Node data. Text, attachments, and
 Outliner Node references remain distinct structured parts in the same order the
 user placed them in the ProseMirror document. Sending a Node from its context
 menu adds a removable Node-reference part to the composer; it never inserts

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentCoreNotification, Thread, Turn } from '../../src/core/agent/protocol';
+import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { ThreadStore, mergeLoadedTurns } from '../../src/renderer/agent/store/threadStore';
 import type { api } from '../../src/renderer/api/client';
 
@@ -35,6 +35,58 @@ describe('renderer Thread store', () => {
       status: 'completed',
       items: [{ type: 'agentMessage', text: 'final' }],
     });
+  });
+
+  test('applies an atomic completed Item batch in one renderer snapshot', async () => {
+    const owner = thread('thread-1', 1);
+    const active = { ...turn('turn-1', 'inProgress', ''), items: [] };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [active], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    let snapshots = 0;
+    store.subscribe(() => { snapshots += 1; });
+    const items: ThreadItem[] = [
+      {
+        type: 'userMessage',
+        id: 'turn-1-steer',
+        provenance: { originThreadId: owner.id, originTurnId: active.id, originItemId: 'turn-1-steer' },
+        clientId: 'steer-1',
+        acceptedAt: 2,
+        content: [{ type: 'text', text: 'Steer atomically' }],
+      },
+      {
+        type: 'agentMessage',
+        id: 'turn-1-ack',
+        provenance: { originThreadId: owner.id, originTurnId: active.id, originItemId: 'turn-1-ack' },
+        text: 'Acknowledged',
+        phase: 'commentary',
+        memoryCitation: null,
+      },
+    ];
+
+    notify({
+      type: 'items/completed',
+      threadId: owner.id,
+      turnId: active.id,
+      items,
+      completedAt: 2,
+    });
+
+    expect(snapshots).toBe(1);
+    expect(store.getSnapshot().turnsByThread.get(owner.id)?.[0]?.items).toEqual(items);
   });
 
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {

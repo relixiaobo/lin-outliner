@@ -1,10 +1,19 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { plainText, type DocumentProjection, type NodeProjection } from '../../src/core/types';
 import {
-  buildReferencedFilesReminder,
-  selectReferencedAssetNodes,
-  type MaterializedReferencedFile,
+  MAX_REFERENCED_RESOURCE_BYTES,
+  admitReferencedResources,
 } from '../../src/main/agent/capabilities/agentReferencedAssets';
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 function node(partial: Partial<NodeProjection> & { id: string }): NodeProjection {
   return {
@@ -23,102 +32,198 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
   return { nodes, rootId: 'root', todayId: 'root' } as DocumentProjection;
 }
 
-describe('selectReferencedAssetNodes', () => {
-  test('selects image and attachment nodes that carry an assetId, with type-specific fields', () => {
+describe('referenced resource admission', () => {
+  test('uses the same attachment and image title precedence as the user view', async () => {
     const doc = projection([
-      node({ id: 'img', type: 'image', assetId: 'asset-1', mediaAlt: 'A diagram', content: plainText('Diagram') }),
-      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', mimeType: 'application/pdf', originalFilename: 'report.pdf', fileSize: 4096, content: plainText('Report') }),
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['captioned', 'remote', 'alt'] }),
+      node({
+        id: 'captioned',
+        type: 'image',
+        parentId: 'root',
+        content: plainText('Visible caption'),
+        mediaUrl: 'https://example.test/captioned.png',
+        mediaAlt: 'Alternative text',
+      }),
+      node({
+        id: 'remote',
+        type: 'image',
+        parentId: 'root',
+        mediaUrl: 'https://example.test/remote.png',
+        mediaAlt: 'Remote alternative text',
+      }),
+      node({ id: 'alt', type: 'image', parentId: 'root', mediaAlt: 'Alternative only' }),
     ]);
-    const selected = selectReferencedAssetNodes(doc, [
-      { nodeId: 'img', title: 'Diagram' },
-      { nodeId: 'pdf', title: 'Report' },
-    ]);
-    expect(selected).toEqual([
-      { nodeId: 'img', assetId: 'asset-1', isImageNode: true, title: 'Diagram' },
-      { nodeId: 'pdf', assetId: 'asset-2', isImageNode: false, title: 'Report', nodeMimeType: 'application/pdf', nodeFileName: 'report.pdf', nodeFileSize: 4096 },
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: 'captioned' }, { nodeId: 'remote' }, { nodeId: 'alt' }],
+      writeResource: async () => { throw new Error('unexpected write'); },
+    });
+
+    expect(result?.payload.resources.map(({ title }) => title)).toEqual([
+      'Visible caption',
+      'https://example.test/remote.png',
+      'Alternative only',
     ]);
   });
 
-  test('drops references to non-asset nodes and asset nodes without an assetId', () => {
+  test('snapshots every explicit Node and records typed missing resources', async () => {
     const doc = projection([
-      node({ id: 'text', content: plainText('Just text') }),
-      node({ id: 'img-empty', type: 'image', content: plainText('No bytes') }),
-      node({ id: 'img', type: 'image', assetId: 'asset-1', content: plainText('Diagram') }),
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['note', 'missing-image'] }),
+      node({ id: 'note', type: 'outline', parentId: 'root', content: plainText('Current argument'), description: 'Evidence' }),
+      node({ id: 'missing-image', type: 'image', parentId: 'root', content: plainText('Diagram') }),
     ]);
-    const selected = selectReferencedAssetNodes(doc, [
-      { nodeId: 'text', title: 'Just text' },
-      { nodeId: 'img-empty', title: 'No bytes' },
-      { nodeId: 'missing', title: 'Gone' },
-      { nodeId: 'img', title: 'Diagram' },
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: 'note' }, { nodeId: 'missing-image' }, { nodeId: 'gone', note: 'Deleted' }],
+      writeResource: async () => { throw new Error('unexpected write'); },
+    });
+
+    expect(result?.payload.resources).toMatchObject([
+      {
+        nodeId: 'note',
+        title: 'Current argument',
+        breadcrumb: [{ nodeId: 'root' }, { nodeId: 'note' }],
+        content: 'Current argument - Evidence',
+        resourceRef: null,
+        unavailableReason: null,
+      },
+      { nodeId: 'missing-image', resourceRef: null, unavailableReason: 'missing' },
+      { nodeId: 'gone', nodeType: 'unknown', title: 'Deleted', unavailableReason: 'missing' },
     ]);
-    expect(selected.map((s) => s.nodeId)).toEqual(['img']);
   });
 
-  test('de-dupes by assetId — the same node twice, or two nodes sharing one asset', () => {
+  test('copies explicitly referenced asset bytes into a managed resource and inlines supported images', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-referenced-resource-'));
+    roots.push(root);
+    const path = join(root, 'diagram.png');
+    const bytes = Buffer.from('image-bytes');
+    await writeFile(path, bytes);
     const doc = projection([
-      node({ id: 'img-a', type: 'image', assetId: 'shared', content: plainText('Copy A') }),
-      node({ id: 'img-b', type: 'image', assetId: 'shared', content: plainText('Copy B') }),
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['image', 'image-copy'] }),
+      node({ id: 'image', type: 'image', parentId: 'root', assetId: 'asset-1', mediaAlt: 'Diagram' }),
+      node({ id: 'image-copy', type: 'image', parentId: 'root', assetId: 'asset-1', mediaAlt: 'Diagram copy' }),
     ]);
-    const selected = selectReferencedAssetNodes(doc, [
-      { nodeId: 'img-a', title: 'Copy A' },
-      { nodeId: 'img-a', title: 'Copy A' },
-      { nodeId: 'img-b', title: 'Copy B' },
-    ]);
-    expect(selected).toHaveLength(1);
-    expect(selected[0].nodeId).toBe('img-a');
+    let writes = 0;
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: 'image' }, { nodeId: 'image' }, { nodeId: 'image-copy' }],
+      resolveAsset: async () => ({ path, metadata: null }),
+      writeResource: async (written, mimeType, fileName) => {
+        writes += 1;
+        return {
+          created: true,
+          ref: {
+            id: createHash('sha256').update(written).digest('hex'),
+            mimeType,
+            byteLength: written.byteLength,
+            fileName,
+          },
+        };
+      },
+    });
+
+    expect(writes).toBe(1);
+    expect(result?.payload.resources).toHaveLength(2);
+    expect(result?.payload.resources[0]).toMatchObject({
+      nodeId: 'image',
+      title: 'Diagram',
+      resourceRef: { mimeType: 'image/png', byteLength: bytes.byteLength, fileName: 'diagram.png' },
+      inlineImage: true,
+      unavailableReason: null,
+    });
+    expect(result?.payload.resources[1]).toMatchObject({
+      nodeId: 'image-copy',
+      title: 'Diagram copy',
+      resourceRef: result?.payload.resources[0]?.resourceRef,
+      inlineImage: false,
+      unavailableReason: null,
+    });
+    expect(result?.resourceRefs).toHaveLength(1);
+    expect(result?.createdResourceRefs).toEqual(result?.resourceRefs);
   });
 
-  test('with no ref title: image falls back to mediaAlt; attachment prefers display text over the stale originalFilename', () => {
+  test('declares distinct typed dependencies for same-byte resources with different MIME types', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-referenced-resource-typed-'));
+    roots.push(root);
+    const path = join(root, 'shared.bin');
+    const bytes = Buffer.from('shared-bytes');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    await writeFile(path, bytes);
     const doc = projection([
-      node({ id: 'img', type: 'image', assetId: 'asset-1', mediaAlt: 'line one\nline two', content: plainText('Stored') }),
-      // The attachment title prefers the node's current display text over originalFilename
-      // (the immutable import-time name, which goes stale after a node-page rename).
-      node({ id: 'pdf', type: 'attachment', assetId: 'asset-2', originalFilename: 'report.pdf', content: plainText('Renamed') }),
-      // …falling back to originalFilename only when there is no display text.
-      node({ id: 'raw', type: 'attachment', assetId: 'asset-3', originalFilename: 'raw.bin', content: plainText('') }),
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['first', 'second'] }),
+      node({ id: 'first', type: 'attachment', parentId: 'root', assetId: 'asset-1' }),
+      node({ id: 'second', type: 'attachment', parentId: 'root', assetId: 'asset-2' }),
     ]);
-    const selected = selectReferencedAssetNodes(doc, [{ nodeId: 'img' }, { nodeId: 'pdf' }, { nodeId: 'raw' }]);
-    expect(selected[0].title).toBe('line one line two');
-    expect(selected[1].title).toBe('Renamed');
-    expect(selected[2].title).toBe('raw.bin');
+    let writes = 0;
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: 'first' }, { nodeId: 'second' }],
+      resolveAsset: async (assetId) => ({
+        path,
+        metadata: {
+          schemaVersion: 1,
+          id: assetId,
+          mimeType: assetId === 'asset-1' ? 'application/octet-stream' : 'application/pdf',
+          byteSize: bytes.byteLength,
+          sha256: digest,
+          originalFilename: 'shared.bin',
+          createdAt: 1,
+        },
+      }),
+      writeResource: async (written, mimeType, fileName) => ({
+        created: writes++ === 0,
+        ref: {
+          id: createHash('sha256').update(written).digest('hex'),
+          mimeType,
+          byteLength: written.byteLength,
+          fileName,
+        },
+      }),
+    });
+
+    expect(writes).toBe(2);
+    expect(result?.resourceRefs).toEqual([
+      expect.objectContaining({ id: digest, mimeType: 'application/octet-stream', fileName: 'shared.bin' }),
+      expect.objectContaining({ id: digest, mimeType: 'application/pdf', fileName: 'shared.bin' }),
+    ]);
+    expect(result?.createdResourceRefs).toEqual([result?.resourceRefs[0]]);
   });
 
-  test('returns empty for empty or missing inputs', () => {
-    const doc = projection([node({ id: 'img', type: 'image', assetId: 'asset-1' })]);
-    expect(selectReferencedAssetNodes(doc, undefined)).toEqual([]);
-    expect(selectReferencedAssetNodes(doc, [])).toEqual([]);
-  });
-});
+  test('rejects symlinked and over-budget asset sources before copying bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-referenced-resource-integrity-'));
+    roots.push(root);
+    const targetPath = join(root, 'target.bin');
+    const symlinkPath = join(root, 'linked.bin');
+    await writeFile(targetPath, 'asset');
+    await symlink(targetPath, symlinkPath);
+    const doc = projection([
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['linked', 'large'] }),
+      node({ id: 'linked', type: 'attachment', parentId: 'root', assetId: 'asset-linked' }),
+      node({ id: 'large', type: 'attachment', parentId: 'root', assetId: 'asset-large' }),
+    ]);
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: 'linked' }, { nodeId: 'large' }],
+      resolveAsset: async (assetId) => assetId === 'asset-linked'
+        ? { path: symlinkPath, metadata: null }
+        : {
+            path: targetPath,
+            metadata: {
+              schemaVersion: 1,
+              id: assetId,
+              mimeType: 'application/octet-stream',
+              byteSize: MAX_REFERENCED_RESOURCE_BYTES + 1,
+              sha256: '0'.repeat(64),
+              originalFilename: 'large.bin',
+              createdAt: 1,
+            },
+          },
+      writeResource: async () => { throw new Error('unexpected write'); },
+    });
 
-describe('buildReferencedFilesReminder', () => {
-  test('returns null when there are no files', () => {
-    expect(buildReferencedFilesReminder([])).toBeNull();
-  });
-
-  test('lists each file with its scratch path and flags inline images', () => {
-    const files: MaterializedReferencedFile[] = [
-      { nodeId: 'img', title: 'Diagram', mimeType: 'image/png', sizeBytes: 1234, path: '/scratch/a-diagram.png', inlineImage: true },
-      { nodeId: 'pdf', title: 'Report', mimeType: 'application/pdf', sizeBytes: 0, path: '/scratch/b-report.pdf', inlineImage: false },
-    ];
-    const reminder = buildReferencedFilesReminder(files)!;
-    expect(reminder).toContain('<referenced-files>');
-    expect(reminder).toContain('use file_read');
-    expect(reminder).toContain('node_id="img"');
-    expect(reminder).toContain('path="/scratch/a-diagram.png"');
-    expect(reminder).toContain('mime="image/png"');
-    expect(reminder).toContain('size_bytes="1234"');
-    expect(reminder).toContain('inline_image="true"');
-    // size_bytes is omitted when unknown (0), and the pdf is not flagged inline.
-    expect(reminder).toContain('path="/scratch/b-report.pdf"');
-    expect(reminder).not.toContain('size_bytes="0"');
-    expect(reminder.match(/inline_image="true"/g)).toHaveLength(1);
-  });
-
-  test('escapes attribute values', () => {
-    const reminder = buildReferencedFilesReminder([
-      { nodeId: 'n', title: 'A & B "quoted"', mimeType: 'image/png', sizeBytes: 1, path: '/s/<x>.png', inlineImage: false },
-    ])!;
-    expect(reminder).toContain('title="A &amp; B &quot;quoted&quot;"');
-    expect(reminder).toContain('path="/s/&lt;x&gt;.png"');
+    expect(result?.payload.resources).toMatchObject([
+      { nodeId: 'linked', resourceRef: null, unavailableReason: 'corrupt' },
+      { nodeId: 'large', resourceRef: null, unavailableReason: 'quotaExceeded' },
+    ]);
   });
 });

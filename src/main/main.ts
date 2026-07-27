@@ -24,9 +24,10 @@ import { AutomationWorktree } from './agent/automations/AutomationWorktree';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { Mutex } from './agent/Mutex';
-import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
+import { AgentSkillRuntime, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
@@ -58,6 +59,7 @@ import type {
   AgentCoreMethod,
   AgentCoreRequestByMethod,
   ThreadAttachmentContent,
+  ThreadUserContent,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
@@ -435,6 +437,7 @@ ensureAgentDir(agentScratchRoot);
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
 let skillRuntime!: AgentSkillRuntime;
 const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
+const turnSkillRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
 const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
   store: managedSkillStore,
@@ -499,8 +502,7 @@ const attachmentResolver = new AttachmentResolver({
 });
 const turnExecutor = new PiTurnExecutor({
   createTools: (context) => toolRuntime.createTools(context),
-  preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
-  skillListing: (context) => toolRuntime.skillListing(context),
+  beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,
@@ -524,6 +526,54 @@ threadService = ThreadService.open(
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
+    getDocumentProjection: () => documentService.getProjection(),
+    resolveReferencedAsset: async (assetId) => {
+      const [path, metadata] = await Promise.all([
+        assetService.pathFor(assetId),
+        assetService.lookup(assetId),
+      ]);
+      return path ? { path, metadata } : null;
+    },
+    resolveSkillAdmission: async ({
+      thread,
+      configuration,
+      content,
+      acceptedAt,
+      observedFilePaths,
+    }) => {
+      if (!configuration.tools.includes('skill')) {
+        return { catalogSnapshot: null, invocation: null };
+      }
+      const runtime = new AgentSkillRuntime({
+        localRoot: agentLocalFileRoot,
+        threadId: thread.id,
+        enabledSkills: configuration.skills,
+        provenanceStore: createAgentSkillProvenanceStore(),
+        managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
+        managedSkillContentRoot: managedSkillService.contentRoot,
+        assertManagedSkillInvocable: (skillId, expectedContentHash) => (
+          managedSkillService.assertInvocable(skillId, expectedContentHash)
+        ),
+        executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+          command,
+          localRoot: agentLocalFileRoot,
+          scratchRoot: agentScratchRoot,
+          signal,
+        }),
+      });
+      const settings = await getAgentRuntimeSettings();
+      runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
+      runtime.updateDisabledSkills(settings.disabledSkills ?? []);
+      await runtime.notifyFileTouched([...observedFilePaths]);
+      const directInput = directSkillAdmissionInput(content);
+      const invocation = directInput
+        ? await resolveUserSkillInvocation(runtime, directInput, { invokedAt: acceptedAt })
+        : null;
+      return {
+        catalogSnapshot: await runtime.buildSkillCatalogSnapshot(),
+        invocation: invocation?.ok ? invocation.evidence : null,
+      };
+    },
     extensions: extensionRegistry,
     beforeInitialTurnAdmission: () => memoryExtension.prepareForTurnAdmission(),
   },
@@ -544,6 +594,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
   const runtime = new AgentSkillRuntime({
     localRoot: agentLocalFileRoot,
     threadId: context.thread.id,
+    enabledSkills: context.configuration.skills,
     provenanceStore: createAgentSkillProvenanceStore(),
     managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
     managedSkillContentRoot: managedSkillService.contentRoot,
@@ -597,11 +648,53 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     },
   });
   turnSkillRuntimes.set(context.turn.id, runtime);
-  void getAgentRuntimeSettings().then((settings) => {
+  return runtime;
+}
+
+async function prepareSkillRuntimeForTurn(
+  context: Parameters<ToolRuntime['createTools']>[0],
+): Promise<AgentSkillRuntime> {
+  const existing = turnSkillRuntimeInitializations.get(context.turn.id);
+  if (existing) return existing;
+  const runtime = skillRuntimeForTurn(context);
+  const initialization = (async () => {
+    const settings = await getAgentRuntimeSettings();
     runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
     runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-  }).catch((error) => console.error('[agent] failed to load Turn skill settings', error));
-  return runtime;
+    await runtime.notifyFileTouched(observedSkillFilePaths([
+      ...context.historyBeforeTurn,
+      { ...context.turn, items: context.recorder.orderedItems() },
+    ]));
+    return runtime;
+  })();
+  turnSkillRuntimeInitializations.set(context.turn.id, initialization);
+  try {
+    return await initialization;
+  } catch (error) {
+    if (turnSkillRuntimeInitializations.get(context.turn.id) === initialization) {
+      turnSkillRuntimeInitializations.delete(context.turn.id);
+      turnSkillRuntimes.delete(context.turn.id);
+    }
+    throw error;
+  }
+}
+
+async function refreshTurnSkillTrustRecords(): Promise<void> {
+  await Promise.all(
+    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshTrustRecords()),
+  );
+}
+
+function directSkillAdmissionInput(content: readonly ThreadUserContent[]): string | null {
+  if (content.some((part) => part.type === 'attachment')) return null;
+  const text = content.flatMap((part): string[] => {
+    if (part.type === 'text') return [part.text];
+    if (part.type === 'nodeReference') {
+      return [`[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}`];
+    }
+    return [];
+  }).join('\n').trim();
+  return text || null;
 }
 
 function parseSkillReasoningEffort(value: string): ReasoningEffort {
@@ -672,7 +765,7 @@ toolRuntime = new ToolRuntime(threadService, {
   imageNormalizer: async ({ filePath, signal }) => {
     return prepareBoundedAgentImage(filePath, basename(filePath), signal);
   },
-  skillRuntime: skillRuntimeForTurn,
+  skillRuntime: prepareSkillRuntimeForTurn,
   imageGeneration: (context) => createThreadImageGenerationRuntime(
     context.turn.id,
     localWorkspaceForTurn(context),
@@ -680,7 +773,10 @@ toolRuntime = new ToolRuntime(threadService, {
   dynamicTools: () => [createAutomationTool(automationService)],
 });
 threadService.subscribe((notification) => {
-  if (notification.type === 'turn/completed') turnSkillRuntimes.delete(notification.turnId);
+  if (notification.type === 'turn/completed') {
+    turnSkillRuntimes.delete(notification.turnId);
+    turnSkillRuntimeInitializations.delete(notification.turnId);
+  }
   if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
     automationService.wake();
   }
@@ -3346,14 +3442,17 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         : skillRuntime.listAllSkills();
     case 'agent_accept_skill': {
       await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
+      await refreshTurnSkillTrustRecords();
       return skillRuntime.listAllSkills();
     }
     case 'agent_revoke_skill_acceptance': {
       await skillRuntime.revokeSkillAcceptance(String(args.skillName));
+      await refreshTurnSkillTrustRecords();
       return skillRuntime.listAllSkills();
     }
     case 'agent_undo_skill_agent_edit': {
       await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
+      await refreshTurnSkillTrustRecords();
       return skillRuntime.listAllSkills();
     }
     case 'agent_managed_skill_catalog':

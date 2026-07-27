@@ -1,7 +1,10 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
-  AdditionalContext,
   Thread,
+  ThreadContextPayload,
+  ContextEvidenceThreadItem,
+  ThreadContextPayloadReference,
+  ThreadItem,
   ThreadItemOutputReference,
   ThreadResourceReference,
   ThreadUserContent,
@@ -9,12 +12,14 @@ import type {
   TurnExecutionDetails,
   TurnError,
   TurnStatus,
+  SkillCatalogContextPayload,
+  SkillInvocationContextPayload,
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
 
 export interface SteeredTurnInput {
-  readonly content: readonly ThreadUserContent[];
-  readonly additionalContext?: AdditionalContext;
+  readonly items: readonly ThreadItem[];
+  readonly acceptedAt: number;
 }
 
 export interface TurnExecutionContext {
@@ -22,10 +27,9 @@ export interface TurnExecutionContext {
   readonly turn: Turn;
   readonly historyBeforeTurn: readonly Turn[];
   readonly configuration: EffectiveThreadConfiguration;
-  readonly additionalContext?: AdditionalContext;
-  readonly systemContext: readonly string[];
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
+  readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
@@ -38,6 +42,13 @@ export interface TurnExecutionContext {
     mimeType: ThreadItemOutputReference['mimeType'],
     summary: string,
   ): Promise<ThreadItemOutputReference>;
+  persistContextEvidence(
+    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    summary: string,
+  ): Promise<ContextEvidenceThreadItem>;
+  persistSkillCatalog(
+    snapshot: SkillCatalogContextPayload,
+  ): Promise<ContextEvidenceThreadItem | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }
