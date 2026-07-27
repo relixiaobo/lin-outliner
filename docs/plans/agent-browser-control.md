@@ -70,6 +70,9 @@ unrelated user tabs.
 - This PR owns the complete prepared-execution refactor, Browser action kinds,
   Browser Pilot distribution, runtime provider, built-in skill, specs, and
   tests. `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned.
+- The PM explicitly ratified one complete feature PR rather than a preceding
+  interface-only PR. The interface-first wording in `docs/TASKS.md` is stale;
+  the main agent updates that board entry at the integration gate.
 
 ## Design
 
@@ -210,10 +213,22 @@ It rejects before process spawn:
 - commands or `net` subcommands absent from the pinned classification table.
 
 Quoted arguments are literal argv, not shell source. They may contain dollar
-signs, shell metacharacters, and newlines so complex `eval` programs retain the
-full CLI capability without a pipe or temporary script. Stdin-dependent
-`bp eval` is rejected with guidance to pass the expression as one quoted direct
-argument.
+signs, shell metacharacters, and newlines, so direct argument workflows do not
+lose expressiveness.
+
+The generic `bash` schema also gains an optional bounded `stdin` field for
+foreground commands. `ProcessExecutionPolicy` writes those bytes directly to
+the child process and closes stdin; it never constructs a pipe command or runs
+an input-producing shell process. Stdin is always transient: durable arguments
+record only its presence and bounded byte count, and sensitive providers add
+its content to their taint set.
+
+`BrowserPilotCommandProvider` accepts `bp eval` with either one expression argv
+or `bash.stdin`, never both. Complex JavaScript therefore follows Browser
+Pilot's published stdin contract without sending `echo ... | bp eval` through a
+shell. The Browser Pilot host note and `bash` description teach this exact
+Tenon transport. A pipeline attempt reaches the non-forwarding facade and
+returns the same corrective guidance.
 
 The parser does not validate Browser Pilot's command-specific flags or values;
 the CLI remains authoritative for those. It extracts only global structural
@@ -236,7 +251,7 @@ through ordinary shell composition.
 The provider prepares one immutable `BrowserPilotCall` containing:
 
 - canonical command and optional `net` subcommand;
-- transient argv, including free-form text and credentials;
+- transient argv and optional stdin, including free-form text and credentials;
 - a taint set derived from every free-form argument;
 - the resolved verified executable;
 - a host-generated Thread client key and Turn output directory;
@@ -277,12 +292,14 @@ intent. Every observation-bearing result carries both `browser.read` and
 recovery, and post-action page state. Version/help and the fixed result of
 `disconnect` are the only classified calls that do not carry sensitive read.
 
-Browser actions do **not** inherit `external.message.send`. A click or keypress
-has no trustworthy semantic mapping to a message, form submission, purchase, or
-other business effect. Conflating those kinds creates false denials and a false
-audit claim. Users can block `browser.external_action` when they want to disable
-outward browser mutation. Default Full Access still exposes the complete
-Browser Pilot surface, with no per-operation approval.
+Browser Pilot cannot reliably distinguish ordinary interaction from a message,
+form submission, purchase, or other business effect. Until trustworthy semantic
+evidence exists, every `browser.external_action` call also carries the existing
+`external.message.send` descriptor as a conservative potential-communication
+guard. The audit summary states that the action *may* communicate externally;
+it does not claim that every click actually sent a message. Either explicit
+block denies the call before spawn. Default Full Access still exposes the
+complete Browser Pilot surface, with no per-operation approval.
 
 Capability audit and `commandActions` are derived only from the normalized
 capability intent and sanitized durable command. An unknown Browser Pilot
@@ -357,11 +374,26 @@ Intel macOS remains unsupported.
 
 Bundle the exact complete upstream `browser-pilot` skill directory, including
 `SKILL.md`, `compatibility.json`, `agents/openai.yaml`, and all references.
-Expose it through Tenon's normal built-in skill mechanism only when the matching
-CLI distribution is available. Browser Pilot remains authoritative for command
-usage, setup, browser operation, file handling, waiting, and recovery; Tenon
-does not duplicate those instructions in its system prompt or create a forked
-command manual.
+Browser Pilot remains authoritative for command usage, setup, browser operation,
+file handling, waiting, and recovery. A short host-owned note adds only Tenon
+transport facts: the executable and environment are already provided, commands
+must use the direct `bp` route, and stdin workflows use `bash.stdin` instead of
+shell composition. It does not duplicate or fork the upstream command manual.
+
+Built-in skill registration gains a host-owned, per-Turn availability predicate
+that is separate from upstream frontmatter and `allowed-tools`. The Browser
+Pilot predicate requires:
+
+- the matching verified CLI distribution;
+- `bash` in the effective Turn tool catalog; and
+- at least one non-metadata Browser Pilot catalog command whose complete action
+  descriptor set survives the effective explicit blocks.
+
+Apply the same predicate to model-visible skill listing, direct `skill`
+invocation, restored/compacted skill state, and active instruction loading. A
+predicate failure makes Browser Pilot absent rather than advertising guidance
+that the Turn cannot execute. Re-evaluate it for every root, child, forked, and
+isolated-skill Turn because parent ceilings and Role tool catalogs differ.
 
 ### User Experience
 
@@ -486,8 +518,15 @@ No URL Preview spec gains a Browser Control dependency.
 - Compare the pinned command/subcommand catalog with `bp --help` and
   `bp net --help`; unknown inventory fails closed before spawn.
 - Verify each Browser action kind independently blocks its mapped commands and
-  that ordinary Browser interaction is unaffected by
-  `Action(external.message.send)`.
+  that `Action(external.message.send)` conservatively blocks every ambiguous
+  `browser.external_action` before spawn while leaving Browser reads and control
+  operations available.
+- Prove bounded `bash.stdin` reaches a foreground child without shell
+  composition, is never persisted, and executes complex `bp eval` input while
+  rejecting an expression-plus-stdin ambiguity and ordinary pipeline attempts.
+- Prove Browser Pilot is omitted from listing, direct invocation, restore, and
+  active instructions whenever its Turn availability predicate fails, across
+  root, child, forked, and isolated-skill Threads.
 - Prove one Thread reuses state across Turns while root, child, forked, and
   isolated-skill Threads receive distinct client namespaces and `target_busy`
   protects one physical tab.
@@ -520,6 +559,10 @@ No URL Preview spec gains a Browser Control dependency.
   when `browser.sensitive_read` is allowed. Durable projection prevents silent
   raw retention but cannot remove content the Agent deliberately includes in
   its response or writes to a file.
+- The conservative `external.message.send` attachment intentionally blocks
+  some non-messaging browser actions for users who configured that explicit
+  block. This is preferable to silently bypassing an existing semantic block
+  until Browser Pilot can provide trustworthy business-action evidence.
 - Browser Pilot's public surface is CLI-only and its command inventory is not a
   permanent native manifest. Every version bump requires a coordinated catalog,
   projection, skill, asset, checksum, and compatibility review.
@@ -539,12 +582,12 @@ No URL Preview spec gains a Browser Control dependency.
 
 - Refactor tool execution and Item lifecycle around `ToolExecutionContract` in
   the same PR, preserving all existing tool behavior.
-- Add `CommandExecutionRouter`, the default shell provider, and reusable process
-  policies.
+- Add `CommandExecutionRouter`, bounded transient `bash.stdin`, the default
+  shell provider, and reusable process policies.
 - Add Browser action kinds and the complete Browser Pilot command provider,
   grammar, catalog, projections, identity, files, lifecycle, and cleanup journal.
-- Add deterministic Browser Pilot 0.5 distribution staging and the exact
-  built-in skill.
+- Add deterministic Browser Pilot 0.5 distribution staging, the exact built-in
+  skill, its host transport note, and per-Turn availability predicate.
 - Update current specs and packaging documentation.
 - Add lifecycle, privacy, grammar, capability, concurrency, recovery,
   cancellation, scratch, distribution, packaging, and real-browser tests.
