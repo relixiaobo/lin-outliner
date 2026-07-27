@@ -52,18 +52,16 @@ does not participate in Agent browser tasks.
 
 ## Shape
 
-This plan is one complete Browser Control feature, preceded by one required
-interface-only checkpoint because action kinds and tool persistence are A4
-shared surfaces:
+This plan is one complete Browser Control feature in one PR. The PR builds the
+A4 foundation before its consumer, but neither stage ships separately:
 
-1. A human-ratified interface-only PR adds Browser action kinds and a generic
-   execution-versus-durable-projection contract. It allows a tool call to use
-   raw values transiently while Items, rollouts, extension hooks, history,
-   Memory, diagnostics, and full-output storage receive only an independently
-   constructed durable projection. It ships no Browser Pilot runtime.
-2. One feature PR packages Browser Pilot 0.5, adds the classified direct-`bp`
-   bash route, injects Thread/Turn context, bundles the matching skill, and
-   proves the complete user workflow.
+1. Add Browser action kinds and a generic execution-versus-durable-projection
+   contract. It allows a tool call to use raw values transiently while Items,
+   rollouts, extension hooks, history, Memory, diagnostics, and full-output
+   storage receive only an independently constructed durable projection.
+2. Build Browser Pilot 0.5 on that contract: package the executable and skill,
+   add the classified direct-`bp` bash route, inject Thread/Turn context, and
+   prove the complete user workflow.
 
 The feature is complete only when a packaged Tenon Agent can discover the
 skill, invoke the bundled CLI through `bash`, connect to the user's browser,
@@ -75,14 +73,14 @@ file result, and leave unrelated user tabs untouched.
 - No open PR claims Browser Pilot packaging, the built-in Browser Pilot skill,
   or this plan.
 - Draft PR #441 claims Agent context composition and canonical evidence
-  admission. It currently publishes no file diff, but the interface checkpoint
-  must recheck and sequence any overlap in `PiTurnExecutor`, rollout, history,
-  or evidence projection before editing those shared paths.
+  admission. It currently publishes no file diff, but this PR must recheck and
+  sequence any overlap in `PiTurnExecutor`, rollout, history, or evidence
+  projection before editing those shared paths.
 - `docs/plans/browser-extension-integration.md` remains restricted to future
   read-only URL Preview extraction and has no Browser Control dependency.
-- The implementation touches shared action kinds plus infrastructure-owned
-  build inputs. The interface checkpoint and implementation use separate,
-  ordered Draft PR claims.
+- This PR claims the shared action kinds, persistence projection, Browser Pilot
+  packaging, and built-in skill as one complete feature. Foundation changes land
+  earlier in its commit/build order but are not independently releasable.
 - `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned and are updated at
   the merge gate.
 
@@ -254,7 +252,7 @@ Item projection.
 Today `bash` records its raw command before execution and persists complete
 output afterward. Browser Pilot commands can contain passwords, typed text,
 headers, mock bodies, private paths, selectors, URLs, and authenticated page
-content, so the interface checkpoint must separate execution from persistence
+content, so the feature's foundation stage must separate execution from persistence
 before Browser Control ships.
 
 For every recognized call the host creates an immutable in-memory envelope
@@ -314,7 +312,7 @@ a private CLI protocol.
 
 Raw `bp` currently falls through to `shell.unknown`, which makes browser effects
 look local and bypasses Browser-specific explicit blocks. The interface
-checkpoint adds these action kinds:
+feature adds these action kinds:
 
 | Action kind | Access | Browser Pilot command class |
 |---|---|---|
@@ -430,7 +428,7 @@ grace period. No Browser command is automatically retried by Tenon.
 
 ### Specs And Documentation
 
-The interface checkpoint updates:
+The feature's foundation stage updates:
 
 - `src/core/agent/tools.ts`: ratified Browser action kinds;
 - `src/core/agent/extensions.ts`: lifecycle payloads are durable projections,
@@ -442,7 +440,7 @@ The interface checkpoint updates:
 - `docs/spec/agent-tool-design.md`: the generic transient execution versus
   durable Item/result contract.
 
-The complete feature PR updates current behavior in:
+The same PR then updates current behavior in:
 
 - `docs/spec/agent-integration.md`: Browser Control integration and lifecycle
   checklist;
@@ -543,8 +541,8 @@ URL Preview specs remain exclusively about internal preview behavior.
 
 ## Subtasks
 
-- Land the human-ratified interface-only Browser action-kind and
-  execution-versus-durable-projection checkpoint.
+- Add the Browser action-kind and execution-versus-durable-projection foundation
+  before its Browser Pilot consumer in the same PR.
 - Add deterministic Browser Pilot 0.5 executable, skill, release index,
   checksum, manifest, and license inputs to the build.
 - Add the direct `bp` bash route, pinned command conformance, capability mapper,
@@ -554,4 +552,4 @@ URL Preview specs remain exclusively about internal preview behavior.
 - Add capability, secret persistence, audit, concurrency, recovery, wait,
   cancellation, scratch, skill, and packaging tests.
 - Complete the real-browser smoke workflow and record non-interference evidence.
-- Fold shipped behavior into the listed specs in the implementation PR.
+- Fold shipped behavior into the listed specs in the same PR.
