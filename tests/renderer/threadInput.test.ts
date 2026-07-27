@@ -48,6 +48,7 @@ describe('renderer Thread structured input', () => {
         id: 'item-1',
         provenance: { originThreadId: 'thread-1', originTurnId: 'turn-1', originItemId: 'item-1' },
         clientId: null,
+        acceptedAt: 100,
         content: [attachment, reference],
       }],
       itemsView: 'full',

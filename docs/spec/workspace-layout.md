@@ -812,12 +812,14 @@ rail.
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds
 that can be copied into the asset store: `local-file` (full-file ingest, gated to
-the agent's trusted roots) and `agent-payload` (bounded byte read — it errors
-rather than truncating past the cap, so an oversized payload reports not-added
-instead of committing a partial file). `url` is not yet ingestable. Anything the
-preview can resolve, it can ingest — the same security boundary backs both, so
-no new command-surface or main-process gate is introduced. The renderer copies
-the bytes into the asset store and creates an `image`/`attachment` node under
+the agent's trusted roots) and `agent-payload` (a typed, admission-bounded Thread
+resource). `url` is not yet ingestable. Anything the preview can resolve, it can
+ingest through the same authorization boundary. For a typed Thread resource, the
+renderer sends only `(threadId, resourceRef)` through the dedicated asset command;
+main reauthorizes the reference against the Thread Item graph and buffer-ingests the
+verified managed bytes without accepting or returning a path. The 20 MiB read cap
+fails closed rather than committing a partial file. The renderer receives the
+committed asset metadata and creates an `image`/`attachment` node under
 Today, then binds the same mounted `file-preview` view to the new node id; from
 then on the source is an ingested node with outliner ancestry and a children
 outline. The preview pane reaches App's document state through a single-handler

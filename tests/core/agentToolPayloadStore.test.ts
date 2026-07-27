@@ -12,6 +12,25 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
 
+function turnEnvironmentPayload(acceptedAt = 1_720_000_000_000) {
+  return {
+    schemaVersion: 1,
+    kind: 'turnEnvironment',
+    acceptedAt,
+    utcInstant: new Date(acceptedAt).toISOString(),
+    localDate: '2024-07-03',
+    localTime: '09:46:40',
+    timeZone: 'UTC',
+    utcOffsetMinutes: 0,
+    locale: 'en-US',
+    workingDirectory: '/tmp/project',
+    conversationMode: 'interactive',
+    executionMode: 'root',
+    replyIdentity: null,
+    todayNodeId: null,
+  } as const;
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -24,13 +43,16 @@ describe('Agent tool payload store', () => {
     const threadId = uuidV7(1_720_000_000_000);
     const bytes = Buffer.from('binary image bytes');
 
-    const first = await store.writeImage(threadId, 'tool-call', 0, bytes.toString('base64'), 'image/png');
-    const second = await store.writeImage(threadId, 'tool-call', 0, bytes.toString('base64'), 'image/png');
-    expect(first).toBe(second);
-    expect(await readFile(first)).toEqual(bytes);
+    const first = await store.writeImageWithStatus(threadId, bytes.toString('base64'), 'image/png');
+    const second = await store.writeImageWithStatus(threadId, bytes.toString('base64'), 'image/png');
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(first.ref).toEqual(second.ref);
+    expect(first.ref).toMatchObject({ mimeType: 'image/png', fileName: 'tool-output.png' });
+    expect(await store.readResource(threadId, first.ref)).toEqual(bytes);
 
     await store.deleteThread(threadId);
-    await expect(stat(first)).rejects.toThrow();
+    expect(await store.readResource(threadId, first.ref)).toBeNull();
   });
 
   test('rejects invalid and oversized base64 before writing image bytes', async () => {
@@ -42,9 +64,9 @@ describe('Agent tool payload store', () => {
 
     expect(measureToolPayloadImage(oversized)).toEqual({ ok: false, reason: 'imageByteLimit' });
     expect(measureToolPayloadImage('not base64!')).toEqual({ ok: false, reason: 'invalidBase64' });
-    await expect(store.writeImage(threadId, 'tool-call', 0, oversized, 'image/png'))
+    await expect(store.writeImage(threadId, oversized, 'image/png'))
       .rejects.toThrow('imageByteLimit');
-    await expect(store.writeImage(threadId, 'tool-call', 0, 'not base64!', 'image/png'))
+    await expect(store.writeImage(threadId, 'not base64!', 'image/png'))
       .rejects.toThrow('invalidBase64');
   });
 
@@ -56,7 +78,7 @@ describe('Agent tool payload store', () => {
     const output = await store.writeText(threadId, 'tool-call', 'full output', 'text/plain', 'Tool output');
     const outputId = output.id;
 
-    expect(await store.readText(threadId, outputId)).toBe('full output');
+    expect(await store.readTextReference(threadId, output)).toBe('full output');
     expect(output).toMatchObject({
       id: expect.stringMatching(/^[a-f0-9]{64}$/),
       mimeType: 'text/plain',
@@ -65,12 +87,144 @@ describe('Agent tool payload store', () => {
     });
     let invalidDigestError: unknown = null;
     try {
-      await store.readText(threadId, '../outside');
+      await store.readTextReference(threadId, { ...output, id: '../outside' });
     } catch (error) {
       invalidDigestError = error;
     }
     expect(invalidDigestError).toBeInstanceOf(Error);
     expect((invalidDigestError as Error).message).toBe('Invalid tool output digest');
+  });
+
+  test('verifies complete text references during reads, copies, and reconciliation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    const external = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-external-'));
+    roots.push(root, external);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const retained = await store.writeText(
+      sourceThreadId,
+      'tool-call',
+      'verified output',
+      'text/plain',
+      'Verified output',
+    );
+    const orphan = await store.writeText(
+      sourceThreadId,
+      'orphan-call',
+      'orphan output',
+      'application/json',
+      'Orphan output',
+    );
+
+    expect(await store.readTextReference(sourceThreadId, retained)).toBe('verified output');
+    expect(await store.readTextReference(sourceThreadId, { ...retained, byteLength: retained.byteLength + 1 }))
+      .toBeNull();
+    expect(await store.copyTextToThread(sourceThreadId, targetThreadId, retained)).toBe(true);
+    await store.deleteThread(sourceThreadId);
+    expect(await store.readTextReference(targetThreadId, retained)).toBe('verified output');
+
+    const secondSource = uuidV7(1_720_000_000_002);
+    const corrupt = await store.writeText(secondSource, 'tool-call', 'original bytes', 'text/plain', 'Output');
+    await writeFile(join(root, secondSource, `${corrupt.id}.txt`), 'tampered bytes');
+    expect(await store.readTextReference(secondSource, corrupt)).toBeNull();
+    expect(await store.copyTextToThread(secondSource, targetThreadId, corrupt)).toBe(false);
+
+    const pruneThread = uuidV7(1_720_000_000_003);
+    const keep = await store.writeText(pruneThread, 'keep', 'keep', 'text/plain', 'Keep');
+    const remove = await store.writeText(pruneThread, 'remove', 'remove', 'application/json', 'Remove');
+    await store.pruneUnreferencedTextOutputs(pruneThread, [keep]);
+    expect(await store.readTextReference(pruneThread, keep)).toBe('keep');
+    expect(await store.readTextReference(pruneThread, remove)).toBeNull();
+    expect(orphan.id).not.toBe(retained.id);
+
+    const unsafeThreadId = uuidV7(1_720_000_000_004);
+    await symlink(external, join(root, unsafeThreadId));
+    await writeFile(join(external, `${retained.id}.txt`), 'verified output');
+    expect(await store.readTextReference(unsafeThreadId, retained)).toBeNull();
+    await expect(store.writeText(unsafeThreadId, 'unsafe', 'escape', 'text/plain', 'Escape'))
+      .rejects.toThrow('unsafe directory entry');
+    await expect(store.copyTextToThread(targetThreadId, unsafeThreadId, retained))
+      .rejects.toThrow('unsafe directory entry');
+  });
+
+  test('owns content-addressed context payloads across copy and source deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const payload = turnEnvironmentPayload();
+
+    const ref = await store.writeContext(sourceThreadId, payload);
+    expect(ref.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(ref).toMatchObject({
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: Buffer.byteLength(JSON.stringify(payload)),
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+    });
+    expect(await store.readContext(sourceThreadId, ref)).toEqual(payload);
+    expect(await store.readContext(sourceThreadId, { ...ref, kind: 'userView' })).toBeNull();
+    expect(await store.copyContextToThread(sourceThreadId, targetThreadId, { ...ref, kind: 'userView' }))
+      .toBe(false);
+    expect(await store.copyContextToThread(sourceThreadId, targetThreadId, ref)).toBe(true);
+
+    const fileName = `${ref.id}.json`;
+    const sourceStat = await lstat(join(root, sourceThreadId, 'context', fileName));
+    const targetStat = await lstat(join(root, targetThreadId, 'context', fileName));
+    expect(targetStat.ino).not.toBe(sourceStat.ino);
+
+    await store.deleteThread(sourceThreadId);
+    expect(await store.readContext(targetThreadId, ref)).toEqual(payload);
+  });
+
+  test('rejects invalid or corrupt context payloads and prunes orphans', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    await expect(store.writeContext(threadId, 'not-json')).rejects.toThrow('expected an object');
+    await expect(store.writeContext(threadId, { ...turnEnvironmentPayload(), unexpected: true }))
+      .rejects.toThrow('unknown fields');
+    const retainedPayload = turnEnvironmentPayload();
+    const retained = await store.writeContext(threadId, retainedPayload);
+    const orphan = await store.writeContext(threadId, turnEnvironmentPayload(1_720_000_000_001));
+
+    await store.pruneUnreferencedContexts(threadId, [retained]);
+    expect(await store.readContext(threadId, retained)).toEqual(retainedPayload);
+    expect(await store.readContext(threadId, orphan)).toBeNull();
+
+    const retainedPath = join(root, threadId, 'context', `${retained.id}.json`);
+    const original = await readFile(retainedPath, 'utf8');
+    await writeFile(retainedPath, 'x'.repeat(original.length));
+    expect(await store.readContext(threadId, retained)).toBeNull();
+  });
+
+  test('applies the Thread quota and safe-directory rules to context payloads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    const external = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-external-'));
+    roots.push(root, external);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const ref = await store.writeContext(sourceThreadId, turnEnvironmentPayload());
+    const existingPath = join(root, targetThreadId, 'resources', 'a'.repeat(64), 'existing.bin');
+    await mkdir(join(root, targetThreadId, 'resources', 'a'.repeat(64)), { recursive: true });
+    await writeFile(existingPath, '');
+    await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 1);
+    await expect(store.copyContextToThread(sourceThreadId, targetThreadId, ref))
+      .rejects.toThrow('Thread storage quota');
+
+    const unsafeThreadId = uuidV7(1_720_000_000_002);
+    const externalFile = join(external, 'keep.json');
+    await writeFile(externalFile, '{"keep":true}');
+    await mkdir(join(root, unsafeThreadId), { recursive: true });
+    await symlink(external, join(root, unsafeThreadId, 'context'));
+    await store.pruneUnreferencedContexts(unsafeThreadId, []);
+    expect(await readFile(externalFile, 'utf8')).toBe('{"keep":true}');
+    await expect(store.writeContext(unsafeThreadId, turnEnvironmentPayload()))
+      .rejects.toThrow();
   });
 
   test('streams a managed resource into content-addressed storage', async () => {

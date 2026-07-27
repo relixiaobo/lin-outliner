@@ -91,6 +91,7 @@ describe('Document system runtime', () => {
         type: 'userMessage',
         id: itemId,
         clientId: null,
+        acceptedAt: 1_720_000_000_000,
         provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
         content: [{ type: 'text', text: 'Remember the clean implementation rule.' }],
       }],

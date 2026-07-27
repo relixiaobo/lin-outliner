@@ -314,6 +314,7 @@ describe('PiTurnExecutor event normalization', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: 'Hello' }],
         }],
       },
@@ -368,6 +369,7 @@ describe('PiTurnExecutor event normalization', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: '{"task":"extract"}' }],
         }],
       }),
@@ -436,7 +438,7 @@ describe('PiTurnExecutor event normalization', () => {
         completedAt: 1_720_000_000_200,
         durationMs: 100,
         items: [
-          { type: 'userMessage', id: 'user-1', provenance: provenance('user-1'), clientId: null, content: [{ type: 'text', text: 'Inspect it' }] },
+          { type: 'userMessage', id: 'user-1', provenance: provenance('user-1'), clientId: null, acceptedAt: 1_720_000_000_000, content: [{ type: 'text', text: 'Inspect it' }] },
           { type: 'agentMessage', id: 'agent-1', provenance: provenance('agent-1'), text: 'Checking.', phase: 'commentary', memoryCitation: null },
           { type: 'reasoning', id: 'reason-1', provenance: provenance('reason-1'), summary: ['Need evidence'], content: ['Inspect the workspace'] },
           {
@@ -487,7 +489,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(messages[3]).toMatchObject({ role: 'toolResult', toolCallId: 'call-2', content: [{ text: '{"matches":2}' }] });
   });
 
-  test('bounds persisted tool projections and stores image paths instead of base64', async () => {
+  test('bounds persisted tool projections and stores typed image sources instead of base64', async () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
     const oversized = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
@@ -576,7 +578,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [
         { type: 'text' },
-        { type: 'image', imageRef: '/workspace/large.png' },
+        { type: 'image', source: { kind: 'localFile', path: '/workspace/large.png' } },
       ],
     });
     expect(JSON.stringify(fileRead)).not.toContain('base64-image-secret');
@@ -588,8 +590,9 @@ describe('PiTurnExecutor event normalization', () => {
     expect(output).toContain('chars omitted');
     expect(images).toMatchObject({ type: 'dynamicToolCall', status: 'completed' });
     const imageContent = (images as Extract<typeof images, { type: 'dynamicToolCall' }>).contentItems!;
-    expect(imageContent.filter((content) => content.type === 'image'))
-      .toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
+    const persistedImages = imageContent.filter((content) => content.type === 'image');
+    expect(persistedImages).toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
+    expect(persistedImages.every((content) => content.source.kind === 'threadPayload')).toBe(true);
     expect(imageContent.at(-1)).toMatchObject({
       type: 'json',
       value: { imagesOmitted: 5, reasons: { countLimit: 5 } },
@@ -645,6 +648,7 @@ describe('PiTurnExecutor Thread naming', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: 'Refactor the Thread runtime' }],
         },
         {
@@ -775,7 +779,12 @@ function createContext(): {
     recorder,
     resolveResourceObservationPath: async () => null,
     readResource: async () => null,
-    persistOutputImage: async () => '/workspace/tool-output.png',
+    persistOutputImage: async () => ({
+      id: 'b'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 12,
+      fileName: 'tool-output.png',
+    }),
     persistOutputText: async (_itemId, text, mimeType, summary) => ({
       id: 'a'.repeat(64),
       mimeType,

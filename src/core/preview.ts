@@ -1,3 +1,7 @@
+import type { ThreadResourceReference } from './agent/protocol';
+import { MAX_MANAGED_ATTACHMENT_BYTES } from './agentAttachmentLimits';
+import { safeAttachmentFileName } from './agentAttachmentPaths';
+
 export type PreviewEntryKind = 'file' | 'directory';
 export type PreviewSourceKind = 'local-file' | 'asset';
 
@@ -9,6 +13,7 @@ export type PreviewTarget =
       label?: string;
       threadId?: string;
       attachmentId?: string;
+      resourceRef?: ThreadResourceReference;
     }
   | {
       kind: 'asset';
@@ -83,9 +88,14 @@ export interface PreviewListDirectoryResult {
 export function previewTargetKey(target: PreviewTarget): string {
   switch (target.kind) {
     case 'local-file':
-      return target.threadId && target.attachmentId
-        ? `local-file:thread-attachment:${target.threadId}:${target.attachmentId}:${target.entryKind}:${target.path}`
-        : `local-file:${target.entryKind}:${target.path}`;
+      if (target.threadId && target.attachmentId) {
+        return `local-file:thread-attachment:${target.threadId}:${target.attachmentId}:${target.entryKind}:${target.path}`;
+      }
+      if (target.threadId && target.resourceRef) {
+        const ref = target.resourceRef;
+        return `local-file:thread-resource:${target.threadId}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
+      }
+      return `local-file:${target.entryKind}:${target.path}`;
     case 'asset':
       return `asset:${target.assetId}`;
     case 'url':
@@ -102,13 +112,20 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
     const attachmentId = typeof value.attachmentId === 'string' && value.attachmentId.trim()
       ? value.attachmentId
       : undefined;
-    if (Boolean(threadId) !== Boolean(attachmentId)) return null;
+    let resourceRef: ThreadResourceReference | undefined;
+    if (value.resourceRef !== undefined) {
+      resourceRef = threadResourceReferenceFromUnknown(value.resourceRef) ?? undefined;
+      if (!resourceRef) return null;
+    }
+    const scopedIdentityCount = Number(Boolean(attachmentId)) + Number(Boolean(resourceRef));
+    if (threadId ? scopedIdentityCount !== 1 : scopedIdentityCount !== 0) return null;
     return {
       kind: 'local-file',
       path: value.path,
       entryKind: value.entryKind === 'directory' ? 'directory' : 'file',
       ...(label ? { label } : {}),
       ...(threadId && attachmentId ? { threadId, attachmentId } : {}),
+      ...(threadId && resourceRef ? { threadId, resourceRef } : {}),
     };
   }
   if (value.kind === 'asset') {
@@ -120,6 +137,26 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
     return { kind: 'url', url: value.url, ...(label ? { label } : {}) };
   }
   return null;
+}
+
+function threadResourceReferenceFromUnknown(value: unknown): ThreadResourceReference | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== 4 || keys.some((key) => !['id', 'mimeType', 'byteLength', 'fileName'].includes(key))) {
+    return null;
+  }
+  if (typeof value.id !== 'string' || !/^[a-f0-9]{64}$/u.test(value.id)) return null;
+  if (typeof value.mimeType !== 'string' || !value.mimeType.trim()) return null;
+  if (!Number.isSafeInteger(value.byteLength)
+    || (value.byteLength as number) < 0
+    || (value.byteLength as number) > MAX_MANAGED_ATTACHMENT_BYTES) return null;
+  if (typeof value.fileName !== 'string' || safeAttachmentFileName(value.fileName) !== value.fileName) return null;
+  return {
+    id: value.id,
+    mimeType: value.mimeType,
+    byteLength: value.byteLength as number,
+    fileName: value.fileName,
+  };
 }
 
 export function normalizePreviewHttpUrl(value: string): string | null {

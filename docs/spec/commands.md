@@ -144,7 +144,7 @@ Thread through Agent Core.
 `undo`, `redo`.
 
 ### Assets
-`ingest_asset`, `ingest_local_file`, `lookup_asset`, `delete_asset`,
+`ingest_asset`, `ingest_local_file`, `ingest_thread_resource`, `lookup_asset`, `delete_asset`,
 `pick_image_files`, `pick_attachment_files`, `open_asset`, `reveal_asset`,
 `copy_asset_file`, `open_external_url`.
 
@@ -163,6 +163,13 @@ previewing those file chips. The renderer can thus only ingest a file it could
 already preview, so this does not reopen the arbitrary-local-file read primitive
 that `ingest_asset`'s buffer-only-over-IPC rule guards against. Directories and
 gone/out-of-root paths return `null`.
+
+`ingest_thread_resource` is the main-renderer-only ingest bridge for managed Agent
+payloads. The renderer supplies only an owning Thread ID and an exact
+`ThreadResourceReference`; main verifies that the current Thread Item graph owns the
+reference, reads the verified managed bytes, and buffer-ingests them without exposing a
+path. The read is capped at 20 MiB and never truncates; oversized, missing, stale,
+forged, corrupt, or length-mismatched references return `null`.
 
 `pick_image_files` and `pick_attachment_files` open native file pickers in the
 main process and ingest selected regular files before returning metadata to the

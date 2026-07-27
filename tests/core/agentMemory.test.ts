@@ -1538,10 +1538,12 @@ function userTurn(
   itemId = ITEM_ID,
   originThreadId = THREAD_ID,
 ): Turn {
+  const startedAt = new Date(2026, 6, 24).getTime();
   const item: ThreadItem = {
     type: 'userMessage',
     id: itemId,
     clientId: null,
+    acceptedAt: startedAt,
     provenance: { originThreadId, originTurnId: turnId, originItemId: itemId },
     content: [
       { type: 'text', text },
@@ -1561,7 +1563,7 @@ function userTurn(
       reasoningEffort: 'medium',
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
     },
-    startedAt: new Date(2026, 6, 24).getTime(),
+    startedAt,
     completedAt: new Date(2026, 6, 24).getTime(),
     durationMs: 0,
   };

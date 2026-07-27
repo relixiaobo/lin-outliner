@@ -41,6 +41,7 @@ import type {
   AgentCoreNotification,
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
+  ThreadResourceReference,
 } from '../../core/agent/protocol';
 import type {
   MemoryFeatureMode,
@@ -194,6 +195,8 @@ export const api = {
   // Returns null when the path is not a trusted file (e.g. GC'd working file).
   ingestLocalFileToAsset: (path: string) =>
     command<AssetMetadata | null>('ingest_local_file', { path }),
+  ingestThreadResourceToAsset: (threadId: string, resourceRef: ThreadResourceReference) =>
+    command<AssetMetadata | null>('ingest_thread_resource', { threadId, resourceRef }),
   lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
   deleteAsset: (id: string) => command<void>('delete_asset', { id }),
   pickImageFiles: () => command<AssetMetadata[]>('pick_image_files'),

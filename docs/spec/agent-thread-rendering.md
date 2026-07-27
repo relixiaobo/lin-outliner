@@ -53,7 +53,11 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   the established Add to Today action without introducing an artifact DTO
 - every ordinary tool, including a loaded or isolated Skill, uses the same
   expandable row inside the counted activity group; tool-specific icons,
-  summaries, images, and child-Thread links remain supplemental affordances
+  summaries, images, and child-Thread links remain supplemental affordances;
+  managed tool images resolve from their typed resource reference through the owning
+  Thread and preview only a disposable scratch copy; Add to Today sends the same typed
+  identity to a main-only ingest seam, which reauthorizes ownership and returns asset
+  metadata without accepting or returning a managed path
 - local paths in tool arguments and results use the shared inline-file reference
   affordance; absolute paths link directly, while relative values in path-bearing
   JSON fields resolve against the Thread working directory. URL text is not
@@ -63,7 +67,8 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Run Details, with no separate Memory Item or disclosure
-- compaction renders as a history boundary
+- context evidence and reset Items are hidden from the ordinary transcript in the
+  interface-contract stage; compaction retains its existing history-boundary row
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
@@ -156,6 +161,12 @@ alongside the existing model, timing, tool, token, and cost facts. Opening
 Details pushes the current view onto that pane's Back stack and never creates a
 split. Opening another Turn while Details is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
+
+Run Details includes context evidence/reset/compaction in its exhaustive Item list.
+Evidence uses its bounded canonical summary; the renderer does not read private payload
+files or expose full untrusted context. Dedicated reset presentation and explicit
+payload inspection arrive with the context planner and command consumer rather than
+being inferred from protocol presence.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item

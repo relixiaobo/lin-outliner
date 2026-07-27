@@ -108,7 +108,7 @@ describe('preview source commands', () => {
               }
             : null
         ),
-        threadAttachmentFileStreamUrl: async (filePath) => {
+        threadManagedFileStreamUrl: async (filePath) => {
           streamPaths.push(filePath);
           return `${PREVIEW_LOCAL_URL_SCHEME}://attachment-token`;
         },
@@ -148,6 +148,57 @@ describe('preview source commands', () => {
       expect(ambient.source).toBeNull();
     } finally {
       await rm(externalRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves a typed Thread resource without exposing its canonical storage path', async () => {
+    const managedRoot = await mkdtemp(join(tmpdir(), 'lin-preview-resource-test-'));
+    try {
+      const observedPath = join(managedRoot, 'tool-output.png');
+      await writeFile(observedPath, 'managed image bytes');
+      const observedStats = await stat(observedPath);
+      const ref = {
+        id: 'a'.repeat(64),
+        mimeType: 'image/png',
+        byteLength: 19,
+        fileName: 'tool-output.png',
+      };
+      const context = previewContext({
+        threadResourceFile: async (threadId, candidate) => (
+          threadId === 'thread-1' && candidate.id === ref.id
+            ? {
+                entryKind: 'file',
+                path: observedPath,
+                stats: observedStats,
+                acceptedPathHints: [ref.fileName],
+              }
+            : null
+        ),
+      });
+      const target = {
+        kind: 'local-file' as const,
+        path: ref.fileName,
+        entryKind: 'file' as const,
+        threadId: 'thread-1',
+        resourceRef: ref,
+      };
+
+      const resolved = await handlePreviewCommand('preview_resolve_source', { target }, context) as PreviewResolveSourceResult;
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        name: 'tool-output.png',
+        displayPath: observedPath,
+        target: { threadId: 'thread-1', resourceRef: ref },
+      });
+      const text = await handlePreviewCommand('preview_read_text', { target }, context) as PreviewReadTextResult;
+      expect(text.text).toBe('managed image bytes');
+
+      const substituted = await handlePreviewCommand('preview_read_text', {
+        target: { ...target, path: '/tmp/substituted.png' },
+      }, context) as PreviewReadTextResult;
+      expect(substituted).toEqual({ text: null, error: 'missing' });
+    } finally {
+      await rm(managedRoot, { recursive: true, force: true });
     }
   });
 

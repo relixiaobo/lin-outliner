@@ -159,6 +159,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           item={props.item}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
+          threadId={props.threadId}
           threadCwd={props.threadCwd}
         />
       );
@@ -180,6 +181,9 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     }
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
+    case 'contextEvidence':
+    case 'contextReset':
+      return null;
     case 'contextCompaction':
       return <div className="thread-item thread-compaction"><span>{t.agent.thread.item.compaction}</span></div>;
     default:
@@ -192,12 +196,14 @@ export function ThreadToolActivityGroup({
   items,
   onReadToolOutput,
   onOpenThread,
+  threadId,
   threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly items: readonly ThreadToolItem[];
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly threadId: string;
   readonly threadCwd: string;
 }) {
   const t = useT();
@@ -225,6 +231,7 @@ export function ThreadToolActivityGroup({
               key={item.id}
               onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
+              threadId={threadId}
               threadCwd={threadCwd}
             />
           ))}
@@ -540,18 +547,20 @@ function ToolItemDisclosure({
   item,
   onReadOutput,
   onOpenThread,
+  threadId,
   threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly item: ThreadToolItem;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly threadId: string;
   readonly threadCwd: string;
 }) {
   const t = useT();
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
-  const detail = toolDetail(item, t, onOpenThread);
+  const detail = toolDetail(item, t, onOpenThread, threadId);
   const [fullOutput, setFullOutput] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     if (!expanded || !item.outputRef || fullOutput !== undefined) return undefined;
@@ -674,6 +683,7 @@ function toolDetail(
   item: ThreadToolItem,
   t: Messages,
   onOpenThread: (threadId: string) => Promise<void>,
+  threadId: string,
 ): ToolDetail {
   const empty = {
     input: null,
@@ -738,7 +748,9 @@ function toolDetail(
         error: item.success === false && !textOutput ? t.agent.thread.item.status.failed : null,
         body: images.length > 0 ? (
           <div className="thread-tool-images">
-            {images.map((image) => <ToolOutputImage image={image} key={image.imageRef} />)}
+            {images.map((image) => (
+              <ToolOutputImage image={image} key={toolOutputImageKey(image)} threadId={threadId} />
+            ))}
           </div>
         ) : null,
       };
@@ -1095,17 +1107,27 @@ function executionStatusNode(status: ItemExecutionStatus, completed: ReactNode):
   return completed;
 }
 
-function ToolOutputImage({ image }: { readonly image: Extract<DynamicToolOutputContent, { type: 'image' }> }) {
+function ToolOutputImage({
+  image,
+  threadId,
+}: {
+  readonly image: Extract<DynamicToolOutputContent, { type: 'image' }>;
+  readonly threadId: string;
+}) {
+  const label = image.alt || toolOutputImageLabel(image);
   const target = useMemo(() => ({
     kind: 'local-file' as const,
-    path: image.imageRef,
+    path: image.source.kind === 'localFile' ? image.source.path : image.source.ref.fileName,
     entryKind: 'file' as const,
-    label: image.alt || image.imageRef,
-  }), [image.alt, image.imageRef]);
+    label,
+    ...(image.source.kind === 'threadPayload'
+      ? { threadId, resourceRef: image.source.ref }
+      : {}),
+  }), [image.source, label, threadId]);
   const preview = usePreviewObjectUrl(target, { mimeType: 'image/*' });
   return (
     <button
-      aria-label={image.alt || image.imageRef}
+      aria-label={label}
       className="thread-tool-image"
       onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })}
       type="button"
@@ -1113,6 +1135,16 @@ function ToolOutputImage({ image }: { readonly image: Extract<DynamicToolOutputC
       {preview.src ? <img alt={image.alt || ''} loading="lazy" src={preview.src} /> : <FileImageIcon size={ICON_SIZE.toolbar} />}
     </button>
   );
+}
+
+function toolOutputImageKey(image: Extract<DynamicToolOutputContent, { type: 'image' }>): string {
+  return image.source.kind === 'localFile'
+    ? `local:${image.source.path}`
+    : `thread:${image.source.ref.id}:${image.source.ref.fileName}`;
+}
+
+function toolOutputImageLabel(image: Extract<DynamicToolOutputContent, { type: 'image' }>): string {
+  return image.source.kind === 'localFile' ? image.source.path : image.source.ref.fileName;
 }
 
 function ImageViewItem({ path }: { readonly path: string }) {

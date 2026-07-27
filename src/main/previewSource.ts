@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { AssetService } from './assetService';
 import { assetUrl } from '../core/assets';
+import type { ThreadResourceReference } from '../core/agent/protocol';
 import type { PreviewCommand } from '../core/commands';
 import {
   normalizePreviewHttpUrl,
@@ -49,7 +50,11 @@ export interface PreviewCommandContext {
   inferMimeType: (filePath: string) => string;
   localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;
   threadAttachmentFile?: (threadId: string, attachmentId: string) => Promise<ThreadAttachmentPreviewFile | null>;
-  threadAttachmentFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
+  threadResourceFile?: (
+    threadId: string,
+    ref: ThreadResourceReference,
+  ) => Promise<ThreadAttachmentPreviewFile | null>;
+  threadManagedFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
 }
 
@@ -93,8 +98,8 @@ async function previewSourceForTarget(
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
     const streamUrl = metadata.entryKind === 'file'
-      ? target.threadId && target.attachmentId
-        ? await context.threadAttachmentFileStreamUrl?.(file.path, metadata.mimeType)
+      ? target.threadId && (target.attachmentId || target.resourceRef)
+        ? await context.threadManagedFileStreamUrl?.(file.path, metadata.mimeType)
         : await context.localFileStreamUrl?.(file, metadata.mimeType)
       : null;
     const normalizedTarget: PreviewTarget = {
@@ -238,7 +243,7 @@ async function previewDirectoryEntriesForTarget(
     }
     const child = await resolveTrustedLocalFileReference(
       join(file.path, dirent.name),
-      target.threadId && target.attachmentId ? [file.path] : context.agentLocalFileRoots,
+      target.threadId && (target.attachmentId || target.resourceRef) ? [file.path] : context.agentLocalFileRoots,
       localFileReferenceOptions(context),
     );
     if (!child) continue;
@@ -252,6 +257,8 @@ async function previewDirectoryEntriesForTarget(
         entryKind: child.entryKind,
         ...(target.threadId && target.attachmentId
           ? { threadId: target.threadId, attachmentId: target.attachmentId }
+          : target.threadId && target.resourceRef
+            ? { threadId: target.threadId, resourceRef: target.resourceRef }
           : {}),
       },
       mimeType,
@@ -267,20 +274,25 @@ async function resolveLocalFileTarget(
   target: Extract<PreviewTarget, { kind: 'local-file' }>,
   context: PreviewCommandContext,
 ): Promise<TrustedLocalFileReference | null> {
-  if (!target.threadId || !target.attachmentId) {
+  if (!target.threadId) {
     return resolveTrustedLocalFileReference(
       target.path,
       context.agentLocalFileRoots,
       localFileReferenceOptions(context),
     );
   }
-  const attachment = await context.threadAttachmentFile?.(target.threadId, target.attachmentId);
-  if (!attachment) return null;
-  if (attachment.entryKind === 'file') {
-    return target.path === attachment.path || attachment.acceptedPathHints.includes(target.path)
-      ? attachment
+  if (target.resourceRef) {
+    const resource = await context.threadResourceFile?.(target.threadId, target.resourceRef);
+    if (!resource || resource.entryKind !== 'file') return null;
+    return target.path === resource.path || resource.acceptedPathHints.includes(target.path)
+      ? resource
       : null;
   }
+  if (!target.attachmentId) return null;
+  const attachment = await context.threadAttachmentFile?.(target.threadId, target.attachmentId);
+  if (!attachment) return null;
+  if (attachment.entryKind === 'file') return target.path === attachment.path
+    || attachment.acceptedPathHints.includes(target.path) ? attachment : null;
   if (target.path === attachment.path || attachment.acceptedPathHints.includes(target.path)) return attachment;
   return resolveTrustedLocalFileReference(
     target.path,

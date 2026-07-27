@@ -20,6 +20,13 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+The current adapter still has separate first-prompt, steering, and history
+construction paths. It places volatile `systemContext` and Skill listing text in the
+system prompt and does not yet consume canonical context payloads. The context Item
+and payload protocol exists so the unified planner can replace these paths without an
+interim private format; stable L0/L1/L2 composition, append-only cache projection, and
+structured Skill reduction are not current runtime behavior yet.
+
 For every ordinary Turn, main adds one trusted environment fragment containing
 the current local calendar date, the exact UTC instant at execution start, and
 the runtime-resolved IANA timezone. Relative schedules therefore never require
@@ -50,9 +57,10 @@ Messages become assistant content, while reasoning becomes explicitly labelled
 assistant text because canonical history does not retain provider-private
 reasoning signatures. Command, file, MCP, dynamic,
 collaboration, and web Items become paired provider tool-call and tool-result
-messages; plans, Subagent activity, viewed images, and compaction remain visible
-as textual context. The active provider supplies message metadata. No hidden
-provider transcript is stored or used as a history authority.
+messages using the bounded text already stored on each Item. Plans and context
+evidence/reset Items are omitted; Subagent activity and viewed images become textual
+context, and compaction becomes a marker. The active provider supplies message
+metadata. No hidden provider transcript is stored or used as a history authority.
 
 ## User Content And Attachments
 
@@ -113,25 +121,30 @@ Every textual tool completion also writes its complete normalized result to the
 Thread-owned content-addressed payload store. The Item keeps only a bounded
 renderer/history projection plus an immutable `outputRef` containing digest,
 MIME type, byte length, and summary. `thread/item/output/read` validates the
-requested Thread/Turn/Item/ref tuple and byte length before returning text.
+requested Thread/Turn/Item/ref tuple, MIME-selected file, byte length, and SHA-256
+digest before returning text.
 Forked Items retain origin provenance while copying referenced payloads under
 the fork's own Thread directory. Managed resource copies use copy-on-write when
 available but always receive a distinct inode. Payload reads resolve through the
 requested Thread, so deleting or corrupting the source Thread cannot invalidate
 inherited text or image results. Payload reads never become provider history
-authority; prior model messages are rebuilt from canonical Items and their full
-output references.
+authority. The current history adapter replays the bounded Item result; selecting full
+content or an addressable observation is reserved for canonical
+`toolOutputProjection` evidence and the unified planner.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image
-files retain their file path. Other provider images are written under the
-owning Thread's payload directory and the Item stores only that file reference.
+files retain a typed `localFile` source. Other provider images are written to the
+owning Thread's managed resource store and the Item keeps a content-addressed
+`threadPayload` reference.
 Base64 length is validated before decoding, with independent per-image and
 per-tool-call byte budgets. Invalid, oversized, over-count, and over-total image
 outputs produce one structured omission summary instead of bytes or unbounded
-Item entries. Forking rewrites Thread-owned image references to the fork's own
-payload directory while leaving external readable file paths unchanged.
-Deleting a Thread deletes only that Thread's payload directory.
+Item entries. Forking copies Thread-owned image bytes under the target Thread while
+preserving the same reference; external readable file paths remain unchanged. A
+Thread-scoped preview resolves managed images to disposable scratch copies rather than
+exposing canonical resource paths. Deleting a Thread deletes only that Thread's payload
+directory.
 
 ## Tools And Causation
 
@@ -162,9 +175,15 @@ status and error.
 
 ## Context Compaction
 
-Compaction is represented by `contextCompaction`. It may replace provider-facing
-context during one execution, but canonical rollout history remains unchanged.
-Skills restore compact state through their own structured reminders.
+The Core contract represents compaction with exact covered/preserved cursors and
+Thread-owned summary, restored-state, and optional instruction payloads. It also
+represents `/clear` with `contextReset`. The current executor does not perform this
+reduction: it ignores context evidence/reset and serializes an existing compaction Item
+only as a marker. The restored-state schema can checkpoint active file/Node observations
+through complete-output and frozen-projection references, but the executor does not yet
+restore or serialize them. Automatic/manual planning, epoch selection, Skill and
+observation checkpoint restore are subsequent consumers of this protocol, never
+reminder-text parsers.
 
 ## Provider Independence
 

@@ -135,6 +135,7 @@ export const AGENT_COMMANDS = [
 export const ASSET_COMMANDS = [
   'ingest_asset',
   'ingest_local_file',
+  'ingest_thread_resource',
   'lookup_asset',
   'delete_asset',
   'pick_image_files',
