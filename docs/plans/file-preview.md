@@ -342,9 +342,11 @@ paths:
   are meant to be visible in conversation UI.
 - `launcher-provider-expansion`: captures need preview/open-original for
   `OriginalResourceRef`. This plan should be the shared destination.
-- `browser-extension-integration` / `agent-browser-control`: remote rich capture
-  and browser automation are separate capabilities over the same visible URL
-  Preview webview and persistent session.
+- `browser-extension-integration`: future rich capture may read an explicitly
+  selected internal URL Preview through a narrow read-only path.
+- `agent-browser-control`: browser automation is independent and uses Browser
+  Pilot to control the user's browser; it does not address URL Preview guests or
+  share their persistent session.
 - `embed-strategy`: live embeds stay separate from URL preview.
 
 ## Open Questions

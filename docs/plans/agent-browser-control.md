@@ -1,511 +1,267 @@
-# Agent Browser Control Tool
+# Agent Browser Control
 
 ## Goal
 
-Build a Tenon-native browser-use capability for the agent. The capability must
-cover the full useful surface of `~/Coding/browser-pilot` while fitting Tenon's
-agent runtime, permission model, event log, and multimodal tool-result pipeline.
+Let an Agent use Browser Pilot to control the user's own eligible Chromium tabs
+and complete browser tasks with the user's existing Profiles, signed-in sessions,
+cookies, extensions, and website state.
 
-The user-facing capability is the Browser Control tool family. It gives the
-agent audited access to the user's existing Tenon URL Preview panes and their
-shared Preview session: observe pages, act on elements, upload files, capture
-screenshots and PDFs, inspect cookies, switch visible panes and frames, handle
-HTTP auth and dialogs, and inspect or modify network traffic. URL Preview remains
-the only user-visible browser surface.
+Tenon is a Browser Pilot consumer, not a second browser-automation
+implementation. It bundles a pinned Browser Pilot executable and the matching
+Browser Pilot skill. An Agent that already has Tenon's `bash` tool follows the
+skill and invokes `bp` commands. Browser Pilot owns browser discovery,
+authorization, tab control, observations, actions, captures, concurrency, and
+cleanup.
 
-The critical product requirement is that visual results are first-class tool
-results. A screenshot, annotated snapshot, or page capture is returned to the
-model as image content and stored through payload refs. The agent must not have
-to infer from a CLI file path that an image exists.
+URL Preview remains Tenon's internal quick-preview surface. It is not a Browser
+Control target, does not share a profile or controller with Browser Pilot, and
+does not participate in Agent browser tasks.
 
 ## Non-goals
 
-- Do not expose a raw shell or CLI wrapper to the model.
-- Do not make browser control a generic MCP dependency. The product surface is a
-  Tenon-owned tool family backed by a replaceable browser backend.
-- Do not replace simple `web_*` search/fetch tools. Browser control is for pages
-  that need real browser state, interactivity, auth, frames, uploads,
-  screenshots, PDFs, cookies, or network inspection.
-- Do not add download management in the browser-pilot parity track.
-  `browser-pilot` does not currently expose a download command; download
-  handling should be a separate product decision if Tenon needs it later.
-- Do not attach to Chrome, Edge, Brave, or Chromium profiles; import their data;
-  require remote debugging; install a browser extension; or create a Pilot
-  window/tab. Browser Control must reuse Tenon-owned URL Preview guests.
-- Do not claim or bypass website sign-in compatibility that URL Preview itself
-  does not have. Browser Control inherits each provider's embedded-user-agent
-  policy and cannot turn OAuth tokens into website cookies.
-- Do not let the agent perform irreversible, outward-facing, credential,
-  payment, account-security, or permission-changing actions without an explicit
-  product safety decision.
-- Do not persist browser screenshots, page text, cookies, or network bodies
-  outside the existing event-log and payload-retention model.
+- Do not attach Electron CDP to URL Preview guests or make Preview panes
+  controllable by the Agent.
+- Do not reimplement Browser Pilot commands, refs, target ownership, Profile
+  routing, Broker coordination, or recovery inside Tenon.
+- Do not project Browser Pilot's canonical operations as a new Tenon-native tool
+  family in the first integration. The existing `bash` tool is the execution
+  surface.
+- Do not embed the Browser Pilot stdio adapter, add MCP, install a browser
+  extension, or import Browser Pilot private source modules.
+- Do not search `PATH`, run `npx`, install a global package, or download a runtime
+  when the packaged app starts. Tenon must invoke its pinned product-owned
+  executable.
+- Do not use URL Preview session data as a fallback when the user's browser is
+  unavailable or not authorized.
+- Do not imply that invoking Browser Pilot adds a per-operation approval layer.
+  Browser Pilot intentionally leaves task authorization and outward-action
+  policy to the Agent host.
 
 ## Shape
 
-This plan is shape (b): a set of independently shippable complete features. Each
-implementation unit must be useful and reviewable on its own, but the full plan
-is the complete Browser Control capability.
+This plan is shape (a): one complete feature in one PR. The feature is complete
+only when a packaged Tenon Agent can discover the built-in skill, invoke the
+bundled `bp` executable through `bash`, connect to the user's browser with the
+normal Chrome authorization flow, perform and verify a browser task, and leave
+unrelated user tabs untouched.
 
 ## Collision Result
 
-- `docs/plans/browser-extension-integration.md` records the older external
-  extension/CDP direction. The single-Preview decision rejects external profile
-  adoption; any future rich capture reuse must target Tenon Preview guests.
-- PR #359, "Use linlab skills for bundled artifacts", has landed. Browser
-  Control's built-in skill should use the resource-backed built-in skill
-  mechanism in `docs/spec/agent-skills.md`: development loads from
-  `src/main/builtInSkills` or enabled linlab roots, `bun run skills:sync` stages
-  tracked files into `build/generated/built-in-skills`, and the packaged app
-  loads them from `Resources/built-in-skills`.
-- No active code PR was found claiming the Browser Control tool files. The future
-  implementation will touch shared agent tool registration, permissions, and
-  specs, so the first implementation PR should keep its interface changes tight
-  and easy for sibling branches to rebase across.
-- This plan intentionally does not edit `docs/TASKS.md`; that file is
-  main-agent-owned.
-
-## Reference Coverage
-
-`browser-pilot` command coverage maps into a small Tenon-owned tool family:
-
-| `browser-pilot` surface | Tenon surface |
-|---|---|
-| `connect`, `disconnect` | `browser_session` |
-| `open` | `browser_open` |
-| `snapshot`, `locate`, `read` | `browser_observe` |
-| `click` | `browser_click` |
-| `type`, `keyboard`, `press` | `browser_type`, `browser_keyboard`, `browser_press` |
-| `eval` | `browser_eval` |
-| `upload` | `browser_upload` |
-| `screenshot`, `pdf`, `cookies` | `browser_capture` |
-| `frame` | `browser_frame` |
-| `auth` | `browser_auth` |
-| `tabs`, `tab`, `close` | `browser_tabs` |
-| `net list`, `net show`, `net block`, `net mock`, `net headers`, `net rules`, `net remove`, `net clear` | `browser_network` |
-| blocked popup requests, JS dialogs, attachment state, load settling | backend behavior reported in tool results |
+- No open PR claims this plan or the Browser Pilot packaging and skill areas.
+- `docs/plans/browser-extension-integration.md` is restricted to future
+  read-only URL Preview extraction. It has no runtime or design dependency on
+  Browser Control.
+- The implementation will touch `package.json` and build inputs, which are
+  infrastructure-owned. It must be claimed as an isolated Draft PR before code
+  changes begin.
+- `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned and are updated at
+  the merge gate.
 
 ## Design
 
 ### Product Boundary
 
-Browser Control is implemented as a first-party agent capability:
+| Capability | URL Preview | Browser Control |
+|---|---|---|
+| Purpose | Quickly preview an HTTP(S) URL inside Tenon | Let an Agent complete tasks in the user's browser |
+| Runtime | Sandboxed Electron webview | Browser Pilot CLI and per-user Broker |
+| Browser state | Tenon-owned `persist:url-preview` partition | User-owned Chromium Profiles and signed-in sessions |
+| Agent access | None | Existing Tenon `bash` tool invoking `bp` |
+| Targets | Visible Preview panes | Eligible user tabs and Browser Pilot-managed tabs |
+| Lifecycle | Workspace preview lifecycle | Browser Pilot connection, target, and managed-tab lifecycle |
 
-- Agent tool definitions stay concise and schema-oriented.
-- Browser workflow guidance lives in a built-in `browser-control` skill.
-- The tool implementation lives in Electron main, next to the existing agent
-  tools, and uses the existing agent permission, event log, payload, and model
-  content mechanisms.
-- The backend sits behind a `BrowserController` interface. Its implementation
-  uses Electron's main-process debugger/CDP access on registered URL Preview
-  guest `webContents`; renderer code never receives CDP access.
+Neither side discovers, adopts, or controls the other's targets. A URL may be
+opened in either surface for its own purpose, but that does not create shared
+identity, cookies, tabs, refs, or permissions.
 
-The agent never receives a path-only screenshot result. When a backend creates a
-PNG, JPEG, PDF, HAR-like payload, request body, or response body, the main
-process stores it as an event-log payload and exposes a typed payload ref. Images
-that are useful to the model are also attached as model-visible image parts.
+### Distribution And Command Resolution
 
-### Main-Process Architecture
+- Pin one Browser Pilot version in Tenon's build inputs. The executable version,
+  matching upstream skill revision, archive checksum, manifest, and license files
+  are reviewed together.
+- Stage the native executable and licenses into a generated build directory and
+  copy it with Electron Builder `extraResources`.
+- Packaged Tenon resolves the executable only under `process.resourcesPath`.
+  Source runs use a repository-generated asset or one explicit absolute
+  development override. A packaged build never falls back to a global install.
+- Prepend the verified product-owned executable directory to the environment
+  built by `buildAgentLocalToolProcessEnv`, so the existing `bash` tool resolves
+  `bp` without exposing an arbitrary executable selector to the model.
+- Fail the build on a missing asset, checksum mismatch, manifest mismatch,
+  unsupported platform/architecture, or executable version mismatch. Do not
+  defer these failures until an Agent task.
+- The initial platform matrix follows both Tenon and Browser Pilot release
+  support. Browser Pilot `v0.3.0` provides macOS arm64 but no macOS x64 asset;
+  Intel packaging remains unsupported until a verified upstream asset exists.
 
-Add a main-process `BrowserControlService` with these layers:
+### Agent Execution Path
 
-- `BrowserController`: backend-neutral interface used by tools.
-- `ElectronPreviewController`: attaches Electron's debugger/CDP client to
-  Tenon-owned URL Preview guests.
-- `BrowserTargetStore`: run-scoped guest ids, pane ids, current target/frame,
-  open network rules, and ephemeral ref maps. Website session state stays owned
-  by `persist:url-preview`; this store never duplicates cookies or credentials.
-- `BrowserSnapshotStore`: run-scoped AX/DOM snapshot refs keyed by
-  `snapshotId`, `targetId`, `frameId`, and backend node ids.
-- `BrowserPayloadWriter`: writes screenshots, PDFs, and network bodies through
-  the existing event-log payload path.
-- `BrowserPermissionAdapter`: maps browser operations to the existing permission
-  classifier and ask resolver.
+The runtime path is deliberately small:
 
-The service runs in Electron main. The renderer never talks to CDP directly and
-never receives raw browser credentials, cookies, or response bodies unless they
-are already normalized into tool-result payloads.
-
-### Preview Discovery And Session Lifecycle
-
-The backend follows Tenon's visible Preview model:
-
-- Main registers every attached URL Preview guest together with its owning main
-  window and pane identity. A destroyed or navigated-away guest invalidates its
-  run-scoped target and element refs.
-- `browser_session` lists controllable URL Preview panes and attaches Electron's
-  debugger only after the agent operation passes its permission gate. It never
-  reads `DevToolsActivePort` or an external profile directory.
-- `browser_open` dispatches the existing `PreviewTarget` route when no suitable
-  pane exists, so the user sees the page in normal workspace chrome. It can
-  navigate or select another Tenon Preview pane but cannot mint a hidden target.
-- Track guest ids, frame ids, the selected pane, and blocked popup attempts. Do
-  not inject a second Pilot overlay; the normal agent activity/approval UI owns
-  control visibility.
-- Wait for navigation using document, network, and load events plus a short
-  interactive grace period. Tool results expose settling uncertainty.
-- Detach the debugger at run/session end and on guest destruction without
-  clearing the user's persistent website session.
-
-If no URL Preview pane can be opened or attached, `browser_session` returns a
-bounded unavailable result rather than external-browser setup instructions.
-
-### Tool Surface
-
-The tool family is intentionally compact, but not a single stringly-typed
-megacommand.
-
-| Tool | Purpose |
-|---|---|
-| `browser_session` | connect, status, disconnect, setup diagnostics, current target |
-| `browser_open` | navigate the current Preview or open/select a Preview pane |
-| `browser_observe` | accessibility snapshot, page text, selector location, optional annotated screenshot |
-| `browser_click` | click by ref, selector, or coordinates; supports double and right click |
-| `browser_type` | type into a target element; supports clear and submit |
-| `browser_keyboard` | send raw text/key stream to the current focus or clicked target |
-| `browser_press` | send named keys and shortcuts |
-| `browser_eval` | run JavaScript in the current frame with strict permission gates |
-| `browser_upload` | attach one or more local files to a file input |
-| `browser_capture` | screenshot, full-page screenshot, selector screenshot, PDF, cookies |
-| `browser_frame` | list frames and switch current frame context |
-| `browser_auth` | set or clear HTTP Basic Auth credentials for matching origins |
-| `browser_tabs` | list, switch, open, and close Tenon URL Preview panes |
-| `browser_network` | inspect requests/responses and manage block/mock/header rules |
-
-Each tool returns a standard envelope plus a model-visible concise projection.
-The full raw result is retained as payload data when it is too large or sensitive
-for the model-visible text.
-
-### Result Protocol And Media
-
-Every browser result has a stable outer shape:
-
-```ts
-type BrowserToolResult = {
-  ok: boolean;
-  sessionId: string;
-  targetId?: string;
-  frameId?: string;
-  url?: string;
-  title?: string;
-  observationId?: string;
-  snapshotId?: string;
-  media?: BrowserMediaRef[];
-  payloads?: BrowserPayloadRef[];
-  warnings?: BrowserWarning[];
-  nextActionHint?: string;
-};
+```text
+Agent -> Tenon bash tool -> bundled bp CLI -> Browser Pilot Broker -> user browser
 ```
 
-Media refs are event-log payload refs. Image media that should guide the next
-model step is also attached to the tool result as image content. Large text,
-network bodies, PDFs, and cookie dumps are stored as payloads and summarized in
-the JSON text.
+Tenon does not launch `browser-pilot bridge --stdio`, call `tools/list`, or
+register each Browser Pilot operation as a model-facing tool. Each `bp` command
+is an ordinary `bash` invocation. Browser Pilot's per-user Broker coordinates
+commands from Tenon and other Agent products and enforces target ownership.
 
-The model-visible part should be small:
+The integration is available to every Tenon Run that already receives `bash`.
+It does not widen deliberately restricted tool pools, such as read-only isolated
+workflows, merely because the Browser Pilot skill is installed.
 
-- page identity, current frame, and current Preview pane;
-- the relevant AX/text excerpt or network summary;
-- clickable refs and their names;
-- verification status for actions;
-- warnings such as stale refs, blocked popups, or redacted cookie values;
-- image content for screenshots and annotated observations.
+### Skill Contract
 
-### Snapshot And Ref Model
+Bundle a resource-backed built-in `browser-pilot` skill derived from the same
+pinned Browser Pilot tag as the executable. Keep Browser Pilot's command and
+recovery guidance upstream-owned; Tenon-specific packaging guidance may only
+replace installation fallback text that is invalid inside the product.
 
-`browser-pilot` persists refs in `~/.browser-pilot/refs.json`. Tenon should not.
-Refs are run-scoped and snapshot-scoped:
+The skill must teach the Agent to:
 
-- `browser_observe` returns a `snapshotId`.
-- Element refs are only valid with that `snapshotId`.
-- A ref resolves through CDP backend node ids when possible.
-- Selector and coordinate actions remain available for cases where the AX tree is
-  insufficient.
-- If the page navigates, frame changes, or the backend node no longer resolves,
-  the action fails with `stale_ref` and asks the agent to observe again.
-- The event log stores the snapshot summary and payload refs, not an unbounded
-  copy of every full AX tree.
+- use Browser Pilot only for work requiring a real browser, signed-in state, or
+  interaction; keep simple public retrieval on the existing `web_*` tools;
+- call passive discovery first and call `bp connect` only when Browser Pilot
+  reports that authorization is required;
+- list tabs and Profiles before adopting browser context, ask when the intended
+  Profile or user tab is ambiguous, and prefer a new managed tab for independent
+  work;
+- follow the observe/read/search-then-act loop, replace stale refs after page or
+  frame changes, and verify the resulting page state;
+- use dedicated commands before `bp eval`, avoid broad cookie/network access
+  unless the task requires it, and keep sensitive output bounded;
+- leave user-owned tabs open unless the task explicitly requires closing one;
+- write screenshots, PDFs, and other durable outputs to an explicit absolute
+  Run scratch path and use Tenon's file tools to inspect or return them.
 
-The snapshot builder should preserve the strengths of `browser-pilot`:
+The skill is model-discoverable. It does not create a parallel set of Browser
+Pilot tool definitions or require Browser Pilot instructions in the stable
+system prompt.
 
-- use `Accessibility.getFullAXTree`;
-- include role, name, value, checked state, disabled state, focused state, and
-  selected state when available;
-- keep refs concise and stable within a snapshot;
-- include frame and target context;
-- generate an optional annotated screenshot for visual grounding.
+### User Interaction And Authorization
 
-### Observation
+- Tenon includes Browser Pilot; the user does not separately install a CLI or
+  extension.
+- Browser discovery is passive. The first task that needs a browser may run
+  `bp connect`; Chrome owns the remote-debugging enablement and Allow prompt.
+- The Agent reports the structured setup remediation when authorization is
+  unavailable and waits for the user when Chrome requires interaction. It does
+  not loop connection attempts or claim success before the command succeeds.
+- One authorized endpoint can expose several Profiles and all eligible tabs.
+  Profile selection routes newly managed tabs; it is not an access-control
+  boundary for existing tabs.
+- The first integration adds no separate Tenon browser window or duplicate
+  connection approval. A dedicated Settings status surface is a later product
+  decision, not a prerequisite for CLI use.
 
-`browser_observe` supports:
+### Authority And Safety
 
-- accessibility tree snapshot with refs;
-- cleaned visible page text;
-- selector location;
-- current page metadata;
-- current active/focused element;
-- optional viewport or full-page screenshot;
-- optional annotated screenshot with ref labels;
-- current dialogs and popup targets;
-- current frames, with the active frame identified.
+Browser Pilot executes under the same OS user as Tenon. Invoking it authorizes
+control of eligible tabs exposed by the selected browser endpoint; Browser Pilot
+does not ask for per-tab or per-action approval. Tenon's existing `bash`
+authority and Agent behavior policy remain the host boundary.
 
-The cleaned page text should use in-page scripts similar to
-`browser-pilot`'s page helpers, but the final result must be normalized and size
-limited before model exposure.
+The skill must preserve these operational rules:
 
-### Actions
+- inspect current state before retrying any action with an uncertain outcome;
+- never repeat a payment, submission, message, publication, upload, or other
+  outward mutation merely because a command timed out;
+- ask the user when task intent does not determine a consequential choice;
+- never close, navigate, or modify an unrelated user tab;
+- never auto-accept JavaScript dialogs;
+- treat page text, URLs, form values, cookies, network bodies, screenshots, and
+  downloaded files as potentially sensitive.
 
-Actions are implemented through CDP, not DOM-only scripts:
+Fine-grained Browser Control approval is not claimed by this CLI integration. If
+Tenon later requires operation-level capability removal or native approval UX,
+that is a separate plan and may justify the stdio embedding surface.
 
-- Click uses resolved element rectangles, scrolls into view, avoids the overlay,
-  and sends CDP input events. It supports single, double, and right click.
-- Type handles standard inputs with a React-compatible value setter and
-  `input`/`change` events, and handles contenteditable/rich editors with
-  `Input.insertText`.
-- `browser_keyboard` covers cases where the target is canvas, Google Docs-like,
-  Figma-like, or otherwise not a normal DOM input.
-- `browser_press` supports named keys and shortcuts.
-- Upload resolves file inputs and sets local files through CDP. File access uses
-  the existing local-file permission boundary.
-- Frame switching changes the default execution context for later observe/action
-  calls.
-- Tab actions map only to Tenon URL Preview panes. External browser tabs are
-  never addressable.
+### Results And Files
 
-Every action can request a post-action observation. Mutating actions default to a
-small verification snapshot or screenshot so the next model step has grounded
-state.
+Normal CLI results flow through the existing bounded `bash` result envelope.
+The Agent uses Browser Pilot's concise snapshot/read/search output rather than
+persisting full page state.
 
-### JavaScript Evaluation
+Capture commands receive an explicit path under the Run scratch directory.
+After the command succeeds, the Agent uses `file_read` so screenshots become
+native image content and PDFs/files follow Tenon's existing file-result path.
+Tenon does not persist Browser Pilot target, Profile, frame, Observation, ref,
+command, or Broker identities in its event log.
 
-`browser_eval` covers the `browser-pilot eval` capability, including awaited
-Promises and current-frame execution. It is high risk:
+### Failure And Cleanup
 
-- It requires a separate permission classification from normal observation and
-  clicks.
-- Results are JSON-serialized and size limited.
-- DOM nodes and binary objects are summarized, not exposed raw.
-- It must not be the default path for normal actions if a dedicated tool exists.
-- It is allowed for debugging, extraction, and one-off site automation only after
-  the permission stack has made that explicit to the user.
-
-### Capture, Cookies, And Files
-
-`browser_capture` covers:
-
-- viewport screenshot;
-- full-page screenshot;
-- selector screenshot;
-- PDF print output;
-- cookie listing for the current site or an explicit domain.
-
-Screenshots return image content. PDFs return payload refs, and the UI may show a
-preview through the existing file-preview path if available. Cookie values are
-redacted in the model-visible summary by default; full values require a separate
-permission and are still stored as sensitive payloads.
-
-### Network Control
-
-`browser_network` covers the full `browser-pilot net` surface:
-
-- list recent requests with filters for URL, method, status, resource type, and
-  `afterRequestId` / cursor semantics matching `browser-pilot net --after`;
-- show request and response details by id;
-- save or expose bodies as payload refs when large or binary;
-- block matching URL patterns;
-- mock matching URL patterns with status, headers, and inline or file-backed
-  bodies;
-- add request headers for matching patterns;
-- list active rules;
-- remove one rule or clear all rules.
-
-Network rules are control-session-scoped and always cleared when Browser Control
-detaches; they never become part of the user's persistent browsing profile. Rule
-results must identify which requests were intercepted or modified.
-
-### Auth, Dialogs, And Popups
-
-The backend tracks:
-
-- HTTP Basic Auth challenges, with `browser_auth` able to set or clear
-  credentials for matching origins;
-- JavaScript dialogs, reported in tool results;
-- blocked new-window requests. Safe GET requests may already have navigated the
-  same Preview in place; Browser Control does not create popup targets.
-
-Dialog handling should be explicit. The backend can auto-acknowledge harmless
-alerts to keep automation moving, but confirm/prompt behavior must be controlled
-by tool args and permission policy. Tool results always report handled dialogs.
-
-### Permission Model
-
-Browser permissions are operation-specific:
-
-- read page state;
-- capture screen or PDF;
-- read cookies;
-- read request and response bodies;
-- mutate page state through clicks, typing, upload, key events, or tab closing;
-- run JavaScript;
-- modify network traffic;
-- provide auth credentials.
-
-The permission classifier should consider host, action kind, target label,
-button text, form context, and whether the action appears outward-facing. A
-future hard-prohibition list must be decided before implementation for payments,
-credential entry, access-control changes, destructive account changes, and other
-irreversible actions.
-
-### Built-In Skill
-
-Add a built-in `browser-control` skill. This is the clean way to avoid bloated
-tool descriptions.
-
-The tool definitions should contain:
-
-- concise purpose;
-- input schema;
-- safety notes that directly affect permission classification;
-- result shape.
-
-The skill should contain:
-
-- when to use browser control instead of `web_*` tools;
-- the observe-then-act loop;
-- how snapshot refs and stale refs work;
-- recipes for login sessions, iframes, popups, file upload, rich editors,
-  screenshots, PDFs, cookies, and network debugging;
-- when to use `browser_eval`;
-- anti-patterns, including blind coordinate clicks, repeated actions without
-  re-observing, using eval when a typed tool exists, and attempting to act outside
-  Tenon URL Preview panes.
-
-The skill should be loaded when the model receives or elects to use browser
-tools. Detailed workflows belong there, not in every tool's description.
+- Missing or mismatched bundled assets are packaging failures, not an instruction
+  to install from npm at runtime.
+- A disconnected browser pauses browser work until an explicit reconnect is
+  appropriate. After reconnect, the Agent lists tabs/Profiles and observes again.
+- `target_busy` means another Agent controls the tab. The Agent chooses another
+  target or waits for release; it does not steal control.
+- Stale refs, frames, Profiles, and targets are rebuilt from fresh CLI state.
+- Routine task completion does not call `bp disconnect`. Temporary managed tabs
+  may be closed when the task is complete; user-owned tabs remain open.
 
 ### Specs And Documentation
 
-Update the current specs in the same implementation PRs:
+The implementation PR updates current specs only for behavior it ships:
 
-- `docs/spec/agent-tool-design.md`: tool registry, permission classes, result
-  examples, and the Browser Control family.
-- `docs/spec/agent-event-log-rendering.md`: image and payload treatment for
-  browser screenshots, PDFs, and network bodies.
-- `docs/spec/agent-pi-mono-implementation.md`: browser controller as a
-  main-process tool implementation, not a renderer bridge.
-- `docs/spec/agent-progress.md`: progress checklist for Browser Control.
-- `docs/spec/agent-skills.md`: Browser Control skill as a resource-backed
-  built-in staged by `bun run skills:sync` and packaged under
-  `Resources/built-in-skills`.
+- `docs/spec/agent-skills.md`: bundled Browser Pilot skill provenance,
+  discovery, and packaging;
+- `docs/spec/agent-tool-design.md`: `bash` environment resolution for the bundled
+  executable and browser-task file-result flow;
+- packaging documentation: pinned version, platform assets, checksums, licenses,
+  and development override;
+- `docs/spec/agent-progress.md`: verified Browser Control capability status.
 
-## Implementation Units
-
-### Unit 1: Read-Only Browser Session And Visual Observation
-
-Complete feature: the agent can select or open a visible Tenon URL Preview pane,
-observe page structure, read visible text, list frames and panes, and return
-screenshots as image tool results.
-
-Scope:
-
-- `BrowserController` and `ElectronPreviewController` foundation;
-- Preview guest registration, selection, and attachment diagnostics;
-- `browser_session`, `browser_open`, `browser_observe`, `browser_frame` list,
-  `browser_tabs` list/switch, and screenshot mode of `browser_capture`;
-- snapshot/ref store;
-- first version of `browser-control` skill focused on observation;
-- specs and tests for image payloads, stale refs, missing Preview state, frame
-  listing, and no binary data in JSONL state.
-
-### Unit 2: Safe Page Actions
-
-Complete feature: the agent can act on normal pages in a visible Tenon URL
-Preview pane with verification and permission gates.
-
-Scope:
-
-- `browser_click`, `browser_type`, `browser_keyboard`, `browser_press`,
-  `browser_upload`;
-- Preview pane close/open through existing workspace routing;
-- frame switching;
-- dialog and popup reporting;
-- post-action verification snapshots;
-- rich input handling for standard inputs, contenteditable, and common React
-  controlled inputs;
-- tests adapted from `browser-pilot` for click, type, clear, submit, key press,
-  upload, dialogs, popups, frames, shadow DOM, scroll-to-click, and overlay
-  avoidance.
-
-### Unit 3: Capture, Cookies, Eval, Auth, And Network Debugging
-
-Complete feature: the agent has the full advanced browser-pilot capability
-surface with stronger permissions and payload handling.
-
-Scope:
-
-- PDF capture and selector/full-page screenshots;
-- cookies with redaction and sensitive-payload policy;
-- `browser_eval`;
-- `browser_auth`;
-- `browser_network` list/show/block/mock/headers/rules/remove/clear;
-- payload storage for large or binary request/response bodies;
-- high-risk permission classes and user-facing ask copy;
-- tests for PDF payloads, cookie redaction, eval permissions, Basic Auth,
-  network monitoring, blocking, mocking, header injection, and rule cleanup.
-  Include incremental network listing through `afterRequestId` / cursor coverage.
-
-### Unit 4: Preview Capture Reuse
-
-Complete feature: launcher/user capture can reuse the read-only subset of the
-same Preview controller without duplicating target addressing, permissions, or
-payload semantics.
-
-Scope:
-
-- finalize the Preview-owned `BrowserController` interface;
-- map visible Preview guest/pane ids into the capture read subset;
-- connect the existing `PageContentExtractor` seam where the active source is a
-  Tenon Preview rather than an external app;
-- add contract tests against a fake controller so capture and Browser Control
-  cannot diverge from target/result shapes.
+URL Preview specs remain about internal preview behavior and must not claim
+Browser Control ownership or reuse.
 
 ## Validation
 
-Validation should combine unit tests, integration tests, and a serial browser
-test suite:
+- Verify the pinned archive checksum, `manifest.json`, licenses, executable bit,
+  architecture, and `bp --version` during the build.
+- Test that the packaged Agent environment resolves the bundled `bp` while a
+  manipulated system `PATH` or global installation cannot replace it.
+- Test that a missing or unsupported asset fails packaging clearly.
+- Verify skill discovery and that its local instructions never recommend npm,
+  `npx`, or global fallback inside Tenon.
+- Run Browser Pilot's distribution and CLI conformance gates against the exact
+  executable Tenon packages.
+- Run a real-browser smoke task with explicit Chrome authorization: inventory
+  Profiles/tabs, open a managed tab, observe/read, perform a disposable verified
+  form action, capture an image through the Run scratch path, and clean up only
+  the managed tab.
+- Confirm pre-existing user tabs remain open and unchanged, URL Preview receives
+  no Browser Control attachment, and a restricted no-`bash` Run cannot invoke
+  Browser Pilot.
+- Run `bun run typecheck`, relevant core tests, packaging verification, and
+  `bun run docs:check`.
 
-- mocked CDP tests for permission classification, result normalization, payload
-  writing, and stale-ref handling;
-- Playwright-hosted fixture pages for forms, contenteditable, file upload, shadow
-  DOM, iframes, popups, dialogs, network interception, screenshots, PDFs, and
-  cookies;
-- real Electron smoke tests over URL Preview fixtures and its persistent
-  partition;
-- event-log tests proving screenshots are payload-backed and model-visible as
-  image parts;
-- security tests proving high-risk operations ask before running;
-- regression tests for no raw binary in JSONL or React state.
+## Risks
+
+- CLI mode deliberately inherits the broad authority of Tenon's current `bash`
+  tool; it does not provide native per-operation approvals.
+- Browser authorization depends on Chromium remote-debugging support and a user
+  Allow action that Tenon cannot complete for the user.
+- Browser Pilot and its skill can drift if Tenon bumps them independently; the
+  build must treat them as one pinned integration input.
+- Current Browser Pilot release assets do not cover macOS Intel.
 
 ## Open Questions
 
-- May an agent control any visible Preview pane, or only the currently active
-  pane until the user explicitly selects another?
-- What is the final hard-prohibition list for browser actions, even with user
-  approval?
-- Is `browser_eval` available to all agent modes, or only to a developer/debug
-  mode?
-- How should the UI indicate a debugger attachment without adding browser chrome?
+- Should a later release add a Settings status/diagnostics surface after the
+  first CLI integration proves real usage?
+- Which additional platform/architecture assets must Browser Pilot publish
+  before Tenon expands beyond its initial packaging target?
 
 ## Subtasks
 
-- Define `BrowserController`, `BrowserControlService`, and result types.
-- Implement Preview guest registration and debugger attach/detach.
-- Route target creation and selection through existing Preview panes.
-- Implement snapshot/ref storage with stale-ref detection.
-- Implement image and binary payload helpers for browser results.
-- Implement read-only tools and first skill version.
-- Implement action tools and verification.
-- Implement capture, cookies, auth, eval, and network tools.
-- Add browser permission classes and ask copy.
-- Port the relevant `browser-pilot` test matrix into Tenon integration tests.
-- Update specs in the same PRs that ship behavior.
+- Add deterministic Browser Pilot version, asset, checksum, manifest, license,
+  and skill inputs to the build.
+- Package the native executable and make only its verified directory resolve as
+  `bp` in Agent process environments.
+- Add the pinned resource-backed `browser-pilot` skill with Tenon-specific
+  installation fallback removed.
+- Add build, environment-resolution, skill, restricted-Run, and packaging tests.
+- Complete the real-browser smoke task and record its non-interference evidence.
+- Fold shipped behavior into the listed specs in the implementation PR.

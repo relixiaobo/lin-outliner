@@ -1,115 +1,114 @@
-# Preview Browser Backend Reuse
+# URL Preview Rich Capture
 
 ## Goal
 
-Keep one browser backend and one user-visible web surface. URL Preview owns the
-browser profile, navigation, guest lifecycle, and website state. Future rich
-capture and Agent Browser Control may reuse a main-process read/control
-interface over those guests; neither capability may introduce an extension,
-external browser profile, hidden browser, or second browser UI.
+Allow a future explicit capture action to extract richer read-only content from
+an already-visible Tenon URL Preview, such as the page body or current
+selection, without introducing an extension or hidden page pipeline.
 
-This is shape **(b)**: a set of independently complete future features. Rich
-capture from an already-open Tenon Preview and Agent Browser Control can ship
-separately. The detailed action/tool design remains in
-`agent-browser-control.md`.
+URL Preview remains an internal quick-preview surface backed by Tenon's
+`persist:url-preview` partition. This plan does not provide browser automation
+and has no target, session, profile, controller, or lifecycle relationship with
+Agent Browser Control.
+
+This is shape (a): one complete future rich-capture feature in one PR.
 
 ## Non-goals
 
-- Installing or publishing a Chrome/Chromium extension.
-- Reading `DevToolsActivePort`, asking users to enable remote debugging, or
-  attaching to Chrome, Edge, Brave, Chromium, or their profiles.
+- Agent Browser Control, browser task execution, page mutation, upload, eval,
+  cookies, dialogs, auth, or network interception.
+- Browser Pilot integration or control of Chrome, Edge, Brave, Chromium, or any
+  external browser Profile or tab.
+- Installing or publishing a browser extension.
 - Importing cookies, saved passwords, history, autofill, extensions, or tabs.
-- Guaranteeing Google/YouTube sign-in or using capture/control to bypass a
-  provider's embedded-user-agent policy.
-- Treating an external browser's active tab as a rich capture source. The
-  existing basic launcher capture can still record its public URL/title through
-  OS integration, but authenticated DOM state stays outside Tenon.
-- Reintroducing the deleted offscreen YouTube resolver, AppleScript DOM
-  scrapers, payload/resolver sidecar, or any parallel hidden-page pipeline.
+- Guaranteeing provider sign-in or bypassing an embedded-user-agent policy.
+- Treating external-browser URL/title capture as authenticated rich content.
+- Reintroducing offscreen resolvers, AppleScript DOM scrapers, or a parallel
+  hidden-page pipeline.
 
 ## Design
 
-### One Owner
+### Independent Product Boundaries
 
-`persist:url-preview` is the only website-data owner. The renderer hosts the
-visible guest but never receives its Session, cookies, credentials, or debugger
-endpoint. Electron main registers each attached URL Preview guest with its
-owning workspace pane and removes the entry on guest destruction.
+URL Preview serves quick in-app inspection. Browser Control serves Agent tasks
+in the user's own browser. They may receive the same URL, but they do not share
+browser state or implementation:
 
-A future main-process `BrowserController` exposes capabilities over a registered
-guest, not over an arbitrary endpoint:
+| Concern | URL Preview rich capture | Agent Browser Control |
+|---|---|---|
+| Source | Visible Tenon Preview guest | User browser through Browser Pilot |
+| Access | Explicit read-only capture | Agent browsing and interaction |
+| State owner | `persist:url-preview` | User browser Profile / Browser Pilot |
+| Backend | Narrow Electron-main Preview reader | Bundled `bp` CLI through `bash` |
+| Output | Capture source content | Browser task observations and files |
+
+Neither capability falls back to the other. Browser Control does not attach to
+Preview guests, and rich capture does not inspect the user's external browser.
+
+### Preview-Owned Read Path
+
+Electron main may register attached URL Preview guests with their owning
+workspace pane and remove them on guest destruction. A narrow read-only
+`PreviewContentReader` may expose only the content needed by an explicit capture:
 
 ```ts
-interface BrowserController {
-  listPreviewTargets(): Promise<PreviewBrowserTarget[]>;
-  observe(targetId: string, request: BrowserObserveRequest): Promise<BrowserObservation>;
-  act(targetId: string, request: BrowserActionRequest): Promise<BrowserActionResult>;
+interface PreviewContentReader {
+  read(target: PreviewCaptureTarget): Promise<PreviewCaptureResult>;
 }
 ```
 
-The concrete implementation uses Electron's debugger/CDP access on the guest
-`webContents`. The interface keeps capture and control from duplicating target
-identity, frame addressing, snapshot refs, image/payload handling, or lifecycle
-cleanup. It is not a plug-in seam for external browsers.
+The interface is not a generic browser controller. It exposes no action, target
+adoption, external endpoint, debugger handle, cookie access, or reusable Agent
+ref. The renderer never receives the Electron Session, credentials, or raw
+debugger endpoint.
 
 ### Capture Consumer
 
-The current launcher capture contract remains backend-neutral:
+The existing launcher capture contracts remain backend-neutral:
 `ExternalContext`, `SourceDraft`, `CaptureNodeMetadata`, site classification,
-normalization, and `create_capture` stay unchanged. `PageContentExtractor` may
-consume the read-only `BrowserController.observe` subset only when the selected
-source is a registered Tenon Preview target.
+normalization, and `create_capture` do not become browser-control APIs.
 
-An external app/browser capture continues to degrade to the current basic
-URL/title/provenance result. Tenon does not prompt for an extension. A future UX
-may offer the existing **Open in Preview** route before a rich capture, but that
-is a separate product decision and must not happen invisibly.
-
-### Browser Control Consumer
-
-Agent Browser Control uses the same target list and observation results, then
-adds action, upload, eval, cookie, dialog, and network operations behind its own
-permission classes. It attaches only to visible Tenon Preview panes. Opening a
-new target routes through the normal `PreviewTarget` workspace flow so the user
-can see where the agent is operating.
+When the user explicitly captures an already-visible URL Preview, the capture
+pipeline may ask the read-only Preview reader for bounded body or selection
+content. If no eligible Preview is selected, capture continues through its
+existing URL/title, clipboard, screenshot, or manual fallbacks. It does not open
+a Preview or external browser invisibly.
 
 ### Safety And Data
 
-- Read access, screenshots, cookies, uploads, eval, network inspection, and
-  page mutations remain separately classified agent permissions.
-- Browser credentials and raw cookie values never enter renderer state.
-- Model-visible images use image content; large/raw results use existing payload
-  refs and retention instead of ad hoc files.
-- Run-scoped snapshots, element refs, debugger attachments, and network rules
-  are discarded when the run ends or the guest is destroyed. Clearing website
-  data remains the user's global Settings action and is never an agent tool.
-- Passkey, provider sign-in compatibility, and unsigned mock-keychain limitations
-  belong to the Preview profile itself; capture/control cannot bypass them.
+- The operation is read-only and explicit; it cannot click, type, navigate,
+  upload, execute arbitrary script, inspect cookies, or modify requests.
+- Extracted content is normalized and bounded before entering capture data.
+- Renderer state receives neither browser credentials nor raw website storage.
+- Guest identity and read state are ephemeral and discarded when the Preview is
+  destroyed.
+- Clearing URL Preview website data remains the user's global Settings action.
+- Browser Control safety and user-browser authorization live exclusively in
+  `agent-browser-control.md`.
 
-## Relationship To Current Modules
+### Relationship To Current Modules
 
 - `src/main/context/contextCapture.ts` keeps the `PageContentExtractor` seam.
-- `src/core/preview.ts` remains the URL target/navigation authority.
-- The URL Preview session/guest registry is the only browser target source.
-- `agent-browser-control.md` owns tool schemas, permissions, actions, result
-  envelopes, and its resource-backed skill.
-- Current specs change only when one of these complete features ships.
+- `src/core/preview.ts` remains URL Preview target and navigation authority.
+- `docs/spec/workspace-layout.md` remains the authority for the shipped URL
+  Preview session and sandbox.
+- `agent-browser-control.md` is an independent Browser Pilot CLI integration and
+  consumes none of this plan's interfaces.
+- Current specs change only when this complete feature ships.
 
 ## Open Questions
 
-- Should launcher capture offer rich extraction only when the active workspace
-  pane is a URL Preview, or may the user explicitly choose another visible
-  Preview pane?
+- Should rich extraction be available only for the active Preview pane, or may
+  the user explicitly select another visible Preview?
 - Should **Open in Preview and capture** be one explicit launcher command, or two
   normal user actions?
-- Which read-only observation fields are safe to retain on a capture node versus
-  only in an agent event payload?
+- Which normalized read-only fields belong on a durable capture node rather than
+  a transient capture preview?
 
 ## Subtasks
 
-- Define Preview guest identity and lifecycle events in main.
-- Define the read-only `BrowserController.observe` contract around those guests.
-- Adapt `PageContentExtractor` only after the rich-capture UX is ratified.
-- Keep the action surface in the independent Agent Browser Control plan.
-- Add contract tests proving neither consumer can address an external browser or
-  receive raw session credentials.
+- Define Preview guest identity and destruction handling in Electron main.
+- Define the minimal read-only `PreviewContentReader` contract.
+- Ratify the explicit rich-capture UX before adapting `PageContentExtractor`.
+- Add security tests proving the reader cannot mutate a page, address an
+  external browser, or expose raw session credentials.

@@ -123,8 +123,10 @@ full power (tools, multi-turn, streaming), no duplicate AI UI.
   AX addon + `osascript` front-tab fallback) + **clipboard** as the fallback when
   the foreground isn't a supported browser.
 - **Later (as `browser-extension-integration` lands):** rich **page content +
-  selection** via the extension, plus **screenshot-as-context** as a deeper
-  fallback (esp. for Ask AI on an unreadable foreground).
+  selection** from an explicitly selected internal URL Preview, plus
+  **screenshot-as-context** as a deeper fallback (esp. for Ask AI on an
+  unreadable foreground). Agent Browser Control is independent and is not a
+  launcher-capture source.
 - **v1 excludes** arbitrary-app Accessibility reading (fragile; heavy A3 surface).
 - **Conventions:** *visible-or-it-didn't-happen* — the out-of-app chip names the
   tier (`⧉ Safari — <title>` / `Clipboard` / `Screenshot`); read nothing → no

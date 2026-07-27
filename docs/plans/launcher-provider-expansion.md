@@ -4,7 +4,8 @@
 > which URLs/apps we classify into which source `kind` + capture framing. It is
 > *orthogonal* to the command surface (`unified-command-surface.md`) and survives
 > the cmd+k/launcher unification intact. Rich extraction (page body/transcript)
-> belongs to `browser-extension-integration.md`, not here.
+> belongs to the URL Preview rich-capture plan in
+> `browser-extension-integration.md`, not here.
 
 ## Why this plan exists
 
@@ -18,9 +19,10 @@ the single home for "which providers we add next," so the declared-but-unproduce
 union members aren't silent placeholders.
 
 It does **not** own rich extraction (page body, transcript, email thread, chat
-messages) — that is the unified backend in `browser-extension-integration.md`.
+messages) — URL Preview rich capture owns the in-app webpage path in
+`browser-extension-integration.md`.
 This plan is about URL/app **classification + the right source `kind` + capture
-framing**; rich fields fill in when the extension backend lands.
+framing**; rich fields fill in when their source-specific readers land.
 
 ## Status: what's done
 
@@ -43,8 +45,8 @@ Light up the declared providers, in two tiers, each only when it actually works
    `contextCapture.ts`, a `selectSiteProvider` branch, an icon, and a test. No new
    infrastructure.
 2. **Tier B — native macOS apps (no URL).** Need per-app readers (AppleScript /
-   Accessibility) on the `unknown-app` path. Heavier, TCC-sensitive; sequenced
-   after Tier A and the extension backend.
+   Accessibility) on the `unknown-app` path. Heavier and TCC-sensitive, with no
+   dependency on URL Preview or Agent Browser Control.
 
 ## Non-goals
 
@@ -115,6 +117,6 @@ after Tier A.
 - [ ] Tier A: slack classifier + test.
 - [ ] Tier A: loom / circle / notion-public / spotify-web classifiers + tests.
 - [ ] Generic special-cases: Medium / TechCrunch / Amazon metadata.
-- [ ] Tier B: native-app providers (after Tier A / extension backend).
+- [ ] Tier B: native-app providers, independently sequenced after Tier A.
 - [ ] Preview / open-original + local-file capture.
 - [ ] As each lands: update `../spec/launcher.md` provider list + fold into spec.
