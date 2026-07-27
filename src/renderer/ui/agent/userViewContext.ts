@@ -4,7 +4,7 @@ import type {
   RendererUserViewVisibleNodeHint,
 } from '../../../core/agent/protocol';
 import type { NodeId } from '../../api/types';
-import type { DocumentIndex, UiState } from '../../state/document';
+import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
 import { buildOutlinerRows, flattenExpandedOutlinerRows } from '../../state/outlinerRows';
 import { buildSelectableRows } from '../../state/selectableRows';
 import type { WorkspacePanelState } from '../workspaceLayoutTypes';
@@ -94,32 +94,40 @@ function visibleNodeHints(
 ): { readonly nodes: RendererUserViewVisibleNodeHint[]; readonly truncated: boolean } {
   const nodes: RendererUserViewVisibleNodeHint[] = [];
   let truncated = limit <= 0;
-  const append = (nodeId: NodeId, depth: number, forceExpanded = false): boolean => {
+  const append = (
+    nodeId: NodeId,
+    depth: number,
+    referencePath: readonly NodeId[],
+    forceExpanded = false,
+  ): boolean => {
     const node = index.byId.get(nodeId);
     if (!node) return true;
     if (nodes.length >= limit) {
       truncated = true;
       return false;
     }
-    const children = visibleChildren(nodeId, index, ui);
     const expanded = forceExpanded || node.type === 'fieldEntry' || ui.expanded.has(nodeId);
     nodes.push({ nodeId, depth, expanded });
+    const childParentId = outlinerChildParentId(nodeId, index.byId);
+    if (!childParentId || referencePath.includes(childParentId)) return true;
+    const children = visibleChildren(childParentId, index, ui);
     if (!expanded || children.length === 0) return true;
     if (depth >= MAX_VISIBLE_DEPTH) {
       truncated = true;
       return true;
     }
+    const nextReferencePath = [...referencePath, childParentId];
     for (const childId of children) {
-      if (!append(childId, depth + 1)) return false;
+      if (!append(childId, depth + 1, nextReferencePath)) return false;
     }
     return true;
   };
-  append(rootNodeId, 0, true);
+  append(rootNodeId, 0, [], true);
   return { nodes, truncated };
 }
 
-function visibleChildren(nodeId: NodeId, index: DocumentIndex, ui: UiState): NodeId[] {
-  const node = index.byId.get(nodeId);
+function visibleChildren(parentId: NodeId, index: DocumentIndex, ui: UiState): NodeId[] {
+  const node = index.byId.get(parentId);
   if (!node) return [];
   return flattenExpandedOutlinerRows(
     buildOutlinerRows(node, index.byId, { expandedHiddenFields: ui.expandedHiddenFields }),

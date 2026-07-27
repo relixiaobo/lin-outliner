@@ -80,9 +80,7 @@ function capabilityBlocks(
   configuration: EffectiveThreadConfiguration,
 ): Array<Omit<StablePromptBlock, 'fingerprint'>> {
   const tools = new Set(configuration.tools);
-  const has = (...names: string[]) => names.some((name) => [...tools].some((tool) => (
-    tool === name || tool.endsWith(`.${name}`) || tool.endsWith(`__${name}`)
-  )));
+  const has = (...canonicalKeys: string[]) => canonicalKeys.some((key) => tools.has(key));
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [];
   if (has('bash', 'file_read', 'file_write', 'file_edit', 'file_glob', 'file_grep')) {
     blocks.push({
@@ -133,7 +131,14 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has('spawn_agent', 'send_message', 'followup_task', 'wait_agent')) {
+  if (has(
+    'collaboration.spawn_agent',
+    'collaboration.send_message',
+    'collaboration.followup_task',
+    'collaboration.wait_agent',
+    'collaboration.list_agents',
+    'collaboration.interrupt_agent',
+  )) {
     blocks.push({
       id: 'collaboration',
       layer: 'L1',

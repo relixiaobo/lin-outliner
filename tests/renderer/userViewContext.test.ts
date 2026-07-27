@@ -166,6 +166,31 @@ describe('renderer Agent user-view hints', () => {
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
   });
 
+  test('includes expanded reference target children with rendered depth and cycle protection', () => {
+    const index = buildIndex(projection([
+      node('root', 'Root', { children: ['ref'] }),
+      node('ref', 'Reference', { parentId: 'root', type: 'reference', targetId: 'target' }),
+      node('target', 'Target', { children: ['child', 'cycle'] }),
+      node('child', 'Child', { parentId: 'target' }),
+      node('cycle', 'Cycle', { parentId: 'target', type: 'reference', targetId: 'root' }),
+    ]));
+
+    const hints = buildRendererUserViewHints({
+      activePanelId: 'panel-1',
+      panels: [panel()],
+      index,
+      ui: ui({ expanded: new Set(['ref', 'cycle']) }),
+    });
+
+    expect(hints.panels[0]?.visibleNodes).toEqual([
+      { nodeId: 'root', depth: 0, expanded: true },
+      { nodeId: 'ref', depth: 1, expanded: true },
+      { nodeId: 'child', depth: 2, expanded: false },
+      { nodeId: 'cycle', depth: 2, expanded: true },
+    ]);
+    expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
+  });
+
   test('orders and bounds selection to 50 authoritative Node IDs', () => {
     const children = Array.from({ length: 55 }, (_, index) => `selected-${index}`);
     const index = buildIndex(projection([

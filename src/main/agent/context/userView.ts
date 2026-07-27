@@ -49,7 +49,7 @@ export function buildUserViewPayload(
     const visibleOutline = panel.visibleNodes.flatMap((visible) => {
       const node = byId.get(visible.nodeId);
       if (!node) return [];
-      const childCount = node.children.length;
+      const childCount = displayedChildCount(node, byId);
       return [{
         nodeId: node.id,
         title: outlineText(node, byId),
@@ -196,11 +196,25 @@ function panelSnapshot(
     active,
     focused,
     order,
-    childCount: root.children.length,
+    childCount: displayedChildCount(root, byId),
     breadcrumb: nodeBreadcrumb(root, byId),
     visibleOutline,
     visibleOutlineTruncated,
   };
+}
+
+function displayedChildCount(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): number {
+  let current: NodeProjection | undefined = node;
+  const seen = new Set<string>();
+  while (current?.type === 'reference') {
+    if (seen.has(current.id) || !current.targetId) return 0;
+    seen.add(current.id);
+    current = byId.get(current.targetId);
+  }
+  return current?.children.length ?? 0;
 }
 
 function validPanelId(

@@ -26,6 +26,10 @@ that prefix. The composer exposes byte fingerprints for each layer and the
 complete prompt; logically identical configurations therefore produce identical
 prompt bytes across Turns and restarts.
 
+L1 capability selection matches exact Core canonical tool keys. A namespaced extension
+or provider-encoded tool whose local name resembles a built-in never enables built-in
+filesystem, Outliner, Memory, Skill, or collaboration guidance.
+
 The stable modules retain the established operational contract: renderer-safe
 deliverables use `[[file:Display name^/absolute/path]]`; Memory lookup searches and
 reads the `#d-memory`/`#d-episode`/`#d-belief` family; a Skill's declared dependency
@@ -62,7 +66,10 @@ Interactive user-view evidence starts from renderer IDs only: at most 80 visible
 Nodes across all panels, depth 5, 50 selected Nodes, and 64 KiB serialized. Main
 resolves titles, breadcrumbs, outline syntax, checkbox/done state, references,
 descriptions, tags, file names, child counts, and Today fallback from the current
-`DocumentProjection`. Panels and text leaves use fixed ordering and escaping.
+`DocumentProjection`. Expanded references contribute the same resolved target children
+and depths that the Outliner renders; reference chains use cycle protection, and main
+derives child counts from that resolved displayed parent. Panels and text leaves use
+fixed ordering and escaping.
 Projection emits a complete first snapshot and deterministic later diffs; replaying
 the same canonical payload sequence reconstructs the same snapshot/diff bytes.
 Only the host-derived projection mode and interaction mode are application observations.

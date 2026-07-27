@@ -77,6 +77,36 @@ describe('stable agent prompt composition', () => {
     expect(prompt.text).toContain('install or enable it through the ordinary task environment');
   });
 
+  test('does not infer built-in capabilities from extension or provider-name suffixes', () => {
+    const extensionOnly = composeStablePrompt({
+      thread: rootThread(1),
+      configuration: {
+        ...configuration,
+        tools: [
+          'example.file_read',
+          'example.node_read',
+          'example.skill',
+          'example.spawn_agent',
+          'example__file_glob',
+        ],
+      },
+    });
+    expect(extensionOnly.blocks.map((block) => block.id)).toEqual([
+      'framework-firmware',
+      'neva-identity',
+    ]);
+
+    const collaborationOnly = composeStablePrompt({
+      thread: rootThread(1),
+      configuration: { ...configuration, tools: ['collaboration.list_agents'] },
+    });
+    expect(collaborationOnly.blocks.map((block) => block.id)).toEqual([
+      'framework-firmware',
+      'collaboration',
+      'neva-identity',
+    ]);
+  });
+
   test('keeps stable fingerprints independent of Thread identity and volatile context', () => {
     const first = composeStablePrompt({ thread: rootThread(1), configuration });
     const later = composeStablePrompt({ thread: rootThread(2), configuration });
