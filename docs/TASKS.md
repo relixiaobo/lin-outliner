@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control boundary #442; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-context-composer` | Draft PR #441 — Agent context integrity PR 2 (unified context composer) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
@@ -33,11 +33,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 **In flight (2026-07-27).** Open PR queue: Draft #441
 (`codex-3/agent-context-composer`), implementing PR 2 of the active
-`agent-context-integrity` plan. Recently merged: #442
-(`codex/browser-control-docs`, plan-only) after iterative main review, separating
-Browser Control from URL Preview and replacing the former native-tool direction
-with the Browser Pilot consumer contract; see *Agent capabilities* and *Recently
-completed*. #440
+`agent-context-integrity` plan. Recently merged: #443
+(`codex/browser-control-v0-5-plan`, plan-only) after main review, pinning the
+Browser Pilot 0.5 contract and one complete implementation PR; #442 established
+the Browser Control / URL Preview boundary and Browser Pilot consumer direction.
+See *Agent capabilities* and *Recently completed*. #440
 (`codex-3/agent-context-integrity`) after iterative main review, landing the
 canonical context contract as PR 1 of the active six-PR plan; see *Agent
 capabilities* and *Recently completed*. #439
@@ -236,9 +236,6 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 boundary), `agent-computer-control` (settle the hard-prohibition and
 helper-packaging decisions before implementation), and
 `browser-extension-integration` (record-only, **not approved to build**).
-`agent-browser-control` is design-ratified by #442; implementation waits for a
-published Browser Pilot release with stable client namespaces, then lands the
-shared interface checkpoint before the isolated feature PR.
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -382,16 +379,14 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1, design updated #442, implementation pending) —
-  Tenon consumes a pinned Browser Pilot executable and matching skill through
+- **agent-browser-control** (P1, design updated #443, implementation pending) —
+  Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
   its classified `bash` path rather than reimplementing browser automation or
-  exposing a Tenon-native tool family. The contract isolates Browser Pilot state
-  per Thread, bounds files per Turn, maps browser/external-action capabilities,
-  and projects raw command input/output into redacted durable Items before any
-  hook, history, Memory, renderer, diagnostic, or full-output sink. It requires
-  a published Browser Pilot release with stable client namespaces, then an
-  interface-only Agent Core checkpoint before the complete feature PR. URL
-  Preview remains wholly independent. See `docs/plans/agent-browser-control.md`.
+  exposing a Tenon-native tool family. One complete feature PR first establishes
+  prepared execution and durable projection, then adds deterministic distribution,
+  the direct command provider, Thread identity, Turn files, conservative Browser
+  capabilities, transient stdin, lifecycle cleanup, and per-Turn Skill availability.
+  URL Preview remains wholly independent. See `docs/plans/agent-browser-control.md`.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
@@ -605,6 +600,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **browser-control-v0-5-plan**
+  (`codex/browser-control-v0-5-plan`, PR #443, codex, merged 2026-07-27,
+  plan-track design update) — pinned the active Browser Control design to Browser
+  Pilot 0.5 and reshaped implementation as one complete feature PR: a generic
+  prepared-execution and durable-projection boundary followed by the direct CLI
+  provider, deterministic distribution, Thread identity, Turn files, capability
+  mapping, lifecycle cleanup, and atomic Skill availability. The implementation
+  remains pending in `docs/plans/agent-browser-control.md`; no product code shipped.
+  **Gate (main):** ultra review closed the external-message block bypass, missing
+  non-shell stdin transport, and restricted-Thread Skill visibility findings.
+  Final head `830aaa12` had no reportable findings; `docs:check` and diff check
+  passed against that exact head.
 
 - **browser-control-product-boundary**
   (`codex/browser-control-docs`, PR #442, codex, merged 2026-07-27, plan-track

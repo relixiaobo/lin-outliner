@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Browser Control 0.5 implementation plan (PR #443, codex)** — pinned the
+  active design to Browser Pilot 0.5 and specified one complete feature PR built
+  foundation-first: prepared tool execution, independent durable projections,
+  deterministic CLI-and-Skill distribution, direct command routing, Thread
+  identity, Turn files, conservative Browser capabilities, transient stdin,
+  lifecycle cleanup, and per-Turn Skill availability. No product code shipped.
+  **Gate (main):** ultra review closed the external-message block bypass,
+  missing non-shell stdin transport, and restricted-Thread Skill visibility
+  findings. Final head `830aaa12` had no reportable findings; `docs:check` and
+  diff check passed against that exact head.
 - **Browser Control and URL Preview planning boundaries (PR #442, codex)** —
   replaced the former Tenon-native browser-tool direction with a pinned Browser
   Pilot CLI-and-skill consumer contract through the classified `bash` path,
