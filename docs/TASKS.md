@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, office-ingestion-inline-attachments #439, and the Core interface sequence #428/#430–#433) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, office-ingestion-inline-attachments #439, agent-context-integrity PR1 #440, and the Core interface sequence #428/#430–#433) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,7 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-26).** Open PR queue: none. Recently merged: #439
+**In flight (2026-07-27).** Open PR queue: none. Recently merged: #440
+(`codex-3/agent-context-integrity`) after iterative main review, landing the
+canonical context contract as PR 1 of the active six-PR plan; see *Agent
+capabilities* and *Recently completed*. #439
 (`codex-3/office-ingestion-inline-attachments`) after iterative main review;
 see *Recently completed*. #438
 (`codex-4/agent-execution-interaction-consistency`) after iterative main review;
@@ -280,6 +283,15 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **agent-context-integrity** (P1, `in-progress`; PR 1 of 6 shipped as #440) —
+  restores the complete canonical model-context contract without reviving the
+  retired runtime or adding a second history authority. PR 1 established strict
+  evidence Items and codecs, Thread-owned verified context payloads, typed
+  resource dependencies, and restart/rollback/fork ownership. Next is PR 2: the
+  unified composer plus input/resource integrity; Skill execution, global
+  budgeting and compaction, Subagent inheritance, and provider/cache controls
+  follow as independently complete units. See
+  `docs/plans/agent-context-integrity.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -584,6 +596,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-context-integrity PR1 — canonical context contract**
+  (`codex-3/agent-context-integrity`, PR #440, codex-3, merged 2026-07-27,
+  plan-track interface unit) — added strict canonical context evidence/reset/
+  compaction Items, accepted-input timestamps, exact cursors and payload
+  references, a verified quota-bound Thread payload store, typed resource
+  dependency ownership, and restart/rollback/fork reconciliation. Managed tool
+  images remain previewable and can be ingested into the outline without
+  exposing canonical or scratch paths. The current interface design is folded
+  into the Agent, runtime, rendering, command, and workspace specs; the plan
+  remains `in-progress` at `docs/plans/agent-context-integrity.md` for PRs 2–6.
+  **Gate (main):** iterative review caught payload kind confusion, persisted
+  scratch observation paths, an attachment-sized allocation ceiling, cleanup
+  errors misreporting durable rollback, source-owned inherited images, and the
+  managed-image Add-to-outline regression. Codex-3 fixed every finding; final
+  head `b810a00a` had no reportable issues. Verified with typecheck,
+  `git diff --check`, focused ownership/ingest tests (57 pass), full `test:core`
+  (1402 pass, 6 environment-dependent skips), full `test:renderer` (767 pass),
+  and Agent Thread E2E (43 pass).
 
 - **office-ingestion-inline-attachments**
   (`codex-3/office-ingestion-inline-attachments`, PR #439, codex-3, merged

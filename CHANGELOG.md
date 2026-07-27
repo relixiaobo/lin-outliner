@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Canonical Agent context evidence contract (PR #440, codex-3)** — added the
+  shared interface for strict context evidence, reset, and compaction Items;
+  exact cursors and payload references; verified quota-bound Thread payload
+  storage; typed resource dependencies; and restart, rollback, and fork
+  reconciliation. Managed tool images retain preview and Add-to-outline support
+  without exposing canonical or scratch paths. This is PR 1 of the active
+  six-PR `agent-context-integrity` plan; composer, Skill, context-budget,
+  Subagent-inheritance, and provider/cache consumers remain follow-up units.
+  **Gate (main):** iterative review caught payload kind confusion, persisted
+  scratch observation paths, an attachment-sized allocation ceiling, cleanup
+  errors misreporting durable rollback, source-owned inherited images, and the
+  managed-image ingest regression; all were fixed before merge. Final head
+  `b810a00a` had no reportable findings; verification covered typecheck, full
+  `test:core` (1402 pass, 6 environment-dependent skips), full `test:renderer`
+  (767 pass), focused ownership/ingest tests (57 pass), Agent Thread E2E (43
+  pass), docs, and diff checks.
 - **Office ingestion and ordered inline attachments (PR #439, codex-3)** —
   rejects Office ownership files before attachment or reading, adds a bounded
   in-process PPTX structural-text reader with Strict OOXML support, and renders
