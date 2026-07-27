@@ -2,502 +2,592 @@
 
 ## Goal
 
-Let an Agent use Browser Pilot to control the user's own eligible Chromium tabs
-and complete browser tasks with the user's existing Profiles, signed-in sessions,
-cookies, extensions, and website state.
+Let an Agent use Browser Pilot `v0.5.0` to operate the user's eligible Chrome tabs
+with the user's existing Profiles, signed-in sessions, cookies, extensions, and
+website state.
 
-Tenon is a Browser Pilot consumer, not a second browser-automation
-implementation. It bundles a pinned Browser Pilot executable and the matching
-Browser Pilot skill. The Agent follows the skill and invokes `bp` through
-Tenon's existing `bash` tool. Browser Pilot owns browser discovery,
-authorization, tab control, observations, actions, captures, Broker
-coordination, and cleanup.
+The public integration remains exactly the one Browser Pilot publishes:
 
-CLI execution still crosses a Tenon-owned host boundary. Tenon assigns every
-Thread an isolated Browser Pilot client identity, gives every Turn an ephemeral
-output directory, classifies Browser Pilot commands before execution, applies
-explicit capability blocks, projects raw Browser input and output into a
-redacted durable view before any Item or extension hook can observe it, and
-records the resolved external action descriptors on the canonical tool Item.
+```text
+Agent
+  -> Browser Pilot skill
+  -> Tenon bash tool
+  -> short-lived bundled bp CLI
+  -> shared per-user Browser Pilot Broker
+  -> user's Chrome
+```
 
-URL Preview remains Tenon's internal quick-preview surface. It is not a Browser
-Control target, does not share a profile or controller with Browser Pilot, and
-does not participate in Agent browser tasks.
+The implementation also establishes a clean Agent execution boundary: raw tool
+arguments and results may be used for one active Turn, while Items, extension
+hooks, history, Memory, diagnostics, and payload storage receive only explicit
+durable projections.
+
+URL Preview remains an unrelated Tenon-owned quick-preview surface. It shares
+no browser process, Profile, cookies, targets, controller, lifecycle, or Agent
+contract with Browser Control.
 
 ## Non-goals
 
-- Do not attach Electron CDP to URL Preview guests or make Preview panes
-  controllable by the Agent.
-- Do not reimplement Browser Pilot refs, target ownership, Profile routing,
-  Broker coordination, or browser recovery inside Tenon.
-- Do not project Browser Pilot's canonical operations as 39 Tenon-native tools
-  in the first integration. The model-facing execution surface remains `bash`.
-- Do not embed the Browser Pilot stdio adapter, add MCP, install a browser
-  extension, or import Browser Pilot private source modules.
-- Do not execute raw, unclassified `bp` commands. Browser Pilot CLI calls must
-  pass Tenon's host launcher, Thread identity injection, command classifier, and
-  capability audit.
-- Do not search `PATH`, run `npx`, install a global package, or download a runtime
-  when the packaged app starts.
-- Do not use URL Preview session data as a fallback when the user's browser is
-  unavailable or not authorized.
-- Do not claim that CLI mode provides semantic knowledge of a website's business
-  operation. Ambiguous browser mutations are classified conservatively.
-- Do not branch host code on English CLI errors. Typed host recovery remains out
-  of scope until Browser Pilot publishes a stable machine-readable CLI error
-  contract.
+- Do not attach Electron CDP to URL Preview guests or make Preview controllable
+  by an Agent.
+- Do not add Browser Pilot-native model tools, MCP, `bridge --stdio`, a native
+  SDK, a browser extension, or a persistent Browser Pilot client.
+- Do not import Browser Pilot private Broker, Workspace, Lease, Command,
+  Observation, or Artifact protocols.
+- Do not reimplement browser discovery, authorization, Profile routing, refs,
+  target ownership, command recovery, or Broker cleanup.
+- Do not discover a global `bp`, run `npx`, install packages, or download
+  Browser Pilot during an Agent task.
+- Do not let the model choose the executable, client key, output root, process
+  environment, or human-output mode.
+- Do not infer the business meaning of an arbitrary browser click, keystroke,
+  script, or form control.
+- Do not add a Tenon approval flow or weaken the existing Full Access plus
+  explicit-block capability model.
 
 ## Shape
 
-This plan is one complete Browser Control feature, preceded by one required
-interface-only checkpoint because the capability catalog is an A4 shared
-surface:
+This is one complete feature in one PR. The PR first establishes the generic
+prepared-execution boundary, then uses it for the Browser Pilot integration;
+neither part ships independently.
 
-1. A human-ratified interface-only PR adds the Browser action kinds, exact
-   command-to-descriptor mapping, and the execution-versus-persistence
-   projection contract to the Agent Core interfaces and permission specs. The
-   contract makes extension lifecycle arguments/results and canonical Item
-   fields durable projections rather than raw execution values. It ships no
-   Browser Pilot runtime.
-2. One feature PR packages Browser Pilot, adds the host launcher and classifier,
-   injects Thread/Turn context, bundles the skill, and proves the complete user
-   workflow.
-
-The feature is complete only when a packaged Tenon Agent can discover the skill,
-invoke the bundled CLI through the classified `bash` path, connect to the user's
-browser, perform and verify a browser task, and leave unrelated user tabs
-untouched.
+The feature is complete only when a packaged Tenon Agent can discover the
+bundled skill, invoke the bundled CLI through `bash`, connect to the user's
+browser, complete and verify a task, recover uncertain work, consume generated
+files, isolate concurrent Threads, and delete one Thread without closing
+unrelated user tabs.
 
 ## Collision Result
 
-- No open PR claims this plan or the Browser Pilot packaging and skill areas.
-- `docs/plans/browser-extension-integration.md` is restricted to future
+- No open PR claims Browser Pilot distribution, the built-in skill, command
+  routing, or this plan.
+- Draft PR #441 claims Agent context composition and evidence admission. It
+  currently publishes no code diff. Because this plan deliberately moves tool
+  Item recording out of `PiTurnExecutor`, implementation must recheck #441 and
+  rebase or sequence the overlapping runtime work before editing it.
+- `docs/plans/browser-extension-integration.md` remains limited to future
   read-only URL Preview extraction and has no Browser Control dependency.
-- The implementation touches shared action kinds plus infrastructure-owned build
-  inputs. The interface checkpoint and implementation must use separate, ordered
-  Draft PR claims.
-- `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned and are updated at
-  the merge gate.
+- This PR owns the complete prepared-execution refactor, Browser action kinds,
+  Browser Pilot distribution, runtime provider, built-in skill, specs, and
+  tests. `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned.
+- The PM explicitly ratified one complete feature PR rather than a preceding
+  interface-only PR. The interface-first wording in `docs/TASKS.md` is stale;
+  the main agent updates that board entry at the integration gate.
 
 ## Design
 
-### Product Boundary
+### Ownership Boundary
 
-| Capability | URL Preview | Browser Control |
-|---|---|---|
-| Purpose | Quickly preview an HTTP(S) URL inside Tenon | Let an Agent complete tasks in the user's browser |
-| Runtime | Sandboxed Electron webview | Browser Pilot CLI and per-user Broker |
-| Browser state | Tenon-owned `persist:url-preview` partition | User-owned Chromium Profiles and signed-in sessions |
-| Agent access | None | Classified `bp` invocation through Tenon `bash` |
-| Targets | Visible Preview panes | Eligible user tabs and Browser Pilot-managed tabs |
-| Lifecycle | Workspace preview lifecycle | Thread-keyed Browser Pilot CLI namespace |
+Browser Pilot owns Chrome and the public CLI behavior: browser authorization,
+Profiles, tabs, frames, refs, target locking, network rules, files, structured
+errors, request deduplication, command recovery, and shared Broker lifecycle.
 
-Neither side discovers, adopts, or controls the other's targets. Opening the
-same URL in both surfaces does not create shared identity, cookies, tabs, refs,
-or permissions.
+Tenon owns the host boundary around that CLI: reproducible distribution,
+Thread identity, Turn files, command routing, capability evaluation, process
+policy, cancellation compatibility, model-visible result projection, durable
+projection, and Thread-deletion cleanup.
 
-### Browser Pilot Baseline And Distribution
+Tenon depends only on Browser Pilot's published 0.5 contracts:
 
-- Pin the first published Browser Pilot release that provides stable one-shot
-  client namespaces through `BROWSER_PILOT_CLIENT_KEY` / `--client-key`. The
-  current upstream candidate is `v0.4.0`; published `v0.3.0` is not an acceptable
-  integration baseline because independent CLI Agents share its default state.
-- Review the executable version, matching upstream skill revision, archive
-  checksum, manifest, and licenses as one integration input.
-- Stage the native executable and licenses into a generated build directory and
-  copy it with Electron Builder `extraResources`.
-- Packaged Tenon resolves the raw executable only under `process.resourcesPath`.
-  Source runs use a repository-generated asset or one explicit absolute
-  development override. There is no global or runtime-download fallback.
-- Fail the build on a missing asset, checksum mismatch, manifest mismatch,
-  unsupported platform/architecture, or executable version mismatch.
-- Platform support follows verified Browser Pilot release assets. Tenon does not
-  rebuild or emulate a missing upstream architecture.
+- `BROWSER_PILOT_CLIENT_KEY` and `BROWSER_PILOT_OUTPUT_DIR`;
+- JSON success and failure envelopes with stable `code`, `retryable`,
+  `context`, and `remediation` fields;
+- `status`, `commands`, `command`, `cancel`, and `wait` recovery commands;
+- per-operation `--request-id` and `--timeout`;
+- absolute file-result metadata; and
+- signal cancellation and `unknown_outcome` semantics.
 
-### Host Launcher And Bash Path
+### Prepared Tool Execution
 
-The model-visible workflow stays CLI-based:
+Tool execution becomes an explicit host contract instead of being reconstructed
+from raw provider events after execution has already begun.
 
 ```text
-Agent -> Tenon bash -> host-owned bp launcher -> bundled Browser Pilot -> user browser
+model tool call
+  -> ToolRuntime.prepare
+       -> transient execution input
+       -> durable argument projection
+       -> capability intent
+  -> evaluate explicit blocks
+  -> record Item from durable arguments and resolved capability intent
+  -> execute transient input
+  -> project model result and durable result independently
+  -> complete Item and extension hooks from durable result
+  -> return transient model result to the active Turn
 ```
 
-Tenon adds only the host integration needed around the CLI:
+Introduce an internal `ToolExecutionContract` with three operations:
 
-- Prepend the directory containing Tenon's `bp` launcher to the Agent process
-  environment. Do not add the raw Browser Pilot executable directory to `PATH`.
-- The launcher invokes the verified raw executable by its absolute
-  `process.resourcesPath` location.
-- The `bash` preflight recognizes only a direct, supported `bp` command form.
-  It rejects client-key flags or assignments, alternate executable paths, and
-  compound shell syntax around `bp`; the model cannot choose its namespace or
-  bypass the Browser command mapper through the supported path.
-- The host injects the canonical client key and Turn output directory after
-  parsing. Caller-supplied values never override them.
-- Browser Pilot commands remain normal one-shot CLI processes. Tenon does not
-  launch `bridge --stdio`, call `tools/list`, or persist Browser Pilot protocol
-  identities.
+```ts
+interface ToolExecutionContract<TPrepared> {
+  prepare(args: unknown, context: ToolPreparationContext): TPrepared;
+  execute(prepared: TPrepared, signal?: AbortSignal): Promise<unknown>;
+  projectOutcome(
+    prepared: TPrepared,
+    outcome: ToolExecutionOutcome,
+  ): { modelResult: AgentToolResult; durableResult: JsonValue };
+}
+```
 
-The Browser Pilot skill is available only when both `bash` and the Browser Pilot
-integration survive the effective Thread Configuration and parent ceiling.
-Installing the skill does not widen a restricted child Thread's tool catalog.
+Every prepared call carries immutable, separately typed fields:
 
-### Thread Identity And Concurrent Agents
+- `execution`: raw in-memory values used only by the executor;
+- `durableArguments`: the sole argument source for Items, hooks, audit, history,
+  Memory, diagnostics, and logs;
+- `capabilityIntent`: normalized descriptors evaluated by the existing block
+  engine;
+- `itemProjection`: the canonical Item presentation, or the existing explicit
+  no-Item policy for controller calls such as `update_plan`; and
+- optional execution policy owned by the concrete executor. Process-backed
+  calls use `ProcessExecutionPolicy`; other tools do not carry process fields.
 
-Each independent root, child, isolated-skill, or forked Thread receives a unique,
-stable Browser Pilot client key. Repeated Turns in the same Thread reuse that
-key so selected target, frame, refs, auth, and network state remain coherent.
+Existing tools use a default contract that preserves their current behavior.
+Sensitive integrations provide a specialized contract. Core protocol types do
+not learn Browser Pilot's private schema.
 
-The host derives the key from Tenon's stable installation identity and canonical
-`thread.id`, for example:
+`ToolRuntime`, which has the canonical tool identity, call ID, configuration,
+and recorder, becomes the only owner of executable tool Item start/completion
+and extension lifecycle notification. `PiEventNormalizer` remains responsible
+for model messages, reasoning, usage, and terminal state, but no longer creates
+Items from `tool_execution_start` or persists results from
+`tool_execution_end`. This removes the race in which raw arguments are recorded
+before the runtime can classify or project them.
+
+Preparation must finish before Item creation, capability hooks, or process
+spawn. A preparation failure creates only a constant safe rejection projection
+and never invokes the executor. `ToolExecutionOutcome` represents both returned
+results and thrown errors, so one projector governs every completion path.
+Outcome projection must finish before a result is returned to the model or
+persisted. If it fails after execution, the raw result is discarded and both
+model and durable surfaces receive a constant `unknown_outcome` result with
+inspect-before-retry guidance.
+
+### Command Execution Router
+
+Refactor `bash` around a `CommandExecutionRouter` instead of adding Browser
+conditionals to the existing monolithic tool. A command provider owns matching,
+preparation, execution, result projection, and process policy for one command
+family.
+
+```text
+bash
+  -> CommandExecutionRouter
+       -> BrowserPilotCommandProvider
+       -> DefaultShellCommandProvider
+```
+
+The default provider preserves ordinary shell execution, background tasks, and
+full-output capture. The Browser Pilot provider is selected only for one direct
+`bp` invocation and never launches a shell. It executes the verified binary by
+absolute path with argv, a private environment, bounded stdout/stderr, and no
+generic overflow file.
+
+The provider contract is intentionally reusable for future bundled command
+families that need stronger identity, environment, capability, persistence, or
+cancellation guarantees. Browser-specific code remains under one module rather
+than spreading across `agentLocalTools`, `agentCapabilities`,
+`PiTurnExecutor`, and packaging code.
+
+### Direct Command Grammar
+
+`BrowserPilotCommandProvider` accepts a deliberately small direct-command
+language, parsed by a dedicated state-machine parser rather than regular
+expressions or a partial Browser Pilot CLI parser. The grammar handles words,
+whitespace, single quotes, double quotes, and backslash escapes, then produces
+argv that is passed directly to the executable.
+
+It accepts:
+
+- `bp --version` and help-only forms; and
+- one `bp [global-options] <command> ...` invocation, including a `net`
+  subcommand.
+
+It rejects before process spawn:
+
+- environment assignments, unquoted shell expansion, command substitution,
+  heredocs, redirection, pipelines, control operators, background execution,
+  multiple commands, or unquoted newlines;
+- alternate executable paths and aliases;
+- caller-supplied `--client-key` or `--human`;
+- `run_in_background: true`; and
+- commands or `net` subcommands absent from the pinned classification table.
+
+Quoted arguments are literal argv, not shell source. They may contain dollar
+signs, shell metacharacters, and newlines, so direct argument workflows do not
+lose expressiveness.
+
+The generic `bash` schema also gains an optional bounded `stdin` field for
+foreground commands. `ProcessExecutionPolicy` writes those bytes directly to
+the child process and closes stdin; it never constructs a pipe command or runs
+an input-producing shell process. Stdin is always transient: durable arguments
+record only its presence and bounded byte count, and sensitive providers add
+its content to their taint set.
+
+`BrowserPilotCommandProvider` accepts `bp eval` with either one expression argv
+or `bash.stdin`, never both. Complex JavaScript therefore follows Browser
+Pilot's published stdin contract without sending `echo ... | bp eval` through a
+shell. The Browser Pilot host note and `bash` description teach this exact
+Tenon transport. A pipeline attempt reaches the non-forwarding facade and
+returns the same corrective guidance.
+
+The parser does not validate Browser Pilot's command-specific flags or values;
+the CLI remains authoritative for those. It extracts only global structural
+options, command/subcommand identity, and file destinations that Tenon must
+constrain.
+
+The Agent `PATH` contains a Tenon-owned non-forwarding `bp` facade so
+`command -v bp` works as the upstream skill expects. Supported direct calls are
+intercepted and executed by the provider. If a compound shell command reaches
+the facade, it returns a fixed machine-readable error and never forwards to the
+raw binary. The verified raw binary is not added to `PATH`.
+
+Full Access is not an OS sandbox: a hostile same-user process may search
+application resources. The supported Agent route is nevertheless deterministic,
+classified, auditable, and incapable of accidentally bypassing Browser blocks
+through ordinary shell composition.
+
+### Browser Pilot Provider
+
+The provider prepares one immutable `BrowserPilotCall` containing:
+
+- canonical command and optional `net` subcommand;
+- transient argv and optional stdin, including free-form text and credentials;
+- a taint set derived from every free-form argument;
+- the resolved verified executable;
+- a host-generated Thread client key and Turn output directory;
+- normalized Browser capability descriptors;
+- a sanitized durable command rendering; and
+- a foreground process policy aligned with Browser Pilot's deadline.
+
+The durable command keeps only command identity, structural flags, bounded
+numeric refs or indices, and placeholders such as `<text>`, `<url>`, `<path>`,
+`<selector>`, `<credential>`, or `<expression>`. It never stores a free-form
+argument merely because that value does not look secret.
+
+The transient model result preserves the bounded structured data needed to
+continue the active Turn, including stable errors and task-relevant browser
+observations, after removing credential fields and direct echoes of tainted
+inputs. The durable result is built independently from an allowlist:
+completion state, stable error code, retryability, safe remediation code,
+sanitized action summary, and file MIME/size/dimensions. It excludes arbitrary
+stdout/stderr, page text, URLs, Profile identity, cookies, headers, bodies,
+selectors, refs, target IDs, command IDs, file paths, and upstream error text.
+
+### Capability Model
+
+Add Browser-specific action kinds to the shared catalog:
+
+| Action kind | Meaning |
+|---|---|
+| `browser.read` | Browser discovery, inventory, recovery inspection, observation, search, waits, and capture |
+| `browser.control` | Connection, Profile/target/frame selection, navigation, scrolling, cancellation, and tab lifecycle |
+| `browser.external_action` | Page input/action, upload, dialog response, auth change, script execution, and network mutation |
+| `browser.sensitive_read` | Any result that may expose browser, account, page, file, cookie, command, or network context |
+| `browser.developer` | JavaScript evaluation and network inspection/interception |
+
+The provider supplies all applicable descriptors before execution; the generic
+capability evaluator applies existing explicit blocks and records the normalized
+intent. Every observation-bearing result carries both `browser.read` and
+`browser.sensitive_read`, including connect, page/content/capture inventory,
+recovery, and post-action page state. Version/help and the fixed result of
+`disconnect` are the only classified calls that do not carry sensitive read.
+
+Browser Pilot cannot reliably distinguish ordinary interaction from a message,
+form submission, purchase, or other business effect. Until trustworthy semantic
+evidence exists, every `browser.external_action` call also carries the existing
+`external.message.send` descriptor as a conservative potential-communication
+guard. The audit summary states that the action *may* communicate externally;
+it does not claim that every click actually sent a message. Either explicit
+block denies the call before spawn. Default Full Access still exposes the
+complete Browser Pilot surface, with no per-operation approval.
+
+Capability audit and `commandActions` are derived only from the normalized
+capability intent and sanitized durable command. An unknown Browser Pilot
+command fails closed; it never falls back to `shell.unknown` or the default
+shell provider.
+
+### Identity And Lifecycle
+
+One independent Tenon Thread maps to one stable Browser Pilot client namespace.
+Root Threads, child Threads, forks, and isolated-skill Threads receive distinct
+keys; repeated Turns in one Thread reuse the same key.
 
 ```text
 tenon.<base64url(sha256(installationId + ":" + thread.id))>
 ```
 
-The key is bounded to Browser Pilot's published syntax, never includes
-`turn.id`, and is never accepted from model input. Distinct Thread IDs therefore
-receive distinct Browser Pilot Principals, Workspaces, and Leases even when they
-run concurrently in one Tenon process. Browser Pilot remains responsible for
-exclusive target ownership and handoff between those namespaces.
+The key is bounded, contains no personal data, is not authentication material,
+and is injected only into the Browser Pilot process. It never appears in model
+input, Items, hooks, logs, or diagnostics.
 
-Turn completion retains the Thread namespace for later Turns. Thread deletion or
-an explicit host-owned Browser reset runs `bp disconnect` through the launcher
-with that Thread's key, releasing only its managed targets. Process crashes rely
-on Broker Lease expiry for bounded cleanup.
+Turn completion, Thread archive, and app exit preserve Browser Pilot state for
+later Turns and other clients. After active Turns stop, Thread deletion first
+persists an idempotent cleanup intent for every deleted descendant, then removes
+the local Thread records and drains `bp disconnect` asynchronously. Cleanup uses
+the same verified executable and derived key, closes only that namespace's
+managed tabs, and never blocks local deletion on browser availability. A small
+host-owned retry journal resumes incomplete cleanup at startup; it stores only
+derived client keys and retry metadata, never browser content.
 
-### Turn-Scoped Output Directory
+Tenon does not create or manage Browser Pilot Workspaces or Leases, and it does
+not stop a shared Broker.
 
-Browser state is Thread-scoped, while files produced for one execution are
-Turn-scoped. Before tool creation, Tenon creates:
+### Turn-Owned Files
+
+Each Turn receives a private output root through the existing scratch lifecycle:
 
 ```text
 <agentScratchRoot>/browser-pilot/<thread-id>/<turn-id>/
 ```
 
-The host exposes this absolute app-owned path to the classified launcher as
-`TENON_BROWSER_OUTPUT_DIR`. The skill uses it only inside `bash`, for example:
+The provider creates and canonicalizes the directory before execution and
+injects it as `BROWSER_PILOT_OUTPUT_DIR`. Explicit screenshot, PDF, download,
+and saved-body destinations must resolve within that root; traversal, symlink
+escape, and alternate absolute destinations fail before process spawn.
 
-```bash
-bp screenshot "$TENON_BROWSER_OUTPUT_DIR/page.png"
-```
+Browser Pilot returns absolute file metadata to the active model result. The
+Agent reads images, PDFs, and other files through Tenon's existing `file_read`
+capability. Generated files follow the normal scratch TTL and do not become
+durable Thread resources automatically. Upload source paths remain transient
+Full Access inputs and never enter the durable Browser Item.
 
-Every Browser Pilot output-writing form, including screenshot, PDF, and network
-body save, requires an explicit destination that canonicalizes inside this
-directory; omitted or escaping destinations are rejected. Browser Pilot returns
-the resolved absolute file path. The Agent then uses `file_read`, which already
-converts image content for the model and handles PDFs or files through existing
-Thread resource paths. The directory follows the normal agent-scratch TTL and
-file contents do not enter Thread history unless a later tool explicitly reads
-them. Durable Browser Items retain only the redacted command family and safe
-target context described below; raw Profile selectors, secret-bearing command
-arguments, and Broker identities are not persisted as Tenon Items or resources.
+### Distribution And Skill
 
-### Execution And Persistence Redaction Boundary
+Maintain one checked-in Browser Pilot distribution manifest for `v0.5.0`
+containing the release-index digest, platform/architecture asset URL, archive
+digest, expected executable digest, plugin archive and skill digests, license
+inventory, and compatibility range.
 
-The Browser preflight creates one immutable per-call execution envelope before
-`item/started`, capability audit publication, extension lifecycle notification,
-or debug logging:
+A deterministic sync script uses a content-addressed local cache or downloads
+only the pinned release during development/build preparation, verifies every
+digest and archive path, stages the native executable plus complete upstream
+plugin skill under `build/generated`, and sets executable permissions. Runtime
+code never downloads or repairs assets. Electron Builder copies the verified
+generated directory with `extraResources`.
+
+Packaged Tenon resolves the executable only below `process.resourcesPath`.
+Source runs accept only the verified generated asset or one explicit absolute
+development override whose version and digest are checked. Missing, mismatched,
+unsupported, or partially staged assets make Browser Control unavailable as one
+unit. The first target is Browser Pilot's published Apple Silicon macOS asset;
+Intel macOS remains unsupported.
+
+Bundle the exact complete upstream `browser-pilot` skill directory, including
+`SKILL.md`, `compatibility.json`, `agents/openai.yaml`, and all references.
+Browser Pilot remains authoritative for command usage, setup, browser operation,
+file handling, waiting, and recovery. A short host-owned note adds only Tenon
+transport facts: the executable and environment are already provided, commands
+must use the direct `bp` route, and stdin workflows use `bash.stdin` instead of
+shell composition. It does not duplicate or fork the upstream command manual.
+
+Built-in skill registration gains a host-owned, per-Turn availability predicate
+that is separate from upstream frontmatter and `allowed-tools`. The Browser
+Pilot predicate requires:
+
+- the matching verified CLI distribution;
+- `bash` in the effective Turn tool catalog; and
+- at least one non-metadata Browser Pilot catalog command whose complete action
+  descriptor set survives the effective explicit blocks.
+
+Apply the same predicate to model-visible skill listing, direct `skill`
+invocation, restored/compacted skill state, and active instruction loading. A
+predicate failure makes Browser Pilot absent rather than advertising guidance
+that the Turn cannot execute. Re-evaluate it for every root, child, forked, and
+isolated-skill Turn because parent ceilings and Role tool catalogs differ.
+
+### User Experience
+
+- Browser Pilot is included with Tenon; the user installs no separate CLI,
+  extension, SDK, or MCP server.
+- The Agent uses `bp browsers` for passive setup inspection. It runs
+  `bp connect` only after `browser_disconnected` or an explicit user request.
+- Chrome owns remote-debugging enablement and the visible Allow dialog. The
+  Agent reports structured remediation and waits instead of looping or claiming
+  authorization succeeded.
+- When several live Profiles match, the Agent inventories representative tabs,
+  uses `profiles --identify` only when account-aware labels are necessary, and
+  asks the user only when the intended Profile remains ambiguous.
+- Browser Pilot may control eligible user-opened tabs, but the Agent prefers a
+  managed tab for independent work and leaves user tabs open unless the task
+  explicitly requires closing one.
+- Tenon adds no duplicate browser window, toolbar, per-operation approval, or
+  settings UI in this feature.
+
+### Process Policy, Cancellation, And Recovery
+
+Generalize the process runner with an explicit `ProcessExecutionPolicy` rather
+than adding Browser-specific timers:
+
+- optional auto-background threshold;
+- hard deadline;
+- graceful termination signal and grace period;
+- bounded stdout/stderr limits;
+- overflow persistence policy; and
+- private environment keys.
+
+The default shell provider keeps current behavior. Browser Pilot sets no
+auto-background threshold, disables overflow persistence, and gives `SIGTERM`
+at least Browser Pilot's two-second cancellation fallback plus cleanup margin
+before `SIGKILL`.
+
+The effective outer deadline is greater than the parsed Browser Pilot
+`--timeout` by the cancellation grace. A caller-provided bash timeout that is
+too short, or a Browser Pilot timeout that cannot fit inside the bash maximum,
+is rejected before spawn. Tenon never retries Browser commands automatically.
+
+The active model receives Browser Pilot's stable `code`, `retryable`, bounded
+`context`, and `remediation` fields. The skill owns recovery behavior:
+
+- `browser_disconnected` permits one deliberate `connect`;
+- `target_busy` means wait or choose another tab, never steal it;
+- stale refs/Profile/frame/target state requires fresh inventory;
+- `wait_timeout` does not prove the underlying action failed;
+- `unknown_outcome`, `action_not_verified`, interruption, or a lost result
+  requires `status`/`command` plus current-state inspection before retry; and
+- `--request-id` is stable only for one intended operation.
+
+### Persistence Matrix
+
+| Surface | Browser input | Browser result |
+|---|---|---|
+| Process | Raw argv plus private host environment | Raw bounded stdout/stderr until projection |
+| Active model Turn | Original model arguments | Sanitized structured result needed for continuation |
+| Item and `commandActions` | Sanitized durable command and capability intent | Allowlisted durable outcome |
+| Extension hooks and audit | Durable arguments only | Durable result only |
+| Rollout/history/fork/Memory | Durable Item only | Durable Item only |
+| `outputRef` and diagnostics | No raw input | Durable result only; no overflow fallback |
+
+Information intentionally retained from a browser task must be stated by the
+Agent in its normal response or explicitly written to an authorized file. Tenon
+does not silently retain authenticated page dumps as tool history.
+
+### Implementation Ownership
+
+The implementation should create cohesive modules rather than enlarge existing
+catch-all files:
 
 ```text
-raw model input
-  -> direct bp parse and classify
-  -> memory-only execution values + durable redacted projection
-  -> capability preflight
-  -> raw process execution
-  -> result redaction
-  -> sanitized result or constant unknown-outcome result
-  -> model result + Item/outputRef/hooks/history/Memory
+src/main/agent/runtime/toolExecution/
+  ToolExecutionContract.ts
+  ToolItemLifecycle.ts
+  CommandExecutionRouter.ts
+  ProcessExecutionPolicy.ts
+
+src/main/agent/browserPilot/
+  BrowserPilotDistribution.ts
+  BrowserPilotCommandGrammar.ts
+  BrowserPilotCommandCatalog.ts
+  BrowserPilotCommandProvider.ts
+  BrowserPilotProjection.ts
+  BrowserPilotLifecycle.ts
 ```
 
-The two views have different authority:
+`agentLocalTools.ts` delegates `bash` preparation/execution to the router.
+`agentCapabilities.ts` consumes prepared capability intent instead of reparsing
+Browser commands. `ToolRuntime.ts` owns prepared execution and tool Item
+lifecycle. `PiTurnExecutor.ts` stops persisting raw tool events. Main-process
+composition creates one distribution/lifecycle service and injects Turn context.
 
-- **Execution values** contain the original parsed command and arguments needed
-  to invoke the bundled executable. They stay in the active tool call's memory,
-  are passed only to capability evaluation and process spawn, and are discarded
-  on completion. They never become `JsonValue` lifecycle payloads, Items,
-  notifications, logs, diagnostics, history, or extension state.
-- **Durable projection** contains the canonical command family/subcommand,
-  applicable action kinds, structural flags, bounded numeric refs/indices, and
-  placeholders for sensitive values. This is the only view supplied to
-  `commandExecution.command`, every `commandActions` field, rollout JSONL,
-  history projection and replay, renderer IPC, forks, extension hooks, Memory
-  evidence, diagnostics, and logs.
+The same PR updates:
 
-The parser treats all free-form values as sensitive unless an explicit allowlist
-proves they are structural. It redacts type and keyboard text, dialog prompt
-text, HTTP-auth usernames and passwords, header values, mock bodies, URLs and
-Profile selectors, search text and selectors, eval source, network filters and
-patterns, and arbitrary upload/source paths. App-owned output destinations are
-canonicalized to
-`$TENON_BROWSER_OUTPUT_DIR/<safe-name>`; arbitrary local source paths are never
-retained. The per-call envelope also retains the decoded sensitive values and
-their CLI/JSON encodings only as an in-memory taint set for result redaction.
+- `src/core/agent/tools.ts` for Browser action kinds;
+- `src/core/agent/extensions.ts` comments/contracts to state lifecycle payloads
+  are durable projections;
+- `docs/spec/agent-tool-design.md` for prepared execution and Browser Control;
+- `docs/spec/agent-tool-permissions.md` for Browser descriptors and blocks;
+- `docs/spec/agent-integration.md` for identity, lifecycle, files, and recovery;
+- `docs/spec/agent-skills.md` for atomic built-in skill/CLI availability; and
+- packaging documentation for the pinned distribution contract.
 
-Raw stdout, stderr, structured details, and thrown errors pass through the same
-boundary before they are returned to the model or supplied to Item completion.
-The result redactor removes credential-bearing structured fields and replaces
-cookie values, authorization/header values, and every tainted input
-representation that Browser Pilot could echo. The sanitized result is the sole
-input to the model-visible tool result, bounded `aggregatedOutput`, extension
-completion hooks, history reconstruction, and the complete content-addressed
-tool-output store behind `outputRef`. No full-output or overflow path may retain
-the raw result as a fallback.
-
-Failure handling preserves the execution boundary:
-
-- If a command that resolves to `bp` cannot be parsed, classified, or projected,
-  the host fails before execution. It does not spawn Browser Pilot, emits only a
-  constant redacted rejection projection, and discards the raw input.
-- If result sanitization fails, Browser Pilot has already run and its external
-  outcome may be unknown. The host discards all raw stdout, stderr, details, and
-  errors, completes every model-visible and durable surface with the same
-  constant redacted `unknown outcome` result, and instructs the Agent not to
-  retry blindly. A later retry is permitted only after a fresh, separately
-  authorized observation establishes the current browser state.
-
-Generic secret-like regexes remain defense in depth; they are not the Browser
-persistence contract.
-
-### Capability Classification And Audit
-
-Raw `bp` currently falls through to `shell.unknown`, which is not acceptable:
-it makes browser effects look local and allows Browser commands to bypass
-Browser or external-action blocks. The interface checkpoint adds these canonical
-action kinds:
-
-| Action kind | Access | Browser Pilot command class |
-|---|---|---|
-| `browser.read` | read, external system | discovery, inventory, observe, read, search, find, capture |
-| `browser.control` | control, external system | connect, Profile/target selection, navigation, scroll, dropdown, tab/frame state |
-| `browser.external_action` | write, external system | click, type, keyboard, press, select, upload, dialog response, auth changes, tab close, eval/network mutation |
-| `browser.sensitive_read` | read, external system | every command that can expose user-browser context, including identity/inventory, page state, post-action observations, captures, cookies, auth, eval, and network results |
-| `browser.developer` | control, external system | eval and network interception/modification |
-
-Every recognized command receives all applicable descriptors before execution.
-Any matching explicit block makes the command unavailable and records the same
-descriptor and rule on the canonical `bash` Item. Capability evaluation may
-inspect memory-only execution values, but published descriptors and audit data
-are built exclusively from the durable projection.
-
-Browser Pilot cannot know whether an arbitrary click sends a message, submits a
-form, purchases an item, or changes an account. Until the host has trustworthy
-semantic evidence, every `browser.external_action` command also receives the
-existing `external.message.send` descriptor. This deliberately over-blocks
-harmless page interaction when `Action(external.message.send)` is configured,
-but it prevents Browser Pilot from bypassing that existing user contract.
-`Action(browser.external_action)` is the broad switch for all ambiguous outward
-browser mutations.
-
-The initial mapping attaches `browser.sensitive_read` to every supported command
-that can reveal URLs, titles, Profile/account identity, tabs, frames, dialogs,
-DOM/page content, element values, local paths, screenshots/PDFs, cookies, auth,
-or network data. This includes:
-
-- browser, Profile, tab, frame, dialog, and interception-rule inventories;
-- `snapshot`, `read`, `search`, `find`, `locate`, `dropdown`, `screenshot`,
-  `pdf`, `cookies`, `eval`, and network inspection;
-- `connect` when it may return Profile context; and
-- `profile`, `tab`, `open`, `close`, `click`, `type`, `keyboard`, `press`,
-  `scroll`, `select`, `dialog`, `upload`, auth, eval, and network mutations when
-  their result or error can return page state or echo sensitive input.
-
-`disconnect` is the only initial metadata-only exception, backed by a pinned
-CLI conformance test proving a fixed status-only result. A new or changed
-Browser Pilot command defaults to `browser.sensitive_read` until equivalent
-conformance proves that it cannot expose user-browser context.
-`Action(browser.sensitive_read)` is evaluated before process spawn, so blocking
-it also blocks post-action observation; the host never performs the mutation and
-then suppresses only its result.
-
-Commands outside the explicit Browser Pilot mapping do not silently fall back
-to a less restrictive Browser classification. Adding or reclassifying a Browser
-Pilot command changes the shared action contract and requires the same A4 review.
-Audit output uses the same durable projection rather than a separately redacted
-copy. It retains the command family, safe target context when available, and
-resolved action kinds, but never raw typed text, auth or cookie values, header
-values, upload paths, or other free-form arguments.
-
-### Skill Contract
-
-Bundle a resource-backed built-in `browser-pilot` skill from the same pinned
-Browser Pilot tag as the executable. Keep Browser Pilot's command and recovery
-guidance upstream-owned; Tenon-specific text removes installation fallback and
-documents the host launcher, capability boundary, and Turn output variable.
-
-The skill teaches the Agent to:
-
-- use Browser Pilot only for work requiring a real browser, signed-in state, or
-  interaction; keep simple public retrieval on `web_*`;
-- call passive discovery first and call `bp connect` only when authorization is
-  required;
-- list tabs and Profiles before adopting context, ask when the intended Profile
-  or user tab is ambiguous, and prefer a managed tab for independent work;
-- observe/read/search before acting, replace stale refs after page or frame
-  changes, and verify the resulting page state;
-- use dedicated commands before eval and keep sensitive output bounded;
-- leave user-owned tabs open unless the task explicitly requires closing one;
-- place captures under `$TENON_BROWSER_OUTPUT_DIR` and use `file_read` on the
-  returned absolute path;
-- never supply `--client-key`, override host environment variables, or invoke a
-  raw Browser Pilot executable path.
-
-The skill is model-discoverable and does not duplicate Browser Pilot guidance in
-the stable system prompt.
-
-### User Interaction And Authorization
-
-- Tenon includes Browser Pilot; the user does not separately install a CLI or
-  extension.
-- Browser discovery is passive. The first task that needs a browser may run
-  `bp connect`; Chrome owns remote-debugging enablement and the Allow prompt.
-- The Agent reports setup remediation and waits when Chrome requires user
-  interaction. It does not loop connection attempts or claim success early.
-- One authorized endpoint can expose several Profiles and all eligible tabs.
-  Profile selection routes newly managed tabs; it is not an access-control
-  boundary for existing tabs.
-- The first integration adds no separate Tenon browser window or duplicate
-  approval flow. A dedicated Settings status surface is a later product decision.
-
-### Failure And Recovery
-
-The CLI and skill own normal interactive recovery. Tenon's host launcher relies
-only on process exit, bounded output, and verified output files; it does not parse
-English error messages into stable codes.
-
-- A disconnected browser pauses browser work until explicit reconnect is
-  appropriate; then the Agent lists tabs/Profiles and observes again.
-- Busy-target output causes the Agent to choose another tab or wait. The host
-  does not depend on a stable `target_busy` code until Browser Pilot publishes
-  one for one-shot CLI consumers.
-- Stale refs, frames, Profiles, and targets are rebuilt from fresh CLI state.
-- Routine completion does not disconnect the Broker. Temporary managed tabs may
-  be closed; user-owned tabs remain open.
-- A timed-out or uncertain mutating command is inspected before any retry.
-- A result-sanitization failure is an uncertain outcome, not evidence that the
-  command failed or was rolled back; it follows the same inspect-before-retry
-  rule.
-
-Stable machine-readable CLI error codes remain an upstream Browser Pilot
-improvement and are not required by this CLI-first plan. The pinned release must
-contain the documented client-key mechanism and discoverable CLI help before
-Tenon can ship the integration.
-
-### Specs And Documentation
-
-The interface checkpoint updates:
-
-- `src/core/agent/tools.ts`: ratified Browser action kinds;
-- `src/core/agent/extensions.ts`: lifecycle arguments and results are explicitly
-  durable projections, with raw execution values unavailable to extensions;
-- `src/core/agent/protocol.ts`: `commandExecution` and `commandActions` fields
-  are persistence-only projections and cannot contain raw Browser arguments;
-- `docs/spec/agent-tool-permissions.md`: Browser descriptor/block semantics and
-  conservative external-action and sensitive-read mapping;
-- `docs/spec/agent-tool-design.md`: the pre-persistence projection contract,
-  `bp` classifier, and canonical Item audit.
-
-The feature PR updates current behavior in:
-
-- `docs/spec/agent-integration.md`: Thread/Turn/Item integration checklist;
-- `docs/spec/agent-skills.md`: bundled Browser Pilot skill provenance and
-  packaging;
-- `docs/spec/agent-tool-design.md`: Thread identity, Turn output environment,
-  launcher execution, durable projection, result redaction, and file-result
-  flow;
-- packaging documentation: pinned assets, checksums, manifests, licenses, and
-  development override.
-
-URL Preview specs remain exclusively about internal preview behavior.
+No URL Preview spec gains a Browser Control dependency.
 
 ## Validation
 
-- Verify archive checksum, manifest, licenses, executable bit, architecture, and
-  `bp --version` during the build.
-- Prove Agent `PATH` resolves Tenon's launcher and cannot select a global `bp`;
-  prove the launcher invokes only the pinned absolute executable.
-- Prove caller-supplied client keys, alternate executable paths, and compound
-  Browser Pilot shell forms are rejected.
-- Run repeated commands in one Thread and prove they reuse selected target/frame/
-  refs across Turns.
-- Run two root/child Threads concurrently and prove distinct keys isolate target,
-  frame, ref, auth, and network state; acquiring the same user tab must not allow
-  one Thread to act through the other's state.
-- Prove `Action(browser.read)`, `Action(browser.control)`,
-  `Action(browser.external_action)`, `Action(browser.sensitive_read)`, and
-  `Action(browser.developer)` block their mapped commands.
-- Run the exhaustive command matrix against an authenticated fixture and prove
-  `Action(browser.sensitive_read)` blocks Profile/tab inventory, every page
-  observation and capture, and every action that returns post-action state
-  before Browser Pilot is spawned. Prove only the conformance-tested
-  metadata-only exception remains callable.
-- Prove `Action(external.message.send)` conservatively blocks click, type,
-  keyboard, press, select, upload, dialog response, and eval command classes.
-- Use unique canary secrets in type/keyboard text, auth, dialog prompts, upload
-  paths, headers, mock bodies/files, URLs, Profile selectors, search terms, and
-  eval source. Make the fake CLI echo raw and encoded variants in stdout,
-  stderr, structured details, and errors; prove none appear in the model-visible
-  result, started/completed Items, `commandActions`, rollout JSONL,
-  history projection/replay, renderer notifications, forks, extension hooks,
-  Memory evidence, diagnostics, logs, or content-addressed complete outputs.
-- Prove parse, classification, and projection failures do not spawn Browser
-  Pilot and produce only a constant redacted rejection Item/result.
-- Force result sanitization to fail after a fake mutating CLI process exits;
-  prove the process ran exactly once, raw output is absent from every consumer
-  and persistence sink, and all surfaces receive the same constant redacted
-  `unknown outcome` with inspect-before-retry guidance. Prove no automatic retry
-  occurs.
-- Verify allowed calls record `external_system`, the shared durable command
-  projection, and all action descriptors on the canonical `bash` Item.
-- Verify each Turn receives a distinct app-owned output directory, capture files
-  are readable through `file_read`, and scratch pruning removes expired output.
-- Verify skill discovery and that its instructions never recommend npm, `npx`,
-  global fallback, caller-selected client keys, or raw executable paths.
-- Run a real-browser smoke task: inventory Profiles/tabs, open a managed tab,
-  observe/read, perform a disposable verified form action, capture an image,
-  and clean up only the managed tab.
-- Confirm pre-existing user tabs remain open and unchanged, URL Preview receives
-  no Browser Control attachment, and a Thread without `bash`/Browser capability
-  cannot invoke the integration.
-- Run Browser Pilot distribution/conformance gates for the exact packaged asset,
-  then run repository typecheck, relevant Core tests, packaging verification,
-  docs check, and diff check.
+- Contract-test the prepared-execution lifecycle for every existing tool Item
+  type and prove `ToolRuntime` is the sole executable Item recorder.
+- Prove preparation happens before Item creation, hooks, audit, logs, or spawn;
+  projection failure after spawn returns one constant `unknown_outcome` and
+  never exposes raw output.
+- Use canaries across typed text, credentials, upload paths, headers, bodies,
+  URLs, selectors, Profile labels, cookies, page content, eval source, refs, and
+  command IDs; prove they never enter any durable surface in the persistence
+  matrix.
+- Test the direct-command grammar exhaustively, including quoting and every
+  rejected shell construct; prove compound commands can reach only the
+  non-forwarding facade.
+- Compare the pinned command/subcommand catalog with `bp --help` and
+  `bp net --help`; unknown inventory fails closed before spawn.
+- Verify each Browser action kind independently blocks its mapped commands and
+  that `Action(external.message.send)` conservatively blocks every ambiguous
+  `browser.external_action` before spawn while leaving Browser reads and control
+  operations available.
+- Prove bounded `bash.stdin` reaches a foreground child without shell
+  composition, is never persisted, and executes complex `bp eval` input while
+  rejecting an expression-plus-stdin ambiguity and ordinary pipeline attempts.
+- Prove Browser Pilot is omitted from listing, direct invocation, restore, and
+  active instructions whenever its Turn availability predicate fails, across
+  root, child, forked, and isolated-skill Threads.
+- Prove one Thread reuses state across Turns while root, child, forked, and
+  isolated-skill Threads receive distinct client namespaces and `target_busy`
+  protects one physical tab.
+- Prove Turn completion, archive, and app exit preserve state; Thread deletion
+  cleans only managed tabs, journals transient cleanup failure, and retries
+  idempotently without touching user tabs.
+- Prove `wait` and delayed `connect` remain foreground beyond 15 seconds;
+  deadline derivation, `SIGTERM` grace, `SIGKILL` escalation, and uncertain
+  recovery match Browser Pilot semantics.
+- Prove every Turn receives a distinct canonical output root, explicit paths
+  cannot escape through traversal or symlinks, and generated image/PDF/download
+  results are consumable through `file_read` and pruned by scratch policy.
+- Verify release index, checksums, archive layout, executable bit, architecture,
+  `bp --version`, compatibility range, license inventory, exact skill resources,
+  source resolution, packaged resolution, and atomic unavailability.
+- Run a real-browser smoke workflow covering setup inspection, deliberate
+  connect, Profile/tab selection, observation, a disposable verified action,
+  wait, screenshot, uncertain-command inspection, and managed-tab cleanup.
+- Confirm URL Preview is never discovered or controlled by Browser Pilot.
+- Run `bun run typecheck`, `bun run test:core`, relevant E2E tests,
+  `bun run app:build`, packaged asset verification, `bun run docs:check`, and
+  `git diff --check`.
 
 ## Risks
 
-- Conservative mapping of ambiguous page interaction to
-  `external.message.send` intentionally blocks more than actual messaging.
-- `browser.sensitive_read` is intentionally coarse. When it is allowed, private
-  authenticated page content may enter model context and Thread history; Tenon
-  does not claim to infer sensitivity from a site or URL. Binary captures are
-  governed by this preflight and scratch/file-read lifecycle rather than text
-  redaction.
-- Tenon's Full Access shell is not an OS sandbox. The classified launcher keeps
-  the supported Agent path auditable but does not claim to constrain a hostile
-  same-user process that independently discovers browser internals.
-- Browser authorization depends on Chromium remote-debugging support and a user
-  Allow action Tenon cannot complete.
-- Browser Pilot and its skill can drift if bumped independently.
-- Platform support is limited by published Browser Pilot native assets.
+- Moving tool Item ownership from `PiEventNormalizer` to `ToolRuntime` is a
+  broad runtime correction. The complete existing tool lifecycle suite must
+  remain green before Browser Pilot tests are considered.
+- Authenticated page content is intentionally available to the active model
+  when `browser.sensitive_read` is allowed. Durable projection prevents silent
+  raw retention but cannot remove content the Agent deliberately includes in
+  its response or writes to a file.
+- The conservative `external.message.send` attachment intentionally blocks
+  some non-messaging browser actions for users who configured that explicit
+  block. This is preferable to silently bypassing an existing semantic block
+  until Browser Pilot can provide trustworthy business-action evidence.
+- Browser Pilot's public surface is CLI-only and its command inventory is not a
+  permanent native manifest. Every version bump requires a coordinated catalog,
+  projection, skill, asset, checksum, and compatibility review.
+- Browser authorization depends on supported Chrome remote-debugging UI and a
+  user Allow action Tenon cannot complete.
+- Full Access cannot contain a hostile local process that searches packaged
+  resources; the command provider secures Tenon's supported route, not the
+  entire user account.
+- Native platform support is limited to Browser Pilot's published assets.
 
 ## Open Questions
 
-- Should a later release add a Settings status/diagnostics surface after the
-  first CLI integration proves real usage?
-- Which additional platform/architecture assets must Browser Pilot publish
-  before Tenon expands beyond its initial packaging target?
+- Should a later, separate product change add a Browser status/reset surface in
+  Settings after CLI-only usage is validated?
 
 ## Subtasks
 
-- Land the human-ratified interface-only Browser action-kind checkpoint.
-- Add deterministic Browser Pilot executable, skill, checksum, manifest, and
-  license inputs to the build.
-- Add the host-owned launcher, direct-command parser, capability mapper,
-  execution/persistence projection and result redaction, stable Thread client
-  key, and Turn output environment.
-- Add the pinned resource-backed `browser-pilot` skill with Tenon-specific
-  integration guidance.
-- Add capability, sensitive-data persistence, audit, concurrency, scratch,
-  skill, and packaging tests.
-- Complete the real-browser smoke task and record non-interference evidence.
-- Fold shipped behavior into the listed specs in the implementation PR.
+- Refactor tool execution and Item lifecycle around `ToolExecutionContract` in
+  the same PR, preserving all existing tool behavior.
+- Add `CommandExecutionRouter`, bounded transient `bash.stdin`, the default
+  shell provider, and reusable process policies.
+- Add Browser action kinds and the complete Browser Pilot command provider,
+  grammar, catalog, projections, identity, files, lifecycle, and cleanup journal.
+- Add deterministic Browser Pilot 0.5 distribution staging, the exact built-in
+  skill, its host transport note, and per-Turn availability predicate.
+- Update current specs and packaging documentation.
+- Add lifecycle, privacy, grammar, capability, concurrency, recovery,
+  cancellation, scratch, distribution, packaging, and real-browser tests.
