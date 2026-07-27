@@ -839,6 +839,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.payloads.readResource(threadId, ref);
   }
 
+  async readReferencedThreadResource(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<Buffer | null> {
+    this.requireThread(threadId);
+    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+      return null;
+    }
+    return this.payloads.readResource(threadId, ref);
+  }
+
   async discardUnreferencedThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,

@@ -55,7 +55,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   expandable row inside the counted activity group; tool-specific icons,
   summaries, images, and child-Thread links remain supplemental affordances;
   managed tool images resolve from their typed resource reference through the owning
-  Thread and preview only a disposable scratch copy
+  Thread and preview only a disposable scratch copy; Add to Today sends the same typed
+  identity to a main-only ingest seam, which reauthorizes ownership and returns asset
+  metadata without accepting or returning a managed path
 - local paths in tool arguments and results use the shared inline-file reference
   affordance; absolute paths link directly, while relative values in path-bearing
   JSON fields resolve against the Thread working directory. URL text is not

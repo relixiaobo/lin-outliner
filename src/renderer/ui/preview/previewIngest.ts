@@ -9,11 +9,11 @@ import { api } from '../../api/client';
 
 /**
  * True when a non-node source can be copied into the asset store: a trusted live local
- * file (full path ingest). A Thread-managed resource has no renderer-visible source
- * path, an `asset` is already a node, and a remote `url` is not fetchable yet.
+ * file or a Thread-owned resource. An `asset` is already a node, and a remote `url` is
+ * not fetchable yet.
  */
 export function canAddPreviewTargetToOutline(target: PreviewTarget): boolean {
-  return target.kind === 'local-file' && !target.resourceRef;
+  return target.kind === 'local-file' && (!target.resourceRef || Boolean(target.threadId));
 }
 
 /**
@@ -22,6 +22,11 @@ export function canAddPreviewTargetToOutline(target: PreviewTarget): boolean {
  */
 export async function ingestPreviewTargetToAsset(target: PreviewTarget): Promise<AssetMetadata | null> {
   if (target.kind === 'local-file') {
+    if (target.resourceRef) {
+      return target.threadId
+        ? api.ingestThreadResourceToAsset(target.threadId, target.resourceRef)
+        : null;
+    }
     // Full-file copy, no size cap, gated to the agent's trusted roots (the same gate
     // that let the file be previewed in the first place).
     return api.ingestLocalFileToAsset(target.path);

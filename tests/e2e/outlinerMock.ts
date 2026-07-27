@@ -2488,6 +2488,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               : name.endsWith('.epub') ? 'application/epub+zip' : 'application/octet-stream';
           return clone(createAsset({ mimeType, originalFilename: name, byteSize: 4096 })) as T;
         }
+        if (cmd === 'ingest_thread_resource') {
+          const ref = args.resourceRef as { mimeType?: unknown; fileName?: unknown; byteLength?: unknown } | undefined;
+          return clone(createAsset({
+            mimeType: typeof ref?.mimeType === 'string' ? ref.mimeType : undefined,
+            originalFilename: typeof ref?.fileName === 'string' ? ref.fileName : undefined,
+            byteSize: typeof ref?.byteLength === 'number' ? ref.byteLength : undefined,
+          })) as T;
+        }
         if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
         if (cmd === 'delete_asset') {
           assets.delete(String(args.id));

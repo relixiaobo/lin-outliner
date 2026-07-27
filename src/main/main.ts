@@ -121,6 +121,7 @@ import {
   type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
+import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
 import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
 import { clearPreviewTranslationCacheFromSettings } from './previewTranslationCacheClear';
@@ -1947,7 +1948,7 @@ function registerIpc() {
     const dispatch = () => {
       if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
-      if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
         if (!mainWindow || event.sender !== mainWindow.webContents) {
           throw new Error('Page translation is only available to the main window.');
@@ -2499,7 +2500,11 @@ function stagedAttachmentBuffer(value: unknown): Buffer | null {
   return null;
 }
 
-async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
+async function handleAssetCommand(
+  event: IpcMainInvokeEvent,
+  command: AssetCommand,
+  args: Record<string, unknown>,
+) {
   switch (command) {
     case 'ingest_asset': {
       // Only the buffer path is exposed to the renderer. Path ingest is an
@@ -2525,6 +2530,20 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       );
       if (!file || file.entryKind !== 'file') return null;
       return assetService.ingest({ kind: 'path', path: file.path });
+    }
+    case 'ingest_thread_resource': {
+      assertMainRenderer(event, 'Thread resource ingest');
+      return ingestThreadResourceAsset(args, {
+        readResource: (threadId, ref) => threadService
+          .readReferencedThreadResource(threadId, ref)
+          .catch(() => null),
+        ingestResource: (bytes, ref) => assetService.ingest({
+          kind: 'buffer',
+          data: bytes,
+          mimeType: ref.mimeType,
+          originalFilename: ref.fileName,
+        }),
+      });
     }
     case 'lookup_asset':
       return assetService.lookup(String(args.id));

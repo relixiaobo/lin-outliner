@@ -1414,6 +1414,7 @@ describe('ThreadService', () => {
       'text/plain',
       'retained.txt',
     );
+    expect(await fixture.service.readReferencedThreadResource(thread.id, retained)).toBeNull();
     await fixture.service.startRendererTurn({
       threadId: thread.id,
       input: [{
@@ -1428,6 +1429,11 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting();
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
+    expect(await fixture.service.readReferencedThreadResource(thread.id, retained)).toEqual(Buffer.from('retained'));
+    expect(await fixture.service.readReferencedThreadResource(thread.id, {
+      ...retained,
+      mimeType: 'application/octet-stream',
+    })).toBeNull();
     expect(await fixture.service.discardUnreferencedThreadResource(thread.id, retained)).toBe(false);
     expect(await fixture.service.discardUnreferencedThreadResource(thread.id, {
       ...retained,

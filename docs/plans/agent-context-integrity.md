@@ -260,7 +260,10 @@ rewriting the inherited payload. The same resource reference is valid under the 
 Thread's ownership; fork therefore preserves the context payload bytes, digest, and
 provider cache identity instead of creating a path-dependent payload variant. Preview
 resolves a referenced image through the current Thread into a disposable scratch copy;
-the canonical managed path never enters rollout JSON or renderer state.
+the canonical managed path never enters rollout JSON or renderer state. Add to outline
+uses a main-renderer-only `(threadId, resourceRef)` asset-ingest seam that reauthorizes
+the Item-graph reference and buffer-ingests verified bytes under the existing 20 MiB
+non-truncating cap, preserving the action without accepting or returning a managed path.
 
 Every provider-visible text leaf inside a payload is classified as:
 
