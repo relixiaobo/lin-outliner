@@ -1,4 +1,7 @@
 import {
+  CONTEXT_EVIDENCE_KINDS,
+  CONTEXT_PAYLOAD_KINDS,
+  MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   THREAD_HISTORY_MODE,
   THREAD_ITEM_TYPES,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -15,6 +18,7 @@ import {
   type AgentCoreTransientNotification,
   type AgentMutationCausation,
   type CommandAction,
+  type ContextCursor,
   type DynamicToolOutputContent,
   type FileUpdateChange,
   type ItemProvenance,
@@ -26,6 +30,8 @@ import {
   type RendererTurnStartRequest,
   type Thread,
   type ThreadAttachmentContent,
+  type ThreadContextPayload,
+  type ThreadContextPayloadReference,
   type ThreadItem,
   type ThreadItemDelta,
   type ThreadItemOutputReference,
@@ -112,6 +118,7 @@ export function decodeThread(value: unknown): Thread {
   if (result.parentThreadId && result.forkedFromId) {
     fail('thread', 'parentThreadId and forkedFromId are mutually exclusive lineage edges');
   }
+  if (result.turns) validateThreadContextCursors(result.turns);
   return deepFreeze(result);
 }
 
@@ -184,12 +191,13 @@ export function decodeThreadItem(value: unknown): ThreadItem {
   let result: ThreadItem;
   switch (type) {
     case 'userMessage':
-      exactKeys(record, ['type', 'id', 'provenance', 'clientId', 'content'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'clientId', 'content', 'acceptedAt'], 'item');
       result = {
         ...base,
         type,
         clientId: nullableString(record.clientId, 'item.clientId'),
         content: arrayValue(record.content, 'item.content').map(decodeUserContent),
+        acceptedAt: nonNegativeNumber(record.acceptedAt, 'item.acceptedAt'),
       };
       break;
     case 'agentMessage':
@@ -349,13 +357,63 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       exactKeys(record, ['type', 'id', 'provenance', 'path'], 'item');
       result = { ...base, type, path: stringValue(record.path, 'item.path') };
       break;
+    case 'contextEvidence':
+      exactKeys(record, [
+        'type', 'id', 'provenance', 'kind', 'payloadRef', 'summary', 'contextRefs', 'resourceRefs', 'outputRefs',
+      ], 'item');
+      result = {
+        ...base,
+        type,
+        kind: enumValue(record.kind, CONTEXT_EVIDENCE_KINDS, 'item.kind'),
+        payloadRef: decodeThreadContextPayloadReference(record.payloadRef, 'item.payloadRef'),
+        summary: stringValue(record.summary, 'item.summary'),
+        contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
+          .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
+          .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
+        outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
+          .map((ref, index) => decodeRequiredThreadItemOutputReference(ref, `item.outputRefs[${index}]`)),
+      };
+      break;
+    case 'contextReset':
+      exactKeys(record, ['type', 'id', 'provenance', 'clearedThrough'], 'item');
+      result = { ...base, type, clearedThrough: decodeContextCursor(record.clearedThrough, 'item.clearedThrough') };
+      break;
     case 'contextCompaction':
-      exactKeys(record, ['type', 'id', 'provenance'], 'item');
-      result = { ...base, type };
+      exactKeys(record, [
+        'type', 'id', 'provenance', 'trigger', 'coveredFrom', 'coveredThrough', 'preservedFrom',
+        'summaryRef', 'restoredStateRef', 'instructionsRef', 'contextRefs', 'resourceRefs', 'outputRefs',
+      ], 'item');
+      result = {
+        ...base,
+        type,
+        trigger: enumValue(
+          record.trigger,
+          ['automaticPreflight', 'providerOverflow', 'manual'],
+          'item.trigger',
+        ),
+        coveredFrom: decodeContextCursor(record.coveredFrom, 'item.coveredFrom'),
+        coveredThrough: decodeContextCursor(record.coveredThrough, 'item.coveredThrough'),
+        preservedFrom: record.preservedFrom === null
+          ? null
+          : decodeContextCursor(record.preservedFrom, 'item.preservedFrom'),
+        summaryRef: decodeThreadContextPayloadReference(record.summaryRef, 'item.summaryRef'),
+        restoredStateRef: decodeThreadContextPayloadReference(record.restoredStateRef, 'item.restoredStateRef'),
+        instructionsRef: record.instructionsRef === null
+          ? null
+          : decodeThreadContextPayloadReference(record.instructionsRef, 'item.instructionsRef'),
+        contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
+          .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
+          .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
+        outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
+          .map((ref, index) => decodeRequiredThreadItemOutputReference(ref, `item.outputRefs[${index}]`)),
+      };
       break;
     default:
       return assertNever(type);
   }
+  validateContextItemReferences(result);
   return deepFreeze(result);
 }
 
@@ -654,10 +712,86 @@ function executionStatusOf(item: ThreadItem): 'inProgress' | 'completed' | 'fail
     case 'reasoning':
     case 'subAgentActivity':
     case 'imageView':
+    case 'contextEvidence':
+    case 'contextReset':
     case 'contextCompaction':
       return null;
     default:
       return assertNever(item);
+  }
+}
+
+function validateContextItemReferences(item: ThreadItem): void {
+  if (item.type !== 'contextEvidence' && item.type !== 'contextCompaction') return;
+  if (item.type === 'contextEvidence') {
+    expectContextPayloadKind(item.payloadRef, item.kind, 'item.payloadRef');
+  } else {
+    expectContextPayloadKind(item.summaryRef, 'compactionSummary', 'item.summaryRef');
+    expectContextPayloadKind(item.restoredStateRef, 'compactionRestoredState', 'item.restoredStateRef');
+    if (item.instructionsRef) {
+      expectContextPayloadKind(item.instructionsRef, 'compactionInstructions', 'item.instructionsRef');
+    }
+  }
+  requireUnique(
+    item.contextRefs.map((ref) => `${ref.id}\0${ref.schemaVersion}`),
+    'item.contextRefs',
+    'references',
+  );
+  requireUnique(
+    item.resourceRefs.map((ref) => `${ref.id}\0${ref.fileName}`),
+    'item.resourceRefs',
+    'references',
+  );
+  requireUnique(
+    item.outputRefs.map((ref) => `${ref.id}\0${ref.mimeType}`),
+    'item.outputRefs',
+    'references',
+  );
+  const direct = item.type === 'contextEvidence'
+    ? [item.payloadRef]
+    : [item.summaryRef, item.restoredStateRef, ...(item.instructionsRef ? [item.instructionsRef] : [])];
+  const directIds = new Set(direct.map((ref) => ref.id));
+  if (item.contextRefs.some((ref) => directIds.has(ref.id))) {
+    fail('item.contextRefs', 'direct Item payloads must not be repeated as dependencies');
+  }
+}
+
+function validateThreadContextCursors(turns: readonly Turn[]): void {
+  if (turns.some((turn) => turn.itemsView !== 'full')) return;
+  const positions = new Map<string, number>();
+  const ordered: ThreadItem[] = [];
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      const key = `${turn.id}\0${item.id}`;
+      if (positions.has(key)) fail('thread.turns', `duplicate context cursor target ${turn.id}/${item.id}`);
+      positions.set(key, ordered.length);
+      ordered.push(item);
+    }
+  }
+  const positionOf = (cursor: ContextCursor, field: string): number => {
+    const position = positions.get(`${cursor.turnId}\0${cursor.itemId}`);
+    if (position === undefined) fail(field, 'cursor target is not reachable in this Thread');
+    return position;
+  };
+  for (let position = 0; position < ordered.length; position += 1) {
+    const item = ordered[position]!;
+    if (item.type === 'contextReset') {
+      if (positionOf(item.clearedThrough, 'item.clearedThrough') >= position) {
+        fail('item.clearedThrough', 'reset cursor must precede its Item');
+      }
+      continue;
+    }
+    if (item.type !== 'contextCompaction') continue;
+    const coveredFrom = positionOf(item.coveredFrom, 'item.coveredFrom');
+    const coveredThrough = positionOf(item.coveredThrough, 'item.coveredThrough');
+    if (coveredFrom > coveredThrough) fail('item', 'coveredFrom must not follow coveredThrough');
+    if (coveredThrough >= position) fail('item.coveredThrough', 'compaction range must precede its Item');
+    if (item.preservedFrom) {
+      const preservedFrom = positionOf(item.preservedFrom, 'item.preservedFrom');
+      if (preservedFrom <= coveredThrough || preservedFrom >= position) {
+        fail('item.preservedFrom', 'preserved tail must follow the covered range and precede compaction');
+      }
+    }
   }
 }
 
@@ -1450,6 +1584,556 @@ export function decodeThreadResourceReference(
   });
 }
 
+export function decodeThreadContextPayloadReference(
+  value: unknown,
+  field = 'threadContextPayloadReference',
+): ThreadContextPayloadReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'mimeType', 'byteLength', 'schemaVersion', 'kind'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!SHA_256_PATTERN.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  const byteLength = nonNegativeInteger(record.byteLength, `${field}.byteLength`);
+  if (byteLength > MAX_THREAD_CONTEXT_PAYLOAD_BYTES) {
+    fail(`${field}.byteLength`, 'exceeds the managed context payload budget');
+  }
+  if (record.schemaVersion !== 1) fail(`${field}.schemaVersion`, 'expected schema version 1');
+  return deepFreeze({
+    id,
+    mimeType: enumValue(
+      record.mimeType,
+      ['application/vnd.tenon.agent-context+json'],
+      `${field}.mimeType`,
+    ),
+    byteLength,
+    schemaVersion: 1,
+    kind: enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, `${field}.kind`),
+  });
+}
+
+export function decodeThreadContextPayload(value: unknown): ThreadContextPayload {
+  const record = recordValue(value, 'contextPayload');
+  const schemaVersion = record.schemaVersion;
+  if (schemaVersion !== 1) fail('contextPayload.schemaVersion', 'expected schema version 1');
+  const kind = enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, 'contextPayload.kind');
+
+  switch (kind) {
+    case 'turnEnvironment':
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'acceptedAt', 'utcInstant', 'localDate', 'localTime',
+        'timeZone', 'utcOffsetMinutes', 'locale', 'workingDirectory', 'conversationMode',
+        'executionMode', 'replyIdentity', 'todayNodeId',
+      ], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        acceptedAt: nonNegativeNumber(record.acceptedAt, 'contextPayload.acceptedAt'),
+        utcInstant: isoInstant(record.utcInstant, 'contextPayload.utcInstant'),
+        localDate: stringValue(record.localDate, 'contextPayload.localDate'),
+        localTime: stringValue(record.localTime, 'contextPayload.localTime'),
+        timeZone: stringValue(record.timeZone, 'contextPayload.timeZone'),
+        utcOffsetMinutes: safeInteger(record.utcOffsetMinutes, 'contextPayload.utcOffsetMinutes'),
+        locale: stringValue(record.locale, 'contextPayload.locale'),
+        workingDirectory: stringValue(record.workingDirectory, 'contextPayload.workingDirectory'),
+        conversationMode: enumValue(
+          record.conversationMode,
+          ['interactive', 'headless'],
+          'contextPayload.conversationMode',
+        ),
+        executionMode: enumValue(
+          record.executionMode,
+          ['root', 'child', 'automation', 'memory', 'feature'],
+          'contextPayload.executionMode',
+        ),
+        replyIdentity: nullableString(record.replyIdentity, 'contextPayload.replyIdentity'),
+        todayNodeId: nullableString(record.todayNodeId, 'contextPayload.todayNodeId'),
+      });
+    case 'userView': {
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'mode', 'activePanelId', 'focusedPanelId', 'focusSurface',
+        'focusedNode', 'selectedNodes', 'referencedNodes', 'panels', 'truncated',
+      ], 'contextPayload');
+      const selectedNodes = arrayValue(record.selectedNodes, 'contextPayload.selectedNodes')
+        .map((entry, index) => decodeUserViewNode(entry, `contextPayload.selectedNodes[${index}]`));
+      if (selectedNodes.length > 50) fail('contextPayload.selectedNodes', 'exceeds the 50-node limit');
+      const panels = arrayValue(record.panels, 'contextPayload.panels')
+        .map((entry, index) => decodeUserViewPanel(entry, `contextPayload.panels[${index}]`));
+      const visibleNodes = panels.reduce((total, panel) => total + panel.visibleOutline.length, 0);
+      if (visibleNodes > 80) fail('contextPayload.panels', 'exceeds the 80-visible-node limit');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        mode: enumValue(record.mode, ['interactive', 'nonInteractive'], 'contextPayload.mode'),
+        activePanelId: nullableString(record.activePanelId, 'contextPayload.activePanelId'),
+        focusedPanelId: nullableString(record.focusedPanelId, 'contextPayload.focusedPanelId'),
+        focusSurface: nullableString(record.focusSurface, 'contextPayload.focusSurface'),
+        focusedNode: record.focusedNode === null
+          ? null
+          : decodeUserViewNode(record.focusedNode, 'contextPayload.focusedNode'),
+        selectedNodes,
+        referencedNodes: arrayValue(record.referencedNodes, 'contextPayload.referencedNodes')
+          .map((entry, index) => decodeUserViewNode(entry, `contextPayload.referencedNodes[${index}]`)),
+        panels,
+        truncated: booleanValue(record.truncated, 'contextPayload.truncated'),
+      });
+    }
+    case 'additionalContext': {
+      exactKeys(record, ['schemaVersion', 'kind', 'entries'], 'contextPayload');
+      const entries = arrayValue(record.entries, 'contextPayload.entries')
+        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.entries[${index}]`));
+      requireUnique(entries.map((entry) => entry.key), 'contextPayload.entries', 'keys');
+      return deepFreeze({ schemaVersion: 1, kind, entries });
+    }
+    case 'referencedResources':
+      exactKeys(record, ['schemaVersion', 'kind', 'resources'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        resources: arrayValue(record.resources, 'contextPayload.resources')
+          .map((entry, index) => decodeReferencedResource(entry, `contextPayload.resources[${index}]`)),
+      });
+    case 'skillCatalog': {
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'mode', 'previousCatalogHash', 'catalogHash', 'entries',
+      ], 'contextPayload');
+      const mode = enumValue(record.mode, ['baseline', 'delta'], 'contextPayload.mode');
+      const previousCatalogHash = nullableSha256(record.previousCatalogHash, 'contextPayload.previousCatalogHash');
+      const catalogHash = sha256(record.catalogHash, 'contextPayload.catalogHash');
+      const entries = arrayValue(record.entries, 'contextPayload.entries')
+        .map((entry, index) => decodeSkillCatalogEntry(entry, `contextPayload.entries[${index}]`));
+      validateCatalogJournal(mode, previousCatalogHash, catalogHash, entries.map((entry) => entry.change));
+      requireUnique(entries.map((entry) => entry.name), 'contextPayload.entries', 'Skill names');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        mode,
+        previousCatalogHash,
+        catalogHash,
+        entries,
+      });
+    }
+    case 'skillInvocation': {
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'name', 'displayName', 'source', 'identity', 'resourceRoot',
+        'contentHash', 'instructions', 'arguments', 'execution', 'invocationSource',
+        'constraints', 'invokedAt',
+      ], 'contextPayload');
+      const execution = enumValue(record.execution, ['inline', 'isolated'], 'contextPayload.execution');
+      const constraints = decodeSkillInvocationConstraints(record.constraints);
+      if (execution === 'inline' && (
+        constraints.allowedTools.length > 0
+        || constraints.model !== null
+        || constraints.effort !== null
+      )) {
+        fail('contextPayload.constraints', 'inline Skills cannot widen or replace the Turn configuration');
+      }
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        name: nonEmptyTrimmedString(record.name, 'contextPayload.name'),
+        displayName: nonEmptyTrimmedString(record.displayName, 'contextPayload.displayName'),
+        source: enumValue(
+          record.source,
+          ['built-in', 'managed', 'user', 'project'],
+          'contextPayload.source',
+        ),
+        identity: nonEmptyTrimmedString(record.identity, 'contextPayload.identity'),
+        resourceRoot: nullableString(record.resourceRoot, 'contextPayload.resourceRoot'),
+        contentHash: sha256(record.contentHash, 'contextPayload.contentHash'),
+        instructions: stringValue(record.instructions, 'contextPayload.instructions', true),
+        arguments: stringValue(record.arguments, 'contextPayload.arguments', true),
+        execution,
+        invocationSource: enumValue(
+          record.invocationSource,
+          ['user', 'model', 'runtime'],
+          'contextPayload.invocationSource',
+        ),
+        constraints,
+        invokedAt: nonNegativeNumber(record.invokedAt, 'contextPayload.invokedAt'),
+      });
+    }
+    case 'roleCatalog': {
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'mode', 'previousCatalogHash', 'catalogHash', 'entries',
+      ], 'contextPayload');
+      const mode = enumValue(record.mode, ['baseline', 'delta'], 'contextPayload.mode');
+      const previousCatalogHash = nullableSha256(record.previousCatalogHash, 'contextPayload.previousCatalogHash');
+      const catalogHash = sha256(record.catalogHash, 'contextPayload.catalogHash');
+      const entries = arrayValue(record.entries, 'contextPayload.entries')
+        .map((entry, index) => decodeRoleCatalogEntry(entry, `contextPayload.entries[${index}]`));
+      validateCatalogJournal(mode, previousCatalogHash, catalogHash, entries.map((entry) => entry.change));
+      requireUnique(entries.map((entry) => entry.name), 'contextPayload.entries', 'Role names');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        mode,
+        previousCatalogHash,
+        catalogHash,
+        entries,
+      });
+    }
+    case 'toolOutputProjection':
+      exactKeys(record, ['schemaVersion', 'kind', 'outputRef', 'projection'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        outputRef: decodeRequiredThreadItemOutputReference(record.outputRef, 'contextPayload.outputRef'),
+        projection: decodeToolOutputProjection(record.projection),
+      });
+    case 'inheritedContext': {
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'sourceThreadId', 'coveredThrough', 'requestedTurns', 'turns',
+      ], 'contextPayload');
+      const requestedTurns = record.requestedTurns === 'all'
+        ? 'all'
+        : positiveInteger(record.requestedTurns, 'contextPayload.requestedTurns');
+      const turns = arrayValue(record.turns, 'contextPayload.turns').map(decodeTurn);
+      if (turns.some((turn) => turn.itemsView !== 'full')) {
+        fail('contextPayload.turns', 'inherited context requires complete Turns');
+      }
+      if (turns.some((turn) => turn.status === 'inProgress')) {
+        fail('contextPayload.turns', 'inherited context cannot contain an in-progress Turn');
+      }
+      validateThreadContextCursors(turns);
+      const coveredThrough = decodeContextCursor(record.coveredThrough, 'contextPayload.coveredThrough');
+      if (!turns.some((turn) => (
+        turn.id === coveredThrough.turnId
+        && turn.items.some((item) => item.id === coveredThrough.itemId)
+      ))) {
+        fail('contextPayload.coveredThrough', 'cursor target is not reachable in inherited context');
+      }
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        sourceThreadId: uuidV7(record.sourceThreadId, 'contextPayload.sourceThreadId'),
+        coveredThrough,
+        requestedTurns,
+        turns,
+      });
+    }
+    case 'compactionSummary':
+      exactKeys(record, ['schemaVersion', 'kind', 'source', 'text'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        source: enumValue(record.source, ['model', 'fallback'], 'contextPayload.source'),
+        text: stringValue(record.text, 'contextPayload.text', true),
+      });
+    case 'compactionRestoredState':
+      exactKeys(record, [
+        'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
+        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef', 'activeObservations',
+      ], 'contextPayload');
+      return decodeCompactionRestoredState(record, kind);
+    case 'compactionInstructions': {
+      exactKeys(record, ['schemaVersion', 'kind', 'entries'], 'contextPayload');
+      const entries = arrayValue(record.entries, 'contextPayload.entries')
+        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.entries[${index}]`));
+      if (entries.some((entry) => entry.authority !== 'application' || entry.purpose !== 'instruction')) {
+        fail('contextPayload.entries', 'compaction instructions require application/instruction entries');
+      }
+      requireUnique(entries.map((entry) => entry.key), 'contextPayload.entries', 'keys');
+      return deepFreeze({ schemaVersion: 1, kind, entries });
+    }
+    default:
+      return assertNever(kind);
+  }
+}
+
+function decodeCompactionRestoredState(
+  record: Record<string, unknown>,
+  kind: 'compactionRestoredState',
+): ThreadContextPayload {
+  const announcedSkills = arrayValue(record.announcedSkills, 'contextPayload.announcedSkills')
+    .map((entry, index) => decodeCatalogCheckpoint(entry, `contextPayload.announcedSkills[${index}]`));
+  const activeSkills = arrayValue(record.activeSkills, 'contextPayload.activeSkills')
+    .map((entry, index) => decodeActiveSkillCheckpoint(entry, `contextPayload.activeSkills[${index}]`));
+  const announcedRoles = arrayValue(record.announcedRoles, 'contextPayload.announcedRoles')
+    .map((entry, index) => decodeCatalogCheckpoint(entry, `contextPayload.announcedRoles[${index}]`));
+  const activeObservations = arrayValue(record.activeObservations, 'contextPayload.activeObservations')
+    .map((entry, index) => decodeActiveObservationCheckpoint(
+      entry,
+      `contextPayload.activeObservations[${index}]`,
+    ));
+  requireUnique(announcedSkills.map((entry) => entry.name), 'contextPayload.announcedSkills', 'Skill names');
+  requireUnique(activeSkills.map((entry) => entry.name), 'contextPayload.activeSkills', 'Skill names');
+  requireUnique(announcedRoles.map((entry) => entry.name), 'contextPayload.announcedRoles', 'Role names');
+  requireUnique(activeObservations.map((entry) => entry.key), 'contextPayload.activeObservations', 'keys');
+  return deepFreeze({
+    schemaVersion: 1,
+    kind,
+    skillCatalogHash: nullableSha256(record.skillCatalogHash, 'contextPayload.skillCatalogHash'),
+    announcedSkills,
+    activeSkills,
+    roleCatalogHash: nullableSha256(record.roleCatalogHash, 'contextPayload.roleCatalogHash'),
+    announcedRoles,
+    userViewBaselineRef: record.userViewBaselineRef === null
+      ? null
+      : expectContextPayloadKind(
+          decodeThreadContextPayloadReference(record.userViewBaselineRef, 'contextPayload.userViewBaselineRef'),
+          'userView',
+          'contextPayload.userViewBaselineRef',
+        ),
+    activeObservations,
+  });
+}
+
+export function encodeThreadContextPayload(value: ThreadContextPayload): string {
+  return JSON.stringify(decodeThreadContextPayload(value));
+}
+
+export function decodeThreadContextPayloadJson(encoded: string): ThreadContextPayload {
+  return decodeThreadContextPayload(parseJson(encoded, 'contextPayload'));
+}
+
+function decodeContextTextEntry(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['key', 'source', 'authority', 'purpose', 'text'], path);
+  const authority = enumValue(record.authority, ['application', 'untrusted'], `${path}.authority`);
+  const purpose = enumValue(record.purpose, ['instruction', 'observation'], `${path}.purpose`);
+  if (authority === 'untrusted' && purpose === 'instruction') {
+    fail(path, 'untrusted text cannot acquire instruction authority');
+  }
+  return {
+    key: nonEmptyTrimmedString(record.key, `${path}.key`),
+    source: nonEmptyTrimmedString(record.source, `${path}.source`),
+    authority,
+    purpose,
+    text: stringValue(record.text, `${path}.text`, true),
+  } as const;
+}
+
+function decodeUserViewNode(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['nodeId', 'title', 'panelId', 'surface'], path);
+  return {
+    nodeId: nonEmptyTrimmedString(record.nodeId, `${path}.nodeId`),
+    title: stringValue(record.title, `${path}.title`, true),
+    panelId: nullableString(record.panelId, `${path}.panelId`),
+    surface: nullableString(record.surface, `${path}.surface`),
+  };
+}
+
+function decodeUserViewOutlineNode(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'nodeId', 'title', 'depth', 'focused', 'collapsed', 'childCount', 'includedChildCount',
+  ], path);
+  const depth = nonNegativeInteger(record.depth, `${path}.depth`);
+  if (depth > 5) fail(`${path}.depth`, 'exceeds the depth-5 limit');
+  const childCount = nonNegativeInteger(record.childCount, `${path}.childCount`);
+  const includedChildCount = nullableInteger(record.includedChildCount, `${path}.includedChildCount`);
+  if (includedChildCount !== null && (includedChildCount < 0 || includedChildCount > childCount)) {
+    fail(`${path}.includedChildCount`, 'must be between zero and childCount');
+  }
+  return {
+    nodeId: nonEmptyTrimmedString(record.nodeId, `${path}.nodeId`),
+    title: stringValue(record.title, `${path}.title`, true),
+    depth,
+    focused: booleanValue(record.focused, `${path}.focused`),
+    collapsed: booleanValue(record.collapsed, `${path}.collapsed`),
+    childCount,
+    includedChildCount,
+  };
+}
+
+function decodeUserViewPanel(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'panelId', 'rootNodeId', 'rootTitle', 'rootType', 'active', 'focused', 'order',
+    'childCount', 'breadcrumb', 'visibleOutline', 'visibleOutlineTruncated',
+  ], path);
+  const breadcrumb = arrayValue(record.breadcrumb, `${path}.breadcrumb`)
+    .map((entry, index) => decodeUserViewNode(entry, `${path}.breadcrumb[${index}]`));
+  if (breadcrumb.length > 6) fail(`${path}.breadcrumb`, 'exceeds the six-node limit');
+  return {
+    panelId: nonEmptyTrimmedString(record.panelId, `${path}.panelId`),
+    rootNodeId: nonEmptyTrimmedString(record.rootNodeId, `${path}.rootNodeId`),
+    rootTitle: stringValue(record.rootTitle, `${path}.rootTitle`, true),
+    rootType: nonEmptyTrimmedString(record.rootType, `${path}.rootType`),
+    active: booleanValue(record.active, `${path}.active`),
+    focused: booleanValue(record.focused, `${path}.focused`),
+    order: nonNegativeInteger(record.order, `${path}.order`),
+    childCount: nonNegativeInteger(record.childCount, `${path}.childCount`),
+    breadcrumb,
+    visibleOutline: arrayValue(record.visibleOutline, `${path}.visibleOutline`)
+      .map((entry, index) => decodeUserViewOutlineNode(entry, `${path}.visibleOutline[${index}]`)),
+    visibleOutlineTruncated: booleanValue(record.visibleOutlineTruncated, `${path}.visibleOutlineTruncated`),
+  };
+}
+
+function decodeReferencedResource(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'nodeId', 'nodeType', 'title', 'breadcrumb', 'content', 'contentTruncated',
+    'resourceRef', 'inlineImage', 'unavailableReason',
+  ], path);
+  const resourceRef = record.resourceRef === null
+    ? null
+    : decodeThreadResourceReference(record.resourceRef, `${path}.resourceRef`);
+  const inlineImage = booleanValue(record.inlineImage, `${path}.inlineImage`);
+  const unavailableReason = nullableEnum(
+    record.unavailableReason,
+    ['missing', 'corrupt', 'unsupported', 'quotaExceeded'],
+    `${path}.unavailableReason`,
+  );
+  if (unavailableReason !== null && (resourceRef !== null || inlineImage)) {
+    fail(path, 'an unavailable resource cannot claim bytes or an inline image');
+  }
+  if (inlineImage && (!resourceRef || !resourceRef.mimeType.startsWith('image/'))) {
+    fail(path, 'an inline image requires an image resource');
+  }
+  return {
+    nodeId: nonEmptyTrimmedString(record.nodeId, `${path}.nodeId`),
+    nodeType: nonEmptyTrimmedString(record.nodeType, `${path}.nodeType`),
+    title: stringValue(record.title, `${path}.title`, true),
+    breadcrumb: arrayValue(record.breadcrumb, `${path}.breadcrumb`)
+      .map((entry, index) => decodeUserViewNode(entry, `${path}.breadcrumb[${index}]`)),
+    content: stringValue(record.content, `${path}.content`, true),
+    contentTruncated: booleanValue(record.contentTruncated, `${path}.contentTruncated`),
+    resourceRef,
+    inlineImage,
+    unavailableReason,
+  };
+}
+
+function decodeSkillCatalogEntry(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'change', 'name', 'displayName', 'source', 'identity', 'contentHash', 'description',
+  ], path);
+  return {
+    change: enumValue(record.change, ['available', 'added', 'changed', 'removed'], `${path}.change`),
+    name: nonEmptyTrimmedString(record.name, `${path}.name`),
+    displayName: nonEmptyTrimmedString(record.displayName, `${path}.displayName`),
+    source: enumValue(record.source, ['built-in', 'managed', 'user', 'project'], `${path}.source`),
+    identity: nonEmptyTrimmedString(record.identity, `${path}.identity`),
+    contentHash: sha256(record.contentHash, `${path}.contentHash`),
+    description: stringValue(record.description, `${path}.description`, true),
+  };
+}
+
+function decodeRoleCatalogEntry(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'change', 'name', 'displayName', 'source', 'identity', 'contentHash', 'description',
+  ], path);
+  return {
+    change: enumValue(record.change, ['available', 'added', 'changed', 'removed'], `${path}.change`),
+    name: nonEmptyTrimmedString(record.name, `${path}.name`),
+    displayName: nonEmptyTrimmedString(record.displayName, `${path}.displayName`),
+    source: enumValue(record.source, ['built-in', 'user', 'project'], `${path}.source`),
+    identity: nonEmptyTrimmedString(record.identity, `${path}.identity`),
+    contentHash: sha256(record.contentHash, `${path}.contentHash`),
+    description: stringValue(record.description, `${path}.description`, true),
+  };
+}
+
+function validateCatalogJournal(
+  mode: 'baseline' | 'delta',
+  previousCatalogHash: string | null,
+  catalogHash: string,
+  changes: readonly ('available' | 'added' | 'changed' | 'removed')[],
+): void {
+  if (mode === 'baseline' && previousCatalogHash !== null) {
+    fail('contextPayload.previousCatalogHash', 'a baseline cannot name a previous catalog');
+  }
+  if (mode === 'delta' && previousCatalogHash === null) {
+    fail('contextPayload.previousCatalogHash', 'a delta requires a previous catalog hash');
+  }
+  if (mode === 'baseline' && changes.some((change) => change !== 'available')) {
+    fail('contextPayload.entries', 'baseline entries must use the available change');
+  }
+  if (mode === 'delta' && changes.some((change) => change === 'available')) {
+    fail('contextPayload.entries', 'delta entries must use added, changed, or removed');
+  }
+  if (mode === 'delta' && (previousCatalogHash === catalogHash || changes.length === 0)) {
+    fail('contextPayload', 'a delta must describe a real catalog change');
+  }
+}
+
+function decodeSkillInvocationConstraints(value: unknown) {
+  const record = recordValue(value, 'contextPayload.constraints');
+  exactKeys(record, ['allowedTools', 'model', 'effort'], 'contextPayload.constraints');
+  return {
+    allowedTools: stringArray(record.allowedTools, 'contextPayload.constraints.allowedTools')
+      .map((tool, index) => nonEmptyTrimmedString(tool, `contextPayload.constraints.allowedTools[${index}]`)),
+    model: nullableString(record.model, 'contextPayload.constraints.model'),
+    effort: nullableString(record.effort, 'contextPayload.constraints.effort'),
+  };
+}
+
+function decodeToolOutputProjection(value: unknown) {
+  const record = recordValue(value, 'contextPayload.projection');
+  const type = enumValue(record.type, ['full', 'inline', 'observation'], 'contextPayload.projection.type');
+  if (type === 'full') {
+    exactKeys(record, ['type'], 'contextPayload.projection');
+    return { type } as const;
+  }
+  exactKeys(record, ['type', 'text'], 'contextPayload.projection');
+  return { type, text: stringValue(record.text, 'contextPayload.projection.text', true) } as const;
+}
+
+function decodeCatalogCheckpoint(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['name', 'identity', 'contentHash'], path);
+  return {
+    name: nonEmptyTrimmedString(record.name, `${path}.name`),
+    identity: nonEmptyTrimmedString(record.identity, `${path}.identity`),
+    contentHash: sha256(record.contentHash, `${path}.contentHash`),
+  };
+}
+
+function decodeActiveSkillCheckpoint(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['name', 'identity', 'contentHash', 'payloadRef'], path);
+  return {
+    ...decodeCatalogCheckpoint({
+      name: record.name,
+      identity: record.identity,
+      contentHash: record.contentHash,
+    }, path),
+    payloadRef: expectContextPayloadKind(
+      decodeThreadContextPayloadReference(record.payloadRef, `${path}.payloadRef`),
+      'skillInvocation',
+      `${path}.payloadRef`,
+    ),
+  };
+}
+
+function decodeActiveObservationCheckpoint(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['key', 'tool', 'subject', 'outputRef', 'projectionRef'], path);
+  return {
+    key: nonEmptyTrimmedString(record.key, `${path}.key`),
+    tool: nonEmptyTrimmedString(record.tool, `${path}.tool`),
+    subject: stringValue(record.subject, `${path}.subject`, true),
+    outputRef: decodeRequiredThreadItemOutputReference(record.outputRef, `${path}.outputRef`),
+    projectionRef: expectContextPayloadKind(
+      decodeThreadContextPayloadReference(record.projectionRef, `${path}.projectionRef`),
+      'toolOutputProjection',
+      `${path}.projectionRef`,
+    ),
+  };
+}
+
+function expectContextPayloadKind<K extends ThreadContextPayload['kind']>(
+  ref: ThreadContextPayloadReference,
+  expected: K,
+  path: string,
+): ThreadContextPayloadReference & { readonly kind: K } {
+  if (ref.kind !== expected) fail(`${path}.kind`, `expected ${expected}`);
+  return ref as ThreadContextPayloadReference & { readonly kind: K };
+}
+
+function decodeContextCursor(value: unknown, field: string): ContextCursor {
+  const record = recordValue(value, field);
+  exactKeys(record, ['turnId', 'itemId'], field);
+  return deepFreeze({
+    turnId: uuidV7(record.turnId, `${field}.turnId`),
+    itemId: stringValue(record.itemId, `${field}.itemId`),
+  });
+}
+
 function decodeMemoryCitation(value: unknown): MemoryCitation | null {
   if (value === null) return null;
   const record = recordValue(value, 'item.memoryCitation');
@@ -1521,18 +2205,27 @@ function decodeTurnTokenCost(value: unknown): NonNullable<Turn['execution']['usa
   });
 }
 
-function decodeThreadItemOutputReference(value: unknown): ThreadItemOutputReference | null {
+function decodeThreadItemOutputReference(
+  value: unknown,
+  field = 'item.outputRef',
+): ThreadItemOutputReference | null {
   if (value === null) return null;
-  const record = recordValue(value, 'item.outputRef');
-  exactKeys(record, ['id', 'mimeType', 'byteLength', 'summary'], 'item.outputRef');
-  const id = stringValue(record.id, 'item.outputRef.id');
-  if (!SHA_256_PATTERN.test(id)) fail('item.outputRef.id', 'expected a lowercase SHA-256 digest');
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'mimeType', 'byteLength', 'summary'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!SHA_256_PATTERN.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
   return deepFreeze({
     id,
-    mimeType: enumValue(record.mimeType, ['text/plain', 'application/json'], 'item.outputRef.mimeType'),
-    byteLength: nonNegativeInteger(record.byteLength, 'item.outputRef.byteLength'),
-    summary: stringValue(record.summary, 'item.outputRef.summary'),
+    mimeType: enumValue(record.mimeType, ['text/plain', 'application/json'], `${field}.mimeType`),
+    byteLength: nonNegativeInteger(record.byteLength, `${field}.byteLength`),
+    summary: stringValue(record.summary, `${field}.summary`),
   });
+}
+
+function decodeRequiredThreadItemOutputReference(value: unknown, field: string): ThreadItemOutputReference {
+  const ref = decodeThreadItemOutputReference(value, field);
+  if (!ref) fail(field, 'expected an output reference');
+  return ref;
 }
 
 function decodeCommandAction(value: unknown): CommandAction {
@@ -1679,6 +2372,11 @@ function nullableInteger(value: unknown, path: string): number | null {
   return value as number;
 }
 
+function safeInteger(value: unknown, path: string): number {
+  if (!Number.isSafeInteger(value)) fail(path, 'expected a safe integer');
+  return value as number;
+}
+
 function nonNegativeInteger(value: unknown, path: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) fail(path, 'expected a non-negative safe integer');
   return value as number;
@@ -1697,6 +2395,25 @@ function nonNegativeNumber(value: unknown, path: string): number {
   const number = finiteNumber(value, path);
   if (number < 0) fail(path, 'expected a non-negative number');
   return number;
+}
+
+function isoInstant(value: unknown, path: string): string {
+  const instant = stringValue(value, path);
+  const parsed = Date.parse(instant);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== instant) {
+    fail(path, 'expected a canonical ISO-8601 UTC instant');
+  }
+  return instant;
+}
+
+function sha256(value: unknown, path: string): string {
+  const digest = stringValue(value, path);
+  if (!SHA_256_PATTERN.test(digest)) fail(path, 'expected a lowercase SHA-256 digest');
+  return digest;
+}
+
+function nullableSha256(value: unknown, path: string): string | null {
+  return value === null ? null : sha256(value, path);
 }
 
 function snakeCaseId(value: unknown, path: string): string {
@@ -1741,6 +2458,10 @@ function exactKeys(record: Record<string, unknown>, allowed: readonly string[], 
   const allowedSet = new Set(allowed);
   const unknown = Object.keys(record).filter((key) => !allowedSet.has(key));
   if (unknown.length > 0) fail(path, `unknown fields: ${unknown.join(', ')}`);
+}
+
+function requireUnique(values: readonly string[], path: string, label: string): void {
+  if (new Set(values).size !== values.length) fail(path, `duplicate ${label}`);
 }
 
 function fail(path: string, message: string): never {

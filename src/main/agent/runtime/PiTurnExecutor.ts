@@ -898,6 +898,9 @@ export async function historyMessages(context: TurnExecutionContext, model: Mode
         case 'imageView':
           assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
           break;
+        case 'contextEvidence':
+        case 'contextReset':
+          break;
         case 'contextCompaction':
           assistantContent.push({ type: 'text', text: '[Context compacted]' });
           break;

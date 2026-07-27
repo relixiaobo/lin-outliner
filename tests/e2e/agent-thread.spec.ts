@@ -175,6 +175,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'userMessage',
               provenance: itemProvenance(userId),
               clientId: null,
+              acceptedAt: 1,
               content: [{ type: 'text', text: 'Use my saved preference.' }],
             },
             {
@@ -270,6 +271,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'userMessage',
               provenance: itemProvenance(userId),
               clientId: null,
+              acceptedAt: 1,
               content: [{ type: 'text', text: 'Inspect the rollout order.' }],
             },
             {
@@ -343,6 +345,7 @@ test.describe('canonical agent Thread surface', () => {
             type: 'userMessage',
             provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
             clientId: null,
+            acceptedAt: 1,
             content: [{ type: 'text', text: 'Show the live state.' }],
           }],
           itemsView: 'full',
@@ -392,6 +395,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'userMessage',
               provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
               clientId: null,
+              acceptedAt: 1,
               content: [{ type: 'text', text: 'Show the live state.' }],
             },
             {
@@ -673,6 +677,7 @@ test.describe('canonical agent Thread surface', () => {
             type: 'userMessage',
             provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
             clientId: null,
+            acceptedAt: 1,
             content: [
               { type: 'text', text: 'Before' },
               {
@@ -1602,6 +1607,7 @@ test.describe('canonical agent Thread surface', () => {
           type: 'userMessage',
           provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
           clientId: null,
+          acceptedAt: 1,
           content: [{ type: 'text', text: 'Implement the interaction' }],
         }],
         itemsView: 'full',
@@ -1783,6 +1789,8 @@ test.describe('canonical agent Thread surface', () => {
             id: userMessageId,
             type: 'userMessage',
             provenance: provenance(userMessageId),
+            clientId: null,
+            acceptedAt: 1,
             content: [{ type: 'text', text: 'Inspect the outline.' }],
           },
           {
@@ -2196,6 +2204,7 @@ test.describe('terminal Thread history actions', () => {
               type: 'userMessage',
               provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userItemId },
               clientId: null,
+              acceptedAt: 1,
               content: [{ type: 'text', text: 'Stop after a partial answer.' }],
             },
             {

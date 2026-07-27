@@ -395,6 +395,8 @@ function itemRole(item: ThreadItem): string {
     case 'subAgentActivity': return 'agent';
     case 'webSearch': return 'search';
     case 'imageView': return 'image';
+    case 'contextEvidence': return 'context';
+    case 'contextReset': return 'system';
     case 'contextCompaction': return 'system';
   }
 }
@@ -415,6 +417,8 @@ function itemSummary(item: ThreadItem): string {
     case 'subAgentActivity': return item.agentPath;
     case 'webSearch': return item.query;
     case 'imageView': return item.path;
+    case 'contextEvidence': return item.summary;
+    case 'contextReset': return item.type;
     case 'contextCompaction': return item.type;
   }
 }

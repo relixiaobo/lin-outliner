@@ -20,13 +20,48 @@ A `ThreadItem` is the smallest persisted history fact. Canonical Item kinds are:
 - `userMessage`, `agentMessage`, and `reasoning`
 - `commandExecution`, `fileChange`, `mcpToolCall`, and `dynamicToolCall`
 - `collabAgentToolCall` and `subAgentActivity`
-- `webSearch`, `imageView`, and `contextCompaction`
+- `webSearch` and `imageView`
+- `contextEvidence`, `contextReset`, and `contextCompaction`
 
 Items with execution status start as `inProgress` and complete with a terminal
 status. Every started Item, including streamed messages and reasoning without an
 execution-status field, receives exactly one `item/completed` fact before its
 Turn becomes terminal. `item/completed` never accepts an `inProgress` executable
 Item. Completed Items and terminal Turns are immutable.
+
+Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
+the Turn start instant; steering records one instant for both Item persistence and
+recorder completion. Replay and forks preserve that timestamp instead of substituting
+the current clock.
+
+Context Items are the canonical protocol for hidden model input. `contextEvidence`
+names one semantic kind and a content-addressed payload; `contextReset` names an exact
+cleared-through cursor; and `contextCompaction` names its trigger, covered range,
+preserved tail, summary, reducer checkpoint, and optional active instructions.
+Context cursors are exact Turn/Item pairs. Full Thread decoding rejects unreachable or
+reversed ranges.
+
+Context payload schema version 1 is an exact-key discriminated union, not arbitrary
+JSON. It covers environment, user view, additional context, referenced resources,
+Skill/Role catalog journals, Skill invocation, tool-output projection, inherited
+context, and the three compaction payloads. Unknown kinds, versions, and fields fail
+closed. Each content reference carries its payload kind, and the owning evidence or
+compaction Item validates the exact expected kind. Individual context payloads are
+limited to 16 MiB. Text entries carry source, authority, and purpose; untrusted text cannot claim
+instruction authority, and an inline Skill cannot carry model, effort, or tool
+overrides. A compaction reducer checkpoint includes catalog state, active Skill payloads,
+the user-view baseline, and active file/Node observations. Each observation retains a
+stable key, tool identity, untrusted subject, complete output reference, and frozen
+projection reference; it stores neither scratch paths nor another copy of observed
+text. Inherited context accepts only complete terminal Turns and requires its
+covered-through cursor to resolve inside that snapshot. These protocol types are
+available before the unified context planner; their presence does not imply that the
+current executor already projects them.
+
+Every nested context payload, managed resource, or complete tool output named by a
+context payload is also an explicit dependency on its owning context Item through
+`contextRefs`, `resourceRefs`, or `outputRefs`. Lifecycle operations use that canonical
+dependency graph instead of parsing payload-private JSON.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
@@ -187,6 +222,12 @@ or attempts to undo external effects. Any future world-state revert is a
 separate explicit capability with preview, conflict detection, and its own audit
 record.
 
+Forked user Items retain `acceptedAt`. Context cursors are rewritten to the copied
+Turn/Item identities. Every context payload and every dependency listed by the owning
+Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
+publication; failure deletes the staged fork. The copied Thread therefore remains
+readable after its source is deleted.
+
 ## Persistence
 
 Persistent Agent Core data lives under `<userData>/agent/`:
@@ -201,6 +242,8 @@ agent/
   payloads/
     <thread-id>/
       <content-hash>.<ext>
+      context/
+        <content-hash>.json
       resources/
         <content-hash>/
           <safe-display-name>
@@ -209,9 +252,12 @@ agent/
 `state.sqlite` is the Thread catalog and configuration snapshot.
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
 owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
-the history source of truth. Large binary tool outputs and managed attachment
-inputs live in the Thread-owned payload directory; canonical Items retain typed
-content-addressed references. Managed input admission reserves quota before
+the history source of truth. Complete textual tool outputs, managed attachment
+inputs, and semantic context payloads live in the Thread-owned payload directory;
+canonical Items retain typed content-addressed references. Context writes
+canonicalize through the Core codec before hashing. Context and text reads/copies
+verify digest and byte length, while text also selects storage by the referenced
+MIME type. Managed input admission reserves quota before
 writing, stages chunks under a non-canonical `.staging` directory, and publishes
 only a complete digest-verified resource. Failed content admission immediately
 removes prompt snapshots created by that attempt unless canonical history already
@@ -229,8 +275,9 @@ collection uses the physical key (content hash plus safe filename), independentl
 of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which
 follow the same Thread deletion lifecycle and are removed when the service
-closes. Startup removes stale staging data and managed resources absent from
-reconciled canonical history. Forks copy only payloads referenced by inherited
+closes. Startup and rollback remove stale staging data plus managed resources,
+context payloads, and complete text outputs absent from reconciled canonical
+history. Forks copy only payloads referenced by inherited
 Items into their own directory with a distinct inode, so provenance remains
 shared while mutation and deletion remain Thread-local.
 If fork preparation fails after a transient `thread/started` notification, the

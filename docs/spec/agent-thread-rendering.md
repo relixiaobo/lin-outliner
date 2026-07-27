@@ -63,7 +63,8 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Run Details, with no separate Memory Item or disclosure
-- compaction renders as a history boundary
+- context evidence and reset Items are hidden from the ordinary transcript in the
+  interface-contract stage; compaction retains its existing history-boundary row
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
@@ -156,6 +157,12 @@ alongside the existing model, timing, tool, token, and cost facts. Opening
 Details pushes the current view onto that pane's Back stack and never creates a
 split. Opening another Turn while Details is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
+
+Run Details includes context evidence/reset/compaction in its exhaustive Item list.
+Evidence uses its bounded canonical summary; the renderer does not read private payload
+files or expose full untrusted context. Dedicated reset presentation and explicit
+payload inspection arrive with the context planner and command consumer rather than
+being inferred from protocol presence.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item

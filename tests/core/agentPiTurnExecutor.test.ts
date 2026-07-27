@@ -314,6 +314,7 @@ describe('PiTurnExecutor event normalization', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: 'Hello' }],
         }],
       },
@@ -368,6 +369,7 @@ describe('PiTurnExecutor event normalization', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: '{"task":"extract"}' }],
         }],
       }),
@@ -436,7 +438,7 @@ describe('PiTurnExecutor event normalization', () => {
         completedAt: 1_720_000_000_200,
         durationMs: 100,
         items: [
-          { type: 'userMessage', id: 'user-1', provenance: provenance('user-1'), clientId: null, content: [{ type: 'text', text: 'Inspect it' }] },
+          { type: 'userMessage', id: 'user-1', provenance: provenance('user-1'), clientId: null, acceptedAt: 1_720_000_000_000, content: [{ type: 'text', text: 'Inspect it' }] },
           { type: 'agentMessage', id: 'agent-1', provenance: provenance('agent-1'), text: 'Checking.', phase: 'commentary', memoryCitation: null },
           { type: 'reasoning', id: 'reason-1', provenance: provenance('reason-1'), summary: ['Need evidence'], content: ['Inspect the workspace'] },
           {
@@ -645,6 +647,7 @@ describe('PiTurnExecutor Thread naming', () => {
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
           content: [{ type: 'text', text: 'Refactor the Thread runtime' }],
         },
         {

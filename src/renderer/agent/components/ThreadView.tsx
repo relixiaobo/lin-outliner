@@ -1642,7 +1642,12 @@ function isSoloResultlessReasoning(turn: Turn, item: ThreadItem): boolean {
     && candidate.text.trim().length > 0
   ))) return false;
   const processItems = turn.items.filter((candidate) => {
-    if (candidate.type === 'userMessage' || candidate.type === 'contextCompaction') return false;
+    if (
+      candidate.type === 'userMessage'
+      || candidate.type === 'contextEvidence'
+      || candidate.type === 'contextReset'
+      || candidate.type === 'contextCompaction'
+    ) return false;
     return candidate.type !== 'agentMessage' || candidate.phase === 'commentary';
   });
   return processItems.length === 1 && processItems[0]?.id === item.id;

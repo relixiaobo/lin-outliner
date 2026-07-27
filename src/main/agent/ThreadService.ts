@@ -47,6 +47,7 @@ import type {
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
   AdditionalContext,
+  ContextCursor,
   EmptyAgentCoreResponse,
   PrivilegedTurnStartRequest,
   RequestUserInputRequest,
@@ -77,6 +78,8 @@ import type {
   ThreadTurnsListResponse,
   ThreadUserContent,
   ThreadAttachmentContent,
+  ThreadContextPayloadReference,
+  ThreadItemOutputReference,
   ThreadResourceReference,
   JsonValue,
   Turn,
@@ -413,9 +416,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         cursor = page.nextCursor;
       } while (cursor);
     }
-    await Promise.all(knownThreadIds.map((threadId) => (
-      this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId))
-    )));
+    await Promise.all(knownThreadIds.flatMap((threadId) => [
+      this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId)),
+      this.payloads.pruneUnreferencedContexts(threadId, this.threadContextPayloadReferences(threadId)),
+      this.payloads.pruneUnreferencedTextOutputs(threadId, this.threadTextPayloadReferences(threadId)),
+    ]));
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
       const { thread } = await this.resumeThread(threadId);
@@ -742,8 +747,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!item || !('outputRef' in item) || !item.outputRef || item.outputRef.id !== request.outputId) {
       return { output: null };
     }
-    const text = await this.payloads.readText(request.threadId, request.outputId);
-    if (text === null || Buffer.byteLength(text, 'utf8') !== item.outputRef.byteLength) return { output: null };
+    const text = await this.payloads.readTextReference(request.threadId, item.outputRef);
+    if (text === null) return { output: null };
     return { output: { ref: item.outputRef, text } };
   }
 
@@ -958,8 +963,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
               ...(content.promptImage ? [content.promptImage] : []),
             ]
           : [])
-        : []
+        : item.type === 'contextEvidence' || item.type === 'contextCompaction'
+          ? item.resourceRefs
+          : []
     )));
+  }
+
+  private threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
+    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(contextPayloadReferences));
+  }
+
+  private threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
+    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => [
+      ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
+      ...(item.type === 'contextEvidence' || item.type === 'contextCompaction' ? item.outputRefs : []),
+    ]));
   }
 
   private async resolveAdmissionContent(
@@ -1162,9 +1180,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
         nameOrigin: request.name === undefined ? 'derived' : 'manual',
       });
       try {
-        const copiedTurns: Turn[] = [];
-        for (const inheritedTurn of inherited) {
-          copiedTurns.push(await this.copyForkedTurnPayloads(source.id, thread.id, inheritedTurn, now));
+        const copiedTurns = inherited.map((turn) => copyTurn(turn, now));
+        const cursorMap = forkedCursorMap(inherited, copiedTurns);
+        for (let index = 0; index < copiedTurns.length; index += 1) {
+          copiedTurns[index] = rewriteForkedContextCursors(copiedTurns[index]!, cursorMap);
+          copiedTurns[index] = await this.copyForkedTurnPayloads(
+            source.id,
+            thread.id,
+            inherited[index]!,
+            copiedTurns[index]!,
+          );
         }
         for (const copied of copiedTurns) {
           await this.recordNotification({
@@ -1186,11 +1211,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
     sourceTurn: Turn,
-    now: number,
+    copiedTurn: Turn,
   ): Promise<Turn> {
-    const copied = copyTurn(sourceTurn, now);
     const items: ThreadItem[] = [];
-    for (const item of copied.items) {
+    for (let index = 0; index < copiedTurn.items.length; index += 1) {
+      const sourceItem = sourceTurn.items[index]!;
+      const item = copiedTurn.items[index]!;
       if (item.type === 'userMessage') {
         for (const content of item.content) {
           if (content.type !== 'attachment') continue;
@@ -1204,11 +1230,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
           }
         }
       }
+      if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
+        for (const ref of contextPayloadReferences(item)) {
+          const payloadCopied = await this.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
+          if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
+        }
+        for (const ref of item.resourceRefs) {
+          const resourceCopied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
+          if (!resourceCopied) throw new Error(`Missing context resource payload: ${ref.id}`);
+        }
+        for (const ref of item.outputRefs) {
+          const outputCopied = await this.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref);
+          if (!outputCopied) throw new Error(`Missing context tool output payload: ${ref.id}`);
+        }
+      }
       if ('outputRef' in item && item.outputRef) {
         const payloadCopied = await this.payloads.copyTextToThread(
           sourceThreadId,
           targetThreadId,
-          item.outputRef.id,
+          item.outputRef,
         );
         if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
       }
@@ -1217,21 +1257,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
         continue;
       }
       const contentItems = [];
-      for (const content of item.contentItems) {
+      for (let contentIndex = 0; contentIndex < item.contentItems.length; contentIndex += 1) {
+        const content = item.contentItems[contentIndex]!;
+        const sourceContent = sourceItem.type === 'dynamicToolCall'
+          ? sourceItem.contentItems?.[contentIndex]
+          : null;
         contentItems.push(content.type === 'image'
           ? {
               ...content,
               imageRef: await this.payloads.copyImageToThread(
                 sourceThreadId,
                 targetThreadId,
-                content.imageRef,
+                sourceContent?.type === 'image' ? sourceContent.imageRef : content.imageRef,
               ),
             }
           : content);
       }
       items.push({ ...item, contentItems });
     }
-    return decodeTurn({ ...copied, items });
+    return decodeTurn({ ...copiedTurn, items });
   }
 
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
@@ -1298,6 +1342,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
       await this.finalizeHistoryRollbackHooks(prepared, 'commit', context);
       if (projectionError) throw projectionError;
+      // The rollback marker is already durable. Orphan cleanup is retried at startup
+      // and must not turn a committed rollback into a reported operation failure.
+      await Promise.all([
+        this.payloads.pruneUnreferencedResources(thread.id, this.threadResourceReferences(thread.id)),
+        this.payloads.pruneUnreferencedContexts(thread.id, this.threadContextPayloadReferences(thread.id)),
+        this.payloads.pruneUnreferencedTextOutputs(thread.id, this.threadTextPayloadReferences(thread.id)),
+      ]).catch(() => undefined);
       if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
       return { thread: this.requireThread(thread.id).thread };
     });
@@ -1497,13 +1548,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const thread = this.requireThread(request.threadId).thread;
       const admission = await this.resolveAdmissionContent(request.input, thread);
       try {
+        const acceptedAt = this.now();
         const item = userMessage(
           request.threadId,
           active.turnId,
           admission.content,
           request.clientUserMessageId ?? null,
+          acceptedAt,
         );
-        await active.recorder.completedImmediately(item, this.now());
+        await active.recorder.completedImmediately(item, acceptedAt);
         if (request.clientUserMessageId) this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
         const steered = { content: admission.content, additionalContext: request.additionalContext };
         if (active.steeringHandler) await active.steeringHandler(steered);
@@ -1979,7 +2032,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     input: readonly ThreadUserContent[],
   ): Promise<AcceptedTurn> {
     const preview = threadPreviewFromContent(input);
-    const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null);
+    const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null, startedAt);
     const turn = decodeTurn({
       id: turnId,
       items: [item],
@@ -3055,6 +3108,7 @@ function userMessage(
   turnId: string,
   content: readonly ThreadUserContent[],
   clientId: string | null,
+  acceptedAt: number,
 ): ThreadItem {
   const id = uuidV7();
   return decodeThreadItem({
@@ -3063,6 +3117,7 @@ function userMessage(
     provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
     clientId,
     content,
+    acceptedAt,
   });
 }
 
@@ -3093,6 +3148,69 @@ function copyTurn(source: Turn, now: number): Turn {
     items: source.items.map((item) => copyItem(item, now)),
     itemsView: 'full',
   });
+}
+
+function forkedCursorMap(sourceTurns: readonly Turn[], copiedTurns: readonly Turn[]): Map<string, ContextCursor> {
+  const cursors = new Map<string, ContextCursor>();
+  for (let turnIndex = 0; turnIndex < sourceTurns.length; turnIndex += 1) {
+    const sourceTurn = sourceTurns[turnIndex]!;
+    const copiedTurn = copiedTurns[turnIndex]!;
+    for (let itemIndex = 0; itemIndex < sourceTurn.items.length; itemIndex += 1) {
+      const sourceItem = sourceTurn.items[itemIndex]!;
+      const copiedItem = copiedTurn.items[itemIndex]!;
+      cursors.set(contextCursorKey({ turnId: sourceTurn.id, itemId: sourceItem.id }), {
+        turnId: copiedTurn.id,
+        itemId: copiedItem.id,
+      });
+    }
+  }
+  return cursors;
+}
+
+function rewriteForkedContextCursors(turn: Turn, cursorMap: ReadonlyMap<string, ContextCursor>): Turn {
+  return decodeTurn({
+    ...turn,
+    items: turn.items.map((item) => {
+      if (item.type === 'contextReset') {
+        return { ...item, clearedThrough: rewriteForkedContextCursor(item.clearedThrough, cursorMap) };
+      }
+      if (item.type === 'contextCompaction') {
+        return {
+          ...item,
+          coveredFrom: rewriteForkedContextCursor(item.coveredFrom, cursorMap),
+          coveredThrough: rewriteForkedContextCursor(item.coveredThrough, cursorMap),
+          preservedFrom: item.preservedFrom
+            ? rewriteForkedContextCursor(item.preservedFrom, cursorMap)
+            : null,
+        };
+      }
+      return item;
+    }),
+  });
+}
+
+function rewriteForkedContextCursor(
+  cursor: ContextCursor,
+  cursorMap: ReadonlyMap<string, ContextCursor>,
+): ContextCursor {
+  const copied = cursorMap.get(contextCursorKey(cursor));
+  if (!copied) throw new Error(`Context cursor is outside the forked history: ${cursor.turnId}/${cursor.itemId}`);
+  return copied;
+}
+
+function contextCursorKey(cursor: ContextCursor): string {
+  return `${cursor.turnId}\0${cursor.itemId}`;
+}
+
+function contextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
+  if (item.type === 'contextEvidence') return [item.payloadRef, ...item.contextRefs];
+  if (item.type !== 'contextCompaction') return [];
+  return [
+    item.summaryRef,
+    item.restoredStateRef,
+    ...(item.instructionsRef ? [item.instructionsRef] : []),
+    ...item.contextRefs,
+  ];
 }
 
 function copyItem(source: ThreadItem, now: number): ThreadItem {

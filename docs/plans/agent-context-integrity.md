@@ -86,6 +86,46 @@ state machine:
 | Memory, Automation, and other extension reminders | typed `additionalContext` evidence with source/authority |
 | compact restore reminder | `contextCompaction` plus reduction of retained evidence |
 
+The comparison baseline is the code immediately before the Core replacement:
+`59c7e1cf^` for `agentRuntime.ts`, `agentSystemPrompt.ts`,
+`agentToolOutputSlimming.ts`, and `agentProviderCacheBreakpoints.ts`, plus
+`4230a975^` for `agentSkills.ts`. The replacement audit is explicit:
+
+| Removed mechanism | Property that must survive | New owner |
+| --- | --- | --- |
+| `buildUserPromptMessage` and trailing `systemReminder` assembly | context stays at the current tail and off the stable prefix | evidence admission plus provider serializer |
+| `AgentUserViewContextReminderTracker` | first snapshot, then bounded deterministic diffs | canonical `userView` snapshots plus planner reducer |
+| referenced-asset materialization | a named Node/file identity accompanies readable bytes and vision input | `referencedResources` plus Thread-owned resources |
+| `SkillListingState.reserve/release/restore` | old conversations see only new or changed Skills without repeating the catalog | durable `skillCatalog` baseline/delta journal |
+| invoked-Skill reminder parsing | exact invoked instructions survive restart and compaction | `skillInvocation` payloads plus compaction restore state |
+| `modelFacingContent` and monotonic slimming state | an old tool result never changes representation on a later request | `toolOutputProjection` evidence |
+| `createPostCompactRestoredFilesReminder` and recent file-read tracking | the latest still-active file/Node observations remain addressable after compaction without rereading mutable files into history | `compactionRestoredState.activeObservations` with frozen projection and full-output references |
+| Neva L0/L1/L2 composer and Anthropic L0 split | stable firmware and execution prompt remain reusable cache prefixes | stable composer plus provider cache adapter |
+| context-manager compaction and clear state | replacement is explicit without deleting source evidence | `contextCompaction` and `contextReset` Items |
+| Subagent character-tail flattener | inheritance preserves complete semantic units and owned bytes | structured `inheritedContext` payload |
+
+The historical `systemReminder()` call sites are classified by semantics, not by
+their wrapper spelling:
+
+| Historical reminder use | Decision |
+| --- | --- |
+| turn environment, Outliner/view state, referenced resources, Memory/Automation context, Skill/Role discovery, and invoked Skill guidance | retain as typed canonical context evidence |
+| compact summary, catalog/invocation restore, recent file observations, and durable child follow-ups | retain as typed compaction summary, reducer checkpoint, and instruction payloads |
+| child completion delivery, amendments, controller directives, and other still-supported collaboration transitions | represent through canonical collaboration/feature Items or typed context owned by that feature; never recover state from prose |
+| retired Issue delivery and Dream hidden-anchor prompts | do not restore with the retired runtimes; any future equivalent must define a current canonical contract |
+| literal user/model text containing `<system-reminder>` | preserve as ordinary untrusted text with no parsing or authority upgrade |
+
+This inventory prevents two opposite regressions: silently losing state merely because
+it used the old wrapper, and reviving obsolete control planes merely because they once
+called the same helper.
+
+The old Skill listing reservation mutated memory before the provider call and rolled
+back on request failure; restart recovered it by scanning reminder prose. The new
+transaction publishes payload bytes and the catalog Item before provider exposure.
+An agent-authored Skill is appended only after complete-bundle validation; an external
+Skill is appended at the next admission. Both cases add a delta at the current tail,
+so the complete previous provider request remains a byte-identical cache prefix.
+
 Three implementation strategies are possible:
 
 1. Restore the retired runtime state. This recreates two histories and makes restart,
@@ -146,6 +186,9 @@ interface ContextEvidenceThreadItem extends ThreadItemBase {
   readonly kind: ContextEvidenceKind;
   readonly payloadRef: ThreadContextPayloadReference;
   readonly summary: string;
+  readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly outputRefs: readonly ThreadItemOutputReference[];
 }
 
 interface ContextResetThreadItem extends ThreadItemBase {
@@ -162,6 +205,9 @@ interface ContextCompactionThreadItem extends ThreadItemBase {
   readonly summaryRef: ThreadContextPayloadReference;
   readonly restoredStateRef: ThreadContextPayloadReference;
   readonly instructionsRef: ThreadContextPayloadReference | null;
+  readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly outputRefs: readonly ThreadItemOutputReference[];
 }
 ```
 
@@ -175,10 +221,36 @@ epoch is derived from Thread identity; every later epoch is identified by its la
 reachable `contextReset` Item. No mutable `currentEpoch` field is stored.
 
 `ThreadContextPayloadReference` is a lowercase SHA-256 content reference with MIME
-type, byte length, and schema version. It uses the existing physical Thread payload
-ownership, quota, safe-path, digest verification, copy-on-write, reconciliation, and
-delete rules. Context payload codecs are exact-key discriminated unions, not arbitrary
-JSON bags. Unknown versions or kinds fail closed.
+type, byte length, schema version, and payload kind. Evidence and compaction Items
+validate the exact kind they require before publication. One context payload is capped
+at 16 MiB and also uses the existing aggregate Thread quota, safe-path, digest
+verification, copy-on-write, reconciliation, and delete rules. Context payload codecs
+are exact-key discriminated unions, not arbitrary JSON bags. Unknown versions or kinds
+fail closed.
+
+Schema version 1 has one exact codec for each evidence kind plus
+`compactionSummary`, `compactionRestoredState`, and `compactionInstructions`.
+Environment and user-view payloads retain structured snapshots; additional-context
+entries carry source/authority/purpose; resource payloads carry typed availability;
+Skill and Role catalogs carry baseline/delta hashes; Skill invocation carries exact
+instruction bytes and validated constraints; tool-output projection freezes one
+representation; inherited context carries terminal canonical Turns; and compaction
+payloads retain the lossy summary, reducer checkpoint, and active instructions. The
+reducer checkpoint includes catalogs, active Skills, the user-view baseline, and
+`activeObservations`. Each active observation has a stable semantic key, tool identity,
+untrusted subject, complete `outputRef`, and frozen `toolOutputProjection` reference.
+It deliberately stores neither a scratch path nor another copy of file text.
+`untrusted/instruction` is invalid. An inline Skill payload with model, effort, or tool
+overrides is invalid.
+
+Any nested context payload, managed resource, or full tool output named by a context
+payload is also listed in the owning Item's `contextRefs`, `resourceRefs`, or
+`outputRefs`. Payload dependency discovery never parses private JSON: startup
+reconciliation, rollback, fork, child copy, and deletion operate from the canonical
+Item graph. Forking rewrites local cursors and copies every payload and dependency
+before the source Thread can be deleted. Text-output reads and copies verify the
+reference MIME type, byte length, and digest rather than selecting a file by digest
+alone.
 
 Every provider-visible text leaf inside a payload is classified as:
 
@@ -286,7 +358,7 @@ L1 contains only cross-tool framing with a real capability consumer, including f
 Outliner, Memory, Skills, and collaboration. A capability absent from the effective
 catalog contributes no module. The files module preserves Full Access/native-denial
 semantics, read-before-rely, and the rule that a user-facing deliverable is placed under
-the Run workdir and referenced through the renderer-safe absolute-file affordance.
+the Run working directory and referenced through the renderer-safe absolute-file affordance.
 Tool-specific syntax, including generated-image placement, remains on the owning tool
 description/result instead of being duplicated in the prompt.
 
@@ -304,6 +376,12 @@ the complete stable per-execution prompt. Existing last-tool and last-user break
 remain within the provider limit. Non-Anthropic serializers do not receive Anthropic
 metadata. Provider-payload golden tests, rather than live cache-hit rates, are the
 correctness surface.
+
+Provider session/cache affinity is derived deterministically from the Thread identity
+and current context epoch, never from a Turn-random value. Tool definitions use a
+canonical order and deterministic schema/prompt serialization. A logically unchanged
+tool registry therefore produces identical bytes across Turns, restarts, and steering;
+an actual configuration or epoch change produces an intentional new affinity branch.
 
 Cache topology is append-only within one context epoch:
 
@@ -502,6 +580,16 @@ fingerprint, and later budget pressure cannot re-slim or re-expand it. Older his
 reduced only by compaction. The full result remains canonical and readable from
 `outputRef` regardless of the model projection.
 
+The reducer also tracks addressable observations created by file/Node reads. At a
+compaction boundary it selects the latest observation for each stable semantic key that
+has not been invalidated by a later write, move, delete, or contradictory read. The
+checkpoint references the existing complete `outputRef` and its frozen projection; the
+owning compaction Item lists those dependencies in `outputRefs` and `contextRefs`.
+This replaces the old root/child fixed limits of five files, 20,000 characters per
+file, and 200,000 characters total with the one global token budget. A restored observation is
+explicitly a historical snapshot: if the underlying file or Node may have changed, the
+model must read it again before relying on current content.
+
 Observation path strings are deterministic within the Thread and never contain a
 Turn-random directory. The host verifies or rematerializes the disposable copy from
 `outputRef` before each Turn that may expose it, using the same path string, so restart
@@ -517,8 +605,10 @@ tail with the model's reserved output budget. It selects the oldest eligible seq
 of complete Turns or complete current-Turn tool units, never a partial tool pair. A
 bounded no-tools summarization request produces a lossy summary plus exact covered and
 preserved cursors. It also derives and persists `restoredStateRef` from the effective
-catalogs, active Skill versions, and view baseline at that exact boundary. Summary and
-restore blocks receive fixed provider-neutral fingerprints. Only a successful append
+catalogs, active Skill versions, view baseline, and still-active file/Node observations
+at that exact boundary. Durable child follow-ups are stored as
+`compactionInstructions`, not anonymous reminder text. Summary and restore blocks
+receive fixed provider-neutral fingerprints. Only a successful append
 changes later projection, and that one explicit cache-branch change is never rebuilt
 from current files or runtime trackers.
 
@@ -624,8 +714,9 @@ Introduce `contextEvidence`, `contextReset`, `acceptedAt`,
 `toolOutputProjection`, the complete `contextCompaction`/restore shape, payload
 references/codecs, stable cursors, rollout/pagination/fork handling, and exhaustive
 renderer-hidden handling. Include payload ownership, validation, reconciliation, and
-copy tests. This is the isolated shared-interface-first PR; no consumer invents a
-private interim shape.
+copy tests. The restore shape includes explicit active-observation dependencies so the
+later compaction consumer does not need to revive restored-file reminder text. This is
+the isolated shared-interface-first PR; no consumer invents a private interim shape.
 
 Primary files:
 
@@ -786,7 +877,8 @@ choices together:
 - [ ] **AC-09:** Budget property tests never split a tool pair, exceed the computed budget silently,
       drop current input, or enter an overflow/compaction loop.
 - [ ] **AC-10:** Full tool output remains readable from `outputRef` after projection, compaction,
-      restart, fork, and child inheritance.
+      restart, fork, and child inheritance; compaction restores the latest non-invalidated
+      file/Node observation through its frozen projection and complete-output references.
 - [ ] **AC-11:** `/compact` and `/clear` preserve visible history, reject active-Turn races, handle
       no-op boundaries, and do not disturb Goals, Memory, configuration, or external
       state.
@@ -795,7 +887,8 @@ choices together:
       child-owned resources without character truncation.
 - [ ] **AC-13:** Provider tests cover timeout, retry/backoff, cache retention, overflow
       classification, Anthropic breakpoint count/order, non-Anthropic cleanliness, and
-      bounded Role discovery.
+      bounded Role discovery. Session affinity remains stable for one Thread/epoch, and
+      logically identical tool registries serialize to identical ordered bytes.
 - [ ] **AC-14:** Renderer tests and light/dark E2E verification cover context/reset/compaction
       Details, boundary rows, composer commands, keyboard focus, and transcript history.
 - [ ] **AC-15:** Each PR passes `bun run typecheck`, relevant Core/renderer/E2E suites,

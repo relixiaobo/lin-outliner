@@ -122,6 +122,110 @@ class ForkPayloadExecutor extends ControlledExecutor {
   }
 }
 
+class ContextPayloadExecutor extends ControlledExecutor {
+  constructor(private readonly payloads: ToolPayloadStore) {
+    super();
+  }
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    const userItem = context.turn.items.find((item) => item.type === 'userMessage');
+    if (!userItem) throw new Error('Context payload test requires a user Item');
+    const resourceRef = await this.payloads.writeResource(
+      context.thread.id,
+      Buffer.from('context resource'),
+      'text/plain',
+      'context.txt',
+    );
+    const outputRef = await context.persistOutputText(
+      'context-output',
+      'context-owned complete output',
+      'text/plain',
+      'Context output',
+    );
+    const payload = {
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: userItem.acceptedAt,
+      utcInstant: '2024-07-03T09:46:40.000Z',
+      localDate: '2024-07-03',
+      localTime: '09:46:40',
+      timeZone: 'UTC',
+      utcOffsetMinutes: 0,
+      locale: 'en-US',
+      workingDirectory: context.thread.cwd,
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+    } as const;
+    const payloadRef = await this.payloads.writeContext(context.thread.id, payload);
+    const nestedPayloadRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'fallback',
+      text: 'Nested context dependency',
+    });
+    const summaryRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'model',
+      text: 'Compacted context summary',
+    });
+    const restoredStateRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'compactionRestoredState',
+      skillCatalogHash: null,
+      announcedSkills: [],
+      activeSkills: [],
+      roleCatalogHash: null,
+      announcedRoles: [],
+      userViewBaselineRef: null,
+      activeObservations: [],
+    });
+    const instructionsRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'compactionInstructions',
+      entries: [],
+    });
+    const evidenceId = context.recorder.createItemId();
+    await context.recorder.completedImmediately({
+      type: 'contextEvidence',
+      id: evidenceId,
+      provenance: context.recorder.localProvenance(evidenceId),
+      kind: 'turnEnvironment',
+      payloadRef,
+      summary: 'UTC turn environment',
+      contextRefs: [nestedPayloadRef],
+      resourceRefs: [resourceRef],
+      outputRefs: [outputRef],
+    });
+    const resetId = context.recorder.createItemId();
+    await context.recorder.completedImmediately({
+      type: 'contextReset',
+      id: resetId,
+      provenance: context.recorder.localProvenance(resetId),
+      clearedThrough: { turnId: context.turn.id, itemId: userItem.id },
+    });
+    const compactionId = context.recorder.createItemId();
+    await context.recorder.completedImmediately({
+      type: 'contextCompaction',
+      id: compactionId,
+      provenance: context.recorder.localProvenance(compactionId),
+      trigger: 'manual',
+      coveredFrom: { turnId: context.turn.id, itemId: userItem.id },
+      coveredThrough: { turnId: context.turn.id, itemId: evidenceId },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef,
+      contextRefs: [nestedPayloadRef],
+      resourceRefs: [resourceRef],
+      outputRefs: [outputRef],
+    });
+    return completedExecutionResult();
+  }
+}
+
 class ControlledNameGenerator implements ThreadNameGenerator {
   readonly contexts: ThreadNameGenerationContext[] = [];
   private readonly completions: Array<(name: string | null) => void> = [];
@@ -795,6 +899,7 @@ describe('ThreadService', () => {
       id: 'restart-user',
       provenance: { originThreadId: thread.id, originTurnId: turnId, originItemId: 'restart-user' },
       clientId: null,
+      acceptedAt: fixture.clock(),
       content: [{ type: 'text', text: 'Stream a response' }],
     };
     const agentItem: ThreadItem = {
@@ -898,6 +1003,69 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('rewrites context cursors and owns every inherited context dependency after source deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const clock = () => ++now;
+    const stores = createStores(root);
+    const executor = new ContextPayloadExecutor(stores.payloads);
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      now: clock,
+    });
+    await service.initialize();
+    const source = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    const accepted = await service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Persist context evidence' }],
+    });
+    await service.waitForIdle(source.id);
+    const sourceTurn = service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
+    const sourceUser = sourceTurn.items.find((item) => item.type === 'userMessage')!;
+    const sourceEvidence = sourceTurn.items.find((item) => item.type === 'contextEvidence')!;
+
+    const fork = (await service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkTurn = service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
+    const forkUser = forkTurn.items.find((item) => item.type === 'userMessage')!;
+    const forkEvidence = forkTurn.items.find((item) => item.type === 'contextEvidence')!;
+    const forkReset = forkTurn.items.find((item) => item.type === 'contextReset')!;
+    const forkCompaction = forkTurn.items.find((item) => item.type === 'contextCompaction')!;
+
+    expect(forkUser.acceptedAt).toBe(sourceUser.acceptedAt);
+    expect(forkReset.clearedThrough).toEqual({ turnId: forkTurn.id, itemId: forkUser.id });
+    expect(forkCompaction.coveredFrom).toEqual({ turnId: forkTurn.id, itemId: forkUser.id });
+    expect(forkCompaction.coveredThrough).toEqual({ turnId: forkTurn.id, itemId: forkEvidence.id });
+    expect(forkEvidence.payloadRef).toEqual(sourceEvidence.payloadRef);
+    expect(forkEvidence.contextRefs).toEqual(sourceEvidence.contextRefs);
+
+    await service.deleteThread(source.id);
+    expect(await stores.payloads.readContext(fork.id, forkEvidence.payloadRef))
+      .toMatchObject({ kind: 'turnEnvironment', timeZone: 'UTC' });
+    expect(await stores.payloads.readContext(fork.id, forkEvidence.contextRefs[0]!))
+      .toEqual({
+        schemaVersion: 1,
+        kind: 'compactionSummary',
+        source: 'fallback',
+        text: 'Nested context dependency',
+      });
+    expect(await stores.payloads.readResource(fork.id, forkEvidence.resourceRefs[0]!))
+      .toEqual(Buffer.from('context resource'));
+    expect(await stores.payloads.readTextReference(fork.id, forkEvidence.outputRefs[0]!))
+      .toBe('context-owned complete output');
+    await service.close();
+  });
+
   test('keeps inherited text and image payloads after deleting the source Thread', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
@@ -950,7 +1118,25 @@ describe('ThreadService', () => {
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await readFile(forkImage.imageRef, 'utf8')).toBe('inherited image');
+    const crashLeftover = await opened.stores.payloads.writeText(
+      fork.id,
+      'uncommitted-output',
+      'uncommitted output',
+      'text/plain',
+      'Uncommitted output',
+    );
     await opened.service.close();
+
+    const reopened = await openFixture(root, new ControlledExecutor(), clock);
+    await reopened.service.initialize();
+    expect(await reopened.service.readItemOutput({
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      outputId: forkItem.outputRef.id,
+    })).toMatchObject({ output: { text: 'complete inherited output' } });
+    expect(await reopened.stores.payloads.readTextReference(fork.id, crashLeftover)).toBeNull();
+    await reopened.service.close();
   });
 
   test('copies inherited managed attachments and prompt snapshots into a fork', async () => {
@@ -1227,7 +1413,12 @@ describe('ThreadService', () => {
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
 
+    const pruneContexts = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    fixture.stores.payloads.pruneUnreferencedContexts = async () => {
+      throw new Error('cleanup failed after durable rollback');
+    };
     const response = await fixture.service.request('thread/rollback', { threadId: thread.id, numTurns: 1 });
+    fixture.stores.payloads.pruneUnreferencedContexts = pruneContexts;
     expect(response.thread.id).toBe(thread.id);
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toEqual([]);
     const marker = fixture.stores.history.rollbackMarkers(thread.id)[0];

@@ -233,6 +233,295 @@ export interface ThreadItemOutputReference {
   readonly summary: string;
 }
 
+export const MAX_THREAD_CONTEXT_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
+export interface ThreadContextPayloadReference {
+  /** Content-addressed lowercase SHA-256 digest. */
+  readonly id: string;
+  readonly mimeType: 'application/vnd.tenon.agent-context+json';
+  readonly byteLength: number;
+  readonly schemaVersion: 1;
+  readonly kind: ContextPayloadKind;
+}
+
+export interface ContextCursor {
+  readonly turnId: TurnId;
+  readonly itemId: ThreadItemId;
+}
+
+export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
+  'turnEnvironment',
+  'userView',
+  'additionalContext',
+  'referencedResources',
+  'skillCatalog',
+  'skillInvocation',
+  'roleCatalog',
+  'toolOutputProjection',
+  'inheritedContext',
+] as const);
+export type ContextEvidenceKind = typeof CONTEXT_EVIDENCE_KINDS[number];
+
+export type ContextAuthority = 'application' | 'untrusted';
+export type ContextPurpose = 'instruction' | 'observation';
+
+export interface ContextTextEntry {
+  readonly key: string;
+  readonly source: string;
+  readonly authority: ContextAuthority;
+  readonly purpose: ContextPurpose;
+  readonly text: string;
+}
+
+export interface TurnEnvironmentContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'turnEnvironment';
+  readonly acceptedAt: number;
+  readonly utcInstant: string;
+  readonly localDate: string;
+  readonly localTime: string;
+  readonly timeZone: string;
+  readonly utcOffsetMinutes: number;
+  readonly locale: string;
+  readonly workingDirectory: string;
+  readonly conversationMode: 'interactive' | 'headless';
+  readonly executionMode: 'root' | 'child' | 'automation' | 'memory' | 'feature';
+  readonly replyIdentity: string | null;
+  readonly todayNodeId: string | null;
+}
+
+export interface UserViewNodeSnapshot {
+  readonly nodeId: string;
+  readonly title: string;
+  readonly panelId: string | null;
+  readonly surface: string | null;
+}
+
+export interface UserViewOutlineNodeSnapshot {
+  readonly nodeId: string;
+  readonly title: string;
+  readonly depth: number;
+  readonly focused: boolean;
+  readonly collapsed: boolean;
+  readonly childCount: number;
+  readonly includedChildCount: number | null;
+}
+
+export interface UserViewPanelSnapshot {
+  readonly panelId: string;
+  readonly rootNodeId: string;
+  readonly rootTitle: string;
+  readonly rootType: string;
+  readonly active: boolean;
+  readonly focused: boolean;
+  readonly order: number;
+  readonly childCount: number;
+  readonly breadcrumb: readonly UserViewNodeSnapshot[];
+  readonly visibleOutline: readonly UserViewOutlineNodeSnapshot[];
+  readonly visibleOutlineTruncated: boolean;
+}
+
+export interface UserViewContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'userView';
+  readonly mode: 'interactive' | 'nonInteractive';
+  readonly activePanelId: string | null;
+  readonly focusedPanelId: string | null;
+  readonly focusSurface: string | null;
+  readonly focusedNode: UserViewNodeSnapshot | null;
+  readonly selectedNodes: readonly UserViewNodeSnapshot[];
+  readonly referencedNodes: readonly UserViewNodeSnapshot[];
+  readonly panels: readonly UserViewPanelSnapshot[];
+  readonly truncated: boolean;
+}
+
+export type AdditionalContextPayloadEntry = ContextTextEntry;
+
+export interface AdditionalContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'additionalContext';
+  readonly entries: readonly AdditionalContextPayloadEntry[];
+}
+
+export type ReferencedResourceUnavailableReason =
+  | 'missing'
+  | 'corrupt'
+  | 'unsupported'
+  | 'quotaExceeded';
+
+export interface ReferencedResourceSnapshot {
+  readonly nodeId: string;
+  readonly nodeType: string;
+  readonly title: string;
+  readonly breadcrumb: readonly UserViewNodeSnapshot[];
+  readonly content: string;
+  readonly contentTruncated: boolean;
+  readonly resourceRef: ThreadResourceReference | null;
+  readonly inlineImage: boolean;
+  readonly unavailableReason: ReferencedResourceUnavailableReason | null;
+}
+
+export interface ReferencedResourcesContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'referencedResources';
+  readonly resources: readonly ReferencedResourceSnapshot[];
+}
+
+export type ContextCatalogChange = 'available' | 'added' | 'changed' | 'removed';
+export type ContextCatalogMode = 'baseline' | 'delta';
+
+export interface SkillCatalogEntry {
+  readonly change: ContextCatalogChange;
+  readonly name: string;
+  readonly displayName: string;
+  readonly source: 'built-in' | 'managed' | 'user' | 'project';
+  readonly identity: string;
+  readonly contentHash: string;
+  readonly description: string;
+}
+
+export interface SkillCatalogContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'skillCatalog';
+  readonly mode: ContextCatalogMode;
+  readonly previousCatalogHash: string | null;
+  readonly catalogHash: string;
+  readonly entries: readonly SkillCatalogEntry[];
+}
+
+export interface SkillInvocationConstraints {
+  readonly allowedTools: readonly string[];
+  readonly model: string | null;
+  readonly effort: string | null;
+}
+
+export interface SkillInvocationContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'skillInvocation';
+  readonly name: string;
+  readonly displayName: string;
+  readonly source: 'built-in' | 'managed' | 'user' | 'project';
+  readonly identity: string;
+  readonly resourceRoot: string | null;
+  readonly contentHash: string;
+  readonly instructions: string;
+  readonly arguments: string;
+  readonly execution: 'inline' | 'isolated';
+  readonly invocationSource: 'user' | 'model' | 'runtime';
+  readonly constraints: SkillInvocationConstraints;
+  readonly invokedAt: number;
+}
+
+export interface RoleCatalogEntry {
+  readonly change: ContextCatalogChange;
+  readonly name: string;
+  readonly displayName: string;
+  readonly source: 'built-in' | 'user' | 'project';
+  readonly identity: string;
+  readonly contentHash: string;
+  readonly description: string;
+}
+
+export interface RoleCatalogContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'roleCatalog';
+  readonly mode: ContextCatalogMode;
+  readonly previousCatalogHash: string | null;
+  readonly catalogHash: string;
+  readonly entries: readonly RoleCatalogEntry[];
+}
+
+export type ToolOutputProjection =
+  | { readonly type: 'full' }
+  | { readonly type: 'inline'; readonly text: string }
+  | { readonly type: 'observation'; readonly text: string };
+
+export interface ToolOutputProjectionContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'toolOutputProjection';
+  readonly outputRef: ThreadItemOutputReference;
+  readonly projection: ToolOutputProjection;
+}
+
+export interface InheritedContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'inheritedContext';
+  readonly sourceThreadId: ThreadId;
+  readonly coveredThrough: ContextCursor;
+  readonly requestedTurns: 'all' | number;
+  readonly turns: readonly Turn[];
+}
+
+export interface CompactionSummaryContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'compactionSummary';
+  readonly source: 'model' | 'fallback';
+  readonly text: string;
+}
+
+export interface ContextCatalogCheckpointEntry {
+  readonly name: string;
+  readonly identity: string;
+  readonly contentHash: string;
+}
+
+export interface ActiveSkillCheckpointEntry extends ContextCatalogCheckpointEntry {
+  readonly payloadRef: ThreadContextPayloadReference;
+}
+
+export interface ActiveObservationCheckpointEntry {
+  readonly key: string;
+  readonly tool: string;
+  readonly subject: string;
+  readonly outputRef: ThreadItemOutputReference;
+  readonly projectionRef: ThreadContextPayloadReference;
+}
+
+export interface CompactionRestoredStateContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'compactionRestoredState';
+  readonly skillCatalogHash: string | null;
+  readonly announcedSkills: readonly ContextCatalogCheckpointEntry[];
+  readonly activeSkills: readonly ActiveSkillCheckpointEntry[];
+  readonly roleCatalogHash: string | null;
+  readonly announcedRoles: readonly ContextCatalogCheckpointEntry[];
+  readonly userViewBaselineRef: ThreadContextPayloadReference | null;
+  readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
+}
+
+export interface CompactionInstructionsContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'compactionInstructions';
+  readonly entries: readonly ContextTextEntry[];
+}
+
+export type ThreadContextPayload =
+  | TurnEnvironmentContextPayload
+  | UserViewContextPayload
+  | AdditionalContextPayload
+  | ReferencedResourcesContextPayload
+  | SkillCatalogContextPayload
+  | SkillInvocationContextPayload
+  | RoleCatalogContextPayload
+  | ToolOutputProjectionContextPayload
+  | InheritedContextPayload
+  | CompactionSummaryContextPayload
+  | CompactionRestoredStateContextPayload
+  | CompactionInstructionsContextPayload;
+
+export type ContextPayloadKind = ThreadContextPayload['kind'];
+
+export const CONTEXT_PAYLOAD_KINDS = Object.freeze([
+  ...CONTEXT_EVIDENCE_KINDS,
+  'compactionSummary',
+  'compactionRestoredState',
+  'compactionInstructions',
+] as const satisfies readonly ContextPayloadKind[]);
+
+type MissingContextPayloadKind = Exclude<ContextPayloadKind, typeof CONTEXT_PAYLOAD_KINDS[number]>;
+const CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE: MissingContextPayloadKind extends never ? true : never = true;
+void CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE;
+
 interface ThreadToolItemBase extends ThreadItemBase {
   readonly status: ItemExecutionStatus;
   readonly outputRef: ThreadItemOutputReference | null;
@@ -242,6 +531,7 @@ export interface UserMessageThreadItem extends ThreadItemBase {
   readonly type: 'userMessage';
   readonly clientId: string | null;
   readonly content: readonly ThreadUserContent[];
+  readonly acceptedAt: number;
 }
 
 export interface AgentMessageThreadItem extends ThreadItemBase {
@@ -365,8 +655,33 @@ export interface ImageViewThreadItem extends ThreadItemBase {
   readonly path: string;
 }
 
+export interface ContextEvidenceThreadItem extends ThreadItemBase {
+  readonly type: 'contextEvidence';
+  readonly kind: ContextEvidenceKind;
+  readonly payloadRef: ThreadContextPayloadReference;
+  readonly summary: string;
+  readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly outputRefs: readonly ThreadItemOutputReference[];
+}
+
+export interface ContextResetThreadItem extends ThreadItemBase {
+  readonly type: 'contextReset';
+  readonly clearedThrough: ContextCursor;
+}
+
 export interface ContextCompactionThreadItem extends ThreadItemBase {
   readonly type: 'contextCompaction';
+  readonly trigger: 'automaticPreflight' | 'providerOverflow' | 'manual';
+  readonly coveredFrom: ContextCursor;
+  readonly coveredThrough: ContextCursor;
+  readonly preservedFrom: ContextCursor | null;
+  readonly summaryRef: ThreadContextPayloadReference;
+  readonly restoredStateRef: ThreadContextPayloadReference;
+  readonly instructionsRef: ThreadContextPayloadReference | null;
+  readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly outputRefs: readonly ThreadItemOutputReference[];
 }
 
 export type ThreadItem =
@@ -381,6 +696,8 @@ export type ThreadItem =
   | SubAgentActivityThreadItem
   | WebSearchThreadItem
   | ImageViewThreadItem
+  | ContextEvidenceThreadItem
+  | ContextResetThreadItem
   | ContextCompactionThreadItem;
 
 export const THREAD_ITEM_TYPES = [
@@ -395,6 +712,8 @@ export const THREAD_ITEM_TYPES = [
   'subAgentActivity',
   'webSearch',
   'imageView',
+  'contextEvidence',
+  'contextReset',
   'contextCompaction',
 ] as const satisfies readonly ThreadItem['type'][];
 

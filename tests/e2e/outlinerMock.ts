@@ -496,6 +496,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       type: 'userMessage' | 'agentMessage';
       provenance: { originThreadId: string; originTurnId: string; originItemId: string };
       clientId?: string | null;
+      acceptedAt?: number;
       content?: Array<
         | { type: 'text'; text: string }
         | { type: 'nodeReference'; nodeId: string; note?: string }
@@ -1711,6 +1712,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 type: 'userMessage',
                 provenance: itemProvenance(thread.id, turnId, userItemId),
                 clientId: automationRunId,
+                acceptedAt: timestamp,
                 content: [{ type: 'text', text: automation.prompt }],
               },
               {
@@ -1930,11 +1932,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const responseItemId = nextCanonicalId();
           const content = Array.isArray(input.input) ? clone(input.input) as NonNullable<MockThreadItem['content']> : [];
           const prompt = content.flatMap((entry) => entry.type === 'text' ? [entry.text] : []).join('\n');
+          const startedAt = ++now;
           const userItem: MockThreadItem = {
             id: userItemId,
             type: 'userMessage',
             provenance: itemProvenance(thread.id, turnId, userItemId),
             clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
+            acceptedAt: startedAt,
             content,
           };
           const responseItem: MockThreadItem = {
@@ -1945,7 +1949,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             phase: 'final_answer',
             memoryCitation: null,
           };
-          const startedAt = ++now;
           const provenance = { originThreadId: thread.id, originTurnId: turnId, trigger: { kind: 'user' as const } };
           const configuration = mockThreadConfigurations.get(thread.id)!;
           const execution = {

@@ -180,6 +180,9 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     }
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
+    case 'contextEvidence':
+    case 'contextReset':
+      return null;
     case 'contextCompaction':
       return <div className="thread-item thread-compaction"><span>{t.agent.thread.item.compaction}</span></div>;
     default:

@@ -8,11 +8,21 @@ import {
   MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
-import type {
-  ThreadId,
-  ThreadItemOutputReference,
-  ThreadResourceReference,
+import {
+  CONTEXT_PAYLOAD_KINDS,
+  MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
+  type ContextPayloadKind,
+  type ThreadContextPayload,
+  type ThreadContextPayloadReference,
+  type ThreadId,
+  type ThreadItemOutputReference,
+  type ThreadResourceReference,
 } from '../../../core/agent/protocol';
+import {
+  decodeThreadContextPayload,
+  decodeThreadContextPayloadJson,
+  encodeThreadContextPayload,
+} from '../../../core/agent/codec';
 
 const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'image/gif': '.gif',
@@ -27,6 +37,9 @@ const TEXT_MIME_EXTENSIONS = {
 } as const satisfies Readonly<Record<ThreadItemOutputReference['mimeType'], string>>;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
 const IMAGE_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:gif|jpg|png|webp|bin)$/;
+const CONTEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
+const TEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:txt|json)$/;
+const CONTEXT_DIR = 'context';
 const RESOURCE_DIR = 'resources';
 const STAGING_DIR = '.staging';
 
@@ -409,6 +422,130 @@ export class ToolPayloadStore {
     });
   }
 
+  async writeContext(
+    threadId: ThreadId,
+    payload: unknown,
+  ): Promise<ThreadContextPayloadReference> {
+    const decoded = decodeThreadContextPayload(payload);
+    const encoded = encodeThreadContextPayload(decoded);
+    const bytes = Buffer.from(encoded, 'utf8');
+    validateContextPayloadByteLength(bytes.byteLength);
+    const ref: ThreadContextPayloadReference = {
+      id: createHash('sha256').update(bytes).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: bytes.byteLength,
+      schemaVersion: 1,
+      kind: decoded.kind,
+    };
+    return this.withResourceLock(threadId, async () => {
+      const directory = await this.ensureManagedDirectory(threadId, CONTEXT_DIR);
+      const target = join(directory, contextPayloadFileName(ref));
+      const existing = await lstat(target).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Context payload conflicts with existing bytes.');
+        return ref;
+      }
+
+      await this.assertResourceCapacity(threadId, bytes.byteLength);
+      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
+      const stagingPath = join(stagingDirectory, randomUUID());
+      try {
+        await writeFile(stagingPath, bytes, { flag: 'wx' });
+        await link(stagingPath, target).catch(async (error: unknown) => {
+          if (!isAlreadyExists(error)) throw error;
+          if (!await verifyStoredPayload(target, ref)) {
+            throw new Error('Context payload conflicts with existing bytes.');
+          }
+        });
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Published context payload is invalid.');
+        return ref;
+      } finally {
+        await rm(stagingPath, { force: true });
+      }
+    });
+  }
+
+  async readContext(
+    threadId: ThreadId,
+    ref: ThreadContextPayloadReference,
+  ): Promise<ThreadContextPayload | null> {
+    validateContextPayloadReference(ref);
+    const directory = await this.existingManagedDirectory(threadId, CONTEXT_DIR);
+    if (!directory) return null;
+    const path = join(directory, contextPayloadFileName(ref));
+    const bytes = await readVerifiedPayloadBytes(path, ref);
+    if (!bytes) return null;
+    const payload = decodeThreadContextPayloadJson(bytes.toString('utf8'));
+    return payload.kind === ref.kind ? payload : null;
+  }
+
+  async copyContextToThread(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    ref: ThreadContextPayloadReference,
+  ): Promise<boolean> {
+    validateContextPayloadReference(ref);
+    const sourceDirectory = await this.existingManagedDirectory(sourceThreadId, CONTEXT_DIR);
+    if (!sourceDirectory) return false;
+    const sourcePath = join(sourceDirectory, contextPayloadFileName(ref));
+    const sourceBytes = await readVerifiedPayloadBytes(sourcePath, ref);
+    if (!sourceBytes) return false;
+    if (decodeThreadContextPayloadJson(sourceBytes.toString('utf8')).kind !== ref.kind) return false;
+    return this.withResourceLock(targetThreadId, async () => {
+      const targetDirectory = await this.ensureManagedDirectory(targetThreadId, CONTEXT_DIR);
+      const targetPath = join(targetDirectory, contextPayloadFileName(ref));
+      const existing = await lstat(targetPath).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(targetPath, ref)) {
+          throw new Error('Context payload conflicts with existing bytes.');
+        }
+        return true;
+      }
+      await this.assertResourceCapacity(targetThreadId, ref.byteLength);
+      try {
+        await copyFile(
+          sourcePath,
+          targetPath,
+          constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+        );
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        if (!isAlreadyExists(error)) throw error;
+      }
+      if (!await verifyStoredPayload(targetPath, ref)) {
+        await rm(targetPath, { force: true });
+        throw new Error('Copied context payload is invalid.');
+      }
+      return true;
+    });
+  }
+
+  async pruneUnreferencedContexts(
+    threadId: ThreadId,
+    references: readonly ThreadContextPayloadReference[],
+  ): Promise<void> {
+    const retained = new Set(references.map((ref) => {
+      validateContextPayloadReference(ref);
+      return contextPayloadFileName(ref);
+    }));
+    await this.withResourceLock(threadId, async () => {
+      const directory = await this.existingManagedDirectory(threadId, CONTEXT_DIR);
+      if (!directory) return;
+      const files = await readdir(directory);
+      for (const fileName of files) {
+        if (!CONTEXT_PAYLOAD_FILENAME_PATTERN.test(fileName) || !retained.has(fileName)) {
+          await rm(join(directory, fileName), { recursive: true, force: true });
+        }
+      }
+    });
+  }
+
   async writeText(
     threadId: ThreadId,
     _itemId: string,
@@ -418,56 +555,77 @@ export class ToolPayloadStore {
   ): Promise<ThreadItemOutputReference> {
     const bytes = Buffer.from(text, 'utf8');
     const digest = createHash('sha256').update(bytes).digest('hex');
-    const directory = join(this.rootPath, threadId);
+    const directory = await this.ensureManagedDirectory(threadId);
     const path = join(directory, `${digest}${TEXT_MIME_EXTENSIONS[mimeType]}`);
-    await mkdir(directory, { recursive: true });
-    await writeFile(path, bytes, { flag: 'wx' }).catch((error: unknown) => {
-      if (!isAlreadyExists(error)) throw error;
-    });
-    return {
+    const ref: ThreadItemOutputReference = {
       id: digest,
       mimeType,
       byteLength: bytes.byteLength,
       summary,
     };
+    await writeFile(path, bytes, { flag: 'wx' }).catch((error: unknown) => {
+      if (!isAlreadyExists(error)) throw error;
+    });
+    if (!await verifyStoredPayload(path, ref)) throw new Error('Tool output conflicts with existing bytes.');
+    return ref;
   }
 
-  async readText(threadId: ThreadId, outputId: string): Promise<string | null> {
-    if (!SHA_256_PATTERN.test(outputId)) throw new Error('Invalid tool output digest');
-    for (const extension of Object.values(TEXT_MIME_EXTENSIONS)) {
-      const path = join(this.rootPath, threadId, `${outputId}${extension}`);
-      try {
-        return await readFile(path, 'utf8');
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-      }
-    }
-    return null;
+  async readTextReference(
+    threadId: ThreadId,
+    ref: ThreadItemOutputReference,
+  ): Promise<string | null> {
+    validateTextPayloadReference(ref);
+    const directory = await this.existingManagedDirectory(threadId);
+    if (!directory) return null;
+    const path = join(directory, textPayloadFileName(ref));
+    const bytes = await readVerifiedPayloadBytes(path, ref);
+    return bytes?.toString('utf8') ?? null;
   }
 
   async copyTextToThread(
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
-    outputId: string,
+    ref: ThreadItemOutputReference,
   ): Promise<boolean> {
-    if (!SHA_256_PATTERN.test(outputId)) throw new Error('Invalid tool output digest');
-    const targetDirectory = join(this.rootPath, targetThreadId);
-    await mkdir(targetDirectory, { recursive: true });
-    for (const extension of Object.values(TEXT_MIME_EXTENSIONS)) {
-      const filename = `${outputId}${extension}`;
-      try {
-        await copyFile(
-          join(this.rootPath, sourceThreadId, filename),
-          join(targetDirectory, filename),
-          constants.COPYFILE_EXCL,
-        );
-        return true;
-      } catch (error) {
-        if (isAlreadyExists(error)) return true;
-        if (!isNotFound(error)) throw error;
-      }
+    validateTextPayloadReference(ref);
+    const filename = textPayloadFileName(ref);
+    const sourceDirectory = await this.existingManagedDirectory(sourceThreadId);
+    if (!sourceDirectory) return false;
+    const sourcePath = join(sourceDirectory, filename);
+    if (!await verifyStoredPayload(sourcePath, ref)) return false;
+    const targetDirectory = await this.ensureManagedDirectory(targetThreadId);
+    const targetPath = join(targetDirectory, filename);
+    try {
+      await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    } catch (error) {
+      if (isNotFound(error)) return false;
+      if (!isAlreadyExists(error)) throw error;
     }
-    return false;
+    if (!await verifyStoredPayload(targetPath, ref)) {
+      await rm(targetPath, { force: true });
+      throw new Error('Copied tool output is invalid.');
+    }
+    return true;
+  }
+
+  async pruneUnreferencedTextOutputs(
+    threadId: ThreadId,
+    references: readonly ThreadItemOutputReference[],
+  ): Promise<void> {
+    const retained = new Set(references.map((ref) => {
+      validateTextPayloadReference(ref);
+      return textPayloadFileName(ref);
+    }));
+    await this.withResourceLock(threadId, async () => {
+      const directory = await this.existingManagedDirectory(threadId);
+      if (!directory) return;
+      const files = await readdir(directory);
+      for (const fileName of files) {
+        if (TEXT_PAYLOAD_FILENAME_PATTERN.test(fileName) && !retained.has(fileName)) {
+          await rm(join(directory, fileName), { force: true });
+        }
+      }
+    });
   }
 
   async writeImage(
@@ -589,17 +747,27 @@ export class ToolPayloadStore {
 
   private async managedResourceBytes(threadId: ThreadId): Promise<number> {
     const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR);
-    if (!directory) return 0;
-    const digests = await readdir(directory);
     let total = 0;
-    for (const digest of digests) {
-      if (!SHA_256_PATTERN.test(digest)) continue;
-      const digestPath = join(directory, digest);
-      const digestStat = await lstat(digestPath).catch(() => null);
-      if (!digestStat || !isPlainDirectory(digestStat)) continue;
-      const files = await readdir(digestPath).catch(() => []);
+    if (directory) {
+      const digests = await readdir(directory);
+      for (const digest of digests) {
+        if (!SHA_256_PATTERN.test(digest)) continue;
+        const digestPath = join(directory, digest);
+        const digestStat = await lstat(digestPath).catch(() => null);
+        if (!digestStat || !isPlainDirectory(digestStat)) continue;
+        const files = await readdir(digestPath).catch(() => []);
+        for (const file of files) {
+          const fileStat = await lstat(join(digestPath, file)).catch(() => null);
+          if (fileStat?.isFile() && !fileStat.isSymbolicLink()) total += fileStat.size;
+        }
+      }
+    }
+    const contextDirectory = await this.existingManagedDirectory(threadId, CONTEXT_DIR);
+    if (contextDirectory) {
+      const files = await readdir(contextDirectory);
       for (const file of files) {
-        const fileStat = await lstat(join(digestPath, file)).catch(() => null);
+        if (!CONTEXT_PAYLOAD_FILENAME_PATTERN.test(file)) continue;
+        const fileStat = await lstat(join(contextDirectory, file)).catch(() => null);
         if (fileStat?.isFile() && !fileStat.isSymbolicLink()) total += fileStat.size;
       }
     }
@@ -755,6 +923,61 @@ async function verifyStoredResource(
   }
 }
 
+async function verifyStoredPayload(
+  path: string,
+  ref: Pick<ThreadContextPayloadReference, 'id' | 'byteLength'>,
+): Promise<boolean> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return false;
+  try {
+    const before = await handle.stat();
+    if (!isStoredResourceFile(before, ref.byteLength)) return false;
+    const hash = createHash('sha256');
+    const buffer = Buffer.alloc(Math.min(1024 * 1024, Math.max(1, ref.byteLength)));
+    let position = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const after = await handle.stat();
+    const current = await lstat(path).catch(() => null);
+    return position === ref.byteLength
+      && hash.digest('hex') === ref.id
+      && current !== null
+      && sameResourceFileIdentity(resourceFileIdentity(before), resourceFileIdentity(after))
+      && sameResourceFileIdentity(resourceFileIdentity(after), resourceFileIdentity(current));
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readVerifiedPayloadBytes(
+  path: string,
+  ref: Pick<ThreadContextPayloadReference, 'id' | 'byteLength'>,
+): Promise<Buffer | null> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return null;
+  try {
+    const before = await handle.stat();
+    if (!isStoredResourceFile(before, ref.byteLength)) return null;
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    const current = await lstat(path).catch(() => null);
+    if (
+      bytes.byteLength !== ref.byteLength
+      || createHash('sha256').update(bytes).digest('hex') !== ref.id
+      || !current
+      || !sameResourceFileIdentity(resourceFileIdentity(before), resourceFileIdentity(after))
+      || !sameResourceFileIdentity(resourceFileIdentity(after), resourceFileIdentity(current))
+    ) return null;
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
 function isPlainDirectory(fileStat: Awaited<ReturnType<typeof lstat>>): boolean {
   return fileStat.isDirectory() && !fileStat.isSymbolicLink();
 }
@@ -805,5 +1028,42 @@ function validateResourceReference(ref: ThreadResourceReference): void {
   validateResourceMetadata(ref.byteLength, ref.mimeType, ref.fileName);
   if (safeAttachmentFileName(ref.fileName) !== ref.fileName) {
     throw new Error('Invalid managed attachment file name');
+  }
+}
+
+function contextPayloadFileName(ref: ThreadContextPayloadReference): string {
+  return `${ref.id}.json`;
+}
+
+function textPayloadFileName(ref: ThreadItemOutputReference): string {
+  return `${ref.id}${TEXT_MIME_EXTENSIONS[ref.mimeType]}`;
+}
+
+function validateContextPayloadByteLength(byteLength: number): void {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    throw new Error('Context payload byte length must be a non-negative safe integer.');
+  }
+  if (byteLength > MAX_THREAD_CONTEXT_PAYLOAD_BYTES) {
+    throw new Error('Context payload exceeds the managed payload budget.');
+  }
+}
+
+function validateContextPayloadReference(ref: ThreadContextPayloadReference): void {
+  if (!SHA_256_PATTERN.test(ref.id)) throw new Error('Invalid context payload digest.');
+  if (ref.mimeType !== 'application/vnd.tenon.agent-context+json') {
+    throw new Error('Invalid context payload MIME type.');
+  }
+  if (ref.schemaVersion !== 1) throw new Error('Invalid context payload schema version.');
+  if (!(CONTEXT_PAYLOAD_KINDS as readonly ContextPayloadKind[]).includes(ref.kind)) {
+    throw new Error('Invalid context payload kind.');
+  }
+  validateContextPayloadByteLength(ref.byteLength);
+}
+
+function validateTextPayloadReference(ref: ThreadItemOutputReference): void {
+  if (!SHA_256_PATTERN.test(ref.id)) throw new Error('Invalid tool output digest');
+  if (!(ref.mimeType in TEXT_MIME_EXTENSIONS)) throw new Error('Invalid tool output MIME type');
+  if (!Number.isSafeInteger(ref.byteLength) || ref.byteLength < 0) {
+    throw new Error('Invalid tool output byte length');
   }
 }

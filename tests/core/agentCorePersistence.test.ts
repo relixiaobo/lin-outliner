@@ -426,6 +426,7 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
       originItemId: `item-user-${seed}`,
     },
     clientId: 'submit-1',
+    acceptedAt: seed,
     content: [{ type: 'text', text: 'Start' }],
   };
   const startedAgentItem: ThreadItem = {
@@ -515,6 +516,7 @@ function interruptedLifecycle(
       originItemId: 'item-interrupted-user',
     },
     clientId: null,
+    acceptedAt: 4_500,
     content: [{ type: 'text', text: 'Start streaming' }],
   };
   const startedAgentItem: ThreadItem = {
