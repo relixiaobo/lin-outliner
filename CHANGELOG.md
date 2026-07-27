@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Browser Control and URL Preview planning boundaries (PR #442, codex)** —
+  replaced the former Tenon-native browser-tool direction with a pinned Browser
+  Pilot CLI-and-skill consumer contract through the classified `bash` path,
+  including Thread client isolation, Turn scratch output, conservative external
+  action and sensitive-read capabilities, and redacted durable command/result
+  projections. Future URL Preview rich capture is now an independent explicit
+  read-only internal-Preview feature; launcher providers retain classification
+  ownership only. **Gate (main):** four review rounds closed seven architecture,
+  persistence, permission, and failure-semantics findings. Final head `0fa8be0c`
+  had no reportable findings; verification covered typecheck, docs, and diff
+  checks.
 - **Canonical Agent context evidence contract (PR #440, codex-3)** — added the
   shared interface for strict context evidence, reset, and compaction Items;
   exact cursors and payload references; verified quota-bound Thread payload
