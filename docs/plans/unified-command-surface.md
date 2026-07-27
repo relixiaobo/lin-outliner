@@ -124,9 +124,11 @@ create a duplicate AI UI or persistence path.
 - **Now:** active browser tab **URL + title** (the existing #103 path: read-only
   AX addon + `osascript` front-tab fallback) + **clipboard** as the fallback when
   the foreground isn't a supported browser.
-- **Later (as `browser-extension-integration` lands):** rich **page content +
-  selection** via the extension, plus **screenshot-as-context** as a deeper
-  fallback (esp. for Ask AI on an unreadable foreground).
+- **Later:** **screenshot-as-context** may become a deeper fallback, especially
+  for Ask AI on an unreadable foreground. Authenticated page content or selection
+  from an external browser has no approved reader plan. Internal URL Preview rich
+  capture and Agent Browser Control are independent capabilities; neither is a
+  D6 out-of-app capture source.
 - **v1 excludes** arbitrary-app Accessibility reading (fragile; heavy A3 surface).
 - **Conventions:** *visible-or-it-didn't-happen* — the out-of-app chip names the
   tier (`⧉ Safari — <title>` / `Clipboard` / `Screenshot`); read nothing → no
@@ -207,9 +209,10 @@ Decisions were grounded in a 2026-06-04 product survey across three categories:
   verb (was `launcher-ai-actions`, see D5) and Capture destinations / secondary
   actions / navigation (was `launcher-capture-destinations`, see D4 + the preserved
   contracts below). **Coordinates with** the surviving capture-pipeline tracks —
-  `launcher-provider-expansion` (capture provider breadth) and
-  `browser-extension-integration` (D6 rich content) — which this plan consumes but
-  does not own.
+  `launcher-provider-expansion` (capture provider breadth), which this plan
+  consumes but does not own. External-browser rich content remains unplanned;
+  `browser-extension-integration` is limited to explicit internal URL Preview
+  capture and is not a D6 dependency.
 - **Reuses #109** (`agent-empty-state-onboarding`) for the no-provider guard on
   Ask AI.
 
