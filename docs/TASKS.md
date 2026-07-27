@@ -23,16 +23,31 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429, agent-codex-memory #434/#436, agent-codex-automations #435, large-local-resources #437, office-ingestion-inline-attachments #439, agent-context-integrity PR1 #440, and the Core interface sequence #428/#430–#433) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-21).** Open PR queue: none. Recently
-merged: #423 (`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
+**In flight (2026-07-27).** Open PR queue: none. Recently merged: #440
+(`codex-3/agent-context-integrity`) after iterative main review, landing the
+canonical context contract as PR 1 of the active six-PR plan; see *Agent
+capabilities* and *Recently completed*. #439
+(`codex-3/office-ingestion-inline-attachments`) after iterative main review;
+see *Recently completed*. #438
+(`codex-4/agent-execution-interaction-consistency`) after iterative main review;
+see *Recently completed*. #437
+(`codex-3/large-local-resources`) after iterative main review; see *Recently
+completed*. #436
+(`codex-3/agent-memory-retrieval-citations`) and #435
+(`codex-3/agent-codex-automations`) after iterative main review; see *Recently
+completed*. #434 (`codex-3/agent-codex-memory`) after iterative main review; see
+*Recently completed*. #429 (`codex-3/agent-codex-core-runtime`) after iterative main
+review, completing the interface sequence #428/#430–#433; see *Recently
+completed*. #423
+(`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
 iterative main review; its three implementation plans remain `draft` below. #427
 (`codex/tag-selector-active-tag-index`) merged 2026-07-21 after
 main review; see *Recently completed*. #426 (`codex/field-name-reuse-candidate-index`) merged 2026-07-21 after
@@ -268,23 +283,15 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-codex-core** (`draft`, plan merged #423) — replace the current agent
-  architecture with one canonical TypeScript Thread / Turn / ThreadItem model.
-  Delivery follows two ordered units: a human-led interface-only PR for the
-  shared protocol and document contracts, followed immediately by one complete
-  runtime, persistence, transport, renderer, and old-model replacement PR. This
-  foundation must land before either consumer plan starts. See
-  `docs/plans/agent-codex-core.md`.
-- **agent-codex-memory** (`draft`, plan merged #423; depends on the complete
-  `agent-codex-core` replacement) — add Codex-style Memory as one complete
-  extension in one PR, publishing canonical editable `#d-*` Memory Nodes on the
-  daily timeline. It may proceed independently of Automations after Core lands.
-  See `docs/plans/agent-codex-memory.md`.
-- **agent-codex-automations** (`draft`, plan merged #423; depends on the complete
-  `agent-codex-core` replacement) — add one host-owned Codex-style Automation
-  scheduler as a complete feature in one PR, with canonical Threads and Turns as
-  the execution record. It may proceed independently of Memory after Core lands.
-  See `docs/plans/agent-codex-automations.md`.
+- **agent-context-integrity** (P1, `in-progress`; PR 1 of 6 shipped as #440) —
+  restores the complete canonical model-context contract without reviving the
+  retired runtime or adding a second history authority. PR 1 established strict
+  evidence Items and codecs, Thread-owned verified context payloads, typed
+  resource dependencies, and restart/rollback/fork ownership. Next is PR 2: the
+  unified composer plus input/resource integrity; Skill execution, global
+  budgeting and compaction, Subagent inheritance, and provider/cache controls
+  follow as independently complete units. See
+  `docs/plans/agent-context-integrity.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -589,6 +596,151 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-context-integrity PR1 — canonical context contract**
+  (`codex-3/agent-context-integrity`, PR #440, codex-3, merged 2026-07-27,
+  plan-track interface unit) — added strict canonical context evidence/reset/
+  compaction Items, accepted-input timestamps, exact cursors and payload
+  references, a verified quota-bound Thread payload store, typed resource
+  dependency ownership, and restart/rollback/fork reconciliation. Managed tool
+  images remain previewable and can be ingested into the outline without
+  exposing canonical or scratch paths. The current interface design is folded
+  into the Agent, runtime, rendering, command, and workspace specs; the plan
+  remains `in-progress` at `docs/plans/agent-context-integrity.md` for PRs 2–6.
+  **Gate (main):** iterative review caught payload kind confusion, persisted
+  scratch observation paths, an attachment-sized allocation ceiling, cleanup
+  errors misreporting durable rollback, source-owned inherited images, and the
+  managed-image Add-to-outline regression. Codex-3 fixed every finding; final
+  head `b810a00a` had no reportable issues. Verified with typecheck,
+  `git diff --check`, focused ownership/ingest tests (57 pass), full `test:core`
+  (1402 pass, 6 environment-dependent skips), full `test:renderer` (767 pass),
+  and Agent Thread E2E (43 pass).
+
+- **office-ingestion-inline-attachments**
+  (`codex-3/office-ingestion-inline-attachments`, PR #439, codex-3, merged
+  2026-07-26, plan-track) — rejects Office ownership files at attachment and
+  read boundaries, adds a bounded in-process PPTX structural-text reader, and
+  preserves canonical mixed attachment order with inline file markers and
+  expandable image galleries. The shipped design is folded into the current
+  Agent, thread-rendering, and design-system specs; the plan is archived at
+  `docs/plans/archive/office-ingestion-inline-attachments.md`.
+  **Gate (main):** iterative review caught incomplete PPTX package identity and
+  exact relationship-type validation, split-text editing that could destroy
+  attachment order, and image galleries that omitted canonical filename
+  markers. Codex-3 fixed all findings; final head `996f096a` had no reportable
+  findings. Verified with typecheck, `docs:check`, `git diff --check`, focused
+  Core/renderer tests (15 pass), full `test:core` (1389 pass, 6
+  environment-dependent skips), full `test:renderer` (765 pass), and relevant
+  Agent E2E (3 pass).
+
+- **agent-execution-interaction-consistency**
+  (`codex-4/agent-execution-interaction-consistency`, PR #438, codex-4, merged
+  2026-07-26, plan-track) — made `update_plan` a transient Turn-local progress
+  projection, moved Run Details into the current workspace pane and its Back
+  history, and unified ordinary tools and Skills under one expandable
+  argument/result disclosure with clickable local paths. The shipped design is
+  folded into the current Agent, workspace, and design-system specs; the plan is
+  archived at
+  `docs/plans/archive/agent-execution-interaction-consistency.md`.
+  **Gate (main):** review found that global root navigation could replace the
+  active non-outliner view instead of reusing an outliner pane, and that the
+  long Plan checklist lacked the complete focus, scrolling, and Escape
+  interaction. Codex-4 fixed both before rebasing over #437; final head
+  `0f95e430` had no reportable findings. Verified with typecheck, `docs:check`,
+  `git diff --check`, full `test:core` (1373 pass, 6 environment-dependent
+  skips), full `test:renderer` (764 pass), relevant E2E (166 pass, with two
+  unchanged guard failures reproduced on pre-merge `main`), and light/dark
+  visual verification.
+
+- **large-local-resources**
+  (`codex-3/large-local-resources`, PR #437, codex-3, merged 2026-07-26,
+  plan-track) — replaced the shared attachment source-size ceiling with
+  reference-based large local and managed resources, chunked pathless uploads,
+  bounded consumer-specific observations, immutable image prompt snapshots,
+  exact attachment authorization, and independent managed-resource copies for
+  Thread forks. The shipped design is folded into the current Agent, preview,
+  and workspace specs; the plan is archived at
+  `docs/plans/archive/large-local-resources.md`.
+  **Gate (main):** the first review found three data-integrity issues: cleanup
+  keyed physical ownership by mutable metadata, Thread forks could share one
+  writable inode, and model plus Preview / Open / Reveal paths could expose or
+  mutate canonical managed payloads. Codex-3 fixed all three before merge;
+  final head `964fe3b2` had no reportable findings. Verification across the
+  final two heads covered typecheck, `docs:check`, `git diff --check`, full
+  `test:core` (1372 pass, 6 environment-dependent skips), focused Core tests
+  (91 pass), full `test:renderer` (758 pass), Agent Thread E2E (40 pass), and
+  light/dark visual verification.
+
+- **agent-codex-memory retrieval and citations**
+  (`codex-3/agent-memory-retrieval-citations`, PR #436, codex-3, merged
+  2026-07-26, plan-track follow-up) — replaced eager Memory briefing injection
+  with relevance-driven `node_search` / `node_read`, counts usage only for
+  successfully read Memory Nodes cited through rendered inline Node references,
+  and keeps the canonical tool process without a separate Memory disclosure.
+  The current design is folded into `docs/spec/agent-memory.md`,
+  `docs/spec/agent-thread-rendering.md`, and the archived Memory plan.
+  **Gate (main):** iterative review caught Markdown literal false attribution,
+  parser drift for escapes and entities, and reference-style links losing their
+  definitions across renderer blocks. Codex-3 fixed every finding before merge;
+  final head `3495305` had no reportable findings. Verified on merged `main`
+  together with #435: typecheck, `docs:check`, diff check, full `test:core`
+  (1342 pass, 6 environment-dependent skips), full `test:renderer` (758 pass),
+  and focused Automation + Agent Thread E2E (40 pass).
+
+- **agent-codex-automations**
+  (`codex-3/agent-codex-automations`, PR #435, codex-3, merged 2026-07-26,
+  plan-track) — added durable host-owned Automations with strict protocol and IPC
+  boundaries, SQLite-backed RRULE/IANA scheduling, catch-up and overlap handling,
+  crash recovery, canonical Thread/Turn execution, local-project and managed
+  worktree modes, structured schedule editing, unread Run state, and a complete
+  light/dark renderer surface. The shipped design is folded into
+  `docs/spec/agent-automations.md` and related Agent specs; the plan is archived
+  at `docs/plans/archive/agent-codex-automations.md`.
+  **Gate (main):** iterative review caught cleanup paths that could lose ignored
+  or embedded-repository content, stale worktree snapshots, the bounded renderer
+  page leaking into bulk-read behavior, and stale/same-millisecond Run races.
+  Codex-3 fixed every finding, including a durable monotonic event sequence;
+  final head `321f65c` had no reportable findings. Verified on merged `main` with
+  typecheck, `docs:check`, diff check, full `test:core` (1342 pass, 6
+  environment-dependent skips), full `test:renderer` (758 pass), and focused
+  Automation + Agent Thread E2E (40 pass).
+
+- **agent-codex-memory**
+  (`codex-3/agent-codex-memory`, PR #434, codex-3, merged 2026-07-24,
+  plan-track) — added Codex-style durable Memory as editable Daily Timeline
+  Nodes under deterministic protected `#d-*` tags, with immutable Turn admission,
+  private control/provenance state, two-phase extraction and consolidation,
+  rollback invalidation, Reset recovery, derived briefings, citations, settings,
+  and foreground mutation authorization. The shipped design is folded into
+  `docs/spec/agent-memory.md` and related Agent specs; the plan is archived at
+  `docs/plans/archive/agent-codex-memory.md`.
+  **Gate (main):** review found multiple Memory publication, visibility,
+  rollback, and history-authorization issues across four rounds. Codex-3 fixed
+  every finding before merge; final head `cc8220f` had no reportable findings.
+  Verified with typecheck, `docs:check`, diff check, full `test:core` (1299
+  pass, 6 environment-dependent skips), full `test:renderer` (741 pass), and
+  focused old-bypass repros proving reserved-tag-name redo and branched
+  multi-step undo are rejected before touching Memory.
+
+- **agent-codex-core**
+  (`codex-3/agent-codex-core-runtime`, PR #429, codex-3, merged 2026-07-24,
+  plan-track) — replaced the former Conversation / Channel / Run / Issue agent
+  stack with one canonical TypeScript Thread / Turn / ThreadItem runtime across
+  persistence, execution, IPC, preload, renderer state, Goals, Subagent
+  collaboration, tool output, and history controls. The clean replacement keeps
+  append-only audit history, same-Thread rollback, explicit Continue-in-new-chat
+  forks, host-resolved admission, bounded Thread-owned payloads, and the retained
+  Full Access capability boundary without migration or compatibility readers.
+  The shipped design is folded into the current Agent specs; the plan is archived
+  at `docs/plans/archive/agent-codex-core.md`.
+  **Gate (main):** two review rounds caught four issues: forked payloads depended
+  on source-Thread deletion, forbidden `agent-debug` residue remained, unloaded
+  Thread notifications lost catalog metadata, and failed forks left transient
+  renderer Threads. Codex-3 fixed all four before merge; final head `c4ff101`
+  had no reportable findings. Verified with typecheck, `docs:check`, diff check,
+  full `test:core` (1250 pass, 6 environment-dependent skips), full
+  `test:renderer` (734 pass), Agent Thread E2E (36 pass), and the PR-recorded
+  light/dark visual probe (3 pass).
 
 - **tag-selector-active-tag-index**
   (`codex/tag-selector-active-tag-index`, PR #427, codex, merged 2026-07-21,

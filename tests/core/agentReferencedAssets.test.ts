@@ -4,7 +4,7 @@ import {
   buildReferencedFilesReminder,
   selectReferencedAssetNodes,
   type MaterializedReferencedFile,
-} from '../../src/main/agentReferencedAssets';
+} from '../../src/main/agent/capabilities/agentReferencedAssets';
 
 function node(partial: Partial<NodeProjection> & { id: string }): NodeProjection {
   return {

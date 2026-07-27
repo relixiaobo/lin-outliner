@@ -12,7 +12,7 @@ const {
   applyAgentCapabilitySettingsPatch,
   appendAgentCapabilityBlock,
   readAgentCapabilitySettings,
-} = await import('../../src/main/agentCapabilityStore');
+} = await import('../../src/main/agent/capabilities/agentCapabilityStore');
 
 describe('agent capability store', () => {
   beforeEach(async () => {

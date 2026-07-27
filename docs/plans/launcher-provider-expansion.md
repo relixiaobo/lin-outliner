@@ -3,9 +3,9 @@
 > **Re-scoped (2026-06-04):** this is the **capture-provider-breadth** track —
 > which URLs/apps we classify into which source `kind` + capture framing. It is
 > *orthogonal* to the command surface (`unified-command-surface.md`) and survives
-> the cmd+k/launcher unification intact. Rich extraction (page body/transcript)
-> belongs to the URL Preview rich-capture plan in
-> `browser-extension-integration.md`, not here.
+> the cmd+k/launcher unification intact. Rich content from an explicitly
+> selected internal Preview belongs to `browser-extension-integration.md`;
+> authenticated external-browser content has no approved reader plan.
 
 ## Why this plan exists
 
@@ -19,8 +19,9 @@ the single home for "which providers we add next," so the declared-but-unproduce
 union members aren't silent placeholders.
 
 It does **not** own rich extraction (page body, transcript, email thread, chat
-messages) — URL Preview rich capture owns the in-app webpage path in
-`browser-extension-integration.md`.
+messages). `browser-extension-integration.md` owns only the explicit internal
+URL Preview path. External-browser authenticated DOM, email/chat bodies, and
+other source readers are deferred until a source-specific plan owns them.
 This plan is about URL/app **classification + the right source `kind` + capture
 framing**; rich fields fill in when their source-specific readers land.
 
@@ -50,8 +51,9 @@ Light up the declared providers, in two tiers, each only when it actually works
 
 ## Non-goals
 
-- No rich content extraction (body/transcript/thread/messages) — that's
-  `browser-extension-integration.md`.
+- No rich content extraction. Internal URL Preview reading belongs to
+  `browser-extension-integration.md`; all other readers require a separate
+  approved source-specific plan.
 - No disabled "coming soon" provider rows. A provider id/kind is *declared* in the
   contract (A7) but only *produced* once its classifier + test land here.
 - No timeline scraping / account actions (already a non-goal of the parent plan).
@@ -67,13 +69,13 @@ launcher icon, and a unit test in `tests/core/contextCapture.test.ts`. The
 
 | Provider | Host(s) | kind | Notes |
 |---|---|---|---|
-| `gmail` | mail.google.com | email | thread id from `#…/<id>`; subject needs the extension |
+| `gmail` | mail.google.com | email | thread id from `#…/<id>`; subject/body remain deferred |
 | `linkedin` | linkedin.com `/in/`, `/feed`, `/messaging` | profile / chat | route-based, like github |
 | `slack` | app.slack.com, `*.slack.com` | chat | workspace/channel from path |
-| `whatsapp` | web.whatsapp.com | chat | URL alone is thin; mostly framing until extension |
+| `whatsapp` | web.whatsapp.com | chat | URL-only framing; authenticated content remains deferred |
 | `loom` | loom.com/share/… | video | id from path |
 | `circle` | `*.circle.so` | article/webpage | post vs feed by path |
-| `notion-public` | notion.site, notion.so public | article/webpage | better title needs the extension |
+| `notion-public` | notion.site, notion.so public | article/webpage | URL-only metadata until a public-page reader is planned |
 | `spotify` (web) | open.spotify.com | music | track/album/playlist by path |
 
 Also the generic-provider **special cases** the parent matrix names but that
@@ -100,15 +102,16 @@ after Tier A.
 - **Local-file capture** (capturing a Finder/file selection), reusing the landed
   local-file reference identity (`outliner-local-file-references`).
 - **Fuller permission-remediation UI** beyond today's single Automation banner
-  (Open Accessibility settings, retry) — unless folded into the extension plan.
+  (Open Accessibility settings, retry) — deferred until a dedicated permission
+  UX plan owns it.
 
 ## Open questions (for the PM)
 
 1. Tier-A priority order — gmail / linkedin / slack first? (likely highest value).
 2. For thin-URL providers (whatsapp, notion-public), is URL-only classification
-   worth shipping before the extension supplies real content, or wait?
-3. Do native-app providers (Tier B) wait for the extension/CDP backend entirely,
-   or do a couple of high-value AppleScript ones (apple-mail, spotify) sooner?
+   valuable without an approved authenticated-content reader, or should it wait?
+3. Which native-app readers justify their own complete Tier B feature first
+   (for example Apple Mail or Spotify)? They have no Browser Control dependency.
 
 ## Subtasks
 

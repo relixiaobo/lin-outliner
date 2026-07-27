@@ -19,6 +19,154 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
+  test('opens Thread Run Details in the current pane and preserves Back navigation', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.openThreadRunDetailsPanel('thread-alpha', 'turn-one');
+    });
+
+    expect(h.api.panels).toHaveLength(1);
+    expect(h.api.panels[0]).toMatchObject({
+      id: 'panel-test',
+      type: 'workspace',
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+      forwardStack: [],
+    });
+    expect(h.api.activePanelId).toBe('panel-test');
+
+    act(() => {
+      h.api.openThreadRunDetailsPanel('thread-beta', 'turn-two');
+    });
+
+    expect(h.api.panels).toHaveLength(1);
+    expect(h.api.panels[0]).toMatchObject({
+      view: { kind: 'thread-run-details', threadId: 'thread-beta', turnId: 'turn-two' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+    });
+    expect(h.clearFocusAndSelectionCalls).toBe(2);
+
+    act(() => {
+      h.api.navigatePanelBack('panel-test');
+    });
+    expect(h.api.panels[0]).toMatchObject({
+      view: { kind: 'outliner', rootId: 'today' },
+      forwardStack: [{ kind: 'thread-run-details', threadId: 'thread-beta', turnId: 'turn-two' }],
+    });
+  });
+
+  test('restores a same-day Thread Run Details view with its outliner history', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-debug',
+      panels: [{
+        id: 'panel-debug',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-debug');
+    expect(h.api.panels[0]).toEqual({
+      id: 'panel-debug',
+      type: 'workspace',
+      size: 1,
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+      forwardStack: [],
+    });
+  });
+
+  test('global root navigation leaves active Run Details and reuses an existing outliner pane', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-details',
+      panels: [
+        {
+          id: 'panel-outliner',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-details',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+          backStack: [{ kind: 'outliner', rootId: 'alpha' }],
+          forwardStack: [],
+        },
+      ],
+    });
+
+    act(() => {
+      h.api.navigateRoot('alpha');
+    });
+
+    expect(h.api.activePanelId).toBe('panel-outliner');
+    expect(h.api.panels).toEqual([
+      {
+        id: 'panel-outliner',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'alpha' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      },
+      {
+        id: 'panel-details',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'alpha' }],
+        forwardStack: [],
+      },
+    ]);
+  });
+
+  test('global root navigation adds an outliner beside a lone Run Details pane', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-details',
+      panels: [{
+        id: 'panel-details',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.navigateRoot('alpha');
+    });
+
+    expect(h.api.panels).toHaveLength(2);
+    expect(h.api.panels[0]).toMatchObject({
+      id: 'panel-details',
+      view: { kind: 'thread-run-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+    });
+    expect(h.api.panels[1]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'outliner', rootId: 'alpha' },
+    });
+    expect(h.api.activePanelId).toBe(h.api.panels[1]?.id);
+  });
+
   test('new file preview panes can open as file-only readers', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
@@ -197,48 +345,13 @@ describe('useWorkspaceLayout history focus', () => {
     expect(h.clearFocusAndSelectionCalls).toBe(0);
   });
 
-  test('opening a different run detail reuses the existing run details pane', () => {
-    const h = renderLayout({
-      activePanelId: 'debug-panel',
-      panels: [
-        {
-          id: 'panel-test',
-          type: 'workspace',
-          size: 1,
-          view: { kind: 'outliner', rootId: 'today' },
-          backStack: [],
-          forwardStack: [],
-        },
-        {
-          id: 'debug-panel',
-          type: 'agent-debug',
-          size: 1,
-          conversationId: 'conversation-a',
-          runId: 'run-a',
-        },
-      ],
-    });
-
-    act(() => {
-      h.api.openAgentRunDetailsPanel('conversation-a', 'run-b');
-    });
-
-    expect(h.api.panels).toHaveLength(2);
-    expect(h.api.activePanelId).toBe('debug-panel');
-    expect(h.api.panels[1]).toMatchObject({
-      id: 'debug-panel',
-      type: 'agent-debug',
-      conversationId: 'conversation-a',
-      runId: 'run-b',
-    });
-  });
 });
 
 function renderLayout(layout: WorkspaceLayout) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const storage = new MemoryStorage();
-  storage.setItem('lin-outliner:workspace-layout:v4', JSON.stringify({
-    version: 3,
+  storage.setItem('lin-outliner:workspace-layout:v7', JSON.stringify({
+    version: 7,
     localDate: todayIsoLocalDate(),
     ...layout,
   }));

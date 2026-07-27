@@ -19,6 +19,12 @@ are all implemented in TypeScript.
 The TypeScript core is the only document writer. React keeps UI-only state such
 as focus, expanded rows, selection, popovers, and transient editor drafts.
 
+Agent Memory keeps published content in ordinary Daily Notes Nodes. Electron
+main owns its local control database under `userData/agent/memories.sqlite` and
+uses trusted receipt-bearing document transactions to reconcile SQLite with the
+Loro document. The control database is not portable workspace content. See
+[`agent-memory.md`](agent-memory.md).
+
 Binary assets are outside the CRDT document. The document stores stable asset
 ids and derived metadata on `image` / `attachment` nodes; `src/main/assetService`
 owns bytes and sidecar metadata under the workspace asset directory. Renderer
@@ -261,25 +267,16 @@ Per-edit cost scales with what changed, not document size.
   are copied. Consistency against a full rebuild is asserted after every command in
   `tests/renderer/projectionDeltaIntegration.test.ts`.
 
-## Agent Runtime Projection Updates
+## Agent Core Updates
 
-Agent conversations use the same stable-identity rule, but with a separate
-renderer projection type:
+Agent Core uses its own strict request and notification transport rather than the
+document projection stream. Main persists canonical Thread notifications before
+publishing them. Renderer `threadStore` applies decoded notifications to loaded
+Thread pages and reloads paginated history when it cannot prove a local update is
+complete. There is no second renderer projection schema.
 
-- The renderer still accepts a full agent `projection` event for initial load,
-  revision gaps, multi-field changes, and any case where the runtime cannot prove
-  a patch is safe.
-- High-frequency direct-message streaming emits `projection_patch` for the
-  single active assistant message when the previous emitted projection is exactly
-  the patch base revision. The patch carries `baseRevision`, `revision`, the
-  changed message entity, and `dmStreaming`; unchanged entity maps keep their
-  object references.
-- The renderer folds patches with `applyAgentRenderProjectionPatch`. A revision
-  mismatch returns `null` and triggers a full conversation reload instead of
-  guessing across a gap.
-- Multi-agent Channel turns remain result-first and transcript-atomic, so they
-  continue to use the full-projection fallback for transcript changes. Channel
-  live activity is still surfaced through the activity/detail projection fields.
+The durable source is each Thread rollout; SQLite catalog and history tables are
+rebuildable projections. See [`agent-core.md`](agent-core.md).
 
 ## Type Boundary
 

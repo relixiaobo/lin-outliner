@@ -1,7 +1,7 @@
 import type { Stats } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { isPathInside } from './agentAttachmentMaterialization';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 
 // A denylist is inherently incomplete against the open-ended set of types macOS
 // (and other OSes) will auto-run or redirect through; an allowlist of inert

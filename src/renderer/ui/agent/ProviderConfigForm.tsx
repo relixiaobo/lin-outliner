@@ -61,7 +61,7 @@ type FormStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
 // provider-config window (a modal child of Settings — the macOS idiom where a list
 // row opens a real dialog, not an in-renderer overlay). It proves a CONNECTION:
 // credentials, optional base URL, and a Test connection probe. The model/effort
-// that runs is chosen on the agent profile, never here. Custom providers enter a
+// that runs is chosen on the Thread Configuration Profile, never here. Custom providers enter a
 // provider id (no catalog to default from). Selection / focus stay neutral (B3/B4);
 // Save is a single neutral-strong primary, never a system-blue accent (B4);
 // validation uses status colour only (B4).

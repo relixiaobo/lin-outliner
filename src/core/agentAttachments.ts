@@ -1,6 +1,30 @@
-import type { AgentFileAttachmentInput, AgentImageAttachmentInput, AgentTextAttachmentInput } from './agentTypes';
 import { basenameForPath } from './referenceMarkup';
 import type { ReferenceTarget } from './types';
+
+interface ThreadAttachmentInputBase {
+  id: string;
+  ref?: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+interface ThreadImageAttachmentInput extends ThreadAttachmentInputBase {
+  kind: 'image';
+  dataBase64: string;
+  path?: string;
+}
+
+interface ThreadTextAttachmentInput extends ThreadAttachmentInputBase {
+  kind: 'text';
+  text: string;
+  truncated?: boolean;
+}
+
+interface ThreadFileAttachmentInput extends ThreadAttachmentInputBase {
+  kind: 'file';
+  path: string;
+}
 
 const ATTACHMENT_START = '[lin attached file: ';
 const ATTACHMENT_END = '[/lin attached file]';
@@ -64,7 +88,6 @@ export function referenceTargetToResourceItem(
   meta: ReferenceTargetResourceMeta = {},
 ): AgentResourceItem | null {
   if (target.kind === 'node') return null;
-  if (target.kind === 'chat-source') return null;
   const name = meta.name?.trim() || basenameForPath(target.path) || target.path;
   const readPath = meta.readPath || target.path;
   return {
@@ -78,7 +101,7 @@ export function referenceTargetToResourceItem(
   };
 }
 
-export function serializeAgentTextAttachment(attachment: AgentTextAttachmentInput): string {
+export function serializeAgentTextAttachment(attachment: ThreadTextAttachmentInput): string {
   const metadata = {
     ref: attachment.ref ?? attachment.name,
     name: attachment.name,
@@ -116,7 +139,9 @@ export function parseAgentTextAttachmentBlock(text: string): ParsedAgentTextAtta
   }
 }
 
-export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAttachmentInput | AgentFileAttachmentInput | AgentTextAttachmentInput>): string | null {
+export function serializeAgentAttachmentMarker(
+  attachments: Array<ThreadImageAttachmentInput | ThreadFileAttachmentInput | ThreadTextAttachmentInput>,
+): string | null {
   const items = attachments.map((attachment): AgentResourceItem => {
     if (attachment.kind === 'image') {
       return {

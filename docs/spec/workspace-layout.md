@@ -74,10 +74,7 @@ Center — per-pane breadcrumb headers:
 
 Right corner — agent chrome:
 
-- The agent dock's header (channel hash glyph + conversation title) when open —
-  every conversation is one of Neva's channels, so there is no per-conversation
-  agent avatar (it would always be the same single agent), matching the channel
-  list rows.
+- The selected Thread title and compact Thread actions when the dock is open.
 - The agent toggle, pinned to the top-right corner as a fixed window-chrome
   control.
 
@@ -106,13 +103,13 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane is one of two variants: an outliner pane (a node root) or an agent-debug
-pane (a session inspector). Both tile identically.
+A pane hosts an outliner, file-preview, or Agent Run Details view. All tile
+identically and share the same per-pane navigation history.
 
 Agent dock:
 
-The conversation surface on the right side. It can read and edit the outliner
-through tools, using the active pane as default context.
+The Thread surface on the right side. It can read and edit the outliner through
+tools, using the active pane as default context.
 
 Sidebar dock:
 
@@ -184,9 +181,15 @@ interface WorkspacePanelBase {
 }
 
 type PreviewTarget =
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory'; label?: string }
+  | {
+      kind: 'local-file';
+      path: string;
+      entryKind: 'file' | 'directory';
+      label?: string;
+      threadId?: string;
+      attachmentId?: string;
+    }
   | { kind: 'asset'; assetId: string; label?: string }
-  | { kind: 'agent-payload'; conversationId: string; runId?: string; payloadId: string; label?: string }
   | { kind: 'url'; url: string; label?: string };
 
 type PanelView =
@@ -200,13 +203,7 @@ interface WorkspaceContentPanelState extends WorkspacePanelBase {
   forwardStack: PanelView[];
 }
 
-interface AgentDebugPanelState extends WorkspacePanelBase {
-  type: 'agent-debug';
-  conversationId: string | null;
-  runId: string | null;
-}
-
-type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
+type WorkspacePanelState = WorkspaceContentPanelState;
 
 interface WorkspaceLayout {
   activePanelId: string;
@@ -239,18 +236,37 @@ File preview uses the same workspace panel host and the same history stack:
 }
 ```
 
+Agent Run Details is a workspace panel view that stores only the canonical
+location needed to read the current data:
+
+```ts
+{
+  type: 'workspace',
+  view: {
+    kind: 'thread-run-details',
+    threadId: ThreadId,
+    turnId: TurnId,
+  },
+  backStack: [{ kind: 'outliner', rootId: NodeId }],
+  forwardStack: [],
+}
+```
+
+Opening Run Details replaces the active pane's current view and pushes that view
+onto its Back stack; it never adds a pane. A different Turn replaces the current
+Run Details target without adding another history entry. Back and the Details
+close action return to the originating view.
+
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v4`). It is UI state; document content remains in
+(`lin-outliner:workspace-layout:v7`). It is UI state; document content remains in
 the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
-The canvas is anchored by at least one outliner view (current or in a workspace
-pane's view history) so startup can restore focus. A restored layout that
-sanitizes down to only agent-debug panes has nothing to anchor, so it is treated
-as corrupt and replaced by the default single pane rather than booting into a
-rootless canvas.
+The canvas is anchored by at least one outliner view, either current or in a
+workspace pane's view history, so startup can restore focus. A sanitized layout
+without one is replaced by the default single pane.
 
 The layout does **not** include:
 
@@ -260,7 +276,8 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent conversation state, scroll, or input.
+- Agent Thread transcript, scroll, or input. A Run Details view persists only
+  its canonical Thread and Turn IDs, never a second transcript projection.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
 
@@ -278,11 +295,10 @@ shared renderer expansion set; it does not live in the pane layout record.
 
 ### Extensibility seam (preview, etc.)
 
-`WorkspacePanelState` is an **extensible discriminated union** (`type`
-discriminant over a shared `WorkspacePanelBase`). The reusable document-content
+`WorkspacePanelState` uses a shared `WorkspacePanelBase`. The document-content
 host is `type: 'workspace'`; its `view` decides whether `WorkspaceCanvas` renders
-the outliner or the file preview. New non-document chrome panels, such as
-`agent-debug`, are still added as union members.
+the outliner or file preview. Agent details remain in the dock rather than adding
+a parallel canvas-panel kind.
 
 Per-pane history is a **view-state stack** (`backStack: PanelView[]`,
 `forwardStack: PanelView[]`). Opening a node in the current pane pushes the
@@ -378,8 +394,16 @@ resolve it through the preload preview API:
 
 Source authority stays source-specific:
 
-- `local-file` targets are validated in main through the local-file reference
-  policy before reads or external open.
+- Ordinary `local-file` targets are validated in main through the local-file
+  reference policy before reads or external open. A transcript attachment adds
+  the owning `threadId` and `attachmentId` as a pair. Main resolves that identity
+  from canonical history and authorizes only its recorded canonical file (or an
+  in-root descendant for a directory); a filename hint is accepted only while
+  resolving the exact managed attachment. Managed payloads are copied to
+  disposable Agent scratch before Preview, Open, or Reveal; their private
+  content-addressed paths never leave the storage layer. Exact-file stream tokens
+  retain that constraint and never promote the parent directory to a trusted
+  root. Symlink replacement, mismatched IDs, and path substitution fail closed.
 - `asset` targets resolve by `assetId` inside the asset jail. Image and media
   rendering may use the existing no-CORS `asset://` URL. Fetch-based EPUB
   loading instead receives an opaque `preview-local://` UUID backed by the
@@ -389,12 +413,8 @@ Source authority stays source-specific:
   when the view is bound to a file node via `nodeId`; a persisted `file-preview`
   view whose target is an `asset` but has no `nodeId` is dropped on restore
   (pre-launch — no migration).
-- `agent-payload` targets resolve only through the active replay state for the
-  referenced conversation and payload id. Normal conversation payloads can be
-  previewed; debug-only payloads are not exposed through the normal preview
-  router. Renderer code never receives a payload file path.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
-  outliner and agent transcript route into a Tenon split preview pane by default.
+  outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
   renders the webpage through a dedicated sandboxed Electron webview that allows
   only `http(s)` navigation, strips preload/Node privileges at attach time,
@@ -792,12 +812,14 @@ rail.
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds
 that can be copied into the asset store: `local-file` (full-file ingest, gated to
-the agent's trusted roots) and `agent-payload` (bounded byte read — it errors
-rather than truncating past the cap, so an oversized payload reports not-added
-instead of committing a partial file). `url` is not yet ingestable. Anything the
-preview can resolve, it can ingest — the same security boundary backs both, so
-no new command-surface or main-process gate is introduced. The renderer copies
-the bytes into the asset store and creates an `image`/`attachment` node under
+the agent's trusted roots) and `agent-payload` (a typed, admission-bounded Thread
+resource). `url` is not yet ingestable. Anything the preview can resolve, it can
+ingest through the same authorization boundary. For a typed Thread resource, the
+renderer sends only `(threadId, resourceRef)` through the dedicated asset command;
+main reauthorizes the reference against the Thread Item graph and buffer-ingests the
+verified managed bytes without accepting or returning a path. The 20 MiB read cap
+fails closed rather than committing a partial file. The renderer receives the
+committed asset metadata and creates an `image`/`attachment` node under
 Today, then binds the same mounted `file-preview` view to the new node id; from
 then on the source is an ingested node with outliner ancestry and a children
 outline. The preview pane reaches App's document state through a single-handler
@@ -820,15 +842,15 @@ panels[2] -> next pane
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.
 
-Operations that act on "the active pane's outliner" — page-history Back/Forward
-(`Cmd+[` / `Cmd+]`) and "open the active root in a pane" (`Cmd+M`) — key off the
-active pane *only when it is an outliner*. When a debug pane is active they no-op
-rather than reaching across to another pane. Untargeted navigation
+Page-history Back/Forward (`Cmd+[` / `Cmd+]`) follows the active workspace pane's
+view history, including Run Details and file previews. "Open the active root in
+a pane" (`Cmd+M`) requires the active view to be an outliner; while another view
+is active it no-ops rather than reaching across to another pane. Untargeted navigation
 (`navigateRoot` — sidebar plain click, command palette, "go to root") targets the
 active outliner pane if there is one, else an existing outliner pane, else opens
 one; it never replaces the whole canvas. Ambient UI that merely needs "the
 outliner the user is looking at" (sidebar root highlight, drag-selection scope)
-falls back to the first outliner pane when a debug pane holds the active slot.
+falls back to the first outliner pane when Run Details holds the active slot.
 
 ## Tiled Layout
 
@@ -862,18 +884,9 @@ Rules:
   resulting pane count can fit after rail re-clamping. The hard cap remains
   `MAX_PERSISTED_PANELS` (4). At the count cap, or when a root/file-preview split
   cannot fit at the current width, opening repurposes an existing workspace pane
-  (rightmost first) rather than adding another pane. Agent-debug panes are added
-  only when the resulting count fits; a too-narrow window reports the capacity
-  failure and does not drop an existing workspace pane just to show debug chrome.
-- Opening run details from an assistant reply opens an agent-debug pane keyed by
-  that concrete `(conversationId, runId)`. If that same run pane already exists it
-  is activated; a different reply/run is a different details target. The agent
-  dock does not expose a standalone debug button; details are opened from a
-  concrete assistant reply. The agent-debug pane uses the same sticky breadcrumb /
-  close chrome as node and file panes so pane headers align across the workspace.
+  (rightmost first) rather than adding another pane.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
-  nearest remaining pane, and clears when that pane is an agent-debug pane (which
-  carries no node to focus).
+  nearest remaining pane.
 
 Avoid making every pane independent `position:absolute` — the product does not do
 freeform window management.
@@ -1020,7 +1033,7 @@ interface SidebarState {
 interface AgentPanelState {
   widthPx: number;
   collapsed: boolean;
-  activeConversationId: string | null;
+  selectedThreadId: string | null;
 }
 ```
 

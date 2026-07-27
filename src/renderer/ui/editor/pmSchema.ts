@@ -1,6 +1,5 @@
 import { Schema } from 'prosemirror-model';
 import { basenameForPath } from '../../../core/referenceMarkup';
-import { inlineChatSourceDomChildren } from './inlineChatSourceIcon';
 import { inlineFileIconKind, inlineFileMentionDomChildren } from './inlineFileIcon';
 import { inlineFilePreviewAttrs } from './inlineFilePreviewData';
 
@@ -24,13 +23,6 @@ export const pmSchema = new Schema({
         targetNodeId: { default: '' },
         targetPath: { default: '' },
         entryKind: { default: 'file' },
-        chatStream: { default: '' },
-        chatStreamId: { default: '' },
-        chatFromSeqExclusive: { default: null },
-        chatThroughSeq: { default: null },
-        chatThroughEventId: { default: '' },
-        chatFromCreatedAtInclusive: { default: null },
-        chatThroughCreatedAtExclusive: { default: null },
         displayName: { default: '' },
         mimeType: { default: '' },
         sizeBytes: { default: null },
@@ -45,13 +37,6 @@ export const pmSchema = new Schema({
             targetNodeId: element.dataset.inlineRef ?? '',
             targetPath: element.dataset.inlineRefPath ?? '',
             entryKind: element.dataset.inlineRefEntryKind ?? 'file',
-            chatStream: element.dataset.inlineRefChatStream ?? '',
-            chatStreamId: element.dataset.inlineRefChatStreamId ?? '',
-            chatFromSeqExclusive: Number(element.dataset.inlineRefChatFromSeqExclusive ?? Number.NaN),
-            chatThroughSeq: Number(element.dataset.inlineRefChatThroughSeq ?? Number.NaN),
-            chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
-            chatFromCreatedAtInclusive: Number(element.dataset.inlineRefChatFromCreatedAtInclusive ?? Number.NaN),
-            chatThroughCreatedAtExclusive: Number(element.dataset.inlineRefChatThroughCreatedAtExclusive ?? Number.NaN),
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
             mimeType: element.dataset.inlineRefMimeType ?? '',
             sizeBytes: Number(element.dataset.inlineRefSizeBytes ?? Number.NaN),
@@ -64,27 +49,13 @@ export const pmSchema = new Schema({
         const targetPath = String(node.attrs.targetPath ?? '');
         const fallbackName = targetKind === 'local-file'
           ? basenameForPath(targetPath) || 'Referenced file'
-          : targetKind === 'chat-source' ? 'Referenced chat' : 'Referenced node';
+          : 'Referenced node';
         const attrs: Record<string, string> = {
           class: 'inline-ref',
           'data-inline-ref-kind': targetKind,
           contenteditable: 'false',
         };
         if (targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
-        if (targetKind === 'chat-source') {
-          attrs['data-inline-ref-chat-stream'] = String(node.attrs.chatStream ?? '');
-          attrs['data-inline-ref-chat-stream-id'] = String(node.attrs.chatStreamId ?? '');
-          attrs['data-inline-ref-chat-from-seq-exclusive'] = String(node.attrs.chatFromSeqExclusive ?? '');
-          attrs['data-inline-ref-chat-through-seq'] = String(node.attrs.chatThroughSeq ?? '');
-          const eventId = String(node.attrs.chatThroughEventId ?? '');
-          if (eventId) attrs['data-inline-ref-chat-through-event-id'] = eventId;
-          if (Number.isSafeInteger(node.attrs.chatFromCreatedAtInclusive)) {
-            attrs['data-inline-ref-chat-from-created-at-inclusive'] = String(node.attrs.chatFromCreatedAtInclusive);
-          }
-          if (Number.isSafeInteger(node.attrs.chatThroughCreatedAtExclusive)) {
-            attrs['data-inline-ref-chat-through-created-at-exclusive'] = String(node.attrs.chatThroughCreatedAtExclusive);
-          }
-        }
         if (targetKind === 'local-file') {
           Object.assign(attrs, inlineFilePreviewAttrs({
             entryKind: node.attrs.entryKind === 'directory' ? 'directory' : 'file',
@@ -105,9 +76,6 @@ export const pmSchema = new Schema({
             name: displayName || basenameForPath(targetPath),
           });
           return ['span', attrs, ...inlineFileMentionDomChildren(iconKind, label)];
-        }
-        if (targetKind === 'chat-source') {
-          return ['span', attrs, ...inlineChatSourceDomChildren(label)];
         }
         return ['span', attrs, label];
       },

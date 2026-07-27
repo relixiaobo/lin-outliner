@@ -89,48 +89,15 @@ export const DOCUMENT_COMMANDS = [
   'redo',
 ] as const;
 
+// Trusted main-process services use this separate surface inside a
+// DocumentService transaction. These commands never enter LinCommand or public
+// renderer/model dispatch.
+export const HOST_DOCUMENT_COMMANDS = [
+  'put_document_system_receipt',
+  'ensure_document_system_tag_definition',
+] as const;
+
 export const AGENT_COMMANDS = [
-  'agent_restore_latest_conversation',
-  'agent_restore_conversation',
-  'agent_create_conversation',
-  'agent_list_conversations',
-  'agent_rename_conversation',
-  'agent_set_conversation_include_in_dream_data',
-  'agent_delete_conversation',
-  'agent_list_runs',
-  'agent_issue_search',
-  'agent_issue_read',
-  'agent_issue_complete_human_review',
-  'agent_session_read',
-  'agent_session_transcript',
-  'agent_list_dream_history',
-  'agent_dream_readiness',
-  'agent_run_dream_now',
-  'agent_debug_view',
-  'agent_debug_run',
-  'agent_payload_text',
-  'agent_run_detail',
-  'agent_run_transcript',
-  'agent_run_conversation_id',
-  'agent_run_status',
-  'agent_run_steer',
-  'agent_run_amend',
-  'agent_run_stop',
-  'agent_send_message',
-  'agent_edit_message',
-  'agent_regenerate_message',
-  'agent_retry_message',
-  'agent_switch_branch',
-  'agent_queue_follow_up',
-  'agent_clear_follow_up',
-  'agent_steer_conversation',
-  'agent_clear_steer',
-  'agent_resolve_user_question',
-  'agent_stop_run',
-  'agent_stop_conversation',
-  'agent_reset_conversation',
-  'agent_close_conversation',
-  'agent_list_slash_commands',
   'agent_get_provider_settings',
   'agent_refresh_provider_models',
   'agent_update_runtime_settings',
@@ -148,7 +115,6 @@ export const AGENT_COMMANDS = [
   'agent_oauth_logout',
   'agent_oauth_respond',
   'agent_oauth_cancel',
-  'agent_list_all_definitions',
   'agent_test_provider_connection',
   'agent_list_all_skills',
   'agent_accept_skill',
@@ -164,13 +130,12 @@ export const AGENT_COMMANDS = [
   'agent_managed_skill_set_enabled',
   'agent_managed_skill_rollback',
   'agent_managed_skill_uninstall',
-  'agent_update_agent_definition',
-  'agent_reload_agent_definitions',
 ] as const;
 
 export const ASSET_COMMANDS = [
   'ingest_asset',
   'ingest_local_file',
+  'ingest_thread_resource',
   'lookup_asset',
   'delete_asset',
   'pick_image_files',
@@ -189,18 +154,24 @@ export const PREVIEW_COMMANDS = [
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];
+export type HostDocumentCommand = typeof HOST_DOCUMENT_COMMANDS[number];
 export type AgentCommand = typeof AGENT_COMMANDS[number];
 export type AssetCommand = typeof ASSET_COMMANDS[number];
 export type PreviewCommand = typeof PREVIEW_COMMANDS[number];
 export type LinCommand = DocumentCommand | AgentCommand | AssetCommand | PreviewCommand;
 
 const documentCommands = new Set<string>(DOCUMENT_COMMANDS);
+const hostDocumentCommands = new Set<string>(HOST_DOCUMENT_COMMANDS);
 const agentCommands = new Set<string>(AGENT_COMMANDS);
 const assetCommands = new Set<string>(ASSET_COMMANDS);
 const previewCommands = new Set<string>(PREVIEW_COMMANDS);
 
 export function isDocumentCommand(command: string): command is DocumentCommand {
   return documentCommands.has(command);
+}
+
+export function isHostDocumentCommand(command: string): command is HostDocumentCommand {
+  return hostDocumentCommands.has(command);
 }
 
 export function isAgentCommand(command: string): command is AgentCommand {

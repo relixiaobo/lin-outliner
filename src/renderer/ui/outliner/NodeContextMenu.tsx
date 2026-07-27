@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import { requestSendNodeReferenceToComposer } from '../../agent/agentReveal';
+import { requestSendNodeReferenceToThreadComposer } from '../../agent/agentReveal';
 import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
 import {
@@ -335,7 +335,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     <>
       {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
       {item(pinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, () => props.onTogglePin(props.openId))}
-      {item(tc.sendToComposer, <AgentIcon size={ICON_SIZE.menu} />, () => requestSendNodeReferenceToComposer({
+      {item(tc.sendToComposer, <AgentIcon size={ICON_SIZE.menu} />, () => requestSendNodeReferenceToThreadComposer({
         nodeId: props.targetId,
         title: textOf(target, t.common.untitled),
       }))}

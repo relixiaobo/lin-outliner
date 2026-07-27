@@ -7,7 +7,7 @@ export type ErrorSeverity = 'warn' | 'error' | 'fatal';
 export type ErrorDomain =
   | 'agent-tool'
   | 'command'
-  | 'dream'
+  | 'memory'
   | 'persistence'
   | 'provider'
   | 'render'

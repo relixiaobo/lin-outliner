@@ -754,15 +754,14 @@ cleared). It is IME-guarded (`isImeComposingEvent`) so CJK composition
 keystrokes are never hijacked, and it makes the surface programmatically focusable
 (`tabindex=-1`) without per-call wiring. The roving index math is one pure
 `resolveMenuNavigation(key, index, count)` reused by the menu kind, the
-`RadioOptionGroup`, and the child-run tablist (which maps Left/Right onto it).
+`RadioOptionGroup`, and any horizontal tablist (which maps Left/Right onto it).
 Escape ownership moves to this hook, so
 `useDismissibleOverlay` is invoked pointer-only (`{ escape: false }`) where the
 two compose. Adopted by: `NodeContextMenu` (menu in `main` mode, dialog in
-tag/move submodes), `SettingsRowMenu`, the agent conversation row menu and the
-agent history/session menu (which previously had **no** Escape), the view-toolbar
-section popovers, and the date-value picker. The two `⋯`-style row menus (settings
-row, conversation row) share one `primitives/AnchoredActionMenu` that bundles the
-anchored positioning, the hook, and trigger-aware outside-pointer dismissal.
+tag/move submodes), `SettingsRowMenu`, Thread row actions, view-toolbar section
+popovers, and the date-value picker. Compact `⋯` row menus share
+`primitives/AnchoredActionMenu`, which bundles anchored positioning, the hook,
+and trigger-aware outside-pointer dismissal.
 Surfaces already on `Dialog` (Command Palette, Confirm, Launcher) are unchanged.
 
 **Outliner tree** (`PanelChildrenOutline`, `OutlinerRowShell`). The outline

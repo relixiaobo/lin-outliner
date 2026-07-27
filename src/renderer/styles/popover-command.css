@@ -1,3 +1,12 @@
+.anchored-overlay-surface {
+  z-index: var(--z-popover);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+}
+
 .trigger-popover {
   position: absolute;
   z-index: var(--z-popover);
@@ -122,24 +131,6 @@
   display: flex;
   flex-direction: column;
   line-height: var(--line-ui-xs-relaxed);
-}
-
-.agent-composer-file-name-middle {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-}
-
-.agent-composer-file-name-start {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-composer-file-name-end {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .popover-item-meta {

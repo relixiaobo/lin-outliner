@@ -1796,14 +1796,12 @@ export function sourceMeta(source: PreviewSourceDescriptor, labels: FilePreviewL
 
 function sourceKindLabel(kind: PreviewFileSource['sourceKind'], labels: FilePreviewLabels): string {
   if (kind === 'local-file') return labels.sourceLocalFile;
-  if (kind === 'asset') return labels.sourceAsset;
-  return labels.sourceAgentPayload;
+  return labels.sourceAsset;
 }
 
 export function targetTitleFallback(target: PreviewTarget): string {
   if (target.kind === 'local-file') return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
   if (target.kind === 'asset') return target.assetId;
-  if (target.kind === 'agent-payload') return target.payloadId;
   return target.url;
 }
 
@@ -1953,7 +1951,12 @@ export async function openPreviewSource(source: PreviewSourceDescriptor): Promis
     return;
   }
   if (source.sourceKind === 'local-file' && source.target.kind === 'local-file') {
-    await window.lin?.openLocalFile?.({ path: source.target.path });
+    await window.lin?.openLocalFile?.({
+      path: source.target.path,
+      ...(source.target.threadId && source.target.attachmentId
+        ? { threadId: source.target.threadId, attachmentId: source.target.attachmentId }
+        : {}),
+    });
   }
 }
 
@@ -1969,6 +1972,11 @@ export async function revealPreviewSource(source: PreviewSourceDescriptor): Prom
     return;
   }
   if (source.sourceKind === 'local-file' && source.target.kind === 'local-file') {
-    await window.lin?.revealLocalFile?.({ path: source.target.path });
+    await window.lin?.revealLocalFile?.({
+      path: source.target.path,
+      ...(source.target.threadId && source.target.attachmentId
+        ? { threadId: source.target.threadId, attachmentId: source.target.attachmentId }
+        : {}),
+    });
   }
 }

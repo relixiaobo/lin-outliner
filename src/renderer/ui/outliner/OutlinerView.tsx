@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
@@ -63,6 +63,7 @@ function countRenderableChildRows(rows: readonly OutlinerRowItem[]): number {
 export function OutlinerView(props: OutlinerViewProps) {
   const parent = props.index.byId.get(props.parentId);
   const [searchRefreshing, setSearchRefreshing] = useState(false);
+  const searchRefreshInFlightRef = useRef(false);
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const view = readViewConfig(parent, props.index.byId);
   const tableMode = view.viewMode === 'table' && !props.fieldValue;
@@ -107,15 +108,14 @@ export function OutlinerView(props: OutlinerViewProps) {
       setSearchRefreshing(false);
       return undefined;
     }
-    let active = true;
+    if (searchRefreshInFlightRef.current) return undefined;
+    searchRefreshInFlightRef.current = true;
     setSearchRefreshing(true);
     void props.run(() => api.refreshSearchNodeResults(props.parentId), { applyFocus: false })
       .finally(() => {
-        if (active) setSearchRefreshing(false);
+        searchRefreshInFlightRef.current = false;
+        setSearchRefreshing(false);
       });
-    return () => {
-      active = false;
-    };
   }, [parent?.type, props.index.projection, props.parentId, props.run, tableMode]);
 
   if (tableMode) {

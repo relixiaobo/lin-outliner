@@ -78,7 +78,7 @@ const {
   refreshProviderModels,
   testProviderConnection,
   upsertProviderConfig,
-} = await import('../../src/main/agentSettings');
+} = await import('../../src/main/agent/capabilities/agentSettings');
 
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
 

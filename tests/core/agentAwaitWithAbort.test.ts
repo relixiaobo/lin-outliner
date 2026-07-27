@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { awaitWithAbort, AwaitTimeoutError } from '../../src/main/agentAwaitWithAbort';
+import { awaitWithAbort, AwaitTimeoutError } from '../../src/main/agent/capabilities/agentAwaitWithAbort';
 
 describe('awaitWithAbort', () => {
   test('returns the original promise result', async () => {

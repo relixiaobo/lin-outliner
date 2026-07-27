@@ -13,9 +13,7 @@
 /* The native provider-config window's content surface: opaque, filling the frame
    (no backdrop — the OS dims the parent; no traffic lights — closed via its own
    Cancel / Save). Reuses the sheet head / body / actions layout below. */
-.provider-config-window,
-.agent-config-window,
-.channel-config-window {
+.provider-config-window {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -24,41 +22,6 @@
   overflow: hidden;
   background: var(--bg-content);
   padding: var(--space-6);
-}
-
-.agent-config-window {
-  overflow-y: auto;
-  padding-bottom: calc(var(--space-6) + 52px);
-}
-
-.channel-config-window {
-  overflow: hidden;
-  padding-bottom: calc(var(--space-6) + 52px);
-}
-
-.channel-config-form {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.channel-config-window .settings-sheet-body {
-  padding-bottom: 52px;
-}
-
-.agent-config-window .agent-editor-actions,
-.channel-config-window .settings-sheet-actions {
-  position: fixed;
-  right: var(--space-6);
-  bottom: var(--space-6);
-  left: var(--space-6);
-  z-index: var(--z-popover);
-  margin-top: 0;
-  border-radius: var(--radius-md);
-  background: var(--bg-content);
-  box-shadow: var(--overlay-shadow-level-1);
-  padding: var(--space-4);
 }
 
 .settings-sheet-icon-avatar {

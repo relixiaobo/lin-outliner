@@ -183,9 +183,8 @@ Expected checks for design-system changes:
   tag-context, field-reuse, field-value-popovers including selected values,
   floating-tool, panel-date-navigation, view-configuration and toolbar tooltip,
   schema-definition, code-block, inline-file preview/context, confirm-dialog,
-  error-state, file-preview row/header menus, document-outline, agent-composer
-  menus/submenus, dream-manual, agent-message-details, agent/debug usage
-  tooltips, agent-process, and run-detail surfaces staying bounded and
+  error-state, file-preview row/header menus, document-outline, Thread actions,
+  structured input, Item details, and execution surfaces staying bounded and
   OS-theme-native in light and dark.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline, the no renderer
   `[data-theme]` bridge rule, the registered dark-media rule allowlist, the
@@ -205,8 +204,9 @@ Expected checks for design-system changes:
   shared `--material-backdrop` filter, scoped to registered chrome / overlay
   surfaces, and routed through the shared accessibility fallback path; backdrop
   filters stay scoped to those material surfaces plus the
-  registered preview-HUD exception, while preview HUD actions use
-  `--preview-action-shadow` and rail chrome uses the shared
+  registered preview-action-HUD exception; arbitrary-pixel HUD consumers use the
+  shared `--media-hud-*` contrast family, compact consumers remain blur-free,
+  preview actions use `--preview-action-shadow`, and rail chrome uses the shared
   `--rail-surface-shadow`. It also keeps level-2 focused overlays on the opaque
   elevated tier, not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,

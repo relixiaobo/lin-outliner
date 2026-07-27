@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
 import {
-  formatChatSourceReferenceMarker,
   formatFileReferenceMarker,
   formatLocalFileReferenceUrl,
   formatNodeReferenceIdMarker,
@@ -13,12 +13,34 @@ import {
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
-  splitChatSourceReferenceMarkers,
   splitFileReferenceMarkers,
   splitNodeReferenceMarkers,
 } from '../../src/core/referenceMarkup';
 
 describe('reference markup', () => {
+  test('finds only node references rendered as Markdown affordances', () => {
+    const markdown = [
+      'Visible [[node:^visible-node]] and **[[node:^bold-node]]**.',
+      'Escaped opening bracket: \\[[node:^escaped-node]]',
+      'Entity opening bracket: &#91;[node:^entity-node]]',
+      '`[[node:^inline-code-node]]`',
+      '```text',
+      '[[node:^fenced-code-node]]',
+      '```',
+      '[Existing link](https://example.test/[[node:^link-url-node]] "[[node:^link-title-node]]")',
+      '[Existing [[node:^link-label-node]]][reference-link]',
+      '![Image [[node:^image-alt-node]]](https://example.test/image.png "[[node:^image-title-node]]")',
+      '[reference-link]: https://example.test/[[node:^reference-url-node]]',
+    ].join('\n\n');
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([
+      'visible-node',
+      'bold-node',
+      'escaped-node',
+      'entity-node',
+    ]);
+  });
+
   test('formats prefixed node reference markers', () => {
     expect(formatNodeReferenceMarker('Alpha', 'node-alpha')).toBe('[[node:Alpha^node-alpha]]');
     expect(formatNodeReferenceMarker('Alpha\nBeta^Gamma', 'node-alpha')).toBe('[[node:Alpha Beta Gamma^node-alpha]]');
@@ -141,118 +163,6 @@ describe('reference markup', () => {
     }]);
   });
 
-  test('formats and parses chat source reference markers', () => {
-    const target = {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'lin-agent:1@branch',
-      range: {
-        fromSeqExclusive: 12,
-        throughSeq: 18,
-        throughEventId: 'event:18@tail',
-      },
-    } as const;
-    const marker = formatChatSourceReferenceMarker('source chat', target);
-
-    expect(marker).toBe('[[chat:source chat^conversation:lin-agent%3A1%40branch@12-18:event%3A18%40tail]]');
-    expect(parseReferenceMarkers(`See ${marker}`)).toEqual([{
-      end: 84,
-      label: 'source chat',
-      raw: marker,
-      start: 4,
-      target,
-    }]);
-    expect(splitChatSourceReferenceMarkers(`See ${marker} now`)).toEqual([
-      { type: 'text', text: 'See ' },
-      { type: 'chat', raw: marker, ref: 'source chat', label: 'source chat', target },
-      { type: 'text', text: ' now' },
-    ]);
-  });
-
-  test('formats and parses date-clamped chat source reference markers', () => {
-    const target = {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'lin-agent-1',
-      range: {
-        fromSeqExclusive: 12,
-        throughSeq: 18,
-        throughEventId: 'event-18',
-        fromCreatedAtInclusive: 1_800_000_000_000,
-        throughCreatedAtExclusive: 1_800_086_400_000,
-      },
-    } as const;
-    const marker = formatChatSourceReferenceMarker('source chat', target);
-
-    expect(marker).toBe('[[chat:source chat^conversation:lin-agent-1@12-18:event-18~1800000000000-1800086400000]]');
-    expect(parseReferenceMarkers(marker)).toEqual([{
-      end: marker.length,
-      label: 'source chat',
-      raw: marker,
-      start: 0,
-      target,
-    }]);
-  });
-
-  test('keeps legacy chat event ids that contain a tilde', () => {
-    const marker = '[[chat:source chat^conversation:lin-agent-1@12-18:event~18]]';
-
-    expect(parseReferenceMarkers(marker)).toEqual([{
-      end: marker.length,
-      label: 'source chat',
-      raw: marker,
-      start: 0,
-      target: {
-        kind: 'chat-source',
-        stream: 'conversation',
-        streamId: 'lin-agent-1',
-        range: {
-          fromSeqExclusive: 12,
-          throughSeq: 18,
-          throughEventId: 'event~18',
-        },
-      },
-    }]);
-  });
-
-  test('encodes chat event id tildes so created-at clamps stay unambiguous', () => {
-    const target = {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'lin-agent-1',
-      range: {
-        fromSeqExclusive: 12,
-        throughSeq: 18,
-        throughEventId: 'event~18-19',
-      },
-    } as const;
-    const marker = formatChatSourceReferenceMarker('source chat', target);
-
-    expect(marker).toBe('[[chat:source chat^conversation:lin-agent-1@12-18:event%7E18-19]]');
-    expect(parseReferenceMarkers(marker)[0]?.target).toEqual(target);
-  });
-
-  test('does not treat a legacy chat event id suffix as a created-at clamp', () => {
-    const marker = '[[chat:source chat^conversation:lin-agent-1@12-18:event~18-19]]';
-
-    expect(parseReferenceMarkers(marker)).toEqual([{
-      end: marker.length,
-      label: 'source chat',
-      raw: marker,
-      start: 0,
-      target: {
-        kind: 'chat-source',
-        stream: 'conversation',
-        streamId: 'lin-agent-1',
-        range: {
-          fromSeqExclusive: 12,
-          throughSeq: 18,
-          throughEventId: 'event~18-19',
-        },
-      },
-    }]);
-  });
-
   test('does not parse labels containing raw square brackets', () => {
     const text = 'Keep [[node:[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);
@@ -275,14 +185,8 @@ describe('reference markup', () => {
   });
 
   test('serializes rich text inline refs as reference markers', () => {
-    const chatSource = {
-      kind: 'chat-source' as const,
-      stream: 'conversation' as const,
-      streamId: 'lin-agent-1',
-      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
-    };
     expect(richTextToReferenceMarkup({
-      text: 'Review  then  .',
+      text: 'Review  then .',
       inlineRefs: [{
         offset: 7,
         target: { kind: 'local-file', path: '/Users/me/report.pdf', entryKind: 'file' },
@@ -293,27 +197,16 @@ describe('reference markup', () => {
         offset: 13,
         target: { kind: 'node', nodeId: 'node-alpha' },
         displayName: 'Alpha',
-      }, {
-        offset: 14,
-        target: chatSource,
-        displayName: 'source',
       }],
     })).toBe(
-      `Review ${formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf')} then [[node:Alpha^node-alpha]] ${formatChatSourceReferenceMarker('source', chatSource)}.`,
+      `Review ${formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf')} then [[node:Alpha^node-alpha]].`,
     );
   });
 
   test('deserializes reference markup into rich text inline refs', () => {
     const fileMarker = formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf');
-    const chatSource = {
-      kind: 'chat-source',
-      stream: 'run',
-      streamId: 'run-1',
-      range: { fromSeqExclusive: 3, throughSeq: 5 },
-    } as const;
-    const chatMarker = formatChatSourceReferenceMarker('run source', chatSource);
 
-    expect(referenceMarkupToRichText(`Read ${fileMarker} and ${chatMarker}.`)).toEqual({
+    expect(referenceMarkupToRichText(`Read ${fileMarker} and [[node:Alpha^node-alpha]].`)).toEqual({
       text: 'Read  and .',
       marks: [],
       inlineRefs: [{
@@ -322,8 +215,8 @@ describe('reference markup', () => {
         displayName: 'report.pdf',
       }, {
         offset: 10,
-        target: chatSource,
-        displayName: 'run source',
+        target: { kind: 'node', nodeId: 'node-alpha' },
+        displayName: 'Alpha',
       }],
     });
   });

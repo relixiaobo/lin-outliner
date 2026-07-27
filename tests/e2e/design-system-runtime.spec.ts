@@ -1,17 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import {
   e2eProjection,
-  emitAgentProjection,
   installElectronMock,
   ids,
   multiSelect,
   nodeById,
-  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowBody,
   rowEditor,
-  setAgentMessageContextMenuAction,
   trailingEditor,
 } from './outlinerMock';
 
@@ -38,21 +34,6 @@ interface SurfaceCase {
   beforeInstall?: (page: Page) => Promise<void>;
   beforeProbe?: (page: Page) => Promise<void>;
 }
-
-const usage = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
@@ -249,94 +230,6 @@ async function showSelectedFieldOptionsPopover(page: Page) {
   await expect(listbox.getByRole('option', { name: 'Low' })).toHaveAttribute('aria-selected', 'true');
 }
 
-async function installLocalFileMentionFixture(page: Page) {
-  await page.evaluate(() => {
-    const win = window as typeof window & {
-      lin?: {
-        prepareLocalFile?: (options: { id: string }) => Promise<{
-          file: {
-            entryKind?: 'file' | 'directory';
-            path: string;
-            name: string;
-            mimeType: string;
-            sizeBytes: number;
-            lastModified: number;
-          } | null;
-        }>;
-        searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
-          files: Array<{
-            entryKind: 'file' | 'directory';
-            id: string;
-            path: string;
-            name: string;
-            parentPath: string;
-            mimeType: string;
-            sizeBytes: number;
-            lastModified: number;
-          }>;
-          query: string;
-        }>;
-      };
-    };
-    if (!win.lin) return;
-    win.lin.searchLocalFiles = async (options) => ({
-      files: options.query.toLowerCase().includes('report')
-        ? [{
-            entryKind: 'file',
-            id: 'local-file-report',
-            path: '/Users/test/Documents/Project Report.md',
-            name: 'Project Report.md',
-            parentPath: '/Users/test/Documents',
-            mimeType: 'text/markdown',
-            sizeBytes: 2048,
-            lastModified: 1_800_000_000_000,
-          }]
-        : [],
-      query: options.query,
-    });
-    win.lin.prepareLocalFile = async (options) => ({
-      file: options.id === 'local-file-report'
-        ? {
-            entryKind: 'file',
-            path: '/Users/test/Documents/Project Report.md',
-            name: 'Project Report.md',
-            mimeType: 'text/markdown',
-            sizeBytes: 2048,
-            lastModified: 1_800_000_000_000,
-          }
-        : null,
-    });
-  });
-}
-
-async function insertInlineFileMention(page: Page) {
-  await installLocalFileMentionFixture(page);
-  const input = page.getByLabel('Agent message');
-  await input.click();
-  await page.keyboard.type('@report');
-  const option = page.getByRole('listbox', { name: 'Agent mention suggestions' })
-    .getByRole('option', { name: /Project Report\.md/ });
-  await option.click();
-  const inlineFile = page.locator('[data-agent-file-ref]', { hasText: 'Project Report.md' });
-  await inlineFile.waitFor({ state: 'visible' });
-  return inlineFile;
-}
-
-async function showInlineFileContextMenu(page: Page) {
-  const inlineFile = await insertInlineFileMention(page);
-  await inlineFile.click({ button: 'right' });
-  const menu = page.getByRole('menu', { name: 'File actions' });
-  await menu.waitFor({ state: 'visible' });
-  await expect(menu.getByRole('menuitem', { name: 'Add to Today' })).toBeVisible();
-}
-
-async function showInlineFilePreviewPopover(page: Page) {
-  const inlineFile = await insertInlineFileMention(page);
-  await inlineFile.hover();
-  const preview = page.locator('[data-inline-file-preview]');
-  await preview.waitFor({ state: 'visible' });
-  await expect(preview).toContainText('Project Report.md');
-}
 
 async function showCodeBlockLanguageMenu(page: Page) {
   const beforeChildren = await todayChildren(page);
@@ -354,70 +247,6 @@ async function showCodeBlockLanguageMenu(page: Page) {
   await page.getByRole('menuitemradio', { name: 'Plain text', exact: true }).waitFor({ state: 'visible' });
 }
 
-async function showAgentChannelPicker(page: Page) {
-  await page.getByRole('button', { name: 'Show conversations' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Channels' });
-  await dialog.waitFor({ state: 'visible' });
-  await expect(dialog.getByRole('button', { name: /Neva/ })).toBeVisible();
-}
-
-async function showAgentChannelInlineRename(page: Page) {
-  await page.getByRole('button', { name: 'Show conversations' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Channels' });
-  await dialog.waitFor({ state: 'visible' });
-  const channelRow = dialog.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
-  await channelRow.hover();
-  await channelRow.getByRole('button', { name: 'Rename channel' }).click();
-  await expect(dialog.getByRole('textbox', { name: 'Rename channel' })).toBeFocused();
-}
-
-async function showAgentMentionSuggestions(page: Page) {
-  const input = page.getByLabel('Agent message');
-  await input.click();
-  await page.keyboard.type('@');
-  const listbox = page.getByRole('listbox', { name: 'Agent mention suggestions' });
-  await listbox.waitFor({ state: 'visible' });
-  await expect(listbox.locator('.agent-composer-mention-section').first()).toBeVisible();
-}
-
-async function showAgentModelMenu(page: Page) {
-  await page.getByRole('button', { name: 'Model and reasoning' }).click();
-  const menu = page.getByRole('menu', { name: 'Model and reasoning' });
-  await menu.waitFor({ state: 'visible' });
-  await expect(menu.getByRole('menuitem', { name: /Reasoning/ })).toBeVisible();
-}
-
-async function showAgentModelSubmenu(page: Page) {
-  await page.getByRole('button', { name: 'Model and reasoning' }).click();
-  const parentMenu = page.getByRole('menu', { name: 'Model and reasoning' });
-  await parentMenu.waitFor({ state: 'visible' });
-  await parentMenu.locator('.agent-composer-model-row').last().hover();
-  const modelMenu = page.getByRole('menu', { name: 'Model', exact: true });
-  await modelMenu.waitFor({ state: 'visible' });
-  await expect(modelMenu.getByRole('menuitemradio').first()).toBeVisible();
-}
-
-async function showAgentReasoningMenu(page: Page) {
-  await page.getByRole('button', { name: 'Model and reasoning' }).click();
-  const parentMenu = page.getByRole('menu', { name: 'Model and reasoning' });
-  await parentMenu.waitFor({ state: 'visible' });
-  await parentMenu.getByRole('menuitem', { name: /Reasoning/ }).hover();
-  const reasoningMenu = page.getByRole('menu', { name: 'Reasoning', exact: true });
-  await reasoningMenu.waitFor({ state: 'visible' });
-  await expect(reasoningMenu.getByRole('menuitemradio').first()).toBeVisible();
-}
-
-async function showDreamManualRunDialog(page: Page) {
-  await page.getByRole('button', { name: 'Show conversations' }).click();
-  const channels = page.getByRole('dialog', { name: 'Channels' });
-  await channels.locator('.agent-conversation-row', { hasText: 'Dream' }).getByRole('button', { name: /Dream/ }).click();
-  const launcher = page.locator('.dream-launcher');
-  await launcher.waitFor({ state: 'visible' });
-  await launcher.getByRole('button', { name: 'Manual run' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Run Dream manually' });
-  await dialog.waitFor({ state: 'visible' });
-  await expect(dialog.getByRole('button', { name: 'Run Dream' })).toBeVisible();
-}
 
 async function showRowContextMenu(page: Page) {
   await rowBody(page, ids.alpha).click({ button: 'right' });
@@ -494,6 +323,10 @@ async function createAttachmentRowPreview(page: Page) {
 }
 
 async function showComposerAttachmentError(page: Page) {
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' })
+    .getByRole('button', { name: 'New Thread' })
+    .click();
   await page.evaluate(() => {
     const win = window as typeof window & {
       lin?: {
@@ -623,181 +456,6 @@ async function createImagePreviewPage(page: Page) {
   await page.locator('.outline-panel-surface.active-panel .file-node-body').waitFor({ state: 'visible' });
 }
 
-async function showCompletedAgentProcess(page: Page) {
-  const assistant = {
-    role: 'assistant',
-    api: 'responses',
-    provider: 'openai',
-    model: 'gpt-5.4',
-    usage,
-    stopReason: 'stop',
-    timestamp: 1_800_000_000_100,
-    content: [
-      {
-        type: 'thinking',
-        thinking: [
-          'Identify relevant outline nodes and tag patterns.',
-          'Compare current Agent rules with the existing tag layout decision before answering.',
-        ].join('\n'),
-      },
-      {
-        type: 'toolCall',
-        id: 'tool-read',
-        name: 'node_read',
-        arguments: { node_id: 'node-alpha' },
-      },
-      {
-        type: 'text',
-        text: 'Current outline focuses on design-system inventory.',
-      },
-    ],
-  };
-
-  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-    conversationTitle: 'Agent System',
-    systemPrompt: '',
-    model: { id: 'gpt-5.4', provider: 'openai' },
-    thinkingLevel: 'medium',
-    messages: [
-      assistant,
-      {
-        role: 'toolResult',
-        toolCallId: 'tool-read',
-        toolName: 'node_read',
-        content: [{ type: 'text', text: 'Alpha node content' }],
-        isError: false,
-        timestamp: 1_800_000_000_101,
-      },
-    ],
-    conversation: [{
-      nodeId: 'assistant-node',
-      message: assistant,
-      branches: null,
-    }],
-    streamingMessage: null,
-    isStreaming: false,
-    pendingToolCallIds: [],
-    errorMessage: null,
-  });
-
-  const process = page.locator('.agent-process-block').first();
-  await process.locator('.agent-process-summary-row').waitFor({ state: 'visible' });
-  const reasoningToggle = process.locator('.agent-reasoning-toggle').first();
-  if (await reasoningToggle.count() > 0) await reasoningToggle.click();
-  const activityToggle = process.locator('.agent-tool-activity-toggle').first();
-  if (await activityToggle.count() > 0) await activityToggle.click();
-}
-
-async function showAgentMessageDetailsDialog(page: Page) {
-  const detailUsage = {
-    input: 1200,
-    output: 34,
-    cacheRead: 10,
-    cacheWrite: 0,
-    totalTokens: 1244,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
-
-  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-    conversationTitle: 'Planning Channel',
-    members: [
-      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-      {
-        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-        mention: 'assistant',
-        displayName: 'Neva',
-        coordinator: true,
-      },
-      {
-        principal: { type: 'agent', agentId: 'user:mock:self' },
-        mention: 'self',
-        displayName: 'self',
-      },
-    ],
-    model: { id: 'gpt-5.4', provider: 'openai' },
-    conversation: [{
-      nodeId: 'assistant-peer-design-details',
-      actor: { type: 'agent', agentId: 'user:mock:self' },
-      message: {
-        role: 'assistant',
-        timestamp: 1_800_000_000_100,
-        api: 'openai-completions',
-        provider: 'openai',
-        model: 'gpt-5.4',
-        usage: detailUsage,
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Self result for runtime design details.' }],
-      },
-    }],
-  });
-
-  const messageRow = page.locator('.agent-message-row.assistant', { hasText: 'Self result for runtime design details.' });
-  await messageRow.waitFor({ state: 'visible' });
-  await setAgentMessageContextMenuAction(page, 'details');
-  await messageRow.click({ button: 'right' });
-  const dialog = page.getByRole('dialog', { name: 'Details' });
-  await dialog.waitFor({ state: 'visible' });
-  await expect(dialog).toContainText('openai/gpt-5.4');
-}
-
-async function showAgentUsageTooltip(page: Page) {
-  const hoverUsage = {
-    input: 2400,
-    output: 120,
-    cacheRead: 300,
-    cacheWrite: 40,
-    totalTokens: 2860,
-    cost: {
-      input: 0.012,
-      output: 0.018,
-      cacheRead: 0.001,
-      cacheWrite: 0.002,
-      total: 0.033,
-    },
-  };
-
-  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-    conversationTitle: 'Planning Channel',
-    model: { id: 'gpt-5.4', provider: 'openai' },
-    conversation: [{
-      nodeId: 'assistant-usage-hover-design',
-      message: {
-        role: 'assistant',
-        timestamp: 1_800_000_000_100,
-        api: 'openai-completions',
-        provider: 'openai',
-        model: 'gpt-5.4',
-        usage: hoverUsage,
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Usage hover surface for runtime design.' }],
-      },
-    }],
-  });
-
-  const messageRow = page.locator('.agent-message-row.assistant', { hasText: 'Usage hover surface for runtime design.' });
-  await messageRow.hover();
-  const detailsButton = messageRow.getByRole('button', { name: 'Details' });
-  await detailsButton.hover();
-  const tooltip = page.locator('.agent-message-usage-hover-card');
-  await tooltip.waitFor({ state: 'visible' });
-  await expect(tooltip).toContainText('Cost');
-}
-
-async function showAgentDebugUsageTooltip(page: Page) {
-  await openMockRunDetailsFromAssistantDetailsButton(page);
-  const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
-  await debugPanel.waitFor({ state: 'visible' });
-  await debugPanel.getByRole('button', { name: 'Call details' }).hover();
-  const tooltip = debugPanel.getByRole('tooltip', { name: 'Call details' });
-  await tooltip.waitFor({ state: 'visible' });
-  await expect(tooltip).toContainText('Cost');
-}
 
 const surfaces: SurfaceCase[] = [
   {
@@ -814,12 +472,6 @@ const surfaces: SurfaceCase[] = [
     waitFor: `[data-node-id="${ids.alpha}"]`,
     options: { dateField: true },
     beforeProbe: showTableView,
-  },
-  {
-    name: 'main app no-provider onboarding',
-    path: '/',
-    waitFor: '.agent-empty-state',
-    options: { noProvider: true },
   },
   {
     name: 'global launcher renderer',
@@ -865,16 +517,7 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.settings-window .inset-row',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: /^Security/ }).click();
-      await page.getByRole('list', { name: 'Folder access' }).waitFor({ state: 'visible' });
-    },
-  },
-  {
-    name: 'settings memory',
-    path: '/?surface=settings',
-    waitFor: '.settings-window .inset-row',
-    beforeProbe: async (page) => {
-      await page.getByRole('button', { name: /^Memory/ }).click();
-      await page.getByRole('list', { name: 'Dream controls' }).waitFor({ state: 'visible' });
+      await page.getByRole('list', { name: 'System boundary' }).waitFor({ state: 'visible' });
     },
   },
   {
@@ -887,31 +530,12 @@ const surfaces: SurfaceCase[] = [
     },
   },
   {
-    name: 'settings agent profiles',
-    path: '/?surface=settings',
-    waitFor: '.settings-window .inset-row',
-    beforeProbe: async (page) => {
-      await page.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
-      await page.getByRole('list', { name: 'Agent profiles' }).waitFor({ state: 'visible' });
-    },
-  },
-  {
     name: 'provider config',
     path: '/?surface=provider-config&provider=anthropic&mode=configure',
     waitFor: '.provider-config-window',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: 'Save', exact: true }).waitFor({ state: 'visible' });
     },
-  },
-  {
-    name: 'agent config',
-    path: '/?surface=agent-config&agent=built-in%3Atenon%3Aassistant',
-    waitFor: '.agent-config-window .agent-editor-actions',
-  },
-  {
-    name: 'channel config',
-    path: '/?surface=channel-config&conversation=lin-agent-channel-planning&mode=configure',
-    waitFor: '.channel-config-window .settings-sheet-actions',
   },
   {
     name: 'command palette overlay',
@@ -921,48 +545,6 @@ const surfaces: SurfaceCase[] = [
       await page.keyboard.press('Meta+K');
       await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ state: 'visible' });
     },
-  },
-  {
-    name: 'agent channel picker',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentChannelPicker,
-  },
-  {
-    name: 'agent channel inline rename',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentChannelInlineRename,
-  },
-  {
-    name: 'agent mention suggestions',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentMentionSuggestions,
-  },
-  {
-    name: 'agent model menu',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentModelMenu,
-  },
-  {
-    name: 'agent model submenu',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentModelSubmenu,
-  },
-  {
-    name: 'agent reasoning menu',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentReasoningMenu,
-  },
-  {
-    name: 'dream manual run dialog',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showDreamManualRunDialog,
   },
   {
     name: 'search query builder',
@@ -1085,18 +667,6 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showSelectedFieldOptionsPopover,
   },
   {
-    name: 'inline file preview popover',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showInlineFilePreviewPopover,
-  },
-  {
-    name: 'inline file context menu',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showInlineFileContextMenu,
-  },
-  {
     name: 'code block language menu',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
@@ -1179,39 +749,6 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: createImagePreviewPage,
-  },
-  {
-    name: 'agent process details',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showCompletedAgentProcess,
-  },
-  {
-    name: 'agent message details dialog',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentMessageDetailsDialog,
-  },
-  {
-    name: 'agent usage tooltip',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentUsageTooltip,
-  },
-  {
-    name: 'agent debug usage tooltip',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentDebugUsageTooltip,
-  },
-  {
-    name: 'agent debug run details',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: async (page) => {
-      await openMockRunDetailsFromAssistantDetailsButton(page);
-      await page.locator('.outline-panel-surface.is-agent-debug').waitFor({ state: 'visible' });
-    },
   },
 ];
 

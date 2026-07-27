@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
-import type { WebSearchResult } from '../../src/main/agentWebTools';
+import type { WebSearchResult } from '../../src/main/agent/capabilities/agentWebTools';
 import {
   duckDuckGoSerpExtractorExpression,
   extractDuckDuckGoSerp,
@@ -8,7 +8,7 @@ import {
   googleSerpExtractorExpression,
   isTransientSearchError,
   shouldFallbackToSecondaryEngine,
-} from '../../src/main/agentWebSearchSerp';
+} from '../../src/main/agent/capabilities/agentWebSearchSerp';
 
 function runGoogleSerpExtractor(html: string): { htmlLength: number; results: WebSearchResult[] } {
   const { document } = parseHTML(html);

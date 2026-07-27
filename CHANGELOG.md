@@ -12,6 +12,157 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Canonical Agent context evidence contract (PR #440, codex-3)** — added the
+  shared interface for strict context evidence, reset, and compaction Items;
+  exact cursors and payload references; verified quota-bound Thread payload
+  storage; typed resource dependencies; and restart, rollback, and fork
+  reconciliation. Managed tool images retain preview and Add-to-outline support
+  without exposing canonical or scratch paths. This is PR 1 of the active
+  six-PR `agent-context-integrity` plan; composer, Skill, context-budget,
+  Subagent-inheritance, and provider/cache consumers remain follow-up units.
+  **Gate (main):** iterative review caught payload kind confusion, persisted
+  scratch observation paths, an attachment-sized allocation ceiling, cleanup
+  errors misreporting durable rollback, source-owned inherited images, and the
+  managed-image ingest regression; all were fixed before merge. Final head
+  `b810a00a` had no reportable findings; verification covered typecheck, full
+  `test:core` (1402 pass, 6 environment-dependent skips), full `test:renderer`
+  (767 pass), focused ownership/ingest tests (57 pass), Agent Thread E2E (43
+  pass), docs, and diff checks.
+- **Office ingestion and ordered inline attachments (PR #439, codex-3)** —
+  rejects Office ownership files before attachment or reading, adds a bounded
+  in-process PPTX structural-text reader with Strict OOXML support, and renders
+  files and image galleries at their canonical message positions without
+  losing filename markers. **Gate (main):** iterative review caught incomplete
+  PPTX package identity and exact relationship-type validation, split-text
+  editing that could destroy attachment order, and galleries that omitted
+  canonical image markers; all were fixed before merge. Final head `996f096a`
+  had no reportable findings; verification covered typecheck, full `test:core`
+  (1389 pass, 6 environment-dependent skips), full `test:renderer` (765 pass),
+  focused Core/renderer tests (15 pass), relevant Agent E2E (3 pass), docs, and
+  diff checks.
+- **Unified Agent execution interactions (PR #438, codex-4)** — made Plan
+  updates transient Turn-local progress, navigates Run Details in the current
+  workspace pane with Back history, and gives ordinary tools and Skills one
+  expandable argument/result disclosure with clickable local paths. **Gate
+  (main):** review caught non-outliner root navigation replacing the wrong pane
+  and an incomplete keyboard/scroll contract for long Plan checklists; both
+  were fixed before the final rebase over #437. Final head `0f95e430` had no
+  reportable findings; verification covered typecheck, full `test:core` (1373
+  pass, 6 environment-dependent skips), full `test:renderer` (764 pass),
+  relevant E2E (166 pass, with two unchanged guard failures reproduced on
+  pre-merge `main`), docs and diff checks, and light/dark visual verification.
+- **Large local resources (PR #437, codex-3)** — replaced the shared attachment
+  source-size ceiling with reference-based path-backed and managed resources,
+  chunked pathless uploads, bounded file and image observations, immutable image
+  prompt snapshots, exact attachment authorization, and independent managed
+  payload copies for Thread forks. **Gate (main):** review caught cleanup keys
+  coupled to mutable metadata, fork copies sharing writable inodes, and model or
+  Preview / Open / Reveal paths exposing canonical managed payloads; all three
+  were fixed before merge. Final head `964fe3b2` had no reportable findings;
+  verification across the final two heads covered typecheck, full `test:core`
+  (1372 pass, 6 environment-dependent skips), focused Core tests (91 pass),
+  full `test:renderer` (758 pass), Agent Thread E2E (40 pass), docs and diff
+  checks, and light/dark visual verification.
+- **Memory retrieval and inline Node citations (PR #436, codex-3)** — replaced
+  eager Memory briefing injection with relevance-driven `node_search` /
+  `node_read` routing and records usage only when a successfully read Memory Node
+  is cited through the rendered inline Node-reference affordance. Thread history
+  keeps the canonical tool process visible without a separate Memory disclosure.
+  **Gate (main):** iterative review caught Markdown literals being attributed as
+  citations, display/accounting parser drift for escapes and entities, and
+  reference-style links losing definitions across renderer blocks; all were
+  fixed before merge. Final head `3495305` passed the merged-main verification
+  listed with PR #435 below.
+- **Codex Automations (PR #435, codex-3)** — added host-owned durable scheduled
+  Agent work with strict protocol and IPC boundaries, SQLite-backed RRULE/IANA
+  scheduling, catch-up and overlap handling, canonical Thread/Turn execution,
+  crash recovery, local-project and managed-worktree modes, structured schedule
+  editing, unread Run state, and a complete light/dark Automation surface.
+  **Gate (main):** iterative review caught cleanup paths that could discard
+  ignored or embedded-repository content, stale worktree snapshots, the bounded
+  renderer page leaking into bulk-read behavior, and stale/same-millisecond Run
+  notification races; all were fixed before merge, including a durable monotonic
+  Run event sequence. Final head `321f65c` passed merged-main typecheck, full
+  `test:core` (1342 pass, 6 environment-dependent skips), full `test:renderer`
+  (758 pass), focused Automation + Agent Thread E2E (40 pass), docs check, and
+  diff check.
+- **Codex Memory on daily timeline Nodes (PR #434, codex-3)** — added durable
+  Codex-style Memory as ordinary editable Daily Notes Nodes under deterministic
+  protected `#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and
+  `#d-guidance` tags. The feature includes immutable Memory admission snapshots,
+  private control/provenance storage, Phase 1 extraction, Phase 2 consolidation,
+  generated-node lineage, rollback invalidation, confirmed Reset, derived
+  briefings, citations, settings, Open Memory, and fail-closed foreground
+  mutation/history authorization. **Gate (main):** four review rounds caught
+  publication, visibility, rollback, Reset, and history-authorization bugs,
+  including reserved tag-name redo and branched multi-step undo bypasses; all
+  were fixed before merge. Final head `cc8220f` passed typecheck, full
+  `test:core` (1299 pass, 6 environment-dependent skips), full `test:renderer`
+  (741 pass), docs check, diff check, and focused old-bypass repros.
+- **Canonical Thread Agent Core replacement (PR #429, codex-3)** — replaced the
+  former Conversation / Channel / Run / Issue agent stack with one canonical
+  TypeScript Thread / Turn / ThreadItem implementation across persistence,
+  runtime execution, IPC/preload, renderer state, Goals, Subagent collaboration,
+  tool output, and history controls. The clean pre-release replacement provides
+  append-only audit history, same-Thread Edit rollback, explicit Continue in new
+  chat forks, host-resolved admission, bounded Thread-owned payloads, automatic
+  Thread naming, and the retained Full Access capability boundary without
+  migration or compatibility readers. **Gate (main):** two review rounds caught
+  source-owned fork payload loss, forbidden `agent-debug` residue, dropped
+  catalog metadata for unloaded Threads, and transient renderer Threads after a
+  failed fork; all four were fixed before merge. Final head `c4ff101` passed
+  typecheck, the full Core suite (1250 pass, 6 environment-dependent skips), the
+  full renderer suite (734 pass), Agent Thread E2E (36 pass), docs check, diff
+  check, and the PR-recorded light/dark visual probe (3 pass).
+- **Codex Agent Core Thread-name notification interface (PR #433, codex-3)** —
+  added the Codex-aligned `thread/name/updated` contract for the complete
+  replacement in #429, carrying `threadId` plus an optional non-empty
+  `threadName`. The codec accepts the upstream omitted or null no-name forms and
+  normalizes both to an omitted field, while rejecting empty names, legacy
+  aliases, and unknown fields. **Gate (main):** review caught that the initial
+  contract required explicit null even though Codex omits `None`; the optional
+  shape and regression coverage were fixed before merge. Verified with
+  typecheck, 17 focused protocol tests, the full Core suite (1726 pass), docs
+  check, and diff check.
+- **Codex Agent Core rollback interface (PR #432, codex-3)** — defined
+  append-only audit plus same-Thread `thread/rollback`, exact omitted-Turn
+  extension hooks, current-history projection semantics, cumulative side-effect
+  and usage accounting, and the exhaustive Copy / Continue in new chat / Details
+  response menu for the complete replacement in #429. Memory now invalidates
+  generated context synchronously at rollback prepare, filters replacement-Turn
+  briefings and implicit Node-tool reads until receipt-backed reconciliation, and
+  retries failed terminal hooks in-process through one coalesced capped-backoff
+  loop. **Gate (main):** iterative review caught the stale Retry/Regenerate shared
+  contract, a replacement Turn that could observe rolled-back generated Memory,
+  and commit-hook failure that could suppress Memory until restart; all three were
+  fixed before merge. Verified with typecheck, 20 focused protocol/extension
+  tests, the full Core suite (1725 pass), docs check, and diff check.
+- **Codex Agent Core renderer interface (PR #431, codex-3)** — defined canonical
+  Thread configuration get/set, immutable Turn execution and token/cost details,
+  content-addressed bounded tool-output reads, provider-retry notifications, and
+  native response context-menu actions for the complete replacement in #429.
+  **Gate (main):** review caught rejection of bare model IDs and incomplete cached
+  token accounting; both were fixed before merge. The runtime-only legacy-colon
+  provider ownership check remains a merge gate for #429. Verified with typecheck,
+  14 focused protocol tests, the full Core suite (1721 pass), docs check, and diff
+  check.
+- **Codex Agent Core renderer admission defaults (PR #430, codex-3)** — split
+  the renderer-facing `thread/start` request from the fully resolved privileged
+  request so the host can supply the configured model provider and working
+  directory. This interface-only addendum unblocks the complete Agent Core
+  replacement without weakening privileged admission. **Gate (main):** review
+  found no reportable issues. Verified with typecheck, 12 focused protocol
+  tests, docs check, and diff check.
+- **Codex Agent Core interfaces (PR #428, codex-3)** — defined the canonical
+  Thread / Turn / ThreadItem protocol and codecs, Goal and extension contracts,
+  parent-bounded child configuration, collision-free provider tool identities,
+  and host-only document receipts and protected system-tag definitions. This is
+  the ordered interface unit; the complete runtime, persistence, transport,
+  renderer, and old-model replacement remains next. **Gate (main):** the first
+  review found four contract gaps covering protected-tag command classification,
+  child capability ceilings, flat provider-name ambiguity, and executable Item
+  lifecycle consistency; all four were fixed before merge. Verified with
+  typecheck, the full Core suite (1719 pass), docs check, and diff check.
 - **Codex agent restructure plans (PR #423, codex)** — ratified three plan-only
   designs for a canonical Thread / Turn / ThreadItem core, Memory published as
   editable daily-timeline Nodes, and host-owned Automations. Core remains ordered

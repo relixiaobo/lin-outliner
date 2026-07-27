@@ -6,7 +6,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
-} from '../../src/main/agentLocalRoot';
+} from '../../src/main/agent/capabilities/agentLocalRoot';
 
 const FS_ROOT = path.parse(process.cwd()).root;
 

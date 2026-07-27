@@ -23,8 +23,8 @@ before code.
   `@` references, `#`/supertags) stay separate and fixed — they are *positional*
   (insert at the caret), a job a global modal cannot do. They are NOT unified into
   this surface (decision #5).
-- **No new AI runtime.** "Ask AI" is an *entry point* into the existing agent
-  (`AgentChatPanel`), not a new AI surface (decision #3).
+- **No new AI runtime.** "Ask AI" is an entry point into the existing
+  `ThreadDock`, not a new AI surface (decision #3).
 - **No search-backend work here.** The shared node retrieval kernel is
   `search-retrieval-stack`'s territory (codex, #107). This plan consumes it.
 - **No arbitrary-app Accessibility reading in v1** (decision #4) — deferred,
@@ -97,23 +97,25 @@ The highlighted verb **consumes the chip set per its arity**:
 one; v1 ships ambient pre-fill + removal; `@`-add turns on as the verbs that need
 it (Ask AI, Reference) land.
 
-### D5 — "Ask AI" routes to the agent panel; continues the session
+### D5 — "Ask AI" routes to the Thread dock; continues the Thread
 
-"Ask AI" hands off to the existing `AgentChatPanel`: the **chip set becomes the
-session context**, the typed query becomes the first message. AI has one home —
-full power (tools, multi-turn, streaming), no duplicate AI UI.
+"Ask AI" hands off to the existing `ThreadDock`: the **chip set becomes Turn
+input**, and the typed query becomes the accepted `userMessage` Item. AI has one
+home with tools, multi-Turn continuity, and streaming; the launcher does not
+create a duplicate AI UI or persistence path.
 
-- **Session:** continue the **current/last session** (the one currently loaded in
-  the panel), appending the chips + query as a **new turn** — the chips attach to
-  *that turn* and are visible, so history-vs-new-context stays legible (the
-  Cursor/Claude/Dia model). A one-key **"new conversation"** escape (the panel's
-  existing New Session) gives clean context on demand.
+- **Thread:** continue the selected or most recently active root user Thread,
+  appending the chips + query through `turn/start`. The chips are represented as
+  canonical `nodeReference` or `attachment` content on that Turn's
+  `userMessage`, so old history and new context remain distinguishable. A
+  one-key **New Thread** escape calls `thread/start` before `turn/start` when a
+  clean context is needed.
 - **Conventions:** AI-written nodes carry **provenance** (visually distinct until
   accepted); the no-usable-provider guard **reuses #109** (Ask AI guides to
   Settings › Providers instead of failing at runtime).
 - **Known trade-off:** routing everything to chat risks the "dead-end chat"
   pitfall. Mitigation is on the agent side — the agent has write tools (A4), so a
-  conversation can produce nodes back into the outline; this becomes an
+  Thread can produce nodes back into the outline; this becomes an
   *agent-behavior* concern (reliably turning answers into nodes), not a surface
   dead-end.
 
@@ -122,11 +124,11 @@ full power (tools, multi-turn, streaming), no duplicate AI UI.
 - **Now:** active browser tab **URL + title** (the existing #103 path: read-only
   AX addon + `osascript` front-tab fallback) + **clipboard** as the fallback when
   the foreground isn't a supported browser.
-- **Later (as `browser-extension-integration` lands):** rich **page content +
-  selection** from an explicitly selected internal URL Preview, plus
-  **screenshot-as-context** as a deeper fallback (esp. for Ask AI on an
-  unreadable foreground). Agent Browser Control is independent and is not a
-  launcher-capture source.
+- **Later:** **screenshot-as-context** may become a deeper fallback, especially
+  for Ask AI on an unreadable foreground. Authenticated page content or selection
+  from an external browser has no approved reader plan. Internal URL Preview rich
+  capture and Agent Browser Control are independent capabilities; neither is a
+  D6 out-of-app capture source.
 - **v1 excludes** arbitrary-app Accessibility reading (fragile; heavy A3 surface).
 - **Conventions:** *visible-or-it-didn't-happen* — the out-of-app chip names the
   tier (`⧉ Safari — <title>` / `Clipboard` / `Screenshot`); read nothing → no
@@ -188,9 +190,9 @@ Decisions were grounded in a 2026-06-04 product survey across three categories:
 3. **Per-verb arity rules** — precise consumption of the chip set per verb (D4),
    and the Capture **destination** picker (default Today; ties
    `launcher-capture-destinations`).
-4. **AI provenance** — how AI-written nodes are visually marked until accepted
-   (ties agent event-log rendering).
-5. **"New conversation" affordance** from the surface into the panel (key + UX).
+4. **AI provenance** — how Node mutations whose command causation points at a
+   Thread/Turn/Item are visually marked until accepted.
+5. **New Thread affordance** from the surface into the dock (key + UX).
 6. **Screenshot-as-context** handling for Ask AI (vision) when the fallback lands.
 7. **Hotkey migration** — `Cmd+K` retirement; does `Cmd+Shift+Space` cover the
    in-app summon cleanly, or keep `Cmd+K` as a temporary in-app alias to the same
@@ -207,9 +209,10 @@ Decisions were grounded in a 2026-06-04 product survey across three categories:
   verb (was `launcher-ai-actions`, see D5) and Capture destinations / secondary
   actions / navigation (was `launcher-capture-destinations`, see D4 + the preserved
   contracts below). **Coordinates with** the surviving capture-pipeline tracks —
-  `launcher-provider-expansion` (capture provider breadth) and
-  `browser-extension-integration` (D6 rich content) — which this plan consumes but
-  does not own.
+  `launcher-provider-expansion` (capture provider breadth), which this plan
+  consumes but does not own. External-browser rich content remains unplanned;
+  `browser-extension-integration` is limited to explicit internal URL Preview
+  capture and is not a D6 dependency.
 - **Reuses #109** (`agent-empty-state-onboarding`) for the no-provider guard on
   Ask AI.
 
@@ -227,9 +230,10 @@ NOT carried — it is replaced by the chip rail + WYSIWYG verb rows):
   targets in `userData`; surface as empty-query quick rows.
 - **Navigation** (→ D1 "Go to" verb): reuse `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` →
   `navigateRoot` + `focusNode` for Go-to-Today/Library and node jumps.
-- **Ask AI IPC** (→ D5): a `launcher.askAi({ prompt?, sourceNodeId? })`-shaped
-  call + a main→renderer focus-agent-surface channel (mirrors the node-navigate
-  channel) to open/seed the panel session.
+- **Ask AI handoff** (→ D5): a launcher-to-renderer handoff containing normalized
+  `ThreadUserContent`; the renderer focuses `ThreadDock`, resolves the selected
+  root user Thread or calls `thread/start`, then submits the content through
+  `turn/start`. The launcher does not define another Agent command family.
 
 ## Collision self-check
 

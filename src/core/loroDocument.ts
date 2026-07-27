@@ -52,6 +52,8 @@ export interface LoroImportResult {
 }
 
 const LORO_TREE_NAME = 'nodes';
+const DOCUMENT_SYSTEM_RECEIPTS_MAP = 'documentSystemReceipts';
+const DOCUMENT_SYSTEM_TAGS_MAP = 'documentSystemTags';
 const MAX_SNAPSHOT_EXPORT_DEPTH = 1_024;
 const INLINE_REF_MARK = 'inlineRef';
 const INLINE_REF_PLACEHOLDER = '\uFFFC';
@@ -128,6 +130,14 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'trashedFromIndex',
 ];
 
+interface UndoStackMirror {
+  undo: Value[];
+  redo: Value[];
+  valid: boolean;
+  groupedUndoPush: boolean;
+  groupedRedoPush: boolean;
+}
+
 export class LoroOutlinerDocument {
   private doc: LoroDoc;
   private tree: LoroTree;
@@ -136,8 +146,10 @@ export class LoroOutlinerDocument {
   private userUndoManager: UndoManager;
   private nodeIdToTreeId = new Map<string, TreeID>();
   private touchedNodeIds = new Set<string>();
+  private systemDataChanged = false;
   private pendingUndoValue: Value | undefined;
   private undoGroupActive = false;
+  private undoStackMirrors = new Map<LoroUndoScope, UndoStackMirror>();
   // The id→TreeID map is maintained incrementally (create sets, delete removes,
   // move is a no-op since TreeIDs are stable). Only operations that rewrite the
   // tree wholesale — import, revertTo, loro undo/redo — invalidate it; they set
@@ -177,9 +189,9 @@ export class LoroOutlinerDocument {
       this.pendingUpdates = retainUnappliedUpdates(updates, this.doc);
     }
     this.rebuildMappings();
-    this.undoManager = this.createUndoManager(UNDO_EXCLUDED_ORIGIN_PREFIXES);
-    this.aiUndoManager = this.createUndoManager(AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
-    this.userUndoManager = this.createUndoManager(USER_UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    this.undoManager = this.createUndoManager('all', UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    this.aiUndoManager = this.createUndoManager('agent', AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    this.userUndoManager = this.createUndoManager('user', USER_UNDO_EXCLUDED_ORIGIN_PREFIXES);
   }
 
   isEmpty() {
@@ -305,6 +317,7 @@ export class LoroOutlinerDocument {
     this.undoManager.clearRedo();
     this.aiUndoManager.clearRedo();
     this.userUndoManager.clearRedo();
+    for (const mirror of this.undoStackMirrors.values()) mirror.redo.length = 0;
   }
 
   undo(scope: LoroUndoScope) {
@@ -338,11 +351,35 @@ export class LoroOutlinerDocument {
     return this.undoManagerFor(scope).topRedoValue();
   }
 
+  historyStackValues(scope: LoroUndoScope, action: 'undo' | 'redo', limit: number): Value[] | undefined {
+    const mirror = this.undoStackMirrors.get(scope);
+    if (!mirror?.valid) return undefined;
+    const manager = this.undoManagerFor(scope);
+    const stack = action === 'undo' ? mirror.undo : mirror.redo;
+    const canExecute = action === 'undo' ? manager.canUndo() : manager.canRedo();
+    if (canExecute !== (stack.length > 0)) {
+      mirror.valid = false;
+      return undefined;
+    }
+    if (canExecute) {
+      const actualTop = action === 'undo' ? manager.topUndoValue() : manager.topRedoValue();
+      if (!undoValuesEqual(actualTop, stack[stack.length - 1])) {
+        mirror.valid = false;
+        return undefined;
+      }
+    }
+    return stack.slice(Math.max(0, stack.length - Math.max(0, limit))).reverse();
+  }
+
   beginUndoGroup(): boolean {
     if (this.undoGroupActive) return false;
     this.undoManager.groupStart();
     this.aiUndoManager.groupStart();
     this.userUndoManager.groupStart();
+    for (const mirror of this.undoStackMirrors.values()) {
+      mirror.groupedUndoPush = false;
+      mirror.groupedRedoPush = false;
+    }
     this.undoGroupActive = true;
     return true;
   }
@@ -353,6 +390,10 @@ export class LoroOutlinerDocument {
     this.aiUndoManager.groupEnd();
     this.userUndoManager.groupEnd();
     this.undoGroupActive = false;
+    for (const mirror of this.undoStackMirrors.values()) {
+      mirror.groupedUndoPush = false;
+      mirror.groupedRedoPush = false;
+    }
     return true;
   }
 
@@ -412,6 +453,44 @@ export class LoroOutlinerDocument {
     const ids = [...this.touchedNodeIds].sort();
     this.clearTouchedNodeIds();
     return ids;
+  }
+
+  clearSystemDataChanged() {
+    this.systemDataChanged = false;
+  }
+
+  drainSystemDataChanged() {
+    const changed = this.systemDataChanged;
+    this.systemDataChanged = false;
+    return changed;
+  }
+
+  readDocumentSystemReceipt(key: string): string | null {
+    return readString(this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP).get(key)) ?? null;
+  }
+
+  writeDocumentSystemReceipt(key: string, encoded: string): void {
+    const map = this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP);
+    if (readString(map.get(key)) === encoded) return;
+    map.set(key, encoded);
+    this.systemDataChanged = true;
+  }
+
+  readDocumentSystemTagClaim(tagId: string): string | null {
+    return readString(this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).get(tagId)) ?? null;
+  }
+
+  writeDocumentSystemTagClaim(tagId: string, encoded: string): void {
+    const map = this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP);
+    if (readString(map.get(tagId)) === encoded) return;
+    map.set(tagId, encoded);
+    this.systemDataChanged = true;
+  }
+
+  documentSystemTagIds(): string[] {
+    return this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).keys()
+      .filter((key): key is string => typeof key === 'string')
+      .sort();
   }
 
   hasNode(nodeId: string) {
@@ -663,18 +742,35 @@ export class LoroOutlinerDocument {
     return this.undoManager;
   }
 
-  private createUndoManager(excludeOriginPrefixes: string[]) {
+  private createUndoManager(scope: LoroUndoScope, excludeOriginPrefixes: string[]) {
     let poppedValue: Value | undefined;
+    const mirror: UndoStackMirror = {
+      undo: [],
+      redo: [],
+      valid: true,
+      groupedUndoPush: false,
+      groupedRedoPush: false,
+    };
+    this.undoStackMirrors.set(scope, mirror);
     return new UndoManager(this.doc, {
       mergeInterval: 0,
       maxUndoSteps: LORO_UNDO_MAX_STEPS,
       excludeOriginPrefixes,
-      onPush: () => {
+      onPush: (isUndo) => {
         const value = this.pendingUndoValue ?? poppedValue ?? null;
         poppedValue = undefined;
+        const stack = isUndo ? mirror.undo : mirror.redo;
+        const groupedPushKey = isUndo ? 'groupedUndoPush' : 'groupedRedoPush';
+        if (!this.undoGroupActive || !mirror[groupedPushKey]) {
+          stack.push(value);
+          if (stack.length > LORO_UNDO_MAX_STEPS) stack.splice(0, stack.length - LORO_UNDO_MAX_STEPS);
+          if (this.undoGroupActive) mirror[groupedPushKey] = true;
+        }
         return { value, cursors: [] };
       },
-      onPop: (_isUndo, value) => {
+      onPop: (isUndo, value) => {
+        const stack = isUndo ? mirror.undo : mirror.redo;
+        if (stack.length === 0 || !undoValuesEqual(stack.pop(), value.value)) mirror.valid = false;
         poppedValue = value.value;
       },
     });
@@ -719,6 +815,19 @@ function normalizeState(state: DocumentState): DocumentState {
     rootId: state.rootId ?? WORKSPACE_ID,
     nodes: Object.fromEntries(Object.entries(state.nodes ?? {}).map(([id, node]) => [id, normalizeNode(node)])),
   };
+}
+
+function undoValuesEqual(left: Value, right: Value): boolean {
+  const leftOperationId = undoValueOperationId(left);
+  const rightOperationId = undoValueOperationId(right);
+  if (leftOperationId || rightOperationId) return leftOperationId === rightOperationId;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function undoValueOperationId(value: Value): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Uint8Array) return undefined;
+  const operationId = value.operationId;
+  return typeof operationId === 'string' ? operationId : undefined;
 }
 
 function normalizeNode(node: Node): Node {
@@ -1333,65 +1442,7 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
   ) {
     return { kind: 'local-file', path: record.path, entryKind: record.entryKind };
   }
-  if (
-    record.kind === 'chat-source'
-    && (record.stream === 'conversation' || record.stream === 'run')
-    && typeof record.streamId === 'string'
-    && record.streamId
-    && record.range
-    && typeof record.range === 'object'
-    && !Array.isArray(record.range)
-  ) {
-    const range = record.range as Record<string, unknown>;
-    const fromSeqExclusive = numberInteger(range.fromSeqExclusive);
-    const throughSeq = numberInteger(range.throughSeq);
-    const throughEventId = typeof range.throughEventId === 'string'
-      ? range.throughEventId
-      : range.throughEventId === null ? null : undefined;
-    const fromCreatedAtInclusive = numberInteger(range.fromCreatedAtInclusive);
-    const throughCreatedAtExclusive = numberInteger(range.throughCreatedAtExclusive);
-    const createdAtClamp = normalizeCreatedAtClamp(fromCreatedAtInclusive, throughCreatedAtExclusive);
-    if (
-      fromSeqExclusive !== null
-      && fromSeqExclusive >= 0
-      && throughSeq !== null
-      && throughSeq > fromSeqExclusive
-      && ((fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) || createdAtClamp)
-    ) {
-      return {
-        kind: 'chat-source',
-        stream: record.stream,
-        streamId: record.streamId,
-        range: {
-          fromSeqExclusive,
-          throughSeq,
-          ...(throughEventId !== undefined ? { throughEventId } : {}),
-          ...(createdAtClamp ?? {}),
-        },
-      };
-    }
-  }
   return undefined;
-}
-
-function numberInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-}
-
-function normalizeCreatedAtClamp(
-  fromCreatedAtInclusive: number | null,
-  throughCreatedAtExclusive: number | null,
-): { fromCreatedAtInclusive: number; throughCreatedAtExclusive: number } | null {
-  if (fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) return null;
-  if (
-    fromCreatedAtInclusive !== null
-    && fromCreatedAtInclusive >= 0
-    && throughCreatedAtExclusive !== null
-    && throughCreatedAtExclusive > fromCreatedAtInclusive
-  ) {
-    return { fromCreatedAtInclusive, throughCreatedAtExclusive };
-  }
-  return null;
 }
 
 function stringifyRecord(value: object): Record<string, string> {

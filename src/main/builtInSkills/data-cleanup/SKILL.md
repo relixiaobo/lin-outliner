@@ -1,6 +1,6 @@
 ---
 description: Clean, normalize, preview, and stage external note/data exports for Tenon. Use when the user asks to import, migrate, clean up, normalize, organize, or reshape exported notes/data from Tana, Roam, Obsidian, OPML, CSV/JSON, or an unknown local format. Known routes must emit Import Pack v1 before committing through tenon-import.
-allowed-tools: file_read, file_glob, file_grep, bash, ask_user_question, node_search, node_read, node_edit, node_delete
+allowed-tools: file_read, file_glob, file_grep, bash, request_user_input, node_search, node_read, node_edit, node_delete
 ---
 
 # Data Cleanup

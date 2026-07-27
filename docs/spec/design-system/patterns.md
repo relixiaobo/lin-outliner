@@ -129,17 +129,15 @@ and non-previewable formats, so Open/Expand/system actions do not move across
 file kinds. The preview frame may resize locally, but it must not resize sibling
 rows or use a canvas-level horizontal scroll as a rescue path.
 
-### Agent Conversation Flow
+### Agent Thread Flow
 
-Agent chrome is subordinate to the outliner workspace. Conversation identity is
-shown through compact title/avatar rows, not provider/model strings. Work in
-flight appears as an in-flow activity row above the composer, never as a floating
-corner pill or transcript message. Activity menus show live state, use shared
-overlay primitives, and keep per-run actions as dense unboxed row controls.
+Agent chrome is subordinate to the outliner workspace. Thread identity is shown
+through a compact title and scan-first list, not provider/model strings. Work in
+flight appears in canonical Item order, never as a floating corner pill. Live
+controls use shared overlay primitives and dense unboxed actions.
 
-Composer controls stay subordinate to the send/stop slot. A model/effort chip is
-a profile shortcut only; diagnostic model/provider details live in message
-Details, run/debug surfaces, ledger metadata, and profile editors.
+Composer controls stay subordinate to the send/stop slot. Product-input requests
+remain in the dock and never become authorization overlays.
 
 ## Content & States
 
@@ -148,7 +146,7 @@ Details, run/debug surfaces, ledger metadata, and profile editors.
   say what happened and what to do — no blame, no stack traces in product UI.
 - **Empty states:** a single quiet hint at the point of action (the outliner idle
   hint `Type here or '/' for commands`), not an illustrated empty-state card. The
-  empty agent panel follows the same rule: when a provider is usable it stays
+  empty Thread follows the same rule: when a provider is usable it stays
   visually blank until the user types or work appears; when provider settings have
   **loaded** and none is usable it shows a quiet onboarding line + a neutral CTA
   that opens Settings › Providers, and the composer send is disabled (neutral,

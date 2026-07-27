@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { AgentDerivedFileCache } from '../../src/main/agentFileIngestionCache';
+import { AgentDerivedFileCache } from '../../src/main/agent/capabilities/agentFileIngestionCache';
 
 describe('AgentDerivedFileCache', () => {
   test('evicts least recently used entries after the limit', () => {

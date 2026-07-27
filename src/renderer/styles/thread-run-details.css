@@ -1,0 +1,369 @@
+.thread-run-details-panel {
+  container-type: inline-size;
+}
+
+.thread-run-details-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.thread-run-details-body,
+.thread-run-details-detail-section,
+.thread-run-details-run-summary,
+.thread-run-details-context-card,
+.thread-run-details-execution-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.thread-run-details-body {
+  gap: var(--space-5);
+}
+
+.thread-run-details-detail-section {
+  gap: var(--space-2);
+}
+
+.thread-run-details-execution-section {
+  gap: var(--space-1);
+}
+
+.thread-run-details-section-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  border-bottom: 1px solid var(--separator);
+  margin-bottom: 0;
+  padding-bottom: var(--space-3);
+}
+
+.thread-run-details-section-header h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.thread-run-details-run-summary {
+  gap: var(--space-3);
+  padding: var(--space-1) 0 0;
+}
+
+.thread-run-details-run-summary-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+
+.thread-run-details-run-summary-facts > div {
+  min-width: 0;
+}
+
+.thread-run-details-run-summary-facts dt {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-2xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.thread-run-details-run-summary-facts dd {
+  min-width: 0;
+  overflow: hidden;
+  margin: var(--space-1) 0 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-run-details-run-summary-facts small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  margin-top: var(--space-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-run-details-disclosure > summary,
+.thread-run-details-execution-card > summary.thread-run-details-execution-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  list-style: none;
+}
+
+.thread-run-details-disclosure > summary {
+  padding: var(--space-2) 0;
+}
+
+.thread-run-details-disclosure > summary::-webkit-details-marker,
+.thread-run-details-execution-card > summary.thread-run-details-execution-head::-webkit-details-marker,
+.thread-run-details-message-head::-webkit-details-marker {
+  display: none;
+}
+
+.thread-run-details-disclosure-title {
+  flex: 0 0 auto;
+}
+
+.thread-run-details-summary-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transform: rotate(-90deg);
+  transition: transform var(--motion-fast);
+}
+
+.thread-run-details-disclosure[open] > summary .thread-run-details-summary-chevron,
+.thread-run-details-execution-card[open] > summary .thread-run-details-summary-chevron,
+.thread-run-details-part-details[open] > summary .thread-run-details-summary-chevron {
+  transform: rotate(0deg);
+}
+
+.thread-run-details-disclosure-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 0 var(--space-3) var(--space-6);
+}
+
+.thread-run-details-identity-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+}
+
+.thread-run-details-identity-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(116px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  border-top: 1px solid var(--separator);
+  padding: var(--space-3) 0;
+}
+
+.thread-run-details-identity-list > div:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.thread-run-details-identity-list dt,
+.thread-run-details-identity-list dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-run-details-identity-list dt {
+  color: var(--text-faint);
+}
+
+.thread-run-details-identity-list dd {
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.thread-run-details-identity-list code,
+.thread-run-details-message-head code {
+  color: var(--text-soft);
+  font-family: var(--font-family-mono);
+  font-size: inherit;
+  white-space: pre-wrap;
+}
+
+.thread-run-details-execution-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+.thread-run-details-execution-card > summary.thread-run-details-execution-head {
+  padding: var(--space-3) 0;
+}
+
+.thread-run-details-status-pill {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--fill-2);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  padding: var(--space-1) var(--space-2);
+}
+
+.thread-run-details-status-pill.is-failed {
+  color: var(--status-danger);
+}
+
+.thread-run-details-usage-hover {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.thread-run-details-usage-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + var(--space-2));
+  right: 0;
+  display: flex;
+  width: min(248px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  flex-direction: column;
+  gap: var(--space-3);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-strong);
+  opacity: 0;
+  padding: var(--space-4);
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity var(--motion-fast), transform var(--motion-fast), visibility var(--motion-fast);
+  user-select: none;
+  visibility: hidden;
+}
+
+.thread-run-details-usage-hover:hover .thread-run-details-usage-popover,
+.thread-run-details-usage-hover:focus-within .thread-run-details-usage-popover {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.thread-run-details-usage-info-button {
+  color: var(--text-faint);
+}
+
+.thread-run-details-usage-info-button:hover {
+  color: var(--text-strong);
+}
+
+.thread-run-details-execution-list {
+  gap: 0;
+  padding: 0 0 var(--space-4) var(--space-6);
+}
+
+.thread-run-details-execution-list > .thread-run-details-execution-event {
+  padding: 0;
+}
+
+.thread-run-details-execution-list > .thread-run-details-execution-event + .thread-run-details-execution-event {
+  border-top: 1px solid var(--separator);
+}
+
+.thread-run-details-part-details {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.thread-run-details-message-head {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  list-style: none;
+  padding: var(--space-2) 0;
+}
+
+.thread-run-details-message-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-run-details-role-label {
+  display: inline-flex;
+  width: 58px;
+  min-width: 0;
+  align-items: center;
+  color: var(--text-soft);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-run-details-code-block {
+  margin: 0 0 var(--space-3) var(--space-6);
+}
+
+.thread-run-details-inline-code-block {
+  margin-left: 0;
+}
+
+@container (max-width: 520px) {
+  .thread-run-details-run-summary-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thread-run-details-identity-list > div {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .thread-run-details-message-head {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .thread-run-details-message-head code {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-run-details-summary-chevron,
+  .thread-run-details-usage-popover {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .thread-run-details-usage-popover {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--bg-content);
+  }
+}

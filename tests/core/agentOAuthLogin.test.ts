@@ -5,7 +5,7 @@ import {
   createOAuthLoginManager,
   type DeviceCodeOAuthLoginCallbacks,
   type OAuthLoginManager,
-} from '../../src/main/agentOAuth';
+} from '../../src/main/agent/capabilities/agentOAuth';
 
 // A marker settings view so tests can assert the manager returns getSettings().
 const SETTINGS = { providers: [], availableProviders: [], agent: {} } as unknown as AgentProviderSettingsView;

@@ -42,6 +42,24 @@ describe('Dialog', () => {
     expect(dismissCount).toBe(1);
   });
 
+  test('keeps a portaled child overlay interaction inside the dialog flow', () => {
+    let dismissCount = 0;
+    const rendered = renderDialog(() => {
+      dismissCount += 1;
+    });
+    const backdrop = rendered.document.querySelector<HTMLElement>('.dialog-backdrop');
+    if (!backdrop) throw new Error('Missing dialog backdrop');
+    const overlay = rendered.document.createElement('div');
+    overlay.dataset.dialogNestedOverlay = 'true';
+    const option = rendered.document.createElement('button');
+    overlay.append(option);
+    backdrop.append(overlay);
+
+    act(() => dispatchMouseDown(rendered.document, option));
+
+    expect(dismissCount).toBe(0);
+  });
+
   test('pulls focus back into the dialog after an in-place content swap', () => {
     const rendered = renderDialog(() => undefined);
     const surface = rendered.document.querySelector<HTMLElement>('.dialog-surface');

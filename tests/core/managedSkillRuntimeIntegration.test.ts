@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AgentSkillRuntime, resolveSkillContentTarget } from '../../src/main/agentSkills';
+import { AgentSkillRuntime, resolveSkillContentTarget } from '../../src/main/agent/capabilities/agentSkills';
 import type { ManagedSkillGitHubClient } from '../../src/main/managedSkillGitHub';
 import { ManagedSkillService } from '../../src/main/managedSkillService';
 import { ManagedSkillStore, storedVersionFromValidated } from '../../src/main/managedSkillStore';

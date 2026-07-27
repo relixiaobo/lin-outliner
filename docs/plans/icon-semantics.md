@@ -63,8 +63,8 @@ against the current file. The recommended choices are spelled out under
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
 | G1 | `Hash` aliases BOTH `HashIcon` (number field-type) AND `SupertagIcon` (schema/supertag) — a `#` means "number" in a field list but "supertag" in nav/tag surfaces | `HashIcon = Hash`, `SupertagIcon = Hash` | keep `#` (`Hash`) for **supertag** (tag convention); give **number field** a distinct glyph → `SupertagIcon` stays `Hash`, `HashIcon` (number) → `Binary` (recommend) | `icons.ts:47-48`; consumers: number via `fieldTypePresentation.tsx:28`; supertag via `NodeContextMenu.tsx:309`, `DefinitionConfigPanel.tsx:142`, Sidebar/CommandPalette schema nav |
-| G2 | Unknown-tool fallback renders `WarningIcon` (AlertTriangle) — a **successful** call to an un-iconned tool looks like an **error** | `return WarningIcon` | neutral generic-tool glyph → `Wrench` (recommend); reserve AlertTriangle for real error/warning status (B4 spirit) | `AgentToolCallBlock.tsx:93` (`getToolIcon` fallback) |
-| G3 | Agent user-attachment icons use a coarse 3-way map (directory→Folder, image→FileImage, else→FileText) — a `.zip`/`.xlsx`/`.mp4` chip shows a generic text glyph, while the **same file** as an inline mention shows archive/spreadsheet/video | hand-rolled `iconForUserAttachment` switch | route through `inlineFileIconKind` (the single source) and map its 10 kinds to the matching `File*Icon` aliases | `AgentMessageRow.tsx:184-188` |
+| G2 | A generic successful `dynamicToolCall` needs a neutral glyph distinct from failed status | `GenericToolIcon = Wrench`; failed status uses `WarningIcon` | preserve this split and add a guard so the generic fallback cannot regress to a status icon | `ThreadItemView.tsx` `ToolDisclosure` / `JsonToolDisclosure` |
+| G3 | `ThreadItemView` currently renders every user attachment with `FileImageIcon`, so a `.zip`/`.xlsx`/`.mp4` attachment disagrees with the same file's inline mention | fixed `FileImageIcon` | route `ThreadAttachmentContent` through `inlineFileIconKind` and map its 10 kinds to matching semantic aliases | `ThreadItemView.tsx` `UserMessageItem` |
 | G4 | `OpenIcon` (ExternalLink) is overloaded: "open in **split pane**" (in-app) shares the arrow-out-of-box glyph with genuinely-external links (OAuth/config browser opens, open image, open link) | `<OpenIcon>` for split-pane | use a panel/split glyph for in-app split-open → `Columns2` (recommend; app already uses `PanelRight`/`PanelLeft` for rails); keep `OpenIcon`=ExternalLink strictly for actions that leave the app | split-pane: `NodeContextMenu.tsx:263`; external (unchanged): `ProviderOAuthForm.tsx`, `ProviderConfigForm.tsx`, `ImageRow.tsx:109`, `OutlinerItem.tsx:1673` |
 
 #### Tier 2 — adjacent-surface inconsistency (same noun, different glyph)
@@ -77,8 +77,8 @@ against the current file. The recommended choices are spelled out under
 
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
-| G6a | `Square` aliases BOTH `CheckboxIcon` (unchecked checkbox) AND `StopIcon` (agent stop) | both `= Square` | low risk (Stop is rendered as a styled filled square button; checkbox lives in a checkbox row) → **keep both; add a comment** noting the deliberate share. Optional: `StopIcon` → `Square` stays, document. No change recommended | `icons.ts:24,87`; Stop: `AgentComposerControls.tsx:168`; checkbox: `NodeContextMenu.tsx:300`, field-type |
-| G6b | Two "edit" glyphs: `PencilIcon` (Pencil) for message/text edit vs `DescriptionIcon`/`NodeEditToolIcon` (FilePenLine) for edit-description / node-edit-tool | `PencilIcon=Pencil`, `DescriptionIcon=NodeEditToolIcon=FilePenLine` | **deliberate distinction** — Pencil = edit free text (message, composer), FilePenLine = edit a structured node's description/content. **Keep both; document** the split in `icons.ts`. No change | Pencil: `AgentComposerControls.tsx:32`, `AgentMessageRow.tsx:503`, `AgentChatPanel.tsx:1022`; FilePenLine: `NodeContextMenu.tsx:329`, `getToolIcon:79,92` |
+| G6a | `Square` aliases BOTH `CheckboxIcon` (unchecked checkbox) AND `StopIcon` (interrupt active Turn) | both `= Square` | low risk because Stop is a composer action while Checkbox lives in a field row; keep both and document the deliberate share | `icons.ts`; Stop: `ThreadView.tsx`; checkbox: `NodeContextMenu.tsx` and field-type presentation |
+| G6b | Free-text edit and structured Node edit intentionally use different glyphs | `PencilIcon=Pencil`; `DescriptionIcon=FilePenLine`; `NodeEditToolIcon=SquarePen` | keep the distinction: Pencil edits Thread/message text, the file/square pen glyphs edit structured Node description/content | `ThreadItemView.tsx`, `ThreadList.tsx`, `ThreadDock.tsx`, `NodeContextMenu.tsx` |
 | G6c | `SettingsIcon` (gear) doubles as the **generic config-row fallback** in DefinitionConfigPanel — a gear on a config row reads as "settings for this row" rather than "misc property" | `autoInitialize` + catch-all `return <SettingsIcon>` | give the catch-all a neutral glyph distinct from the app-settings gear → `SlidersHorizontal` (recommend) for the catch-all; keep `SettingsIcon` for actual Settings entry points. (#118 further loaded `SettingsIcon` as the **settings category** glyph — gear now carries three distinct meanings, reinforcing the catch-all collision.) | `DefinitionConfigPanel.tsx:148` (`autoInitialize`), `:153` (catch-all) |
 
 ### Implementation shape
@@ -88,9 +88,10 @@ against the current file. The recommended choices are spelled out under
   and G6c (add `MiscConfigIcon = SlidersHorizontal`) are all alias-table edits. New glyphs are added as **named aliases** so the
   one-table architecture is preserved — call sites import the semantic name,
   never the raw lucide name.
-- **Resolver edits (3 lines):** `getToolIcon` fallback (G2),
-  `iconForUserAttachment` rewrite to consume `inlineFileIconKind` (G3),
-  `ConfigIcon` catch-all + `autoInitialize` (G6c).
+- **Resolver edits:** pin the generic `dynamicToolCall` fallback in
+  `ThreadItemView` (G2), route `ThreadAttachmentContent` through
+  `inlineFileIconKind` (G3), and update `ConfigIcon` catch-all +
+  `autoInitialize` (G6c).
 - **Call-site edit (1 line):** `NodeContextMenu.tsx:263` swaps `OpenIcon` →
   the new split-pane alias (G4).
 - **Comments only:** G5 (rule comment in `icons.ts` near `CloseIcon`/`TrashIcon`),
@@ -139,8 +140,8 @@ follows whatever is chosen.
 
 - Last refreshed 2026-07-01: no open PR currently claims this icon-semantics
   surface. This plan's edits are confined to `src/renderer/ui/icons.ts`, three
-  resolver files (`AgentToolCallBlock.tsx`, `AgentMessageRow.tsx`,
-  `DefinitionConfigPanel.tsx`), one call site (`NodeContextMenu.tsx`), and a spec
+  resolver files (`ThreadItemView.tsx`, `DefinitionConfigPanel.tsx`), one call
+  site (`NodeContextMenu.tsx`), and a spec
   paragraph in `design-system.md`.
 - **Roadmap boundary contract** (`docs/plans/ui-quality-roadmap.md`): no other
   Layer-1/2/3 plan touches icon glyph choices — `composition-rhythm` owns
@@ -177,10 +178,10 @@ follows whatever is chosen.
 - [ ] **G1** number-field glyph: split `HashIcon`/`SupertagIcon` in `icons.ts`
   (number → chosen glyph; supertag keeps `Hash`); verify `fieldTypePresentation`
   + all supertag consumers.
-- [ ] **G2** `getToolIcon` fallback → neutral generic-tool glyph
-  (`AgentToolCallBlock.tsx:93`); add the new alias to `icons.ts`.
-- [ ] **G3** rewrite `iconForUserAttachment` (`AgentMessageRow.tsx:184-188`) to
-  consume `inlineFileIconKind` + a kind→`File*Icon` map.
+- [ ] **G2** pin `ThreadItemView`'s generic tool fallback to
+  `GenericToolIcon`; failed status alone uses `WarningIcon`.
+- [ ] **G3** route `ThreadAttachmentContent` in `ThreadItemView` through
+  `inlineFileIconKind` plus an exhaustive kind-to-`File*Icon` map.
 - [ ] **G4** add split-pane alias to `icons.ts`; swap `NodeContextMenu.tsx:263`.
 - [ ] **G6c** `ConfigIcon` catch-all + `autoInitialize`
   (`DefinitionConfigPanel.tsx:148,153`) → neutral config glyph; add alias.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 import { escapeSemanticText } from '../../src/core/semanticIngest/inlineScanner';
-import { parseLinOutline } from '../../src/main/agentOutlineParser';
+import { parseLinOutline } from '../../src/main/agent/capabilities/agentOutlineParser';
 
 describe('agent outline parser', () => {
   test('parses top-level field lines as document fields', () => {

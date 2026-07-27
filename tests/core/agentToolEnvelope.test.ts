@@ -5,7 +5,7 @@ import {
   isToolEnvelope,
   successEnvelope,
   toolEnvelopeAfterToolCall,
-} from '../../src/main/agentToolEnvelope';
+} from '../../src/main/agent/capabilities/agentToolEnvelope';
 
 describe('agent tool envelope', () => {
   test('builds pi-agent-core compatible tool results with model-visible content', () => {

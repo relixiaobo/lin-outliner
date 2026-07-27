@@ -8,18 +8,6 @@ export function inlineRefTargetAttrs(target: ReferenceTarget): Record<string, un
       targetNodeId: target.nodeId,
     };
   }
-  if (target.kind === 'chat-source') {
-    return {
-      targetKind: 'chat-source',
-      chatStream: target.stream,
-      chatStreamId: target.streamId,
-      chatFromSeqExclusive: target.range.fromSeqExclusive,
-      chatThroughSeq: target.range.throughSeq,
-      chatThroughEventId: target.range.throughEventId ?? '',
-      chatFromCreatedAtInclusive: target.range.fromCreatedAtInclusive ?? '',
-      chatThroughCreatedAtExclusive: target.range.throughCreatedAtExclusive ?? '',
-    };
-  }
   return {
     targetKind: 'local-file',
     targetPath: target.path,
@@ -38,58 +26,7 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
     const entryKind = attrs.entryKind === 'directory' ? 'directory' : 'file';
     return path ? { kind: 'local-file', path, entryKind } : null;
   }
-  if (targetKind === 'chat-source') {
-    const stream = attrs.chatStream === 'conversation' || attrs.chatStream === 'run' ? attrs.chatStream : null;
-    const streamId = String(attrs.chatStreamId ?? '');
-    const fromSeqExclusive = Number(attrs.chatFromSeqExclusive);
-    const throughSeq = Number(attrs.chatThroughSeq);
-    const throughEventId = String(attrs.chatThroughEventId ?? '');
-    const fromCreatedAtInclusive = optionalSafeInteger(attrs.chatFromCreatedAtInclusive);
-    const throughCreatedAtExclusive = optionalSafeInteger(attrs.chatThroughCreatedAtExclusive);
-    const createdAtClamp = createdAtClampFromAttrs(fromCreatedAtInclusive, throughCreatedAtExclusive);
-    if (
-      !stream
-      || !streamId
-      || !Number.isSafeInteger(fromSeqExclusive)
-      || fromSeqExclusive < 0
-      || !Number.isSafeInteger(throughSeq)
-      || throughSeq <= fromSeqExclusive
-      || ((fromCreatedAtInclusive !== null || throughCreatedAtExclusive !== null) && !createdAtClamp)
-    ) return null;
-    return {
-      kind: 'chat-source',
-      stream,
-      streamId,
-      range: {
-        fromSeqExclusive,
-        throughSeq,
-        ...(throughEventId ? { throughEventId } : {}),
-        ...(createdAtClamp ?? {}),
-      },
-    };
-  }
   return null;
-}
-
-function createdAtClampFromAttrs(
-  fromCreatedAtInclusive: number | null,
-  throughCreatedAtExclusive: number | null,
-): { fromCreatedAtInclusive: number; throughCreatedAtExclusive: number } | null {
-  if (fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) return null;
-  if (fromCreatedAtInclusive === null || throughCreatedAtExclusive === null) return null;
-  return throughCreatedAtExclusive > fromCreatedAtInclusive
-    ? { fromCreatedAtInclusive, throughCreatedAtExclusive }
-    : null;
-}
-
-function optionalSafeInteger(value: unknown): number | null {
-  if (value === undefined || value === null || value === '') return null;
-  const numeric = Number(value);
-  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
-}
-
-function numberFromDatasetValue(value: string | undefined): number {
-  return value && value.trim() ? Number(value) : Number.NaN;
 }
 
 export function targetFromInlineReferenceElement(element: HTMLElement): ReferenceTarget | null {
@@ -98,13 +35,6 @@ export function targetFromInlineReferenceElement(element: HTMLElement): Referenc
     targetNodeId: element.dataset.inlineRef ?? '',
     targetPath: element.dataset.inlineRefPath ?? '',
     entryKind: element.dataset.inlineRefEntryKind ?? 'file',
-    chatStream: element.dataset.inlineRefChatStream ?? '',
-    chatStreamId: element.dataset.inlineRefChatStreamId ?? '',
-    chatFromSeqExclusive: numberFromDatasetValue(element.dataset.inlineRefChatFromSeqExclusive),
-    chatThroughSeq: numberFromDatasetValue(element.dataset.inlineRefChatThroughSeq),
-    chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
-    chatFromCreatedAtInclusive: numberFromDatasetValue(element.dataset.inlineRefChatFromCreatedAtInclusive),
-    chatThroughCreatedAtExclusive: numberFromDatasetValue(element.dataset.inlineRefChatThroughCreatedAtExclusive),
   });
 }
 
@@ -116,6 +46,5 @@ export function fallbackTextForInlineReferenceAttrs(attrs: Record<string, unknow
     const targetPath = String(attrs.targetPath ?? '');
     return basenameForPath(targetPath) || 'Referenced file';
   }
-  if (targetKind === 'chat-source') return 'Referenced chat';
   return 'Referenced node';
 }

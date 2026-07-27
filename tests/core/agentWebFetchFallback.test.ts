@@ -10,13 +10,13 @@ import {
   makeRedirectedHostHint,
   nextSecFetchSite,
   webFetchRefererForHop,
-} from '../../src/main/agentWebFetchFallback';
+} from '../../src/main/agent/capabilities/agentWebFetchFallback';
 import {
   extractFetchedPageContent,
   normalizeWebFetchParams,
   type FetchTextResult,
   type WebParamResult,
-} from '../../src/main/agentWebTools';
+} from '../../src/main/agent/capabilities/agentWebTools';
 
 function expectParams<T>(result: WebParamResult<T>): T {
   expect(result.ok).toBe(true);

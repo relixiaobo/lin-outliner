@@ -30,7 +30,7 @@ export function providerHasCredential(
 }
 
 // The one "can this provider drive models right now?" predicate, shared by the
-// chat panel (empty-state gating), the composer (send-guard), the agent profile
+// Thread dock (empty-state gating), the composer (send-guard), the Configuration Profile
 // model selector, and the settings views. `auth.credentialed` already generalizes
 // across api-key / oauth / managed (main's authoritative signal), so there is no
 // need for caller-specific copies.

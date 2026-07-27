@@ -16,7 +16,7 @@ import {
   isRetryableResponsesRequestError,
   responsesRequestRetryDelayMs,
   wrapStreamWithAbortSettling,
-} from '../../src/main/agentStreamAbort';
+} from '../../src/main/agent/capabilities/agentStreamAbort';
 
 const EMPTY_USAGE: Usage = {
   input: 0,

@@ -1,23 +1,84 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
-import { AssetService, mimeTypeForFilename } from './assetService';
-import { AgentRuntime } from './agentRuntime';
+import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
+import { ThreadService } from './agent/ThreadService';
+import { closeAgentServices } from './agent/closeAgentServices';
+import { ExtensionRegistry } from './agent/ExtensionRegistry';
+import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
+import { MemoryExtension } from './agent/extensions/memory/MemoryExtension';
+import { TimelineMemoryStore } from './agent/extensions/memory/TimelineMemoryStore';
+import { AutomationDispatcher } from './agent/automations/AutomationDispatcher';
+import { AutomationScheduler } from './agent/automations/AutomationScheduler';
+import { AutomationService } from './agent/automations/AutomationService';
+import { AutomationStore } from './agent/automations/AutomationStore';
+import { createAutomationTool } from './agent/automations/AutomationTool';
+import { AutomationWorktree } from './agent/automations/AutomationWorktree';
+import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
+import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
+import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import { AttachmentResolver } from './agent/tools/attachments';
+import { Mutex } from './agent/Mutex';
+import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
+import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
+import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
+import {
+  decodeMemoryFeatureMode,
+  decodeThreadMemoryMode,
+  memoryTagId,
+} from '../core/agent/memory';
+import { decodeThreadResourceReference } from '../core/agent/codec';
+import {
+  AUTOMATION_NOTIFICATION_CHANNEL,
+  AUTOMATION_REQUEST_CHANNEL,
+  AUTOMATION_METHODS,
+  type AutomationMethod,
+} from '../core/agent/automation';
+import {
+  createAgentLocalWorkspaceContext,
+  resolveAgentLocalReadPath,
+  type AgentLocalWorkspaceContext,
+} from './agent/capabilities/agentLocalTools';
+import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
+import { resolveGeneratedImageReadPath } from './generatedImagePaths';
+import {
+  piFindImageModel,
+  piGenerateImages,
+  piImageModelsForProvider,
+  validateImageGenerationOptions,
+} from './piImageModels';
+import type {
+  AgentCoreMethod,
+  AgentCoreRequestByMethod,
+  ThreadAttachmentContent,
+  ThreadMessageContextMenuAction,
+  ThreadMessageContextMenuRequest,
+} from '../core/agent/protocol';
+import {
+  REASONING_EFFORTS,
+  type EffectiveThreadConfiguration,
+  type ReasoningEffort,
+} from '../core/agent/configuration';
+import {
+  AGENT_CORE_NOTIFICATION_CHANNEL,
+  AGENT_CORE_REQUEST_CHANNEL,
+  THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
+} from '../core/agent/transport';
 import {
   ManagedSkillService,
   ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
-import { AgentImportService } from './agentImportService';
-import { AgentImportApiServer } from './agentImportApi';
+import { AgentImportService } from './agent/capabilities/agentImportService';
+import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
@@ -32,30 +93,18 @@ import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
-  AGENT_CONFIG_AGENT_PARAM,
-  CHANNEL_CONFIG_CONVERSATION_PARAM,
-  CHANNEL_CONFIG_MODE_PARAM,
-  SETTINGS_AGENT_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
   isSettingsCategoryTarget,
-  type ChannelConfigMode,
   type ProviderConfigMode,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
-import {
-  LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL,
-  LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
-  type AgentMessageContextMenuAction,
-  type AgentMessageContextMenuRequest,
-} from '../core/agentTypes';
-import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
+import { officeOwnershipFileInfo } from '../core/officeFiles';
 import {
   isUrlPageTranslationCommand,
   isUrlPageTranslationPreferences,
@@ -72,6 +121,7 @@ import {
   type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
+import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
 import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
 import { clearPreviewTranslationCacheFromSettings } from './previewTranslationCacheClear';
@@ -81,6 +131,7 @@ import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
+  DAILY_NOTES_ID,
   TRASH_ID,
   type AssetIngestInput,
   type CommandResult,
@@ -101,6 +152,9 @@ import {
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
+  getActiveProviderRuntimeConfig,
+  getProviderRuntimeConfig,
+  getAgentRuntimeSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
   getProviderSettings,
@@ -112,12 +166,13 @@ import {
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   testProviderConnection,
-} from './agentSettings';
+} from './agent/capabilities/agentSettings';
+import { validateAgentModelSelection } from './agent/capabilities/agentModelResolution';
 import {
   applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
   readAgentCapabilitySettingsView,
-} from './agentCapabilityStore';
+} from './agent/capabilities/agentCapabilityStore';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -127,10 +182,10 @@ import {
   type AssetCommand,
   type PreviewCommand,
 } from '../core/commands';
-import { oauthLoginManager } from './agentOAuthManager';
+import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
-import { resolveRipgrepCommand } from './agentRipgrep';
-import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
+import { resolveRipgrepCommand } from './agent/capabilities/agentRipgrep';
+import { buildAgentLocalToolProcessEnv } from './agent/capabilities/agentToolProcess';
 import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
@@ -155,9 +210,17 @@ import {
 } from '../core/translationLanguage';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
-import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
+import {
+  ATTACHMENT_UPLOAD_CHUNK_BYTES,
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGE_DIMENSION,
+} from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { agentAttachmentDir, pruneAgentScratch, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import {
+  AGENT_GENERATED_IMAGE_DIR,
+  pruneAgentScratch,
+} from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -192,7 +255,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
-} from './agentLocalRoot';
+} from './agent/capabilities/agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
 import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
@@ -300,6 +363,10 @@ const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
 const documentService = new DocumentService();
+const extensionRegistry = new ExtensionRegistry();
+const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
+const timelineMemoryStore = new TimelineMemoryStore(documentService);
+const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore);
 const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
 const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
 configureTenonImportRuntime({
@@ -324,8 +391,6 @@ const assetService = new AssetService(assetRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
-let agentConfigWindow: BrowserWindow | null = null;
-let channelConfigWindow: BrowserWindow | null = null;
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitAfterFlush = false;
@@ -333,12 +398,6 @@ let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
 const DEFAULT_RECENT_LOCAL_FILE_LIMIT = 6;
-const AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS = {
-  width: 620,
-  height: 680,
-  minWidth: 520,
-  minHeight: 560,
-} as const;
 const LOCAL_FILE_SEARCH_TIMEOUT_MS = 1200;
 const LOCAL_FILE_ICON_TIMEOUT_MS = 250;
 const LOCAL_FILE_ICON_SIZE: Electron.FileIconOptions['size'] = 'normal';
@@ -374,28 +433,343 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
 }
 ensureAgentDir(agentScratchRoot);
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
+let skillRuntime!: AgentSkillRuntime;
+const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
 const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
   store: managedSkillStore,
-  onChanged: (): Promise<void> => agentRuntime.managedSkillsChanged(),
-  findNameConflict: (name, excludingManagedSkillId) => (
-    agentRuntime.findSkillNameConflict(name, excludingManagedSkillId)
-  ),
+  onChanged: async (): Promise<void> => {
+    await Promise.all(
+      [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
+    );
+  },
+  findNameConflict: async (name, excludingManagedSkillId) => {
+    const normalized = name.trim();
+    if (!normalized) return null;
+    const skills = await skillRuntime.listAllSkills();
+    const conflict = skills.find((skill) => (
+      skill.name === normalized
+      && !(skill.source === 'managed' && skill.name === excludingManagedSkillId)
+    ));
+    return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
+  },
 });
-// Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
-// bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
+// Scratch holds only ephemeral, app-owned data (attachment observations, web-fetch binaries, bash
+// overflow logs, and PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
 });
-const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentService, {
-  localFileRoot: agentLocalFileRoot,
-  scratchRoot: agentScratchRoot,
-  managedSkillService,
-  assetResolver: assetService,
-  dreamMemoryExtractionEnabled: true,
-  errorReporter: reportError,
+skillRuntime = new AgentSkillRuntime({
+  localRoot: agentLocalFileRoot,
+  provenanceStore: createAgentSkillProvenanceStore(),
+  managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
+  managedSkillContentRoot: managedSkillService.contentRoot,
+  assertManagedSkillInvocable: (skillId, expectedContentHash) => (
+    managedSkillService.assertInvocable(skillId, expectedContentHash)
+  ),
+  executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+    command,
+    localRoot: agentLocalFileRoot,
+    scratchRoot: agentScratchRoot,
+    signal,
+  }),
 });
+void getAgentRuntimeSettings().then((settings) => {
+  for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
+    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
+    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
+  }
+}).catch((error) => console.error('[agent] failed to load skill settings', error));
+let toolRuntime!: ToolRuntime;
+const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+let threadService!: ThreadService;
+const agentImageObservationMutex = new Mutex();
+const attachmentResolver = new AttachmentResolver({
+  useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
+  prepareImageSnapshot: async ({ threadId, attachment, sourcePath }) => {
+    const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
+    return threadService.writeThreadResourceWithStatus(
+      threadId,
+      snapshot.bytes,
+      snapshot.mimeType,
+      snapshot.fileName,
+    );
+  },
+});
+const turnExecutor = new PiTurnExecutor({
+  createTools: (context) => toolRuntime.createTools(context),
+  preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
+  skillListing: (context) => toolRuntime.skillListing(context),
+});
+threadService = ThreadService.open(
+  resolvedUserDataDir,
+  turnExecutor,
+  {
+    attachmentScratchRoot: agentScratchRoot,
+    nameGenerator: turnExecutor,
+    resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
+      request.configurationProfile,
+      request.cwd,
+    ),
+    resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveRendererStartDefaults: async () => {
+      const provider = await getActiveProviderRuntimeConfig();
+      if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
+      return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
+    },
+    validateRendererConfiguration: async (selection) => {
+      const provider = await getProviderRuntimeConfig(selection.modelProvider);
+      if (!provider) throw new Error(`Provider is not configured: ${selection.modelProvider}`);
+      validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
+    },
+    resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
+    extensions: extensionRegistry,
+    beforeInitialTurnAdmission: () => memoryExtension.prepareForTurnAdmission(),
+  },
+);
+memoryExtension.bindHost(threadService);
+extensionRegistry.register(memoryExtension);
+documentService.setMutationGuard((command, args, meta, projection) => {
+  return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
+});
+documentService.setMutationCoordinator((meta, operation) => (
+  meta.origin === 'system' && meta.operationId?.startsWith('memory:')
+    ? operation()
+    : timelineMemoryStore.withWriteGate(operation)
+));
+function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
+  const existing = turnSkillRuntimes.get(context.turn.id);
+  if (existing) return existing;
+  const runtime = new AgentSkillRuntime({
+    localRoot: agentLocalFileRoot,
+    threadId: context.thread.id,
+    provenanceStore: createAgentSkillProvenanceStore(),
+    managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
+    managedSkillContentRoot: managedSkillService.contentRoot,
+    assertManagedSkillInvocable: (skillId, expectedContentHash) => (
+      managedSkillService.assertInvocable(skillId, expectedContentHash)
+    ),
+    executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+      command,
+      localRoot: agentLocalFileRoot,
+      scratchRoot: agentScratchRoot,
+      signal,
+    }),
+    executeIsolatedSkill: async ({
+      skill,
+      renderedContent,
+      parentToolCallId,
+      readOnlyIsolated,
+    }) => {
+      if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
+      const spawned = await threadService.spawnIsolatedSkillThread({
+        parentThreadId: context.thread.id,
+        parentTurnId: context.turn.id,
+        parentItemId: parentToolCallId,
+        skillName: skill.name,
+        prompt: renderedContent,
+        allowedTools: skill.allowedTools,
+        readOnly: readOnlyIsolated === true,
+        ...(skill.model === undefined ? {} : { model: skill.model }),
+        ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
+      });
+      await threadService.waitForIdle(spawned.thread.id);
+      const completed = threadService.readThread({
+        threadId: spawned.thread.id,
+        includeTurns: true,
+      }).thread.turns?.find((turn) => turn.id === spawned.turn.id);
+      if (!completed || completed.status === 'inProgress') {
+        throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
+      }
+      const result = completed.items
+        .filter((item) => item.type === 'agentMessage')
+        .map((item) => item.text.trim())
+        .filter(Boolean)
+        .join('\n\n');
+      return {
+        threadId: spawned.thread.id,
+        agentRole: spawned.thread.agentRole ?? (readOnlyIsolated ? 'explorer' : 'worker'),
+        status: completed.status,
+        ...(result ? { result } : {}),
+        ...(completed.error?.message ? { error: completed.error.message } : {}),
+      };
+    },
+  });
+  turnSkillRuntimes.set(context.turn.id, runtime);
+  void getAgentRuntimeSettings().then((settings) => {
+    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
+    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
+  }).catch((error) => console.error('[agent] failed to load Turn skill settings', error));
+  return runtime;
+}
+
+function parseSkillReasoningEffort(value: string): ReasoningEffort {
+  const normalized = value.trim().toLowerCase();
+  if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
+  throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
+}
+
+function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
+  return createAgentLocalWorkspaceContext(
+    agentLocalFileRoot,
+    agentScratchRoot,
+    skillRuntimeForTurn(context),
+  );
+}
+
+const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
+const automationWorktree = new AutomationWorktree(resolvedUserDataDir);
+let automationService!: AutomationService;
+async function validateAutomationEffectiveConfiguration(
+  modelProvider: string,
+  configuration: EffectiveThreadConfiguration,
+): Promise<void> {
+  const provider = await getProviderRuntimeConfig(modelProvider);
+  if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
+  validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
+}
+const automationDispatcher = new AutomationDispatcher({
+  store: automationStore,
+  threads: threadService,
+  worktrees: automationWorktree,
+  defaultCwd: agentLocalFileRoot,
+  resolveConfiguration: async (selection, cwd) => {
+    const configuration = agentConfigurationLoader.resolveProfile(undefined, cwd);
+    const effectiveConfiguration = Object.freeze({
+      ...configuration,
+      ...(selection.model === null ? {} : { model: selection.model }),
+      ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
+    });
+    const provider = selection.modelProvider
+      ? await getProviderRuntimeConfig(selection.modelProvider)
+      : await getActiveProviderRuntimeConfig();
+    if (!provider) throw new Error('Configure the Automation model provider before its next occurrence.');
+    await validateAutomationEffectiveConfiguration(provider.providerId, effectiveConfiguration);
+    return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
+  },
+  validateEffectiveConfiguration: validateAutomationEffectiveConfiguration,
+  onRunChanged: (run) => automationService.runChanged(run),
+});
+const automationScheduler = new AutomationScheduler({
+  store: automationStore,
+  dispatcher: automationDispatcher,
+  onAutomationChanged: (automation) => automationService.automationChanged(automation),
+  onRunChanged: (run) => automationService.runChanged(run),
+});
+automationService = new AutomationService({
+  store: automationStore,
+  scheduler: automationScheduler,
+  dispatcher: automationDispatcher,
+  threads: threadService,
+});
+const wakeAutomationsOnResume = () => automationService.wake();
+
+toolRuntime = new ToolRuntime(threadService, {
+  outliner: documentService,
+  filterOutlinerProjection: (projection, causation) => memoryExtension.filterProjection(projection, causation),
+  localWorkspace: localWorkspaceForTurn,
+  imageNormalizer: async ({ filePath, signal }) => {
+    return prepareBoundedAgentImage(filePath, basename(filePath), signal);
+  },
+  skillRuntime: skillRuntimeForTurn,
+  imageGeneration: (context) => createThreadImageGenerationRuntime(
+    context.turn.id,
+    localWorkspaceForTurn(context),
+  ),
+  dynamicTools: () => [createAutomationTool(automationService)],
+});
+threadService.subscribe((notification) => {
+  if (notification.type === 'turn/completed') turnSkillRuntimes.delete(notification.turnId);
+  if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
+    automationService.wake();
+  }
+  liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
+});
+automationService.subscribe((notification) => {
+  liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
+});
+
+function createThreadImageGenerationRuntime(
+  turnId: string,
+  workspace: AgentLocalWorkspaceContext,
+): AgentImageGenerationRuntime {
+  return {
+    listModels: async () => {
+      const settings = await getProviderSettings();
+      const activeProviderId = (await getActiveProviderRuntimeConfig().catch(() => null))?.providerId
+        ?? settings.activeProviderId
+        ?? null;
+      const priority = [...new Set([
+        activeProviderId,
+        'openai',
+        'google',
+        'openrouter',
+      ].filter((value): value is string => Boolean(value)))];
+      return settings.providers
+        .filter((provider) => provider.enabled && (provider.auth?.credentialed ?? (provider.hasApiKey || provider.hasEnvApiKey)))
+        .sort((left, right) => imageProviderPriority(priority, left.providerId) - imageProviderPriority(priority, right.providerId))
+        .flatMap((provider) => piImageModelsForProvider(provider.providerId).map((model) => ({
+          providerId: provider.providerId,
+          id: model.id,
+          name: model.name,
+          input: [...model.input],
+          output: [...model.output],
+        })));
+    },
+    getActiveProviderId: async () => (
+      await getActiveProviderRuntimeConfig().catch(() => null)
+    )?.providerId ?? null,
+    getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
+    validateOptions: ({ providerId, modelId, options }) => (
+      validateImageGenerationOptions(providerId, modelId, options)
+    ),
+    readLocalImage: async ({ filePath }) => {
+      const resolvedPath = await resolveGeneratedImageReadPath(workspace, filePath)
+        ?? resolveAgentLocalReadPath(workspace, filePath);
+      const data = await readFile(resolvedPath);
+      const mimeType = sniffMimeType(data, resolvedPath);
+      if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
+      return { data, mimeType, label: basename(resolvedPath) };
+    },
+    writeGeneratedImage: async ({ toolCallId, index, data, mimeType }) => {
+      const turnPart = shortGeneratedImagePathPart(turnId, 'turn');
+      const directory = join(workspace.scratchRoot, AGENT_GENERATED_IMAGE_DIR, turnPart);
+      await mkdir(directory, { recursive: true });
+      const callDigest = createHash('sha256').update(toolCallId).digest('hex').slice(0, 6);
+      const fileName = `image-${index}-${callDigest}${generatedImageExtension(mimeType)}`;
+      await writeFile(join(directory, fileName), data);
+      return { path: posix.join(AGENT_GENERATED_IMAGE_DIR, turnPart, fileName) };
+    },
+    generateImages: async ({ providerId, modelId, context, options }) => {
+      const model = piFindImageModel(providerId, modelId);
+      if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
+      const settings = await getProviderSettings();
+      const provider = settings.providers.find((candidate) => candidate.providerId === providerId);
+      return piGenerateImages(model, context, { ...options, baseUrl: provider?.baseUrl });
+    },
+  };
+}
+
+function imageProviderPriority(priority: readonly string[], providerId: string): number {
+  const index = priority.indexOf(providerId);
+  return index >= 0 ? index : priority.length;
+}
+
+function shortGeneratedImagePathPart(value: string, fallback: string): string {
+  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return `${safe}-${digest}`;
+}
+
+function generatedImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '.png';
+}
+
 const previewTranslationCache = new PreviewTranslationCacheStore(
   join(app.getPath('userData'), 'preview-translation-cache'),
   {
@@ -418,12 +792,13 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   assetRoot(),
 ]);
 
-documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
+documentService.onProjectionChanged(({ event, sourceWebContentsId, operationId }) => {
   const target = liveWindow(mainWindow)?.webContents;
   if (target && target.id !== sourceWebContentsId) {
     target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
   }
   pruneNodeAccessForProjectionUpdate(event.update);
+  memoryExtension.documentChanged(operationId);
 });
 
 documentService.setTransientSearchOptionsProvider(() => ({
@@ -482,31 +857,6 @@ function descendantProjectionIds(rootIds: readonly string[], nodes: readonly Nod
   }
   return descendants;
 }
-
-// Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
-// in-app delivery is unaffected. The preference is read synchronously at call time
-// (no async cache that could fail closed and stay OFF for the process). The banner
-// is suppressed only when the user is actually LOOKING at THIS task's conversation
-// (window focused AND the renderer reports it as the viewed conversation — i.e. the
-// dock is open showing it). A completion in a background channel, or while the dock
-// is collapsed, still escalates.
-agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
-  if (!loadAppPreferences().osNotificationsEnabled) return;
-  if (!Notification.isSupported()) return;
-  const lookingAtThisConversation =
-    mainWindow?.isFocused() && agentRuntime.getViewedConversation() === conversationId;
-  if (lookingAtThisConversation) return;
-  const notification = new Notification({ title, body: body ?? '' });
-  notification.on('click', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    // Route the click to the originating conversation, not whatever was last active.
-    mainWindow.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId);
-  });
-  notification.show();
-});
 
 // ─── Security shell (the native host owns navigation + capabilities) ───
 
@@ -1003,9 +1353,6 @@ function createWindow() {
     mainWindow = null;
   });
   mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
-  mainWindow.webContents.once('did-finish-load', () => {
-    agentRuntime.ready();
-  });
   // A launcher "open node" that had to spin up the main window — or that arrived
   // during a renderer reload — waits for the renderer to load before the navigate
   // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
@@ -1215,22 +1562,17 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; agentId?: unknown };
+  const input = raw as { category?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
-  const agentId = typeof input.agentId === 'string' && input.agentId.trim()
-    ? input.agentId.trim()
-    : undefined;
   return {
     ...(category ? { category } : {}),
-    ...(agentId ? { agentId } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
-    ...(!target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
   };
 }
 
@@ -1486,74 +1828,12 @@ function createConfigChildWindow(options: {
 function configChildWindowParent(excluded: BrowserWindow | null = null): BrowserWindow | undefined {
   const focused = BrowserWindow.getFocusedWindow();
   if (isLiveWindow(focused) && focused !== excluded) {
-    if (focused === providerConfigWindow || focused === agentConfigWindow || focused === channelConfigWindow) {
+    if (focused === providerConfigWindow) {
       return liveWindow(focused.getParentWindow()) ?? liveWindow(settingsWindow) ?? liveWindow(mainWindow);
     }
     return focused;
   }
   return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
-}
-
-// Agent and Channel create/edit are their own native config windows, like the
-// provider config child. Settings owns the list; these child windows own the
-// create/edit process.
-function openAgentConfigWindow(agentId: string) {
-  const previous = agentConfigWindow;
-  if (isLiveWindow(previous)) {
-    previous.close();
-  }
-  agentConfigWindow = null;
-
-  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
-  const parent = configChildWindowParent(previous);
-  const target = createConfigChildWindow({
-    title: getMessages(effectiveLocale()).window.agentConfigTitle,
-    width,
-    height,
-    minWidth,
-    minHeight,
-    resizable: true,
-    parent,
-    query: {
-      [WINDOW_SURFACE_QUERY_PARAM]: 'agent-config',
-      [AGENT_CONFIG_AGENT_PARAM]: agentId,
-    },
-  });
-  agentConfigWindow = target;
-
-  target.on('closed', () => {
-    if (agentConfigWindow === target) agentConfigWindow = null;
-  });
-}
-
-function openChannelConfigWindow(conversationId: string, mode: ChannelConfigMode) {
-  const previous = channelConfigWindow;
-  if (isLiveWindow(previous)) {
-    previous.close();
-  }
-  channelConfigWindow = null;
-
-  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
-  const parent = configChildWindowParent(previous);
-  const target = createConfigChildWindow({
-    title: getMessages(effectiveLocale()).window.channelConfigTitle,
-    width,
-    height,
-    minWidth,
-    minHeight,
-    resizable: true,
-    parent,
-    query: {
-      [WINDOW_SURFACE_QUERY_PARAM]: 'channel-config',
-      [CHANNEL_CONFIG_CONVERSATION_PARAM]: conversationId,
-      [CHANNEL_CONFIG_MODE_PARAM]: mode,
-    },
-  });
-  channelConfigWindow = target;
-
-  target.on('closed', () => {
-    if (channelConfigWindow === target) channelConfigWindow = null;
-  });
 }
 
 function trustedLocalFileReferenceOptions() {
@@ -1562,11 +1842,113 @@ function trustedLocalFileReferenceOptions() {
   };
 }
 
+interface LocalFileOperationInput {
+  readonly path?: unknown;
+  readonly threadId?: unknown;
+  readonly attachmentId?: unknown;
+}
+
+async function resolveLocalFileOperation(
+  raw: LocalFileOperationInput | undefined,
+  allowAttachmentPathHint = false,
+): Promise<TrustedLocalFileReference | null> {
+  const threadId = typeof raw?.threadId === 'string' && raw.threadId.trim() ? raw.threadId : null;
+  const attachmentId = typeof raw?.attachmentId === 'string' && raw.attachmentId.trim()
+    ? raw.attachmentId
+    : null;
+  if (Boolean(threadId) !== Boolean(attachmentId)) return null;
+  if (!threadId || !attachmentId) {
+    return resolveTrustedLocalFileReference(
+      raw?.path,
+      [agentLocalFileRoot, agentScratchRoot],
+      trustedLocalFileReferenceOptions(),
+    );
+  }
+  const attachment = await threadService.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
+  if (!attachment) return null;
+  if (attachment.entryKind === 'directory') {
+    return resolveTrustedLocalFileReference(
+      raw?.path,
+      [attachment.path],
+      trustedLocalFileReferenceOptions(),
+    );
+  }
+  if (allowAttachmentPathHint) {
+    const requestedPath = typeof raw?.path === 'string' ? raw.path : '';
+    const acceptedHints = attachment.attachment.source.kind === 'localFile'
+      ? [attachment.path, attachment.attachment.source.path]
+      : [
+          attachment.path,
+          attachment.attachment.name,
+          attachment.attachment.source.ref.fileName,
+        ];
+    return acceptedHints.includes(requestedPath) ? attachment : null;
+  }
+  if (typeof raw?.path !== 'string') return null;
+  const requestedPath = await realpath(raw.path).catch(() => null);
+  return requestedPath === attachment.path ? attachment : null;
+}
+
 function registerIpc() {
+  ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Automations are available only to the main application window.');
+    }
+    if (typeof method !== 'string' || !(AUTOMATION_METHODS as readonly string[]).includes(method)) {
+      throw new Error(`Unknown Automation method: ${String(method)}`);
+    }
+    return automationService.request(method as AutomationMethod, input);
+  });
+  ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Agent Core is available only to the main application window.');
+    }
+    return threadService.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+  });
+  ipcMain.handle(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, async (
+    event,
+    request?: Partial<ThreadMessageContextMenuRequest>,
+  ): Promise<ThreadMessageContextMenuAction | null> => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    const messages = getMessages(effectiveLocale()).agent;
+    let settled = false;
+    return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
+      const pick = (action: ThreadMessageContextMenuAction) => {
+        settled = true;
+        resolve(action);
+      };
+      const template: Electron.MenuItemConstructorOptions[] = [];
+      if (request?.canCopy === true) {
+        template.push({ label: messages.message.copyMessage, click: () => pick('copy') });
+      }
+      if (request?.canContinueInNewChat === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({
+          label: messages.thread.continueInNewChat,
+          click: () => pick('continueInNewChat'),
+        });
+      }
+      if (request?.canShowDetails === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({ label: messages.message.details, click: () => pick('details') });
+      }
+      if (template.length === 0) {
+        resolve(null);
+        return;
+      }
+      Menu.buildFromTemplate(template).popup({
+        window: mainWindow!,
+        callback: () => {
+          if (!settled) resolve(null);
+        },
+      });
+    });
+  });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
+      if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
-      if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
         if (!mainWindow || event.sender !== mainWindow.webContents) {
           throw new Error('Page translation is only available to the main window.');
@@ -1574,10 +1956,10 @@ function registerIpc() {
         return pageTranslationService.handle(command, args ?? {});
       }
       if (isPreviewCommand(command)) {
+        assertMainRenderer(event, 'Preview');
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
           agentGeneratedImageRoots: [agentScratchRoot],
-          agentRuntime,
           assetService,
           assetFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
@@ -1586,6 +1968,30 @@ function registerIpc() {
           inferMimeType,
           localFileStreamUrl: async (file, mimeType) => {
             const token = await localFilePreviewStreams.issue(file, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
+          threadAttachmentFile: async (threadId, attachmentId) => (
+            threadService.resolveAttachmentFile(threadId, attachmentId).then((resolved) => {
+              if (!resolved) return null;
+              return {
+                ...resolved,
+                acceptedPathHints: resolved.attachment.source.kind === 'localFile'
+                  ? [resolved.attachment.source.path]
+                  : [resolved.attachment.name, resolved.attachment.source.ref.fileName],
+              };
+            }).catch(() => null)
+          ),
+          threadResourceFile: async (threadId, ref) => (
+            threadService.resolveThreadResourceFile(threadId, ref).then((resolved) => {
+              if (!resolved) return null;
+              return {
+                ...resolved,
+                acceptedPathHints: [resolved.ref.fileName],
+              };
+            }).catch(() => null)
+          ),
+          threadManagedFileStreamUrl: async (filePath, mimeType) => {
+            const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           localFileReferencePreview,
@@ -1630,46 +2036,6 @@ function registerIpc() {
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
-  ipcMain.handle(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, async (
-    event,
-    request?: Partial<AgentMessageContextMenuRequest>,
-  ): Promise<AgentMessageContextMenuAction | null> => {
-    const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
-    const messages = getMessages(effectiveLocale()).agent.message;
-    let settled = false;
-    return new Promise<AgentMessageContextMenuAction | null>((resolve) => {
-      const pick = (action: AgentMessageContextMenuAction) => {
-        settled = true;
-        resolve(action);
-      };
-      const template: Electron.MenuItemConstructorOptions[] = [];
-      if (request?.canCopy) {
-        template.push({ label: messages.copy, click: () => pick('copy') });
-      }
-      if (request?.canRetry || request?.canRegenerate) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        if (request.canRetry) {
-          template.push({ label: messages.retry, click: () => pick('retry') });
-        } else if (request.canRegenerate) {
-          template.push({ label: messages.regenerate, click: () => pick('regenerate') });
-        }
-      }
-      if (request?.canShowDetails) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        template.push({ label: messages.details, click: () => pick('details') });
-      }
-      if (template.length === 0) {
-        resolve(null);
-        return;
-      }
-      Menu.buildFromTemplate(template).popup({
-        ...(window ? { window } : {}),
-        callback: () => {
-          if (!settled) resolve(null);
-        },
-      });
-    });
-  });
   // Launcher window IPC (the prewarmed global launcher).
   ipcMain.handle('launcher:hide', () => {
     dismissLauncher();
@@ -1787,17 +2153,6 @@ function registerIpc() {
     saveOsNotificationsPreference(enabled);
     return { osNotificationsEnabled: enabled };
   });
-  // Durable attention-clear: the user opened/viewed a conversation. Dedicated channel
-  // (off the command union) — see markConversationRead. A config reload never hits this.
-  ipcMain.handle('lin:agent-mark-conversation-read', (_event, conversationId: unknown) => {
-    if (typeof conversationId !== 'string' || !conversationId) return;
-    return agentRuntime.markConversationRead(conversationId);
-  });
-  // The renderer reports which conversation the user can actually see (dock open),
-  // or null (dock collapsed). Authoritative for OS-banner suppression.
-  ipcMain.handle('lin:agent-set-viewed-conversation', (_event, conversationId: unknown) => {
-    agentRuntime.setViewedConversation(typeof conversationId === 'string' && conversationId ? conversationId : null);
-  });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
   // windows re-render via I18nProvider without a reload), and rebuilds the native
@@ -1847,8 +2202,6 @@ function registerIpc() {
     const messages = getMessages(raw);
     liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
     liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
-    liveWindow(agentConfigWindow)?.setTitle(messages.window.agentConfigTitle);
-    liveWindow(channelConfigWindow)?.setTitle(messages.window.channelConfigTitle);
   });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
@@ -1863,22 +2216,7 @@ function registerIpc() {
     }
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
-  ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown }) => {
-    const agentId = typeof args?.agentId === 'string' ? args.agentId : '';
-    openAgentConfigWindow(agentId);
-  });
-  ipcMain.handle('lin:close-agent-config', () => liveWindow(agentConfigWindow)?.close());
-  ipcMain.handle('lin:open-channel-config', (_event, args?: { conversationId?: unknown; mode?: unknown }) => {
-    const conversationId = typeof args?.conversationId === 'string' ? args.conversationId : '';
-    const mode: ChannelConfigMode = args?.mode === 'create' ? 'create' : 'configure';
-    openChannelConfigWindow(conversationId, mode);
-  });
-  ipcMain.handle('lin:close-channel-config', () => liveWindow(channelConfigWindow)?.close());
-  ipcMain.handle('lin:agent-navigate-conversation', (_event, conversationId?: unknown) => {
-    if (typeof conversationId !== 'string' || !conversationId.trim()) return;
-    liveWindow(mainWindow)?.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId.trim());
-  });
-  // A provider/agent setting changed (from the settings window OR its config child).
+  // A provider setting changed in the settings window or its config child.
   // Tell BOTH the main window (stale provider state) and the settings window (its
   // list reflects the new configured provider row) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
@@ -1944,14 +2282,30 @@ function registerIpc() {
       };
     }
     lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
-    const selectedPaths = result.filePaths.slice(0, maxFiles);
-    const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
-    const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
-      (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
-    );
+    let skippedCount = 0;
+    const files: NonNullable<Awaited<ReturnType<typeof localPickedFile>>>[] = [];
+    const rejectedFiles: Array<{
+      name: string;
+      reason: 'officeOwnershipFile';
+      suggestedName?: string;
+    }> = [];
+    for (const filePath of result.filePaths) {
+      const rejected = await rejectedOfficeOwnershipFile(filePath);
+      if (rejected) {
+        rejectedFiles.push(rejected);
+        continue;
+      }
+      if (files.length >= maxFiles) {
+        skippedCount += 1;
+        continue;
+      }
+      const file = await localPickedFile(filePath);
+      if (file) files.push(file);
+    }
     return {
       canceled: false,
       files,
+      ...(rejectedFiles.length > 0 ? { rejectedFiles } : {}),
       ...(skippedCount > 0 ? { skippedCount } : {}),
     };
   });
@@ -2005,70 +2359,139 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+  ipcMain.handle('lin:preview-local-file-reference', async (event, rawOptions?: LocalFileOperationInput) => {
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment preview');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file) return { file: null };
     return { file: await localFileReferencePreview(file) };
   });
 
-  ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+  ipcMain.handle('lin:open-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment open');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
     const error = await shell.openPath(file.path);
     return { opened: error.length === 0 };
   });
 
-  ipcMain.handle('lin:reveal-local-file', async (_event, rawOptions?: { path?: unknown }) => {
+  ipcMain.handle('lin:reveal-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
     // Reveal-in-Finder never executes the file, so it carries no `isSafeLocalFileOpenTarget`
     // gate (an app/script that can't be opened can still be revealed); the same trusted-root
     // boundary as `lin:open-local-file` is the authority.
-    const file = await resolveTrustedLocalFileReference(
-      rawOptions?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
-    );
+    assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment reveal');
+    const file = await resolveLocalFileOperation(rawOptions, true);
     if (!file) return { revealed: false };
     shell.showItemInFolder(file.path);
     return { revealed: true };
   });
 
-  ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
-    bytes?: unknown;
-    mimeType?: unknown;
-    name?: unknown;
-  }) => {
-    const bytes = stagedAttachmentBuffer(rawOptions?.bytes);
-    if (!bytes) throw new Error('Attachment bytes are required.');
-    if (bytes.byteLength > MAX_STAGED_ATTACHMENT_BYTES) {
-      throw new Error(`Attachment is larger than ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)} and cannot be staged.`);
+  ipcMain.handle('lin:attachment-upload/begin', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    const expectedBytes = Number(raw?.sizeBytes);
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+      throw new Error('Attachment upload size must be a non-negative safe integer.');
     }
-    const rawName = typeof rawOptions?.name === 'string' && rawOptions.name.trim()
-      ? rawOptions.name.trim()
-      : 'attachment';
-    const mimeType = typeof rawOptions?.mimeType === 'string' && rawOptions.mimeType.trim()
-      ? rawOptions.mimeType.trim()
-      : 'application/octet-stream';
-    const name = safeAttachmentFileName(rawName);
-    await pruneOldAgentAttachments(agentScratchRoot);
-    const attachmentDir = agentAttachmentDir(agentScratchRoot);
-    await mkdir(attachmentDir, { recursive: true });
-    const filePath = join(attachmentDir, `${randomUUID()}-${name}`);
-    await writeFile(filePath, bytes);
-    return {
-      path: filePath,
-      name: rawName,
-      mimeType,
-      sizeBytes: bytes.byteLength,
-    };
+    const threadId = requiredNonEmptyString(raw?.threadId, 'threadId');
+    const attachmentId = requiredNonEmptyString(raw?.attachmentId, 'attachmentId');
+    const uploadId = await threadService.beginAttachmentUpload({
+      threadId,
+      attachmentId,
+      expectedBytes,
+      mimeType: requiredNonEmptyString(raw?.mimeType, 'mimeType'),
+      fileName: requiredNonEmptyString(raw?.name, 'name'),
+    });
+    return { uploadId };
   });
+
+  ipcMain.handle('lin:attachment-upload/append', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    const bytes = stagedAttachmentBuffer(raw?.bytes);
+    if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_UPLOAD_CHUNK_BYTES) {
+      throw new Error('Attachment upload chunk is invalid.');
+    }
+    await threadService.appendAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+      bytes,
+    });
+    return {};
+  });
+
+  ipcMain.handle('lin:attachment-upload/finish', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    return threadService.finishAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+    });
+  });
+
+  ipcMain.handle('lin:attachment-upload/abort', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment upload');
+    await threadService.abortAttachmentUpload({
+      threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
+      attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
+      uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
+    });
+    return {};
+  });
+
+  ipcMain.handle('lin:attachment-resource/discard', async (event, raw?: Record<string, unknown>) => {
+    assertMainRenderer(event, 'Attachment resource discard');
+    const discarded = await threadService.discardUnreferencedThreadResource(
+      requiredNonEmptyString(raw?.threadId, 'threadId'),
+      decodeThreadResourceReference(raw?.ref, 'attachmentResource.ref'),
+    );
+    return { discarded };
+  });
+}
+
+async function handleMemoryCommand(command: string, args: Record<string, unknown>) {
+  switch (command) {
+    case 'memory_settings_get':
+      return memoryExtension.settings(typeof args.threadId === 'string' ? args.threadId : null);
+    case 'memory_feature_mode_set':
+      return memoryExtension.setFeatureMode(decodeMemoryFeatureMode(args.mode));
+    case 'memory_thread_mode_set':
+      return memoryExtension.setThreadMode(
+        requiredNonEmptyString(args.threadId, 'threadId'),
+        decodeThreadMemoryMode(args.mode),
+      );
+    case 'memory_open':
+      {
+        const outcome = await documentService.handle('ensure_tag_search', {
+          tagId: memoryTagId('memory'),
+        }) as CommandResult;
+        navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
+      }
+      return memoryExtension.settings();
+    case 'memory_reset':
+      return memoryExtension.reset();
+    default:
+      throw new Error(`Unknown Memory command: ${command}`);
+  }
+}
+
+function requiredNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`);
+  return value;
+}
+
+function assertMainRenderer(event: IpcMainInvokeEvent, capability: string): void {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error(`${capability} is available only to the main application window.`);
+  }
+}
+
+function assertAttachmentFileOperationRenderer(
+  event: IpcMainInvokeEvent,
+  input: LocalFileOperationInput | undefined,
+  capability: string,
+): void {
+  if (input?.threadId !== undefined || input?.attachmentId !== undefined) {
+    assertMainRenderer(event, capability);
+  }
 }
 
 function stagedAttachmentBuffer(value: unknown): Buffer | null {
@@ -2077,20 +2500,11 @@ function stagedAttachmentBuffer(value: unknown): Buffer | null {
   return null;
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
-}
-
-async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
+async function handleAssetCommand(
+  event: IpcMainInvokeEvent,
+  command: AssetCommand,
+  args: Record<string, unknown>,
+) {
   switch (command) {
     case 'ingest_asset': {
       // Only the buffer path is exposed to the renderer. Path ingest is an
@@ -2116,6 +2530,20 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       );
       if (!file || file.entryKind !== 'file') return null;
       return assetService.ingest({ kind: 'path', path: file.path });
+    }
+    case 'ingest_thread_resource': {
+      assertMainRenderer(event, 'Thread resource ingest');
+      return ingestThreadResourceAsset(args, {
+        readResource: (threadId, ref) => threadService
+          .readReferencedThreadResource(threadId, ref)
+          .catch(() => null),
+        ingestResource: (bytes, ref) => assetService.ingest({
+          kind: 'buffer',
+          data: bytes,
+          mimeType: ref.mimeType,
+          originalFilename: ref.fileName,
+        }),
+      });
     }
     case 'lookup_asset':
       return assetService.lookup(String(args.id));
@@ -2477,6 +2905,7 @@ async function localFileMetadataResults(paths: string[], limit: number) {
   const files = [];
   for (const filePath of paths) {
     if (files.length >= limit) break;
+    if (officeOwnershipFileInfo(filePath)) continue;
     try {
       const fileStat = await stat(filePath);
       const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
@@ -2496,6 +2925,24 @@ async function localFileMetadataResults(paths: string[], limit: number) {
     }
   }
   return files;
+}
+
+async function rejectedOfficeOwnershipFile(filePath: string): Promise<{
+  name: string;
+  reason: 'officeOwnershipFile';
+  suggestedName?: string;
+} | null> {
+  const ownershipFile = officeOwnershipFileInfo(filePath);
+  if (!ownershipFile) return null;
+  const suggestedPath = join(dirname(filePath), ownershipFile.suggestedName);
+  const suggestedName = await stat(suggestedPath)
+    .then((candidate) => candidate.isFile() ? ownershipFile.suggestedName : undefined)
+    .catch(() => undefined);
+  return {
+    name: ownershipFile.name,
+    reason: 'officeOwnershipFile',
+    ...(suggestedName ? { suggestedName } : {}),
+  };
 }
 
 async function localFileReferencePreview(file: TrustedLocalFileReference) {
@@ -2657,11 +3104,7 @@ async function localPickedFile(filePath: string) {
     const fileStat = await stat(filePath);
     const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
     if (!entryKind) return null;
-    if (entryKind === 'file' && fileStat.size <= 0) return null;
     const mimeType = entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath);
-    const imageDataBase64 = entryKind === 'file' && isInlineImageMimeType(mimeType) && fileStat.size <= MAX_RAW_INLINE_IMAGE_BYTES
-      ? (await readFile(filePath)).toString('base64')
-      : undefined;
     const [visual] = await withLocalFileIcons([{
       entryKind,
       mimeType,
@@ -2677,11 +3120,100 @@ async function localPickedFile(filePath: string) {
       lastModified: fileStat.mtimeMs,
       ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
       ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
-      ...(imageDataBase64 ? { imageDataBase64 } : {}),
     };
   } catch {
     return null;
   }
+}
+
+async function prepareAttachmentPromptImage(
+  attachment: ThreadAttachmentContent,
+  sourcePath: string,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  return prepareBoundedAgentImage(sourcePath, attachment.name);
+}
+
+async function prepareBoundedAgentImage(
+  sourcePath: string,
+  displayName: string,
+  signal?: AbortSignal,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  return agentImageObservationMutex.run(async () => {
+    signal?.throwIfAborted();
+    return prepareBoundedAgentImageUnlocked(sourcePath, displayName);
+  });
+}
+
+async function prepareBoundedAgentImageUnlocked(
+  sourcePath: string,
+  displayName: string,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: 'image/png' | 'image/jpeg';
+  readonly fileName: string;
+  readonly dimensions: { readonly width: number; readonly height: number };
+}> {
+  const sourceStat = await stat(sourcePath);
+  if (!sourceStat.isFile() || sourceStat.size <= 0) {
+    throw new Error(`Image is not a readable regular file: ${displayName}`);
+  }
+  if (sourceStat.size > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
+    throw new Error(
+      `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
+    );
+  }
+  let image = await nativeImage.createThumbnailFromPath(sourcePath, {
+    width: MAX_PROMPT_IMAGE_DIMENSION,
+    height: MAX_PROMPT_IMAGE_DIMENSION,
+  });
+  if (image.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
+
+  const png = image.toPNG();
+  if (png.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
+    return {
+      bytes: png,
+      mimeType: 'image/png',
+      fileName: 'prompt.png',
+      dimensions: image.getSize(),
+    };
+  }
+
+  for (;;) {
+    for (const quality of [80, 70, 55, 40]) {
+      const jpeg = image.toJPEG(quality);
+      if (jpeg.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
+        return {
+          bytes: jpeg,
+          mimeType: 'image/jpeg',
+          fileName: 'prompt.jpg',
+          dimensions: image.getSize(),
+        };
+      }
+    }
+    const size = image.getSize();
+    const width = Math.max(1, Math.floor(size.width * 0.75));
+    const height = Math.max(1, Math.floor(size.height * 0.75));
+    if (width === size.width && height === size.height) break;
+    image = image.resize({ width, height, quality: 'best' });
+  }
+  throw new Error(`Image could not fit the model-input image budget: ${displayName}`);
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MiB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
 function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
@@ -2710,13 +3242,6 @@ function inferMimeType(filePath: string): string {
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
-}
-
-function isInlineImageMimeType(mimeType: string): boolean {
-  return mimeType === 'image/jpeg'
-    || mimeType === 'image/png'
-    || mimeType === 'image/gif'
-    || mimeType === 'image/webp';
 }
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
@@ -2754,145 +3279,20 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
   }
 }
 
-async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
-  const conversationId = () => String(args.conversationId);
+async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
-    case 'agent_restore_latest_conversation':
-      return agentRuntime.restoreLatestConversation();
-    case 'agent_restore_conversation':
-      return agentRuntime.restoreConversation(conversationId());
-    case 'agent_create_conversation':
-      return agentRuntime.createConversation({
-        title: typeof args.title === 'string'
-          ? args.title
-          : typeof args.goal === 'string'
-            ? args.goal
-            : undefined,
-      });
-    case 'agent_list_conversations':
-      return agentRuntime.listConversations();
-    case 'agent_rename_conversation':
-      return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
-    case 'agent_set_conversation_include_in_dream_data':
-      return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
-    case 'agent_delete_conversation':
-      return agentRuntime.deleteConversation(conversationId());
-    case 'agent_list_runs':
-      return agentRuntime.listRuns({
-        limit: typeof args.limit === 'number' ? args.limit : undefined,
-        perConversationLimit: typeof args.perConversationLimit === 'number' ? args.perConversationLimit : undefined,
-      });
-    case 'agent_issue_search':
-      return agentRuntime.searchIssues(args as IssueSearchInput);
-    case 'agent_issue_read':
-      return agentRuntime.readIssue(args as unknown as IssueReadInput);
-    case 'agent_issue_complete_human_review':
-      return agentRuntime.completeHumanReview(
-        String(args.issueId ?? ''),
-        typeof args.expectedRevision === 'string' ? args.expectedRevision : undefined,
-      );
-    case 'agent_session_read':
-      return agentRuntime.readAgentSession(args as unknown as AgentSessionReadInput);
-    case 'agent_session_transcript':
-      return agentRuntime.agentSessionTranscript(String(args.agentSessionId ?? ''));
-    case 'agent_list_dream_history':
-      return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_dream_readiness':
-      return agentRuntime.previewDreamReadiness();
-    case 'agent_run_dream_now':
-      await agentRuntime.runDreamNow({
-        startDate: typeof args.startDate === 'string' ? args.startDate : undefined,
-        endDate: typeof args.endDate === 'string' ? args.endDate : undefined,
-        guidance: typeof args.guidance === 'string' ? args.guidance : undefined,
-      });
-      return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_debug_view':
-      return agentRuntime.agentDebugView(conversationId());
-    case 'agent_debug_run':
-      return agentRuntime.agentDebugRun(conversationId(), String(args.runId));
-    case 'agent_payload_text':
-      return agentRuntime.payloadText(conversationId(), String(args.payloadId));
-    case 'agent_run_detail':
-      return typeof args.conversationId === 'string'
-        ? agentRuntime.agentRunDetail(String(args.runId), args.conversationId)
-        : null;
-    case 'agent_run_transcript':
-      return typeof args.conversationId === 'string'
-        ? agentRuntime.agentRunTranscript(args.conversationId, String(args.runId))
-        : null;
-    case 'agent_run_conversation_id':
-      // Run ids are global, so this resolver needs no conversation context.
-      return agentRuntime.runConversationId(String(args.runId));
-    case 'agent_run_status':
-      return agentRuntime.runStatus(conversationId(), String(args.runId), {
-        wait: args.wait === true,
-        timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
-      });
-    case 'agent_run_steer':
-      return agentRuntime.runSteer(conversationId(), String(args.runId), String(args.message ?? ''));
-    case 'agent_run_amend':
-      return agentRuntime.runAmend(conversationId(), String(args.runId), args.changes);
-    case 'agent_run_stop':
-      return agentRuntime.runStop(conversationId(), String(args.runId));
-    case 'agent_send_message':
-      return agentRuntime.sendMessage(
-        conversationId(),
-        String(args.message ?? ''),
-        args.attachments,
-        args.userViewContext,
-      );
-    case 'agent_edit_message':
-      return agentRuntime.editMessage(
-        conversationId(),
-        String(args.nodeId),
-        String(args.message ?? ''),
-      );
-    case 'agent_regenerate_message':
-      return agentRuntime.regenerateMessage(conversationId(), String(args.nodeId));
-    case 'agent_retry_message':
-      return agentRuntime.retryMessage(conversationId(), String(args.nodeId));
-    case 'agent_switch_branch':
-      return agentRuntime.switchBranch(conversationId(), String(args.nodeId));
-    case 'agent_queue_follow_up':
-      return agentRuntime.queueFollowUp(
-        conversationId(),
-        String(args.message ?? ''),
-        args.userViewContext,
-      );
-    case 'agent_clear_follow_up':
-      return agentRuntime.clearFollowUp(conversationId());
-    case 'agent_steer_conversation':
-      return agentRuntime.steerConversation(
-        conversationId(),
-        String(args.message ?? ''),
-      );
-    case 'agent_clear_steer':
-      return agentRuntime.clearSteer(conversationId());
-    case 'agent_resolve_user_question':
-      return agentRuntime.resolveUserQuestion(
-        conversationId(),
-        String(args.requestId),
-        args.result,
-      );
-    case 'agent_stop_run':
-      return agentRuntime.stopRun(
-        conversationId(),
-        String(args.runId),
-      );
-    case 'agent_stop_conversation':
-      return agentRuntime.stopConversation(conversationId());
-    case 'agent_reset_conversation':
-      return agentRuntime.resetConversation(conversationId());
-    case 'agent_close_conversation':
-      return agentRuntime.closeConversation(conversationId());
-    case 'agent_list_slash_commands':
-      return agentRuntime.listSlashCommands(conversationId());
     case 'agent_get_provider_settings':
       return getProviderSettings();
     case 'agent_refresh_provider_models':
       return refreshProviderModels(String(args.providerId));
-    case 'agent_update_runtime_settings':
-      return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+    case 'agent_update_runtime_settings': {
+      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
+        runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
+        runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);
+      }
+      return settings;
+    }
     case 'agent_update_image_generation_settings':
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
     case 'agent_get_capability_settings':
@@ -2934,8 +3334,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_oauth_cancel':
       oauthLoginManager.cancel(String(args.providerId));
       return undefined;
-    case 'agent_list_all_definitions':
-      return agentRuntime.listAllAgentDefinitions(conversationId());
     case 'agent_test_provider_connection':
       return testProviderConnection({
         providerId: String(args.providerId),
@@ -2943,13 +3341,21 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });
     case 'agent_list_all_skills':
-      return agentRuntime.listAllSkills(conversationId());
-    case 'agent_accept_skill':
-      return agentRuntime.acceptSkill(conversationId(), String(args.skillName), String(args.expectedHash ?? ''));
-    case 'agent_revoke_skill_acceptance':
-      return agentRuntime.revokeSkillAcceptance(conversationId(), String(args.skillName));
-    case 'agent_undo_skill_agent_edit':
-      return agentRuntime.undoLastAgentSkillEdit(conversationId(), String(args.skillName));
+      return args.userInvocableOnly === true
+        ? skillRuntime.listUserInvocableSkills()
+        : skillRuntime.listAllSkills();
+    case 'agent_accept_skill': {
+      await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
+      return skillRuntime.listAllSkills();
+    }
+    case 'agent_revoke_skill_acceptance': {
+      await skillRuntime.revokeSkillAcceptance(String(args.skillName));
+      return skillRuntime.listAllSkills();
+    }
+    case 'agent_undo_skill_agent_edit': {
+      await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
+      return skillRuntime.listAllSkills();
+    }
     case 'agent_managed_skill_catalog':
       return managedSkillCommand(() => managedSkillService.loadCatalog());
     case 'agent_managed_skill_discover':
@@ -3002,14 +3408,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));
-    case 'agent_update_agent_definition':
-      return agentRuntime.updateAgentDefinition(
-        conversationId(),
-        String(args.agentId),
-        args.input as AgentAuthoringInput,
-      );
-    case 'agent_reload_agent_definitions':
-      return agentRuntime.reloadAgentDefinitions(conversationId());
     default:
       throw new Error(`Unknown agent command: ${command}`);
   }
@@ -3056,6 +3454,11 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
+    await documentService.initWorkspace();
+    await threadService.initialize();
+    await memoryExtension.startWorker();
+    await automationService.start();
+    powerMonitor.on('resume', wakeAutomationsOnResume);
     await nodeAccessStore.load().catch((error) => {
       reportError({
         domain: 'node-access',
@@ -3106,10 +3509,6 @@ if (!app.requestSingleInstanceLock()) {
     configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
-    // Anacron catch-up on system wake belongs to Issue triggers.
-    powerMonitor.on('resume', () => {
-      agentRuntime.runIssueCatchUp();
-    });
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),
@@ -3155,22 +3554,22 @@ if (!app.requestSingleInstanceLock()) {
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
     // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
+    powerMonitor.removeListener('resume', wakeAutomationsOnResume);
     pageTranslationService.dispose();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
     // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
     // reads as "didn't quit, press again". But a bare exit would truncate in-flight
     // async writes, so we first drain them — the document mutation queue and the
-    // agent runtime's conversation event-log appends — bounded by a hard timeout so a
-    // slow/hung write (e.g. an in-flight Dream LLM call, which is crash-safe and
-    // re-fires next launch) can't block the quit.
+    // Thread rollout/state writes — bounded by a hard timeout so a slow write
+    // cannot block quit indefinitely.
     void Promise.race([
       Promise.allSettled([
         documentService.flushPendingChanges(),
         nodeAccessStore.flushNow(),
         previewTranslationCache.flushNow(),
         importApiServer.stop(),
-        agentRuntime.drainPendingWrites(),
+        closeAgentServices(memoryExtension, threadService, automationService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),

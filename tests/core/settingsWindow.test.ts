@@ -9,15 +9,10 @@ describe('settings window query routing', () => {
     expect(settingsOpenTargetFromSearch('?surface=settings&category=permissions')).toEqual({});
   });
 
-  test('treats a literal "create" agent param as an ordinary agent id', () => {
-    expect(settingsOpenTargetFromSearch('?surface=settings&category=agents&agent=create')).toEqual({
-      category: 'agents',
-      agentId: 'create',
-    });
-    // The one-Neva invariant removed the agent-create surface, so `agentMode` is
-    // no longer recognized — only the category survives.
-    expect(settingsOpenTargetFromSearch('?surface=settings&category=agents&agentMode=create')).toEqual({
-      category: 'agents',
+  test('ignores unknown categories and unrelated detail parameters', () => {
+    expect(settingsOpenTargetFromSearch('?surface=settings&category=unknown&detail=create')).toEqual({});
+    expect(settingsOpenTargetFromSearch('?surface=settings&category=skills&detail=create')).toEqual({
+      category: 'skills',
     });
   });
 });

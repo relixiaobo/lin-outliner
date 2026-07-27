@@ -14,7 +14,7 @@ and non-goals; product behavior stays with the owning surface.
 | --- | --- | --- |
 | `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked uses `--control-on` with a fixed-white check glyph (`--text-on-accent`, theme-independent). Does not own row behavior or persistence. See [Form Controls](#form-controls). |
 | `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsView.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. See [Form Controls](#form-controls). |
-| `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentSettingsView.tsx`, `AgentEditor.tsx`, `DateValuePicker.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. See [Form Controls](#form-controls). |
+| `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentSettingsView.tsx`, `DateValuePicker.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. See [Form Controls](#form-controls). |
 | `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
 | `MenuSurface` | `MenuSurface.tsx`, `PopoverList.tsx`, `NodeContextMenu.tsx` | Shared menu/popover wrapper. Caller owns role, positioning, keyboard navigation, filtering, and execution. Edge separation comes from pure overlay shadow, not border. See [Overlays](#overlays). |
 | `MenuItem` | `MenuItem.tsx`, command/menu rows | Stable row contract for icon, label, metadata, active, disabled, selected, and danger states. See [Overlays](#overlays). |
@@ -130,9 +130,12 @@ File previews use one rounded viewport with a token inset on every side, an inse
 hairline edge, and concentric inner document-page corners. Preview pages scroll
 inside the viewport content box; pages never render into the frame inset. The
 bottom-center preview action bar is a fixed-width primary capsule plus a separate
-circular `...` action, never a segmented control. It uses `--preview-action-*`
-HUD tokens, including `--preview-action-shadow`, because it floats over
-arbitrary document/image pixels.
+circular `...` action, never a segmented control. It uses the shared
+`--media-hud-*` fixed-contrast pair plus the file-preview-only
+`--preview-action-shadow` because it floats over arbitrary document/image pixels.
+Only these registered preview actions add `--material-backdrop`; compact media-HUD
+consumers such as gallery count badges keep the shared contrast pair without blur
+or preview elevation.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview
@@ -144,3 +147,7 @@ Process summaries, tool-call disclosures, run activity rows, and similar compact
 status rows reserve one measured disclosure/status slot. Labels must not jump
 between rest, hover, focus, loading, and expansion. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
+Turn-local Plan progress uses the same compact status register above the
+composer; its level-1 checklist popover appears on hover or summary activation
+without moving the composer or transcript. The summary is a disclosure button;
+the open popover is focusable and scrollable, and Escape restores summary focus.

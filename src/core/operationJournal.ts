@@ -1,4 +1,5 @@
 import type { DocumentProjection, DocumentState } from './types';
+import type { AgentMutationCausation } from './agent/protocol';
 
 export type OperationHistoryScope = 'all' | 'agent' | 'user';
 export type OperationHistoryOrigin = 'agent' | 'user' | 'system';
@@ -9,12 +10,14 @@ export interface OperationHistoryEntry {
   origin: OperationHistoryOrigin;
   command?: string;
   tool?: string;
+  causation?: AgentMutationCausation;
   action: string;
   summary: string;
   affectedNodeIds: string[];
   affectedNodeCount: number;
   affectedNodeIdsTruncated?: boolean;
   affectedNodeIdsHash?: string;
+  affectsMemory?: boolean;
   createdAt: string;
 }
 
@@ -54,7 +57,9 @@ export interface OperationHistoryMetadata {
   operationId?: string;
   command?: string;
   tool?: string;
+  causation?: AgentMutationCausation;
   summary?: string;
+  affectsMemory?: boolean;
 }
 
 export interface OperationStackState {
@@ -104,8 +109,10 @@ export class OperationJournal {
       origin,
       command: metadata.command,
       tool: metadata.tool,
+      causation: metadata.causation,
       action,
       summary: metadata.summary ?? summarizeOperation(origin, action),
+      affectsMemory: metadata.affectsMemory === true,
       ...affected,
       createdAt: new Date().toISOString(),
     };
@@ -117,8 +124,10 @@ export class OperationJournal {
       applyMergedAffectedNodeSummary(existing, entry);
       existing.command ??= entry.command;
       existing.tool ??= entry.tool;
+      existing.causation ??= entry.causation;
       existing.action = entry.action;
       existing.summary = entry.summary;
+      existing.affectsMemory = existing.affectsMemory === true || entry.affectsMemory === true;
       return;
     }
     this.appendEntry(entry);
@@ -182,6 +191,7 @@ export function isOperationHistoryEntry(value: unknown): value is OperationHisto
     && (entry.origin === 'agent' || entry.origin === 'user' || entry.origin === 'system')
     && (entry.command == null || typeof entry.command === 'string')
     && (entry.tool == null || typeof entry.tool === 'string')
+    && (entry.causation == null || isAgentMutationCausation(entry.causation))
     && typeof entry.action === 'string'
     && typeof entry.summary === 'string'
     && Array.isArray(entry.affectedNodeIds)
@@ -189,6 +199,7 @@ export function isOperationHistoryEntry(value: unknown): value is OperationHisto
     && (entry.affectedNodeCount == null || isNonNegativeInteger(entry.affectedNodeCount))
     && (entry.affectedNodeIdsTruncated == null || typeof entry.affectedNodeIdsTruncated === 'boolean')
     && (entry.affectedNodeIdsHash == null || typeof entry.affectedNodeIdsHash === 'string')
+    && (entry.affectsMemory == null || typeof entry.affectsMemory === 'boolean')
     && typeof entry.createdAt === 'string';
 }
 
@@ -322,6 +333,14 @@ function applyMergedAffectedNodeSummary(target: OperationHistoryEntry, entry: Op
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isAgentMutationCausation(value: unknown): value is AgentMutationCausation {
+  if (!value || typeof value !== 'object') return false;
+  const causation = value as Record<string, unknown>;
+  return typeof causation.threadId === 'string'
+    && typeof causation.turnId === 'string'
+    && typeof causation.itemId === 'string';
 }
 
 function hashStrings(values: readonly string[]) {

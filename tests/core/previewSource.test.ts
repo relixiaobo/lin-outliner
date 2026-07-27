@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
@@ -89,6 +88,120 @@ describe('preview source commands', () => {
     }
   });
 
+  test('authorizes one external attachment without widening the trusted roots', async () => {
+    const externalRoot = await mkdtemp(join(tmpdir(), 'lin-preview-attachment-test-'));
+    try {
+      const attachmentPath = join(externalRoot, 'attached.txt');
+      const substitutedPath = join(externalRoot, 'substituted.txt');
+      await writeFile(attachmentPath, 'attached bytes');
+      await writeFile(substitutedPath, 'substituted bytes');
+      const attachmentStats = await stat(attachmentPath);
+      const streamPaths: string[] = [];
+      const context = previewContext({
+        threadAttachmentFile: async (threadId, attachmentId) => (
+          threadId === 'thread-1' && attachmentId === 'attachment-1'
+            ? {
+                entryKind: 'file',
+                path: attachmentPath,
+                stats: attachmentStats,
+                acceptedPathHints: ['attached.txt'],
+              }
+            : null
+        ),
+        threadManagedFileStreamUrl: async (filePath) => {
+          streamPaths.push(filePath);
+          return `${PREVIEW_LOCAL_URL_SCHEME}://attachment-token`;
+        },
+      });
+      const authorizedTarget = {
+        kind: 'local-file' as const,
+        path: 'attached.txt',
+        entryKind: 'file' as const,
+        threadId: 'thread-1',
+        attachmentId: 'attachment-1',
+      };
+
+      const resolved = await handlePreviewCommand('preview_resolve_source', {
+        target: authorizedTarget,
+      }, context) as PreviewResolveSourceResult;
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        displayPath: attachmentPath,
+        streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://attachment-token`,
+        target: { path: attachmentPath, threadId: 'thread-1', attachmentId: 'attachment-1' },
+      });
+      expect(streamPaths).toEqual([attachmentPath]);
+
+      const text = await handlePreviewCommand('preview_read_text', {
+        target: authorizedTarget,
+      }, context) as PreviewReadTextResult;
+      expect(text.text).toBe('attached bytes');
+
+      const substituted = await handlePreviewCommand('preview_resolve_source', {
+        target: { ...authorizedTarget, path: substitutedPath },
+      }, context) as PreviewResolveSourceResult;
+      expect(substituted.source).toBeNull();
+
+      const ambient = await handlePreviewCommand('preview_resolve_source', {
+        target: { kind: 'local-file', path: attachmentPath, entryKind: 'file' },
+      }, context) as PreviewResolveSourceResult;
+      expect(ambient.source).toBeNull();
+    } finally {
+      await rm(externalRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves a typed Thread resource without exposing its canonical storage path', async () => {
+    const managedRoot = await mkdtemp(join(tmpdir(), 'lin-preview-resource-test-'));
+    try {
+      const observedPath = join(managedRoot, 'tool-output.png');
+      await writeFile(observedPath, 'managed image bytes');
+      const observedStats = await stat(observedPath);
+      const ref = {
+        id: 'a'.repeat(64),
+        mimeType: 'image/png',
+        byteLength: 19,
+        fileName: 'tool-output.png',
+      };
+      const context = previewContext({
+        threadResourceFile: async (threadId, candidate) => (
+          threadId === 'thread-1' && candidate.id === ref.id
+            ? {
+                entryKind: 'file',
+                path: observedPath,
+                stats: observedStats,
+                acceptedPathHints: [ref.fileName],
+              }
+            : null
+        ),
+      });
+      const target = {
+        kind: 'local-file' as const,
+        path: ref.fileName,
+        entryKind: 'file' as const,
+        threadId: 'thread-1',
+        resourceRef: ref,
+      };
+
+      const resolved = await handlePreviewCommand('preview_resolve_source', { target }, context) as PreviewResolveSourceResult;
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        name: 'tool-output.png',
+        displayPath: observedPath,
+        target: { threadId: 'thread-1', resourceRef: ref },
+      });
+      const text = await handlePreviewCommand('preview_read_text', { target }, context) as PreviewReadTextResult;
+      expect(text.text).toBe('managed image bytes');
+
+      const substituted = await handlePreviewCommand('preview_read_text', {
+        target: { ...target, path: '/tmp/substituted.png' },
+      }, context) as PreviewReadTextResult;
+      expect(substituted).toEqual({ text: null, error: 'missing' });
+    } finally {
+      await rm(managedRoot, { recursive: true, force: true });
+    }
+  });
+
   test('lists trusted local directories with directories first', async () => {
     await mkdir(join(root, 'folder'));
     await writeFile(join(root, 'folder', 'nested.txt'), 'nested');
@@ -148,113 +261,6 @@ describe('preview source commands', () => {
       assetFileStreamUrl: async () => null,
     })) as PreviewResolveSourceResult;
     expect(fallback.source?.kind === 'file' ? fallback.source.streamUrl : 'unexpected-source').toBeUndefined();
-  });
-
-  test('keeps agent payload preview conversation/run scoped', async () => {
-    const calls: Array<[conversationId: string, payloadId: string, runId: string | undefined]> = [];
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'payload-1',
-      storage: 'file',
-      mimeType: 'text/plain',
-      byteLength: 12,
-      sha256: 'sha',
-      role: 'tool_output',
-      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
-      summary: 'Tool output',
-    };
-    const context = previewContext({
-      agentRuntime: {
-        previewPayload: async (conversationId, payloadId, runId) => {
-          calls.push([conversationId, payloadId, runId]);
-          return conversationId === 'conversation-1' && payloadId === 'payload-1' && runId === 'run-1'
-            ? payload
-            : null;
-        },
-        previewPayloadBytes: async (conversationId, payloadId, runId) => (
-          conversationId === 'conversation-1' && payloadId === 'payload-1' && runId === 'run-1'
-            ? Buffer.from('payload text')
-            : null
-        ),
-      },
-    });
-
-    const resolved = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewResolveSourceResult;
-
-    expect(resolved.source).toMatchObject({
-      kind: 'file',
-      sourceKind: 'agent-payload',
-      name: 'Tool output',
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    });
-    expect(resolved.source && 'displayPath' in resolved.source ? resolved.source.displayPath : undefined).toBeUndefined();
-
-    const text = await handlePreviewCommand('preview_read_text', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewReadTextResult;
-    expect(text.text).toBe('payload text');
-    expect(calls).toContainEqual(['conversation-1', 'payload-1', 'run-1']);
-
-    const missingRun = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewResolveSourceResult;
-    expect(missingRun.source).toBeNull();
-  });
-
-  test('derives EPUB source extension from MIME when the payload has no filename', async () => {
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'book-payload',
-      storage: 'file',
-      mimeType: 'application/epub+zip',
-      byteLength: 4,
-      sha256: 'sha',
-      role: 'tool_output',
-      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
-    };
-    const context = previewContext({
-      agentRuntime: {
-        previewPayload: async () => payload,
-        previewPayloadBytes: async () => Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-      },
-    });
-
-    const resolved = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'book-payload',
-      },
-    }, context) as PreviewResolveSourceResult;
-
-    expect(resolved.source).toMatchObject({
-      kind: 'file',
-      name: 'book-payload.epub',
-      ext: 'epub',
-      mimeType: 'application/epub+zip',
-    });
   });
 
   test('resolves local HTML files as text/html preview sources', async () => {
@@ -327,10 +333,6 @@ describe('preview source commands', () => {
     return {
       agentLocalFileRoots: [root],
       agentGeneratedImageRoots: [],
-      agentRuntime: {
-        previewPayload: async () => null,
-        previewPayloadBytes: async () => null,
-      },
       assetService: {
         lookup: async () => null,
         pathFor: async () => null,

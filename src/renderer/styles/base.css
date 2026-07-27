@@ -30,14 +30,6 @@
 }
 
 .main-panel,
-.agent-debug-panel,
-.agent-debug-part-details pre,
-.agent-chat-scroll,
-.agent-conversation-list,
-.agent-code-block pre,
-.agent-steer-preview,
-.agent-composer-input,
-.agent-composer-editor,
 .command-list,
 .trigger-popover,
 .node-picker-popover {

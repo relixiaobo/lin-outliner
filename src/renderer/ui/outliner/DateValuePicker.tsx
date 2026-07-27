@@ -22,6 +22,8 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
+import { isDialogNestedOverlayTarget } from '../primitives/dialogNestedOverlay';
+import { TimePickerControl } from '../primitives/TimePickerControl';
 import { useAnchoredOverlay, type OverlayPlacement } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
@@ -40,12 +42,15 @@ interface DateValuePickerProps {
   // Whether the end-date (range) toggle is offered. Off for single-date callers
   // where a range has no meaning.
   allowRange?: boolean;
-  // Whether the time toggle is offered. Off for date-only callers such as the
-  // Dream launcher, which persists strict YYYY-MM-DD windows.
+  // Whether the time toggle is offered. Date-only callers persist strict
+  // YYYY-MM-DD values.
   allowTime?: boolean;
   // Whether the recurrence selector is offered for single dates. Recurring
   // workflows need it; plain date pickers do not.
   allowRecurrence?: boolean;
+  // Required-value callers (for example an Automation schedule) can keep the
+  // shared calendar interaction without offering a destructive clear action.
+  allowClear?: boolean;
   // Optional upper bound for selectable dates, encoded as YYYY-MM-DD.
   maxDate?: string;
   // Composer-like callers near the viewport bottom can force the calendar above
@@ -73,6 +78,7 @@ export function DateValuePicker({
   allowRange = true,
   allowTime = true,
   allowRecurrence = true,
+  allowClear = true,
   maxDate,
   popoverPlacement = 'bottom-start',
   popoverGap,
@@ -148,6 +154,7 @@ export function DateValuePicker({
       const target = event.target;
       if (target instanceof Node && anchorRef.current?.contains(target)) return;
       if (target instanceof Node && popoverRef.current?.contains(target)) return;
+      if (isDialogNestedOverlayTarget(target)) return;
       onOpenChange(false);
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
@@ -395,6 +402,7 @@ export function DateValuePicker({
     <div
       ref={popoverRef}
       className="typed-field-date-popover"
+      data-dialog-nested-overlay="true"
       role="dialog"
       aria-label={td.title}
       onKeyDown={onPopoverKeyDown}
@@ -491,7 +499,7 @@ export function DateValuePicker({
       )}
       <div className="typed-field-date-actions">
         <ButtonControl onClick={pickToday}>{td.today}</ButtonControl>
-        <ButtonControl onClick={clearDate}>{td.clear}</ButtonControl>
+        {allowClear ? <ButtonControl onClick={clearDate}>{td.clear}</ButtonControl> : null}
       </div>
     </div>,
     document.body,
@@ -570,12 +578,10 @@ function DateSummaryRow({
         />
       </label>
       {includeTime && (
-        <input
-          aria-label={timeAriaLabel}
-          className="typed-field-date-time-input"
-          type="time"
+        <TimePickerControl
+          label={timeAriaLabel}
+          onValueChange={onTimeChange}
           value={dateFieldEndpointTime(value) || time}
-          onInput={(event) => onTimeChange(event.currentTarget.value)}
         />
       )}
     </div>

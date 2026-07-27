@@ -1,7 +1,7 @@
 # Performance Optimization Program
 
 Scope: the document data flow across the `core → IPC → renderer` seam, the
-outliner render path, the agent streaming/transcript path, and main-process
+outliner render path, Thread Item streaming, and main-process
 persistence/IO. This is a **catalog + roadmap**, not a single change: it grades
 every known performance finding by priority so the items can be sequenced into
 separate PRs (the keystone, P1, is large enough to grow its own detailed plan).
@@ -15,9 +15,9 @@ three sources converged independently, the item is marked **(3×)**.
 ## Goal
 
 Make per-edit and per-streamed-frame cost scale with the size of the **change**,
-not the size of the **whole document / whole transcript / whole history**. Today
-a single-character edit pays O(N) in several places at once (N = node count);
-a single streamed token pays O(transcript) plus a full index-file rewrite.
+not the size of the **whole document / whole Thread / whole history**. Today a
+single-character edit pays O(N) in several places at once (N = node count), and
+a streamed Item delta still wakes more renderer work than its target requires.
 
 Concretely, in priority order:
 
@@ -25,18 +25,17 @@ Concretely, in priority order:
 2. Land an **incremental projection** protocol so the renderer ingests a node
    delta instead of re-deriving "what changed" from a full projection (P1 — the
    keystone; it unlocks a whole class of P3 memo wins at once).
-3. Default the outliner to the windowed/flat renderer; make the agent streaming
-   path emit deltas (P2).
+3. Default the outliner to the windowed/flat renderer and make Thread Item delta
+   consumption selective (P2).
 4. Incrementalize the remaining localized O(N) scans (P3 — several become
    no-ops once P1 lands).
 
 ## Non-goals
 
-- No rewrite of the Loro CRDT model or the command/event-sourcing contract — the
-  apply path is already incremental (state cache, projection cache, inverted
-  text index, event-log checkpoints all verified incremental).
-- No new persistence engine in this program. SQLite-ifying the agent event
-  search index is noted as a P3 *option*, not a commitment.
+- No rewrite of the Loro CRDT model or document command contract; the apply path
+  already has a state cache, projection cache, and inverted text index.
+- No replacement for Agent Core's rollout plus SQLite history projection. This
+  program optimizes measured paths without adding another Thread store.
 - Not chasing micro-allocations where the probe shows headroom: incremental text
   search measured fine (10k corpus: single upsert 0.56 ms, edit+search 4.6 ms).
   Search is **not** the bottleneck; projection diff + virtualization are.
@@ -87,10 +86,10 @@ collapses at once, instead of being optimized one memo at a time.
 
 | ID | Finding | Location | Trigger | Fix |
 |----|---------|----------|---------|-----|
-| P0-1 | Agent session/search index **fully rewritten per streamed token** (read + `JSON.parse` + pretty-print + atomic write of the whole file) | `agentEventStore.ts:139-140` (`updateSessionIndex`/`updateSearchIndex` in `appendEvents`), called per `assistant_message.delta` (`agentRuntime.ts:2257-2273`); whole-file write at `:558`,`:573` | every streamed token batch (~tens/sec); scales O(all messages ever) | Indexes are derived caches: update only at durable message boundaries (`assistant_message.completed`, `user_message.created`, `tool_result.*`) or debounce; the `events.jsonl` append is the source of truth and stays per-delta. **(3×)** |
-| P0-2 | Pretty-printed (`JSON.stringify(x, null, 2)`) full-document/state writes | doc snapshot `core.ts:232`; agent indexes `agentEventStore.ts:558,573` | every save / every index update | Drop `null, 2` everywhere — these are machine-read files. One-line, zero-risk. |
+| P0-1 | Pretty-printed (`JSON.stringify(x, null, 2)`) full-document/state writes | document snapshot serialization | every affected save | Drop pretty-printing for machine-read state after verifying the current writer still uses it. One-line, zero-risk when present. |
 
-Both are surgical, no behavior change, no protocol change. P0-1 is the fastest-firing offender in the codebase; P0-2 roughly halves the bytes written on every save.
+This is surgical, has no behavior/protocol change, and ships only if a refreshed
+probe confirms the writer still exists.
 
 ---
 
@@ -181,39 +180,34 @@ viewport — the main scaling cliff for large docs (load/expand/scroll).
 - Severity: high · Effort: medium (mostly parity verification) · Risk: medium
   (behavioral — needs light/dark visual verify + keyboard-nav/scroll parity).
 
-### P2-2 — Agent streaming: emit a delta, memoize transcript rows
+### P2-2 — Thread Item streaming: selective subscriptions and bounded Markdown work
 
-Two coupled costs make a streamed turn O(transcript) **per frame** (≈60/s):
+Agent Core already sends canonical `item/delta` notifications and the renderer
+applies each delta to one Item. The previous whole-history render-projection cost
+therefore no longer exists. The remaining cost is renderer-local:
 
-- Main rebuilds the **entire** agent render projection every 16 ms coalesce tick
-  (`agentRuntime.ts:1664` → `buildAgentRenderProjection` over all messages),
-  then structure-clones it over IPC. **(3×, Codex #9)**
-- Renderer `runtime.ts:791-841` `publish→buildView` rebuilds every entry/message
-  with **fresh identities** each frame (`buildToolResultMap`, `buildEntries`,
-  `new Set(...)`, `sessionCost`), defeating downstream memo; and
-  `AgentMessageRow`/`AgentTranscriptRowShell` are **not** `memo`'d
-  (`AgentMessageRow.tsx:352`), so the whole visible transcript re-renders.
-- Streaming markdown re-runs `remend` + `marked` `Lexer.lex` over the **full
-  accumulated tail text** each frame → O(n²) over a message
-  (`AgentMarkdown.tsx:274-284`, `:48-56`). **Note:** finished/non-tail blocks are
-  **already** memoized (`MemoizedMarkdownBlock`, `:243`), and `remend` is already
-  wrapped in `useMemo` — so the fix is to throttle/incrementalize the live-tail
-  reparse, **not** to re-add block-level memo (which exists).
-- Auto-scroll `useLayoutEffect` reads `scrollHeight` (forced reflow) every frame
-  via the per-frame `revision` dep (`AgentChatPanel.tsx:659-662`).
+- `useThreadStore()` subscribes `ThreadDock` to the whole store snapshot. Each
+  `item/delta` replaces the selected Turn and its Item array, then wakes every
+  consumer even when it reads only Thread list or Goal state.
+- `ThreadView` maps every visible Turn and `ThreadItemView` is not memoized, so a
+  text delta can revisit unchanged Items even though their object identity is
+  preserved.
+- The active `agentMessage` passes its full accumulated text through
+  `react-markdown` on every accepted delta. Long responses therefore accumulate
+  repeated parse work.
 
-Implementation: main keeps the last emitted agent render projection and, for a
-safe single-agent DM `message_update`, emits `projection_patch` for the active
-assistant message instead of re-emitting the whole projection. The patch carries a
-base revision and the renderer reloads the full conversation if the patch cannot
-apply cleanly. The renderer folds the patch into the existing projection,
-preserves unchanged entity references, reuses derived message/tool/pending-run
-objects, memoizes transcript rows, throttles the streaming markdown tail to an
-80 ms parse cadence, and moves tail auto-scroll into one requestAnimationFrame
-without a per-revision forced `scrollHeight` read. Channel turns remain
-result-first and transcript-atomic, so they use the full-projection fallback for
-transcript changes while live activity continues through the Channel activity
-fields.
+Implementation: add selector-based store subscriptions with equality checks,
+subscribe Thread list/header, selected Turns, Goal, and user-input state
+independently, and memoize Turn/Item rows around stable canonical object identity.
+Coalesce high-frequency text deltas at the renderer boundary to a bounded frame
+or 50–80 ms cadence while applying command/file/tool completion immediately.
+Render only the active Markdown tail at that cadence; completed Items remain
+immutable and reusable. Keep `item/delta` as the transport contract and reload a
+paginated Thread only when notification order or identity validation fails.
+
+Auto-scroll runs once per committed visible-tail update and reads layout only
+when the user is already near the bottom. It never depends on a global store
+revision.
 
 - Severity: high (streaming UX) · Effort: medium-large · Risk: low-medium.
 
@@ -254,9 +248,8 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 | P3-23 | Delta reducer copies the **whole** `byId` (`new Map(prev.byId)`) and rebuilds the **whole** `nextRevisions` map every keystroke — both O(N), immutability-driven (the residual #119/#121 left) | `renderer/state/document.ts` (`reduceProjection`), `renderRev.ts` (`nextRevisions`) | persistent/HAMT-style structural sharing, or mutate-with-version-stamp; measure with `tmp/bench-reverse-edges.ts` before trading immutability for throughput (perception-first, `AGENTS.md` A9) |
 | P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts:139`, `useFieldNameReuse.ts:57` | reuse the main-process text index or a renderer-side label/fieldDef index (Codex #6) |
 | P3-4 | Day-page note counts scan all of `byId`, memo dep `byId` reborn each keystroke | `NodePanel.tsx:292` | **↑P1**; or move counts into projection metadata / incremental date index (Codex #7) |
-| P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `AgentDock`, `CommandPalette`) re-render | `App.tsx:51` (consumers `:337`/`:374`/`:405`) | memo heavy consumers against the slice they use |
-| P3-6 | `AgentDebugPanel` fires 3 IPC round-trips per streamed frame while open | `AgentDebugPanel.tsx:239-292` | dev-only; throttle/skip-in-flight |
-| P3-21 | A code block being edited re-highlights the **whole block** through Shiki on every keystroke (unthrottled; correctly cancellable + plain fallback, so non-blocking) | `CodeBlockRow.tsx:101-105`, `AgentMarkdown.tsx:48-56`, `AgentToolCallBlock.tsx:392-396` | debounce re-highlight while typing in large blocks; low until big blocks feel laggy |
+| P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `ThreadDock`, `CommandPalette`) re-render | current `App.tsx` consumers | memo heavy consumers against the slice they use |
+| P3-21 | A code block being edited re-highlights the whole block through Shiki on every keystroke | current `CodeBlockRow` path | debounce re-highlight while typing in large blocks; Thread Markdown uses its own bounded work under P2-2 |
 
 ### Core scans (reverse-index candidates)
 
@@ -267,7 +260,7 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 | P3-9 | O(N) tag/field-def lookups by name on create/apply | `core.ts:3771-3801` (`findTagByName`, `findFieldDefByName`, `findNodesWithTag`, `nextTagColor`) | name→id index for the small schema set |
 | P3-10 | `materializeState()` shallow-spreads all N nodes; 122 `snapshot()` call sites, ≥2 per command | `loroDocument.ts:346-352`, `core.ts` (122×) | stable cached container ref invalidated on patch; hoist repeated `snapshot()` per command |
 
-### Search / agent history (scale with corpus, not per-keystroke)
+### Search (scale with corpus, not per-keystroke)
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
@@ -275,9 +268,6 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 | P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts:1640-1689` | precompute `inTrash`/condition flags in one tree walk at index build |
 | P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts:592` | mutate the changed ids in place |
 | P3-22 | `materializeSearchNodeResultsDirect` inner `.find` over a node's children when reordering result refs | `core.ts:2254-2257` | bounded to one search node's children on explicit refresh; index children by id if it shows up. Low |
-| P3-14 | Agent search index **cold rebuild** replays all events of all sessions; can land inside a streaming append | `agentEventStore.ts:452-461` | background/lazy rebuild, schema-version migration; **probe: 838 ms / 553 MB heap** at scale (Codex) — startup pressure as history grows |
-| P3-15 | `cloneReplayState` deep-clones full session via `JSON.parse(JSON.stringify(...))` per checkpoint | `agentEventStore.ts:938-940` | use `structuredClone()` |
-| P3-16 | `pruneCheckpoints` reads + parses every checkpoint file to decide deletions | `agentEventStore.ts:494-530` | prune by filename seq (`parseCheckpointSeq`) without reading contents |
 
 ### Main-process IO / bundle
 
@@ -294,14 +284,12 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 
 - Per-row `OutlinerItem` memo comparator is precise (`OutlinerItem.tsx:2009-2039`,
   `renderRev` + `rowUiState`); untouched rows correctly skip re-render.
-- Core apply path is incremental: Loro state cache (`loroDocument.ts:354-369`),
-  projection cache (`core.ts:292-316`), operation journal capped at 500 with
-  `affectedNodeIds` (no O(N) fallback), agent event-log checkpoint replay.
+- Core apply path is incremental: Loro state cache, projection cache, and the
+  bounded operation journal with affected Node IDs.
 - Inverted text-search index (BM25, incremental upsert/remove); module-level
   cached regexes/segmenter. Probe confirms incremental search is fine.
-- ProseMirror editors are created once and reused (`RichTextEditor.tsx:351`,
-  `AgentComposerEditor.tsx:506`); Shiki highlighter is a cached singleton with
-  lazy per-language loading.
+- ProseMirror editors are created once and reused; the Shiki highlighter is a
+  cached singleton with lazy per-language loading.
 - No `ipcRenderer.sendSync` on the renderer hot path; startup does not block on
   the large workspace file (window paints first, `init_workspace` is async); only
   timer is a dev-only `unref`'d watchdog. (One deliberate seed `sendSync` exists
@@ -323,25 +311,24 @@ now — recorded so they are not "lost"):
 
 ## Suggested sequencing
 
-1. **P0-1, P0-2** — land immediately (fast-track, one small PR). Biggest
-   bang-per-line; unblocks nothing but stops the worst write amplification.
+1. **P0-1** — refresh the writer probe and land the compact serialization change
+   only if the current path still pretty-prints machine state.
 2. **P1** — interface-only PR for the delta projection envelope (PM-led, touches
    protocol), then the core emit change, then the renderer ingestion. Establish
    a baseline first (`measureRenderIndex` `index=` time at a known doc size) and
    re-measure after.
-3. **P2** — one combined PR for default virtualization, streaming delta, and
-   structural-save coalescing; verify light/dark UI and agent/document tests
+3. **P2** — one combined PR for default virtualization, selective Thread Item
+   streaming, and structural-save coalescing; verify light/dark UI and
+   Agent/document tests
    together.
 4. **P3** — sweep after P1; start with the reverse-reference index (retires
-   P3-2/P3-7/P3-8 together), then the search/agent-history items. Re-check the
+   P3-2/P3-7/P3-8 together), then the remaining search items. Re-check the
    **↑P1** items first — several will already be gone.
 
 ## Open questions
 
 - **Delta granularity (P1):** node-level patches vs field-level patches? Start
   node-level (simplest correct unit; matches the projection cache granularity).
-- **Agent index storage (P3-14):** keep JSON-with-in-memory-cache, or move to
-  SQLite once history is large? Decide on measured corpus growth, not now.
 - **Ownership/coordination:** P1 touches `src/core/types.ts` + `projection.ts`
   (infrastructure-ownership files) — must be claimed and interface-first per
   `AGENTS.md`; the rest can fan out across dev clones once P1's interface lands.
@@ -351,16 +338,14 @@ now — recorded so they are not "lost"):
 Shape (b) — each line is a complete optimization; lifecycle status is tracked in
 `docs/TASKS.md`. P2 ships as one combined line for this execution.
 
-- P0-1 agent index update at message boundaries (or debounced)
-- P0-2 drop `null, 2` from doc snapshot + agent index writes
+- P0-1 compact machine-state serialization where the refreshed probe confirms it
 - P1 delta projection envelope → core emit → renderer ingest; delete whole-doc signature
   pass (PR-A: `ProjectionUpdate` union + `buildProjectionUpdate` + `reduceProjection` with
   stable unchanged-node identity; PR-B: incrementalize reverse edges — see
   `incremental-projection.md`)
-- P2 default flat/virtual outliner, agent streaming delta + transcript row memo +
+- P2 default flat/virtual outliner, selective Thread Item subscriptions + Item row memo +
   tail-markdown throttle + rAF auto-scroll, and structural-mutation save
   coalescing
 - P3 reverse-reference index (P3-2/7/8), render memo/lookup cleanups
-      (P3-1/3/4/5/6/9/10), search index caching (P3-11/12/13/22),
-      agent-history cold-rebuild/clone (P3-14/15/16), main IO (P3-17/18),
+      (P3-1/3/4/5/9/10), search index caching (P3-11/12/13/22), main IO (P3-17/18),
       Shiki langs + code-block re-highlight (P3-19/21), tokenizer (P3-20)

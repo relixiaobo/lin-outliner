@@ -657,12 +657,11 @@ test.describe('table view', () => {
     await expect(grid.getByRole('row')).toHaveCount(1);
     await expect(grid.getByRole('gridcell')).toHaveCount(0);
     await expect(page.locator(`[data-trailing-parent-id="${ids.recents}"]`)).toHaveCount(0);
-    // React StrictMode runs one extra setup/cleanup cycle in this dev renderer.
-    // Two calls therefore represent one refresh owner; Outline + Table ownership
-    // would regress this count to four.
+    // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
+    // call would mean the search has more than one refresh owner.
     await expect.poll(async () => (await commandCalls(page)).filter((call) => (
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length).toBe(2);
+    )).length).toBe(1);
   });
 
   test('gives a nested search table a single refresh owner', async ({ page }) => {
@@ -682,7 +681,7 @@ test.describe('table view', () => {
     await expect(page.getByRole('grid', { name: 'Recents table' })).toBeVisible();
     await expect.poll(async () => (await commandCalls(page)).filter((call) => (
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length - refreshesBefore).toBe(2);
+    )).length - refreshesBefore).toBe(1);
   });
 });
 

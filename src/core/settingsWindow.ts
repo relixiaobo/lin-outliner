@@ -6,24 +6,20 @@
 // surface and listens for change broadcasts).
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
-export type WindowSurface = 'main' | 'settings' | 'provider-config' | 'agent-config' | 'channel-config';
-export type SettingsCategoryTarget = 'general' | 'providers' | 'security' | 'memory' | 'skills' | 'agents';
+export type WindowSurface = 'main' | 'settings' | 'provider-config';
+export type SettingsCategoryTarget = 'general' | 'providers' | 'security' | 'skills';
 
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
-  agentId?: string;
 }
 
 export const SETTINGS_CATEGORY_PARAM = 'category';
-export const SETTINGS_AGENT_PARAM = 'agent';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
   if (surface === 'settings') return 'settings';
   if (surface === 'provider-config') return 'provider-config';
-  if (surface === 'agent-config') return 'agent-config';
-  if (surface === 'channel-config') return 'channel-config';
   return 'main';
 }
 
@@ -31,18 +27,14 @@ export function isSettingsCategoryTarget(value: unknown): value is SettingsCateg
   return value === 'general'
     || value === 'providers'
     || value === 'security'
-    || value === 'memory'
-    || value === 'skills'
-    || value === 'agents';
+    || value === 'skills';
 }
 
 export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget {
   const params = new URLSearchParams(search);
   const category = params.get(SETTINGS_CATEGORY_PARAM);
-  const agentParam = params.get(SETTINGS_AGENT_PARAM)?.trim();
   return {
     ...(isSettingsCategoryTarget(category) ? { category } : {}),
-    ...(agentParam ? { agentId: agentParam } : {}),
   };
 }
 
@@ -67,39 +59,7 @@ export function providerConfigParamsFromSearch(search: string): ProviderConfigPa
   };
 }
 
-export const AGENT_CONFIG_AGENT_PARAM = 'agent';
-
-export interface AgentConfigParams {
-  agentId: string;
-}
-
-// The agent-config window only ever *configures* the one agent (Neva); the
-// one-Neva invariant removed the create surface, so there is no mode.
-export function agentConfigParamsFromSearch(search: string): AgentConfigParams {
-  const params = new URLSearchParams(search);
-  return {
-    agentId: params.get(AGENT_CONFIG_AGENT_PARAM) ?? '',
-  };
-}
-
-export const CHANNEL_CONFIG_CONVERSATION_PARAM = 'conversation';
-export const CHANNEL_CONFIG_MODE_PARAM = 'mode';
-export type ChannelConfigMode = 'create' | 'configure';
-
-export interface ChannelConfigParams {
-  conversationId: string;
-  mode: ChannelConfigMode;
-}
-
-export function channelConfigParamsFromSearch(search: string): ChannelConfigParams {
-  const params = new URLSearchParams(search);
-  return {
-    conversationId: params.get(CHANNEL_CONFIG_CONVERSATION_PARAM) ?? '',
-    mode: params.get(CHANNEL_CONFIG_MODE_PARAM) === 'create' ? 'create' : 'configure',
-  };
-}
-
 // Broadcast from the main process to the main window after the settings window
-// mutates provider/agent settings, so the main window re-fetches instead of
+// mutates provider settings, so the main window re-fetches instead of
 // showing stale provider state.
 export const LIN_SETTINGS_CHANGED_CHANNEL = 'lin:settings-changed';

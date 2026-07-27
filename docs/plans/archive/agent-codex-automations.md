@@ -1,0 +1,475 @@
+# Codex Automations
+
+## Goal
+
+Add one Codex-style Automation system for scheduled and repeated agent work.
+Automations are host-owned schedule definitions that start a new Thread or add a
+Turn to an existing Thread; they never materialize an Issue, AgentSession,
+generic Run, hidden Channel, or command-node scheduler.
+
+This is a clean replacement against empty agent data. Old definitions and
+execution history are deleted outside the product; the new scheduler never
+detects, imports, migrates, aliases, or adapts RecurringIssue, command schedules,
+or any previous persistence format.
+
+This is one complete feature in one PR and depends on `agent-codex-core`. It may
+run in parallel with `agent-codex-memory` after the core PR lands because it owns
+the Automation protocol, scheduler service, persistence, execution bindings, and
+Automation UI.
+
+The behavioral reference is OpenAI Codex's current Automations documentation and
+commit `841e47b8fb113a201b68e0f1f5790ba22836a241`, including:
+
+- the official `Scheduled tasks` / Automations manual
+  (`https://learn.chatgpt.com/docs/automations?surface=app`)
+- `ThreadSource::Feature("automation")`
+- host-owned `codex_app.automation_update` tool
+- Turn `additional_context["automation_info"]`
+- `ScheduledTaskSummary` as plugin-provided configuration input
+- `codex-rs/app-server-protocol/src/protocol/v2/plugin.rs`
+- `codex-rs/core/src/tools/handlers/tool_search.rs`
+- `codex-rs/core/tests/suite/additional_context.rs`
+
+Codex core does not implement a general cron engine. Tenon's Electron main
+process is therefore the scheduling service; the agent Thread runtime remains a
+consumer of due work rather than the owner of time.
+
+The Codex-backed product contract is: standalone schedules create a new Thread
+per occurrence, existing-Thread schedules preserve context, RRULE is the advanced
+schedule format, local/project worktree execution is supported, skills/plugins
+are inherited from the Thread or default Profile and Skills may be invoked in
+the prompt, and execution is unattended. Tenon retains its separately
+ratified Full Access host boundary instead of adopting Codex sandbox or approval
+policy concepts. Codex source does not expose its full scheduler implementation.
+Durable claims, latest-only catch-up, overlap coalescing, and cleanup below are
+explicit Tenon reliability choices, not claims about undocumented Codex internals.
+
+## Non-goals
+
+- Preserve RecurringIssue, Issue schedule, AgentSession trigger, or old scheduled
+  execution records. No legacy table, DTO, IPC route, parser, or compatibility
+  branch remains after the replacement.
+- Reuse "Run" as a general agent entity. `AutomationRun` is a narrowly scoped
+  dispatch/binding record whose actual execution is a canonical Thread and Turn.
+- Put recurrence state on document command nodes, dates, Channels, or Goals.
+- Guarantee execution while the desktop app is not running. Automations requiring
+  local files require the app and machine to be available.
+- Build a remote scheduler, cloud queue, or multi-device lease protocol.
+- Migrate existing recurring Issues or schedule strings.
+
+## Design
+
+### 1. Ownership and canonical model
+
+Add the feature beside, not inside, the Thread runtime:
+
+```text
+src/core/agent/
+  automation.ts
+
+src/main/agent/automations/
+  AutomationService.ts
+  AutomationStore.ts
+  AutomationScheduler.ts
+  AutomationDispatcher.ts
+  AutomationTool.ts
+  AutomationWorktree.ts
+
+src/renderer/agent/automations/
+  automationStore.ts
+  AutomationsView.tsx
+  AutomationEditor.tsx
+  AutomationRunsView.tsx
+
+<userData>/agent/
+  automations.sqlite
+```
+
+`Automation` is the only schedule definition. It contains:
+
+- stable `id`, `name`, and durable `prompt`
+- `schedule` with canonical RFC 5545 RRULE plus IANA `timezone`
+- `destination`: `standalone` or `existingThread`
+- optional destination `threadId` for existing-Thread delivery
+- zero or more local project bindings, each with a canonical real `cwd` and
+  `executionMode: local | worktree`
+- optional provider, model, and reasoning effort selections
+- status `active | paused | completed`
+- created/updated timestamps and derived next occurrence
+
+Once, hourly, daily, weekdays, weekly, and structured custom controls all compile
+to the same RRULE; there are no parallel schedule formats. Any finite schedule becomes `completed`
+after its final occurrence is durably claimed for every binding. Plugin `ScheduledTaskSummary` values are
+configuration templates that create an Automation through the same service; they
+are not another persisted task type.
+
+`AutomationRun` contains only scheduling and routing facts: `id`,
+`automationId`, `scheduledFor`, optional project binding, claim/dispatch state,
+`threadId`, optional `turnId`, worktree metadata, `readAt`, timestamps, and a
+pre-Thread dispatch error if one occurred. Once a Turn starts, its status, items,
+result, and error remain authoritative; Automation UI joins through `threadId`
+and `turnId` instead of copying execution state. A dispatched binding is valid
+only when that Turn's immutable provenance names the same AutomationRun ID.
+
+The persisted dispatch states are `pending`, `dispatched`, `failed`, and
+`omitted`. `pending` owns the durable claim; `dispatched` must reference a Thread
+and Turn; `failed` is limited to failures before a Turn exists; `omitted` records
+coalesced/missed occurrences. There is no duplicated completed/failed execution
+status after dispatch.
+
+An omitted record is an aggregate `{ from, through, count }`, not one row per
+missed tick. The definition also stores a durable evaluated-through cursor, so a
+long offline interval advances in bounded work while preserving an auditable
+summary of what did not run.
+
+### 2. Durable scheduler service
+
+`AutomationStore` owns `automations.sqlite`, its current empty-data schema,
+Automation definitions, and AutomationRun claims. Core state/history, Goal, and
+Memory databases contain no Automation tables. Every project binding has a
+stable ID; the no-project case uses a non-null reserved binding key. The store enforces a
+unique `(automationId, scheduledFor, projectBindingKey)` key without relying on
+SQLite's nullable-unique behavior. The scheduler calculates occurrences in the
+stored IANA timezone, persists a claim before dispatch, and therefore never
+starts the same occurrence twice after restart or resume.
+
+The claim allocates and stores the standalone `threadId` before Thread creation;
+ThreadService creation with that UUIDv7 is idempotent. Existing-Thread claims
+store their destination ID. Both destinations start input with
+`clientUserMessageId=AutomationRun.id`, so a retry after Turn acceptance returns
+the existing binding instead of appending a second Turn. Recovery checks that
+binding before any path, worktree, or configuration preparation and again before
+any pre-Turn failure transition. Pause and delete perform the same recovery under
+the scheduler mutex before omitting genuinely undispatched runs. Startup
+dispatches or reconciles pending claims before calculating new occurrences.
+
+The Electron main process starts one scheduler after stores and the Thread
+service are ready, stops it during quit, and wakes it on a bounded timer and
+`powerMonitor.resume`. The next wake is derived from active Automations rather
+than one timer per definition.
+
+If the app was unavailable across several occurrences, startup/resume claims at
+most the latest missed occurrence per Automation/project binding and records all
+older occurrences in one omitted range, avoiding both an execution storm and an
+unbounded row-writing loop. An active occurrence never overlaps another
+occurrence of the same Automation/project binding. The next due occurrence waits
+until the current one is terminal; stale waits are coalesced to the latest due
+occurrence with the same aggregate omission rule.
+
+Definition edits are revision-checked. A scheduler claim stores the definition
+revision and complete saved selection snapshot for that occurrence, so changing
+the prompt, cadence, or selections cannot mutate an already claimed run. Main
+validates that snapshot against the current provider and model environment at
+dispatch and fails closed if the selection is no longer available. Standalone
+runs inherit the default Configuration Profile; existing-Thread runs inherit
+their destination Thread's persisted configuration.
+
+Ordinary edits affect only unclaimed occurrences; an already pending claim keeps
+its captured revision. Pause and delete first recover any accepted Turn through
+the run's client-input binding, then atomically convert only undispatched pending
+claims to `omitted` with a reason, while a dispatched Thread/Turn continues as
+canonical history. Delete is a scheduler tombstone, not a hard row removal, so
+AutomationRun history retains its name/configuration snapshot and foreign-key
+integrity while the definition disappears from active management views.
+
+### 3. Destination semantics
+
+For a `standalone` Automation, every occurrence creates a fresh persistent root
+Thread with `threadSource=automation`, then starts its first Turn from
+the saved prompt. The new Thread has independent context and appears under the
+Automation's recent runs and normal Thread history.
+
+For an `existingThread` Automation, every occurrence resumes the target Thread
+and starts a new Turn from the saved prompt, preserving that Thread's context.
+The target must be persistent and user-addressable. If it already has an active
+Turn, dispatch remains claimed and waits for Thread idle; repeated due
+occurrences coalesce according to the scheduler rule above.
+
+Both dispatch paths use ThreadService's privileged feature entry and persist
+this immutable provenance before model execution:
+
+```ts
+turn.provenance.trigger = {
+  kind: "feature",
+  feature: "automation",
+  ref: automationRun.id,
+};
+```
+
+For standalone and existing-Thread delivery alike, `AutomationRun.turnId` and
+the Turn's provenance `ref` must point to each other. Startup reconciliation
+accepts a dispatch as complete only when this pair matches. Renderer IPC, prompt
+text, model output, tools, and plugins cannot invoke the privileged entry or
+author, copy, or rewrite this provenance.
+
+Both modes attach trusted application context under
+`additionalContext.automation_info` as `{ kind: application, value }`, containing
+Automation identity, scheduled time, destination, project/worktree facts, and
+the durable prompt revision. Main creates this entry; renderer or prompt input
+cannot claim application trust. This is context for the Turn, not a ThreadItem
+or a second system message stored by the renderer. It helps the model understand
+the schedule but is never used to establish Automation provenance or Memory
+eligibility.
+
+Automations do not create `ThreadGoal`s. A user may deliberately target a Thread
+that already has a Goal, in which case the Goal extension observes the resulting
+Turn normally. Schedule status and Goal status remain independent.
+
+### 4. Projects and worktrees
+
+An Automation with no local project uses the agent local-file root without a
+project binding. A non-Git project runs in its configured local directory. A Git
+project may run in that local checkout or in a dedicated worktree created for
+the AutomationRun.
+
+Worktree creation, detached-HEAD base, containment, snapshots, pinning, and
+cleanup are host-owned; creation metadata is recorded before the Turn starts. A worktree survives
+while its AutomationRun is active or pinned. Unpinned completed worktrees follow
+a bounded recent-worktree retention limit; before removal the host records a
+restorable snapshot and clears only a worktree it created under its managed root.
+Cleanup never deletes the source checkout, an unrecognized worktree, or a
+user-authored branch. It durably records a base-relative snapshot before removal
+and records removal completion afterward, so both crash boundaries resume
+idempotently.
+
+Multiple project bindings create one AutomationRun and Thread per binding for a
+standalone Automation. Existing-Thread Automations accept at most one local
+project binding because one Thread has one sticky working context; worktree mode
+is invalid for this destination. Creation/update rejects a binding whose
+workspace does not match the destination Thread's effective environment;
+dispatch never silently retargets an existing Thread.
+
+### 5. Standing authorization and unattended execution
+
+Creating or enabling an Automation is standing authorization for its future
+occurrences to perform the saved work under the current OS account's Full Access.
+Automation does not add a sandbox, permission mode/profile, approval policy,
+managed fallback, risk confirmation, or pause/resume authorization flow. Each
+occurrence receives its tool catalog from the destination Thread or default
+Configuration Profile; current explicit user blocks are checked again at every
+tool dispatch, and native OS, authentication, provider, and service failures are
+returned by their owners. A tool that remains available has the same host-account
+authority as it has in an interactive Thread.
+
+An Automation Turn may call root-only `request_user_input` for missing product
+input. That sets the canonical Thread `waitingOnUserInput` flag and keeps the
+occurrence active while later due work coalesces, but it can never request or
+grant authorization. The Automations view links to the canonical Thread input
+request instead of copying it or inventing an Automation execution status.
+
+Automation exposes no Profile, tool, Skill, Plugin, or MCP override fields.
+Those capability ceilings are host-private and inherited from the default
+Configuration Profile for standalone runs or the persisted destination Thread
+configuration for existing-Thread runs. An Automation prompt can explicitly
+invoke an available Skill with `$skill-name`; this is ordinary prompt content,
+not a saved allowlist. A skill or foreground Thread can request an Automation
+create/update only through the host-owned `codex_app.automation_update` tool;
+model input never writes scheduler tables.
+
+### 6. Host tool and transport
+
+`codex_app.automation_update` supports Codex's create, update, view, and delete
+modes.
+Mutating modes use strict schemas for prompt, destination, RRULE/timezone,
+project bindings, model/effort, and status. Main performs path, Thread, schedule,
+and model validation and returns the
+canonical Automation DTO or deletion receipt. Current explicit blocks remain
+dispatch-time policy and are not copied into the definition. No tool or renderer
+schema accepts a permission profile, sandbox, or approval policy.
+
+The tool manages definitions only. Definition status never verifies a Run, and
+the model does not wait for future occurrences with shell sleep or polling. A
+user-requested workflow test runs in the current Turn before scheduling. Start
+now and Run inspection remain explicit renderer/host operations backed by the
+canonical AutomationRun and Thread facts.
+
+Preload exposes canonical list/read/create/update/pause/resume/delete/start-now
+operations plus Automation/AutomationRun change notifications. `start-now`
+creates an immediate uniquely keyed AutomationRun through the same dispatcher;
+it does not bypass saved configuration, current explicit blocks, worktree, or
+destination logic.
+
+Deleting an Automation stops future claims and omits undispatched pending claims,
+but does not delete dispatched Threads, Turns, or retained AutomationRun history.
+Pausing applies the same pending-claim rule and prevents new claims. Completing a
+finite definition prevents new claims while preserving history; changing its
+schedule reactivates it against a fresh evaluated-through cursor.
+
+### 7. User surface
+
+The user-visible entity name is "Automation", and the top-level view is
+"Automations". "Scheduled" may describe timing but is not a second object name.
+Automations is a peer of Threads in the Agent Dock and opens from the Dock
+header; it is not nested inside the anchored Thread list, which remains scoped
+to Thread navigation and management. The main surface remains a compact,
+searchable Automation list with active, paused, and completed filters, unread
+findings, and next-occurrence summaries.
+Selecting a row opens a modal bottom drawer over the list instead of replacing
+the list with a nested detail route. Closing the drawer therefore restores the
+same filtered list and scroll context.
+
+The drawer reuses the proven Issue-detail interaction without retaining any
+Issue naming or CSS surface: it is bottom-aligned with a transparent backdrop,
+defaults to 80% of the available height, leaves a 52px top gap, has a 360px
+minimum height where space permits, and supports pointer dragging plus 48px
+Arrow Up/Down keyboard steps. The normalized height is a best-effort renderer
+preference in local storage and is reapplied after resize. The drawer traps
+focus, closes by Escape, backdrop, or its Close control, and restores focus to
+the originating row or New Automation control.
+
+Create and detail/edit use this one drawer and one form. Existing values are
+directly editable; there is no separate read-only detail screen or Edit command.
+Changes remain a local draft until an atomic Save, with a fixed Save/Cancel
+footer. The header keeps the Automation name and plain-text status visible while
+the form scrolls; it has no decorative status dot. Name and Prompt reuse shared
+form controls. Details and Frequency use the grouped-row geometry: comfortable
+row height, `--radius-md`, inset hairline, content-aligned separators, and
+row-owned keyboard focus. Closing or cancelling a dirty draft requires explicit
+discard confirmation. Tool, Skill, Plugin, and MCP capability configuration
+stays outside the Automation form and is inherited at dispatch.
+
+The compact list keeps Search and New in one toolbar row. Its equal-width status
+filter uses a strong neutral selected fill and label weight. The filter and
+Automation row content share one reading column, while hover fills use
+the rail's concentric block inset. Each row aligns compact status text with the
+Automation title, while unread state is attached to the leading icon instead of
+creating a competing status column. Previous-run rows use one in-row unread slot
+and textual execution state rather than two adjacent dots.
+Time Picker columns use fixed-height seven-value wheels with no visible scrollbar
+and support pointer, wheel/trackpad, and keyboard selection.
+
+The drawer uses task-oriented grouped rows instead of exposing the storage
+schema as a flat form. Its information order is:
+
+1. status and actions, including Start now, pause/resume, delete, and Close
+2. name and prompt
+3. Details: destination and optional Thread, project/worktree mode, model, and
+   reasoning effort
+4. Frequency: repeat rule, all preset-specific fields (once date/time, hourly,
+   daily or weekdays time, or weekly multi-select weekdays/time), timezone, and
+   the structured custom rule fields when needed
+5. previous Automation runs
+
+Model and timezone use finite native selectors. Model options come from usable
+provider catalogs and save provider plus provider-qualified model together;
+timezone options come from the runtime-supported IANA catalog. Custom exposes
+hourly, daily, weekly, monthly, and yearly recurrence with an interval, plus
+frequency-specific weekday, month, month-day, minute, and time fields. Weekday
+and month-day fields are non-empty multi-select menus. Once reuses the Outliner
+calendar popover for date selection; every schedule time field reuses the shared,
+tokenized Time Picker with direct `HH:mm` entry and full hour/minute selection.
+The editor parses and serializes one canonical Schedule Draft;
+it never exposes RRULE protocol text in the primary flow. A valid rule outside
+the structured subset remains byte-for-byte authoritative until the first explicit
+schedule-field edit, preventing unrelated form edits from discarding advanced
+recurrence semantics.
+
+The Automation editor supports:
+
+- prompt and name
+- standalone versus existing-Thread destination
+- once, hourly, daily, weekdays, multi-day weekly, and structured custom schedule controls
+- timezone
+- no project, local project, or isolated worktree
+- model and reasoning effort
+- pause/resume, Start now, and delete commands
+- pin/unpin for worktree retention
+
+Previous runs are compact status rows with occurrence time and one unread slot.
+The section header exposes one conditional Mark all as read command. Dispatched
+runs become read when opened, and individual rows never expose read-management
+commands.
+Opening a dispatched run closes the drawer and navigates to its canonical Thread
+and Turn; it never copies or embeds a transcript. The drawer may show scheduler
+claim/dispatch failures and worktree retention controls, but it never renders an
+Issue Activity timeline. Tenon does not add ChatGPT cloud Suggestions or
+Automation-level notification settings because neither has a local product
+contract.
+
+### 8. Destructive replacement and documentation
+
+`agent-codex-core` removes the old RecurringIssue and Issue scheduler before this
+plan begins. This plan must also verify that no command-node or legacy agent
+scheduler remains as an alternative path. Generic date-field recurrence may
+remain a document value feature, but it cannot dispatch agent work; all scheduled
+agent execution belongs to `AutomationService`.
+
+`AutomationStore` initializes only its current schema. Product startup never
+opens or inspects an old schedule store, and a fresh-userData integration test
+fails if any old scheduler directory, file, table, command, or default definition
+is recreated. Old development userData is wiped in full before validation.
+
+Add `docs/spec/agent-automations.md` as the sole current scheduled-agent-work
+authority. The core and command specs link to it instead of duplicating schedule
+or dispatch rules, and `docs/spec/README.md` indexes it. Old scheduled-routine,
+scheduled-work, and Issue-manager plans remain history only and are
+archived/superseded by the main integration gate when it updates
+`docs/TASKS.md` and `CHANGELOG.md`.
+
+A terminology/ownership guard rejects `RecurringIssue`, scheduled AgentSession,
+Issue-trigger schedules, and any second scheduler that starts agent execution.
+
+### 9. Risks and mitigations
+
+- **Duplicate or overlapping execution:** persist the unique occurrence claim
+  before dispatch and serialize one active occurrence per Automation/project.
+- **Busy existing Thread:** retain one pending claim, start only through
+  `tryStartTurnIfIdle`, and coalesce later due occurrences to the latest.
+- **Unattended work exceeds its saved scope:** Automation creation is explicit
+  standing authorization; every occurrence inherits the host-owned Thread/Profile
+  capability ceiling, reevaluates current explicit blocks, records capability
+  audits, and surfaces native failures in its canonical Thread.
+- **Automation content leaks into Memory:** every dispatched Turn has immutable
+  host-authored Automation provenance, including delivery into an existing user
+  Thread; Memory filters that provenance rather than relying on Thread source or
+  model-visible context.
+- **Destructive worktree cleanup:** operate only inside the managed root, verify
+  ownership, snapshot before removal, and preserve pinned worktrees.
+- **Execution-model drift:** AutomationRun stores routing only; every transcript,
+  result, error, and terminal execution status is read from Thread/Turn.
+
+### 10. Collision result
+
+At drafting time, open PR #422 owns unrelated renderer date-count files.
+There is no overlap. This plan consumes the Thread/Turn APIs from
+`agent-codex-core`, owns the isolated Automations directories and their small
+preload/navigation integration, and does not modify Memory files.
+
+## Open questions
+
+None. Ratifying this plan ratifies latest-only catch-up, no overlapping
+occurrences per Automation/project binding, standalone versus existing-Thread
+destinations, scoped AutomationRun bindings, Full Access standing authorization,
+trusted Turn provenance, and service-layer scheduling.
+
+## Implementation checklist
+
+- [ ] Confirm `agent-codex-core` is merged and have the main agent add this plan
+  to `docs/TASKS.md`; open the Draft PR claim.
+- [ ] Define Automation, schedule, project binding, AutomationRun, and the
+  extension-owned `automations.sqlite` contracts.
+- [ ] Implement strict RRULE/timezone parsing, occurrence calculation, durable
+  revisioned definitions, and unique claims.
+- [ ] Implement timer/resume wakeup, latest-only catch-up, overlap prevention,
+  coalescing, and shutdown behavior.
+- [ ] Implement standalone and existing-Thread dispatch through canonical
+  Thread/Turn APIs with reciprocal AutomationRun provenance and trusted
+  automation context.
+- [ ] Implement project/worktree lifecycle and unattended Full Access execution
+  through inherited Thread/Profile capabilities, current explicit blocks, and
+  native failures.
+- [ ] Implement `codex_app.automation_update`, preload APIs, notifications, Start
+  now, and pause/delete/tombstone/retention semantics.
+- [ ] Delete every RecurringIssue, Issue schedule, AgentSession trigger,
+  command-node scheduler, legacy store/reader, IPC command, settings surface,
+  test fixture, and compatibility branch before validating fresh userData.
+- [ ] Implement the Automations list, editor, filters, unread state, recent-run
+  joins, and Thread/Turn navigation.
+- [ ] Add DST, crash, duplicate-claim, revision race, busy Thread, catch-up,
+  post-Thread/post-Turn crash recovery, bounded omission aggregation, worktree
+  containment/cleanup, missing dependency, provenance-integrity, explicit-block,
+  and `request_user_input` wait tests.
+- [ ] Rewrite active scheduling specs and add legacy-scheduler ownership guards.
+- [ ] Validate from empty userData with `bun run typecheck`, `bun run test:core`,
+  `bun run test:renderer`, focused E2E coverage, `bun run docs:check`, and
+  `git diff --check`.

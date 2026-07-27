@@ -16,7 +16,6 @@ import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, PasteRowMeta, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
-import { requestRevealChatSource } from '../../agent/agentReveal';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
@@ -195,6 +194,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingTextPatchCountRef = useRef(0);
   // Guards materialization so the create fires exactly once per draft. This alone
   // prevents a double-commit: Enter materializes, then the resulting blur re-enters
   // commitDraft, but the guard makes the second materializeDraft a no-op.
@@ -281,6 +281,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   useEffect(() => {
     const nextContent = displayed?.content ?? EMPTY_RICH_TEXT;
+    if (pendingTextPatchCountRef.current > 0) return;
     const pendingLocalDraft = localDraftSyncRef.current;
     if (pendingLocalDraft) {
       if (pendingLocalDraft.nodeId !== displayed?.id) {
@@ -466,10 +467,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const onDraftTrigger = props.draft === true && !realNode && !materializeStartedRef.current;
 
   const restorePendingReferenceConversion = async (
-    content: RichText,
+    _content: RichText,
     options: { rearmTypeAhead?: boolean } = {},
   ) => {
     await pendingTextPatchRef.current;
+    const content = draftContentRef.current;
     const pendingConversion = props.ui.pendingReferenceConversion;
     if (pendingConversion?.nodeId !== props.nodeId) return { restored: false, nodeId: props.nodeId };
     if (restoredReferenceConversionNodeRef.current === props.nodeId) {
@@ -539,6 +541,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const commitDraft = async (content = draftContent) => {
+    draftContentRef.current = content;
+    setDraftContent(content);
     if (props.draft && !realNode) {
       // Blur/commit on the trailing draft (body OR field value): materialize only
       // if something was typed (so a click-away on an empty line never persists an
@@ -624,6 +628,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     draftContentRef.current = nextContent;
     if (
       optionPickerDraft
+      || pendingReferenceConversion
       || draftTriggerActiveRef.current
       || props.trigger?.nodeId === props.nodeId
       || patch.ops.some((op) => op.type === 'replace_all')
@@ -665,10 +670,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }
       return;
     }
-    pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
-      props.run(() => api.applyNodeTextPatch(targetEditId, patch), {
+    pendingTextPatchCountRef.current += 1;
+    pendingTextPatchRef.current = pendingTextPatchRef.current
+      .then(() => props.run(() => api.applyNodeTextPatch(targetEditId, patch), {
         applyFocus: false,
-      }));
+      }))
+      .finally(() => {
+        pendingTextPatchCountRef.current -= 1;
+      });
     void pendingTextPatchRef.current;
   };
 
@@ -2090,7 +2099,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             });
             return;
           }
-          if (target.kind === 'chat-source') void requestRevealChatSource(target);
         }}
       focusTarget={editorRequestTarget}
       focusRequest={props.ui.focusRequest}

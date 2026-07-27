@@ -607,16 +607,20 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   }, [applyGridTemplate, props.run]);
 
   const [searchRefreshing, setSearchRefreshing] = useState(false);
+  const searchRefreshInFlightRef = useRef(false);
   useEffect(() => {
     if (parent?.type !== 'search') {
       setSearchRefreshing(false);
       return undefined;
     }
-    let active = true;
+    if (searchRefreshInFlightRef.current) return undefined;
+    searchRefreshInFlightRef.current = true;
     setSearchRefreshing(true);
     void props.run(() => api.refreshSearchNodeResults(props.parentId), { applyFocus: false })
-      .finally(() => { if (active) setSearchRefreshing(false); });
-    return () => { active = false; };
+      .finally(() => {
+        searchRefreshInFlightRef.current = false;
+        setSearchRefreshing(false);
+      });
   }, [parent?.type, props.index.projection, props.parentId, props.run]);
 
   const measuredRef = useRef(new Map<string, number>());

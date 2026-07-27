@@ -2310,10 +2310,15 @@ describe('Core', () => {
 
     core.undoAgent();
     expect(core.operationHistory({ action: 'list', origin: 'agent' }).canRedo).toBe(true);
+    expect(core.preflightOperationHistory({ action: 'redo', origin: 'agent', steps: 1 }).status).toBe('known');
 
     core.createNode(today, null, 'User node');
 
     expect(core.operationHistory({ action: 'list', origin: 'agent' }).canRedo).toBe(false);
+    expect(core.preflightOperationHistory({ action: 'redo', origin: 'agent', steps: 1 })).toEqual({
+      status: 'none',
+      targets: [],
+    });
     expect(core.operationHistory({ action: 'redo', origin: 'agent' }).count).toBe(0);
     expect(core.state().nodes[agentNode]).toBeUndefined();
   });
@@ -2359,6 +2364,8 @@ describe('Core', () => {
         document.commit(scenario.commitOrigin);
         return nodeId;
       });
+
+      expect(document.historyStackValues(scenario.origin, 'undo', 101)).toHaveLength(100);
 
       let undone = 0;
       while (document.canUndo(scenario.origin)) {
@@ -2744,6 +2751,10 @@ describe('Core', () => {
 
     const history = core.operationHistory({ action: 'list', origin: 'user' });
     expect(history.items?.filter((item) => item.operationId === 'op:text-session')).toHaveLength(1);
+    const preflight = core.preflightOperationHistory({ action: 'undo', origin: 'user', steps: 2 });
+    expect(preflight.status).toBe('known');
+    expect(preflight.targets).toHaveLength(2);
+    expect(preflight.targets[0]?.operationId).toBe('op:text-session');
     expect(core.state().nodes[nodeId]!.content.text).toBe('AB');
 
     core.undoUser();

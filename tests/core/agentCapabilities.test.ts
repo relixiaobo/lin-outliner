@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { evaluateAgentToolCapability } from '../../src/main/agentCapabilities';
-import { unavailableToolResultMessage } from '../../src/main/agentCapabilityEvents';
-import { parseAgentCapabilitySettings } from '../../src/main/agentCapabilityRules';
-import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
+import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
+import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
+import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
+import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
 
 const roots: string[] = [];
 

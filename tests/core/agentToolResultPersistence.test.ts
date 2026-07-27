@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { TOOL_RESULT_VERSION } from '../../src/main/agentToolEnvelope';
-import { persistedToolResultDetails } from '../../src/main/agentToolResultPersistence';
+import { TOOL_RESULT_VERSION } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { persistedToolResultDetails } from '../../src/main/agent/capabilities/agentToolResultPersistence';
 
 describe('agent tool result persistence', () => {
   test('does not persist generic tool runtime envelopes', () => {

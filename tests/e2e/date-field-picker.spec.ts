@@ -27,7 +27,7 @@ test.describe('date field picker', () => {
     await expect(dueRow.getByRole('dialog', { name: 'Date picker' })).toHaveCount(0);
     await expectCalendarDayRhythm(page);
 
-    await page.getByRole('button', { name: 'Select 2026-05-20' }).click();
+    await page.getByRole('gridcell', { name: 'Select 2026-05-20' }).click();
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20');
 
     await ensurePickerOpen(page, dueRow);
@@ -40,14 +40,14 @@ test.describe('date field picker', () => {
 
     await ensurePickerOpen(page, dueRow);
     await page.getByRole('switch', { name: 'End date' }).click();
-    await page.getByRole('button', { name: 'Select 2026-05-24' }).click();
+    await page.getByRole('gridcell', { name: 'Select 2026-05-24' }).click();
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20T13:45/2026-05-24T13:45');
   });
 
   test('arms a recurrence on a single date and hides repeat for ranges', async ({ page }) => {
     const dueRow = row(page, ids.dueEntry);
     await openEmptyDatePicker(page);
-    await page.getByRole('button', { name: 'Select 2026-05-20' }).click();
+    await page.getByRole('gridcell', { name: 'Select 2026-05-20' }).click();
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20');
 
     // A generic date field now carries a "Repeat" control (B1). Arming a preset
@@ -61,7 +61,7 @@ test.describe('date field picker', () => {
     await ensurePickerOpen(page, dueRow);
     await page.getByRole('switch', { name: 'End date' }).click();
     await expect(page.locator('.typed-field-date-recurrence')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Select 2026-05-24' }).click();
+    await page.getByRole('gridcell', { name: 'Select 2026-05-24' }).click();
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20/2026-05-24');
   });
 
@@ -125,7 +125,7 @@ async function expectCalendarDayRhythm(page: import('@playwright/test').Page) {
 }
 
 async function calendarDayBox(page: import('@playwright/test').Page, isoDate: string) {
-  const box = await page.getByRole('button', { name: `Select ${isoDate}` }).boundingBox();
+  const box = await page.getByRole('gridcell', { name: `Select ${isoDate}` }).boundingBox();
   if (!box) throw new Error(`Missing calendar day box: ${isoDate}`);
   return box;
 }
