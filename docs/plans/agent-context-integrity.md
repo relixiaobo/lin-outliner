@@ -24,10 +24,13 @@ This restores and unifies all context-bearing behavior:
 - faithful Subagent `fork_turns` inheritance; and
 - provider runtime settings and prompt-cache boundaries.
 
-This plan has shape **(b): a set of complete features**, delivered as five PRs ordered
-by genuine protocol and runtime dependencies. The first PR is the repository-mandated
-shared-interface-first contract change; each later PR leaves its restored capability
-complete and independently verifiable.
+This plan has shape **(b): a set of complete features**, delivered as three complete
+PRs. The first PR is the repository-mandated shared-interface-first contract change;
+the second replaces context composition and admission end to end; the third completes
+the remaining runtime as one atomic feature. Budgeting, context controls, Subagent
+inheritance, Role discovery, provider policy, and prompt-cache integration are internal
+build stages of PR 3, never separate releases. No PR is a scaffold that requires a
+later PR to become useful.
 
 ## Non-goals
 
@@ -809,50 +812,47 @@ Primary files:
 This PR must be sequenced with the active `agent-skills-authoring` plan if that plan
 starts changing the same loader or spec. Authoring behavior is otherwise orthogonal.
 
-#### PR 3: global context budget, `/compact`, and `/clear`
+#### PR 3: complete context runtime
 
-Implement token planning on every provider request, full-output observations,
-preflight/reactive/manual compaction, one overflow retry, epoch selection, reserved
-commands, feature-triggered Turns, and the two transcript boundary rows. Remove time-based
-microcompaction and fixed character-tail truncation.
+Ship every remaining context-integrity consumer as one complete feature. Implement
+token planning on every provider request, frozen full-output observations,
+preflight/reactive/manual compaction, one overflow retry, epoch selection, `/compact`,
+`/clear`, feature-triggered Turns, and transcript boundary rows. Replace the
+collaboration `fork_turns` character flattener with structured snapshots, exact source
+boundaries, child-owned payload copies, planner integration, and Details provenance.
+Apply ordinary Turn runtime settings, separate context overflow from transient retries,
+restore provider cache retention and deterministic epoch affinity, add Anthropic
+L0/per-execution breakpoints, publish the versioned Role catalog tail, expose
+common-prefix/cache usage diagnostics, and lock request shapes with provider contract
+tests. Remove the remaining fixed character-tail and runtime-only context state that
+these canonical consumers replace.
+
+The implementation order inside this PR is foundation before consumers, but no stage
+is an independently mergeable delivery:
+
+1. global budget planner, frozen tool-output projections, active-observation reducer;
+2. compaction/reset engine, reserved commands, context epochs, and boundary UI;
+3. structured Subagent inheritance, child ownership, provenance, and Role discovery;
+4. provider runtime policy, overflow handling, cache adapters, affinity, and diagnostics;
+5. cross-feature restart, rollback, fork, deletion, cache-prefix, and E2E verification.
 
 Primary files:
 
-- context budget/compaction modules
+- context budget/compaction/reducer modules
 - `src/main/agent/ThreadService.ts`
 - `src/main/agent/runtime/PiTurnExecutor.ts`
+- `src/main/agent/runtime/ToolRuntime.ts`
+- `src/main/agent/capabilities/agentSettings.ts`
+- `src/main/agent/AgentConfigurationLoader.ts`
 - `src/main/agent/persistence/ToolPayloadStore.ts`
+- collaboration capability/runtime modules
+- context payload copy/projector/provider-adapter modules
 - `src/renderer/agent/store/threadStore.ts`
 - `src/renderer/agent/components/ThreadDock.tsx`
 - `src/renderer/agent/components/ThreadView.tsx`
 - `src/renderer/agent/components/ThreadComposerEditor.tsx`
-- boundary rendering and E2E tests
-
-#### PR 4: Subagent inheritance fidelity
-
-Replace flattened `fork_turns` context with structured snapshots, exact source
-boundaries, child-owned payload copies, planner integration, and Details provenance.
-
-Primary files:
-
-- `src/main/agent/ThreadService.ts`
-- collaboration capability/runtime modules
-- context payload copy/projector modules
-- Subagent protocol/runtime/persistence tests
-
-#### PR 5: provider controls and prompt cache
-
-Apply ordinary Turn runtime settings, split context overflow from transient retries,
-restore provider cache retention, add Anthropic L0/per-execution breakpoints, add the
-versioned Role catalog tail, expose common-prefix/cache usage diagnostics, and lock
-request shapes with provider contract tests.
-
-Primary files:
-
-- `src/main/agent/runtime/PiTurnExecutor.ts`
-- `src/main/agent/capabilities/agentSettings.ts`
-- `src/main/agent/AgentConfigurationLoader.ts`
-- provider adapters and payload tests
+- budget/property, Subagent protocol/runtime/persistence, provider payload, boundary,
+  and E2E tests
 
 Every behavior PR updates the affected current specs in the same change:
 
@@ -866,7 +866,7 @@ Every behavior PR updates the affected current specs in the same change:
 
 The current specs already over-claim full-output history replay and structured Skill
 compaction restore; those claims must be rewritten to the verified implementation in
-the relevant PR, not left as aspirational text.
+PR 3, not left as aspirational text.
 
 ### Collision result
 
