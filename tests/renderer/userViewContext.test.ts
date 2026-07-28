@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { DocumentProjection, NodeProjection } from '../../src/core/types';
-import { buildIndex, type UiState } from '../../src/renderer/state/document';
+import {
+  buildIndex,
+  flattenVisibleRows,
+  type UiState,
+} from '../../src/renderer/state/document';
 import { buildRendererUserViewHints } from '../../src/renderer/ui/agent/userViewContext';
 import type { WorkspacePanelState } from '../../src/renderer/ui/workspaceLayoutTypes';
 
@@ -187,6 +191,51 @@ describe('renderer Agent user-view hints', () => {
       { nodeId: 'ref', depth: 1, expanded: true },
       { nodeId: 'child', depth: 2, expanded: false },
       { nodeId: 'cycle', depth: 2, expanded: true },
+    ]);
+    expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
+  });
+
+  test('omits table-column fields from expanded record descendants', () => {
+    const index = buildIndex(projection([
+      node('root', 'Root', { children: ['view', 'record'] }),
+      node('view', 'View', {
+        parentId: 'root',
+        type: 'viewDef',
+        viewMode: 'table',
+        children: ['shown-column'],
+      }),
+      node('shown-column', 'Shown column', {
+        parentId: 'view',
+        type: 'displayField',
+        displayField: 'shown-field',
+      }),
+      node('record', 'Record', {
+        parentId: 'root',
+        children: ['shown-entry', 'child'],
+      }),
+      node('shown-entry', 'Shown entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'shown-field',
+        children: ['shown-value'],
+      }),
+      node('shown-value', 'Shown value', { parentId: 'shown-entry' }),
+      node('child', 'Child', { parentId: 'record' }),
+    ]));
+    const expanded = new Set(['record']);
+
+    expect(flattenVisibleRows('root', index.byId, expanded)).toEqual(['record', 'child']);
+    const hints = buildRendererUserViewHints({
+      activePanelId: 'panel-1',
+      panels: [panel()],
+      index,
+      ui: ui({ expanded }),
+    });
+
+    expect(hints.panels[0]?.visibleNodes).toEqual([
+      { nodeId: 'root', depth: 0, expanded: true },
+      { nodeId: 'record', depth: 1, expanded: true },
+      { nodeId: 'child', depth: 2, expanded: false },
     ]);
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
   });

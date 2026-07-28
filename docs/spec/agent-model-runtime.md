@@ -68,8 +68,9 @@ resolves titles, breadcrumbs, outline syntax, checkbox/done state, references,
 descriptions, tags, file names, child counts, and Today fallback from the current
 `DocumentProjection`. Expanded references contribute the same resolved target children
 and depths that the Outliner renders; reference chains use cycle protection, and main
-derives child counts from that resolved displayed parent. Panels and text leaves use
-fixed ordering and escaping.
+derives child counts from that resolved displayed parent. Expanded table records omit
+authored field entries already represented by visible columns. Panels and text leaves
+use fixed ordering and escaping.
 Projection emits a complete first snapshot and deterministic later diffs; replaying
 the same canonical payload sequence reconstructs the same snapshot/diff bytes.
 Only the host-derived projection mode and interaction mode are application observations.
