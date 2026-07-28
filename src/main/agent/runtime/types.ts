@@ -12,6 +12,8 @@ import type {
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
+  TurnDiagnosticsPayload,
+  TurnDiagnosticsPayloadReference,
   TurnExecutionDetails,
   TurnError,
   TurnStatus,
@@ -49,6 +51,9 @@ export interface TurnExecutionContext {
     payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem>;
+  persistTurnDiagnostics(
+    payload: TurnDiagnosticsPayload,
+  ): Promise<TurnDiagnosticsPayloadReference>;
   persistSkillCatalog(
     snapshot: SkillCatalogContextPayload,
   ): Promise<ContextEvidenceThreadItem | null>;

@@ -282,7 +282,7 @@ Renderer IPC may author only `untrusted/observation`. Main owns every applicatio
 classification. A payload may contain both application metadata and untrusted document
 values, but the two become separate blocks at projection time.
 
-Context evidence is hidden from the ordinary message transcript. Run Details and
+Context evidence is hidden from the ordinary message transcript. Turn Details and
 exports expose its bounded summary, kind, source, hash, and availability for audit;
 full untrusted payload text is loaded only through an explicit details action. Reset and
 compaction Items retain dedicated visible boundary rows.
@@ -404,7 +404,7 @@ L1 contains only cross-tool framing with a real capability consumer, including f
 Outliner, Memory, Skills, and collaboration. A capability absent from the effective
 catalog contributes no module. The files module preserves Full Access/native-denial
 semantics, read-before-rely, and the rule that a user-facing deliverable is placed under
-the Run working directory and referenced through the renderer-safe absolute-file affordance.
+the Thread working directory and referenced through the renderer-safe absolute-file affordance.
 Tool-specific syntax, including generated-image placement, remains on the owning tool
 description/result instead of being duplicated in the prompt.
 
@@ -711,7 +711,7 @@ images, context evidence, assistant text, reasoning summaries, complete tool pai
 resource references, and compaction/reset semantics. Store it as one
 `inheritedContext` payload in the child before the child's task `userMessage`.
 Inherited history is model context but not duplicated as visible child transcript rows.
-Child Run Details expose the parent Thread ID, exact source cursor, selected Turn count,
+Child Turn Details expose the parent Thread ID, exact source cursor, selected Turn count,
 and payload hash.
 
 Copy every referenced managed payload into the child's ownership using the existing
@@ -741,6 +741,33 @@ journal as Skills for built-in and effective project/user Roles. An unchanged ca
 adds no tokens; a Role created during an old conversation is appended at the next
 admission without changing prior history. The `spawn_agent` tool still validates Role
 identity and capability ceilings; the catalog only makes accepted values discoverable.
+
+### Turn diagnostics and Details
+
+Replace the partial post-rewrite Details view with one complete Turn-scoped audit
+surface. `PiTurnExecutor` records provider-boundary facts rather than asking the
+renderer to reconstruct them: effective configuration, layered stable prompt and
+fingerprints, canonical-sorted tool schemas, resolved provider settings, context epoch,
+cache affinity, each planned message window and budget, provider-specific parameters,
+request fingerprint, cache breakpoints, HTTP status and request identity, response,
+usage, and stop/error facts. Transport diagnostics retain only an allowlisted provider
+request ID rather than arbitrary response headers.
+
+Repeated normalized messages form one content-fingerprint pool shared by all Provider
+Calls in the Turn. Provider payload message fields become verifiable digest/length
+markers instead of a second full message copy. Binary and image bytes likewise become
+typed omission markers. This preserves the complete inspectable construction while
+keeping diagnostics bounded and leaves the outbound request untouched, so the cache
+topology above remains authoritative.
+
+Terminal diagnostics are a versioned content-addressed Thread payload referenced from
+`Turn.execution`, copied on fork, and pruned on rollback/startup/failure when no
+reachable Turn references them. One `thread/turn/details/read` call is the read
+authority and fails closed on missing, corrupt, or mismatched bytes. Turn Details
+renders Overview, Request Construction, Provider Calls, and Canonical Items; context
+payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
+run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
+readers.
 
 ### Failure semantics
 
@@ -798,6 +825,7 @@ Primary files:
 
 - `src/main/agent/ThreadService.ts`
 - `src/main/agent/runtime/PiTurnExecutor.ts`
+- `src/main/agent/context/TurnDiagnostics.ts`
 - `src/main/agent/runtime/ToolRuntime.ts`
 - `src/main/agent/runtime/types.ts`
 - new `src/main/agent/context/` composer, evidence, planner, and serializer modules
@@ -851,6 +879,9 @@ Primary files:
 - `src/renderer/agent/components/ThreadDock.tsx`
 - `src/renderer/agent/components/ThreadView.tsx`
 - `src/renderer/agent/components/ThreadComposerEditor.tsx`
+- `src/renderer/agent/components/ThreadTurnDetailsPanel.tsx`
+- `src/core/agent/protocol.ts`
+- `src/core/agent/codec.ts`
 - budget/property, Subagent protocol/runtime/persistence, provider payload, boundary,
   and E2E tests
 
@@ -953,3 +984,8 @@ choices together:
       post-commit renderer/extension observer failure cannot produce a false rejection.
       Deleting or corrupting the client-id sidecar before restart still deduplicates from
       the canonical user Item and rebuilds the index.
+- [ ] **AC-19:** Turn Details tests prove one authoritative read exposes stable prompt,
+      tool schemas, file/context reminders, every Provider Call, parameters, normalized
+      message windows, responses, cache facts, and canonical Items. Missing/corrupt or
+      mismatched diagnostics fail closed; rollback, fork/source deletion, and startup
+      pruning preserve the Thread-ownership contract without a legacy reader.

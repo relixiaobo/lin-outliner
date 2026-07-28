@@ -99,20 +99,22 @@ test.describe('canonical agent Thread surface', () => {
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
     await expect(usage).toHaveCount(0);
-    const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
-    await expect(runDetails).toBeVisible();
-    await expect(runDetails).toHaveClass(/active-panel/);
+    const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
+    await expect(turnDetails).toBeVisible();
+    await expect(turnDetails).toHaveClass(/active-panel/);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
-    await expect(runDetails).toContainText('Run Details');
-    await expect(runDetails).toContainText('Summary');
-    await expect(runDetails).toContainText('Model Input');
-    await expect(runDetails).toContainText('Execution (1)');
-    await expect(runDetails).toContainText('Thread ID');
-    await expect(runDetails).toContainText('Turn ID');
-    await expect(runDetails).toContainText('Session ID');
-    await runDetails.locator('.thread-run-details-execution-event').first().locator('.thread-run-details-message-head').click();
-    await expect(runDetails.locator('.thread-run-details-execution-event').first()).toContainText('"type": "userMessage"');
-    await runDetails.getByRole('button', { name: 'Previous page' }).click();
+    await expect(turnDetails).toContainText('Turn Details');
+    await expect(turnDetails).toContainText('Overview');
+    await expect(turnDetails).toContainText('Request Construction');
+    await expect(turnDetails).toContainText('Provider Calls (1)');
+    await expect(turnDetails).toContainText('Canonical Items (2)');
+    await expect(turnDetails).toContainText('Stable system prompt');
+    await expect(turnDetails).toContainText('Tool schemas (1)');
+    await expect(turnDetails).toContainText('Provider request parameters');
+    const userItemDetails = turnDetails.locator('.thread-turn-details-item').filter({ hasText: 'userMessage' });
+    await userItemDetails.locator('.thread-turn-details-row-head').click();
+    await expect(userItemDetails).toContainText('"type": "userMessage"');
+    await turnDetails.getByRole('button', { name: 'Previous page' }).click();
     await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 
     await userMessage.hover();
@@ -138,7 +140,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'thread/list',
       'thread/start',
-      'thread/read',
+      'thread/turn/details/read',
       'thread/turns/list',
       'turn/start',
       'goal/get',
@@ -208,6 +210,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 100,
               output: 20,
@@ -298,6 +301,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -356,6 +360,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -415,6 +420,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -1051,6 +1057,7 @@ test.describe('canonical agent Thread surface', () => {
           modelProvider: 'openai',
           model: 'openai/gpt-5.4',
           reasoningEffort: 'medium',
+          diagnosticsRef: null,
           usage: {
             input: 0,
             output: 0,
@@ -1191,10 +1198,11 @@ test.describe('canonical agent Thread surface', () => {
       await expect(compactionTurn.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
       await compactionTurn.hover();
       await compactionTurn.getByRole('button', { name: 'Details' }).click();
-      const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
-      await expect(runDetails).toContainText(`Context epoch${fixture.resetItemId}`);
-      await expect(runDetails).toContainText(/Cache affinity[a-f0-9]{64}/);
-      await expect.poll(() => runDetails.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+      const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
+      await expect(turnDetails).toContainText('Turn Details');
+      await expect(turnDetails).toContainText('Request diagnostics have not been recorded for this Turn.');
+      await expect(turnDetails).toContainText('contextCompaction');
+      await expect.poll(() => turnDetails.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     });
   }
 
@@ -1802,6 +1810,7 @@ test.describe('canonical agent Thread surface', () => {
           modelProvider: 'openai',
           model: 'openai/gpt-5.4',
           reasoningEffort: 'medium',
+          diagnosticsRef: null,
           usage: {
             input: 0,
             output: 0,

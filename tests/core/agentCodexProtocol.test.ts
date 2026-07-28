@@ -19,6 +19,7 @@ import {
   encodeThread,
   encodeThreadContextPayload,
   encodeThreadItem,
+  encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
 import {
   AGENT_CORE_METHODS,
@@ -31,6 +32,7 @@ import {
   type ThreadItem,
   type ThreadMessageContextMenuRequest,
   type Turn,
+  type TurnDiagnosticsPayload,
 } from '../../src/core/agent/protocol';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
@@ -253,6 +255,7 @@ const completedTurn: Turn = {
     modelProvider: 'openai',
     model: 'openai/gpt-5',
     reasoningEffort: 'high',
+    diagnosticsRef: null,
     usage: {
       input: 100,
       output: 20,
@@ -272,6 +275,56 @@ const completedTurn: Turn = {
   startedAt: 100,
   completedAt: 200,
   durationMs: 100,
+};
+
+const turnDiagnosticsPayload: TurnDiagnosticsPayload = {
+  schemaVersion: 1,
+  contextEpochId: 'initial',
+  cacheAffinity: '1'.repeat(64),
+  configuration: {
+    profileName: 'default',
+    developerInstructions: [],
+    model: 'openai/gpt-5',
+    reasoningEffort: 'high',
+    tools: ['node_read'],
+    skills: [],
+    plugins: [],
+    mcpServers: [],
+  },
+  stablePrompt: null,
+  toolSchemas: [],
+  runtime: {
+    provider: 'openai',
+    model: 'openai/gpt-5',
+    api: 'openai-responses',
+    endpoint: 'https://api.openai.com/v1',
+    transport: 'auto',
+    contextWindow: 128_000,
+    maxOutputTokens: 8_192,
+    thinkingLevel: 'high',
+    timeoutMs: 30_000,
+    maxRetries: 2,
+    maxRetryDelayMs: 60_000,
+    cacheRetention: 'short',
+    toolExecution: 'parallel',
+    steeringMode: 'all',
+  },
+  messages: [],
+  providerCalls: [{
+    index: 0,
+    requestedAt: 100,
+    messageIds: [],
+    protectedFromMessageIndex: 0,
+    estimatedInputTokens: 100,
+    inputTokenLimit: 100_000,
+    reservedOutputTokens: 8_192,
+    commonPrefixMessageCount: 0,
+    requestParameters: { model: 'openai/gpt-5' },
+    requestFingerprint: '2'.repeat(64),
+    cacheBreakpoints: [],
+    transportResponse: null,
+    response: null,
+  }],
 };
 
 const thread: Thread = {
@@ -1149,6 +1202,7 @@ describe('Codex Agent Core protocol codec', () => {
         itemId: 'item-13',
         contextId: contextRef.id,
       },
+      'thread/turn/details/read': { threadId: THREAD_ID, turnId: TURN_ID },
       'turn/start': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Start' }],
@@ -1205,6 +1259,7 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/context/read': {
         context: { ref: rpcContextRef, payload: rpcContextPayload },
       },
+      'thread/turn/details/read': { thread, turn: completedTurn, diagnostics: null },
       'turn/start': { turn: completedTurn, acceptedItemId: 'item-1', deduplicated: false },
       'turn/steer': { turnId: TURN_ID, acceptedItemId: 'item-1', deduplicated: true },
       'turn/interrupt': { turnId: TURN_ID },
@@ -1240,6 +1295,65 @@ describe('Codex Agent Core protocol codec', () => {
       numTurns: 1,
       turnId: TURN_ID,
     })).toThrow('unknown fields: turnId');
+  });
+
+  test('fails closed when Turn Details diagnostics are absent, mismatched, or malformed', () => {
+    const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(turnDiagnosticsPayload)).byteLength;
+    const ref = {
+      id: '3'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json' as const,
+      byteLength,
+      schemaVersion: 1 as const,
+    };
+    const turn = {
+      ...completedTurn,
+      execution: { ...completedTurn.execution, diagnosticsRef: ref },
+    };
+    const response = { thread, turn, diagnostics: { ref, payload: turnDiagnosticsPayload } };
+    expect(decodeAgentCoreResponse('thread/turn/details/read', response)).toEqual(response);
+
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      thread,
+      turn,
+      diagnostics: null,
+    })).toThrow('is required by the Turn execution reference');
+
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: { ...response.diagnostics, ref: { ...ref, id: '4'.repeat(64) } },
+    })).toThrow('must match the Turn execution reference');
+
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      turn: {
+        ...turn,
+        execution: {
+          ...turn.execution,
+          diagnosticsRef: { ...ref, byteLength: ref.byteLength + 1 },
+        },
+      },
+    })).toThrow('must match the Turn execution reference');
+
+    const [providerCall] = turnDiagnosticsPayload.providerCalls;
+    expect(providerCall).toBeDefined();
+    const { requestParameters: _requestParameters, ...missingRequestParameters } = providerCall!;
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: { ...turnDiagnosticsPayload, providerCalls: [missingRequestParameters] },
+      },
+    })).toThrow('requestParameters');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{ ...providerCall, legacyRoundId: 'round-1' }],
+        },
+      },
+    })).toThrow('unknown fields: legacyRoundId');
   });
 
   test('exposes only the ratified response-menu actions', () => {

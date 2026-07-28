@@ -34,7 +34,7 @@ The stable modules retain the established operational contract: renderer-safe
 deliverables use `[[file:Display name^/absolute/path]]`; Memory lookup searches and
 reads the `#d-memory`/`#d-episode`/`#d-belief` family; a Skill's declared dependency
 is verified and installed or enabled before an approximation is considered; and child
-Runs explicitly account for shared files, processes, ports, credentials, application
+Threads explicitly account for shared files, processes, ports, credentials, application
 state, and services. Tool-owned syntax such as generated-image placement remains on
 the owning tool description/result rather than being duplicated in the prompt.
 
@@ -361,3 +361,42 @@ exceed the limit, that identity breakpoint is removed before either protected st
 breakpoint. The adapter matches the sanitized provider text reconstructed from
 `StablePrompt.blocks`, never parses textual markers, and adds no Anthropic metadata to
 other providers.
+
+## Turn Diagnostics
+
+`PiTurnExecutor` creates one `TurnDiagnosticsCollector` from the effective configuration
+and resolved runtime at Turn start. At every provider boundary it records the exact
+context epoch and cache affinity, L0/L1/L2 stable-prompt blocks and fingerprints,
+canonical-sorted tool schemas, provider/model/API/endpoint/transport limits and
+retry/cache settings, the planned protected boundary and token budget, and the normalized
+provider message window. Endpoint diagnostics remove URL userinfo, query, and fragment
+data before persistence. Messages are pooled by a stable SHA-256 fingerprint so a later
+tool or steering call references its unchanged prefix instead of persisting another full
+copy.
+
+The post-adapter provider payload is also observed at the send boundary. Diagnostics
+retain provider-specific non-message parameters, a SHA-256 fingerprint of the complete
+canonical diagnostic request representation, and every cache-control path. The repeated
+top-level `input`, `messages`, `contents`, or `prompt` field is replaced by a verifiable
+field/digest/byte-length marker
+because the normalized message window is already pooled. Binary, base64 image, and image
+data-URL bytes are never copied into diagnostics; an omission marker retains encoding,
+MIME when known, byte length, and digest. This bounds the diagnostic copy without
+changing the provider request or its prompt-cache bytes.
+
+The transport `onResponse` boundary records when HTTP headers arrive, the status code,
+and the first non-empty provider request ID from a fixed allowlist. Arbitrary response
+headers are never persisted: cookies, authorization material, and unrelated volatile
+metadata therefore cannot enter Turn diagnostics. Transport response facts remain
+separate from the completed assistant response because headers may exist even when body
+streaming later fails. An adapter or non-HTTP transport that exposes no response hook
+provides no transport facts.
+
+An assistant `message_end` closes the latest open Provider Call with its normalized
+response, real usage, stop reason, error details, and receive time. A failed or retried
+call may legitimately have no response. Terminalization canonicalizes the complete
+versioned diagnostics payload, writes it content-addressed under the Thread, and stores
+the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,
+not provider history and not input to future execution. Active Turns and feature Turns
+that never contact a provider have no reference; the renderer never fills that absence
+from current settings.

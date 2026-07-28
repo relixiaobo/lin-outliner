@@ -66,11 +66,11 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   child Thread
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Run Details, with no separate Memory Item or disclosure
+  in the process and Turn Details, with no separate Memory Item or disclosure
 - context evidence stays hidden from the ordinary transcript; `contextReset` and
   `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
   at their exact canonical positions. A completed standalone `/clear` or `/compact`
-  feature Turn exposes Run Details from that boundary and does not synthesize an empty
+  feature Turn exposes Turn Details from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
 A completed Turn with a final answer and known duration folds its process Items
@@ -152,32 +152,58 @@ duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card containing timestamp, provider, model, reasoning effort,
 and the complete token/cost usage breakdown. The card is anchored in a portal
 and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens Run Details in the active workspace
+Details from the native message menu, opens Turn Details in the active workspace
 pane.
 
-Run Details preserves the established debug-page structure: Summary, Model
-Input disclosures, and an expandable Execution list with raw JSON for every
-canonical Item. It reads the canonical Thread and full Turn rollout directly;
-it does not recreate the removed debug-run, round, or event projection. The
-page adds canonical Thread, Turn, Session, provenance, and trigger identities
-alongside the existing model, timing, tool, token, and cost facts. Opening
-Details pushes the current view onto that pane's Back stack and never creates a
-split. Opening another Turn while Details is current replaces only the target,
+Turn Details is the complete diagnostic view for one canonical Turn. Its four
+sections are Overview, Request Construction, Provider Calls, and Canonical Items.
+Overview reads model, timing, status, Item count, input/output/cache token usage,
+cost, and any terminal error code/message/detail from the immutable Turn. `Input tokens`
+means `usage.input`; cache reads and writes remain separate facts and are never relabeled
+as input context.
+
+The renderer performs one `thread/turn/details/read` request. Main returns the exact
+Thread, Turn, and immutable diagnostics payload referenced by
+`Turn.execution.diagnosticsRef`; renderer code never scans Turn pages, recomputes a
+context epoch or cache affinity, or substitutes current configuration for historical
+facts. A Turn without a diagnostics reference explicitly reports that request
+diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
+not match the Turn fails closed instead of appearing absent.
+
+Request Construction exposes the accepted user Items, canonical Thread/Turn/Session,
+provenance and trigger identities, context epoch, cache affinity, effective
+configuration, L0/L1/L2 stable-prompt blocks and fingerprints, canonical-sorted tool
+schemas, and resolved provider runtime settings including endpoint and transport.
+Provider Calls lists every provider invocation observable at the post-adapter send
+boundary in order. Wrapper-level retries create another call; retries hidden inside a
+provider SDK remain part of that SDK invocation. Each call distinguishes request time,
+HTTP-headers time and latency,
+and assistant-response completion time and total duration. It exposes an HTTP status and
+allowlisted provider request ID when available, but never arbitrary response headers. It
+also exposes the protected message boundary, token budget, common-prefix count, request
+fingerprint, cache-breakpoint paths, provider parameters, exact normalized message
+window, and assistant response. Provider-reported input/output/cache/reasoning usage and
+stop reason, plus locally calculated cost and normalized error details, are typed call
+facts rather than renderer inferences. The
+call summary derives completed, failed, or
+interrupted from the response stop reason rather than treating every response as success.
+Repeated message windows use the diagnostics message fingerprint pool; provider request
+parameters replace their repeated wire-message field with a digest/length marker. Image
+bytes are never returned to the renderer: binary/base64/data-URL content is represented
+by an omission marker containing its byte length and SHA-256.
+
+Canonical Items is exhaustive, including context evidence, reset, and compaction
+Items. Large prompt blocks, schemas, provider messages, responses, and Item JSON mount
+only while their disclosure is open. Expanding an evidence Item issues one exact
+`(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
+payload; it never receives a canonical payload path or gains digest-only read authority.
+Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
+Opening Details pushes the current view onto the pane's Back stack and never creates a
+split. Opening another Turn while Turn Details is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
 
-Run Details includes context evidence/reset/compaction in its exhaustive Item list.
-Evidence uses its bounded canonical summary while collapsed. Expanding an evidence
-row issues one exact `(threadId, turnId, itemId, contextId)` audit read and renders the
-decoded semantic payload; it never receives a canonical payload path or gains digest-only
-read authority. Missing, corrupt, rolled-back, or mismatched evidence remains explicitly
-unavailable. The canonical-context disclosure also shows the context epoch and exact
-64-character provider cache affinity for that Turn. It searches older pages for the
-nearest preceding reset, uses `initial` when none exists, and does not confuse the
-Thread-tree `sessionId` with provider affinity. Summary usage continues to show
-cache-read, cache-write, and cached-share metrics from canonical Turn execution data.
-
 Normal Thread UI may visually group Items by Turn without printing every Turn
-ID. Run Details and diagnostics must show the same Thread, Turn, and Item
+ID. Turn Details and diagnostics must show the same Thread, Turn, and Item
 identities as the transport.
 
 Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.
@@ -339,7 +365,7 @@ checklist; activating the summary opens the same scrollable checklist and moves
 keyboard focus into it. Escape closes it and restores focus to the summary. A
 replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
-or application restart removes it. It never appears in transcript history, Run
+or application restart removes it. It never appears in transcript history, Turn
 Details, response copy, or as `Used update_plan`.
 
 Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI

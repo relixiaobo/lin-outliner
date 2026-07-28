@@ -87,6 +87,8 @@ import type {
   ThreadContextPayloadReference,
   ThreadContextReadRequest,
   ThreadContextReadResponse,
+  ThreadTurnDetailsReadRequest,
+  ThreadTurnDetailsReadResponse,
   ThreadItemOutputReference,
   ThreadResourceReference,
   RoleCatalogContextPayload,
@@ -94,6 +96,7 @@ import type {
   SkillInvocationContextPayload,
   JsonValue,
   Turn,
+  TurnDiagnosticsPayloadReference,
   TurnId,
   TurnInputRequest,
   TurnStartResponse,
@@ -505,6 +508,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await Promise.all(knownThreadIds.flatMap((threadId) => [
       this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId)),
       this.payloads.pruneUnreferencedContexts(threadId, this.threadContextPayloadReferences(threadId)),
+      this.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.threadTurnDiagnosticsReferences(threadId)),
       this.payloads.pruneUnreferencedTextOutputs(threadId, this.threadTextPayloadReferences(threadId)),
     ]));
     const resumableThreads: Thread[] = [];
@@ -794,6 +798,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.readContextPayload(
           decoded as AgentCoreRequestByMethod['thread/context/read'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/turn/details/read':
+        return await this.readTurnDetails(
+          decoded as AgentCoreRequestByMethod['thread/turn/details/read'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/start':
         return await this.startRendererTurn(decoded as AgentCoreRequestByMethod['turn/start']) as AgentCoreResponseByMethod[Method];
       case 'turn/steer':
@@ -852,6 +860,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!payload) return { context: null };
     assertContextPayloadDependencies(item, payload);
     return { context: { ref: item.payloadRef, payload } };
+  }
+
+  async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
+    const thread = this.requireThread(request.threadId).thread;
+    const turn = this.readTurn(request.threadId, request.turnId);
+    if (!turn) throw new Error(`Unknown Turn: ${request.turnId}`);
+    const ref = turn.execution.diagnosticsRef;
+    if (!ref) return { thread, turn, diagnostics: null };
+    const payload = await this.payloads.readTurnDiagnostics(request.threadId, ref);
+    if (!payload) throw new Error(`Missing or corrupt Turn diagnostics payload: ${ref.id}`);
+    return { thread, turn, diagnostics: { ref, payload } };
   }
 
   async beginAttachmentUpload(input: {
@@ -1108,6 +1127,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
   }
 
+  private threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
+    return this.allTurns(threadId).flatMap((turn) => (
+      turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
+    ));
+  }
+
   private threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
     return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => [
       ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
@@ -1347,6 +1372,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
     targetThreadId: ThreadId,
     copiedTurn: Turn,
   ): Promise<Turn> {
+    if (copiedTurn.execution.diagnosticsRef) {
+      const copied = await this.payloads.copyTurnDiagnosticsToThread(
+        sourceThreadId,
+        targetThreadId,
+        copiedTurn.execution.diagnosticsRef,
+      );
+      if (!copied) {
+        throw new Error(`Missing Turn diagnostics payload: ${copiedTurn.execution.diagnosticsRef.id}`);
+      }
+    }
     for (const item of copiedTurn.items) {
       for (const ref of itemResourceReferences(item)) {
         const copied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
@@ -1451,6 +1486,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await Promise.all([
         this.payloads.pruneUnreferencedResources(thread.id, this.threadResourceReferences(thread.id)),
         this.payloads.pruneUnreferencedContexts(thread.id, this.threadContextPayloadReferences(thread.id)),
+        this.payloads.pruneUnreferencedTurnDiagnostics(
+          thread.id,
+          this.threadTurnDiagnosticsReferences(thread.id),
+        ),
         this.payloads.pruneUnreferencedTextOutputs(thread.id, this.threadTextPayloadReferences(thread.id)),
       ]).catch(() => undefined);
       if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
@@ -2615,6 +2654,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           payload,
           summary,
         ),
+        persistTurnDiagnostics: (payload) => this.payloads.writeTurnDiagnostics(active.threadId, payload),
         persistSkillCatalog: (snapshot) => this.threadMutex.run(active.threadId, async () => {
           const catalog = await planSkillCatalogEvidence({
             turns: this.allTurns(active.threadId),
@@ -2696,6 +2736,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await this.payloads.pruneUnreferencedContexts(
         active.threadId,
         this.threadContextPayloadReferences(active.threadId),
+      ).catch(() => undefined);
+      await this.payloads.pruneUnreferencedTurnDiagnostics(
+        active.threadId,
+        this.threadTurnDiagnosticsReferences(active.threadId),
       ).catch(() => undefined);
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
@@ -2857,10 +2901,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.extensions.turnError(this.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
       }
     }
-    await this.threadMutex.run(active.threadId, () => this.payloads.pruneUnreferencedContexts(
-      active.threadId,
-      this.threadContextPayloadReferences(active.threadId),
-    )).catch(() => undefined);
+    await this.threadMutex.run(active.threadId, async () => {
+      await Promise.all([
+        this.payloads.pruneUnreferencedContexts(
+          active.threadId,
+          this.threadContextPayloadReferences(active.threadId),
+        ),
+        this.payloads.pruneUnreferencedTurnDiagnostics(
+          active.threadId,
+          this.threadTurnDiagnosticsReferences(active.threadId),
+        ),
+      ]);
+    }).catch(() => undefined);
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
@@ -3991,6 +4043,7 @@ function initialTurnExecution(
     modelProvider: thread.modelProvider,
     model: configuration.model,
     reasoningEffort: configuration.reasoningEffort,
+    diagnosticsRef: null,
     usage: {
       input: 0,
       output: 0,

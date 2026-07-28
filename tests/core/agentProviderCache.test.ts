@@ -202,6 +202,7 @@ function turn(id: string, items: readonly ThreadItem[]): Turn {
       modelProvider: 'anthropic',
       model: 'claude-test',
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
     },
     startedAt: 1,

@@ -124,8 +124,8 @@ describe('stable agent prompt composition', () => {
     expect(child.fingerprints.l1).toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
     expect(child.text).not.toContain(NEVA_AGENT_PERSONA);
-    expect(child.text).toContain('You are a headless Tenon Subagent Run');
-    expect(child.text).toContain('concurrent Runs share files, processes, ports, credentials');
+    expect(child.text).toContain('You are a headless Tenon Subagent Thread');
+    expect(child.text).toContain('concurrent Threads share files, processes, ports, credentials');
     expect(child.text).toContain('Execute the assigned implementation and verify it.');
   });
 });
@@ -675,6 +675,7 @@ function turn(index: number, items: readonly ThreadItem[], completed: boolean): 
       modelProvider: 'openai',
       model: model.id,
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
     },
     startedAt: 1_720_000_100_000 + index,

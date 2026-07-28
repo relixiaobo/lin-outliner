@@ -2256,6 +2256,49 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('serves immutable Turn diagnostics and keeps fork copies independent of the source Thread', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Inspect the exact provider request' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const payload = turnDiagnosticsPayload();
+    const ref = await fixture.executor.contexts[0]!.persistTurnDiagnostics(payload);
+    const result = completedExecutionResult();
+    fixture.executor.finish(0, {
+      ...result,
+      execution: { ...result.execution!, diagnosticsRef: ref },
+    });
+    await fixture.service.waitForIdle(source.id);
+
+    await expect(fixture.service.readTurnDetails({
+      threadId: source.id,
+      turnId: accepted.turn.id,
+    })).resolves.toMatchObject({ diagnostics: { ref, payload } });
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const copiedTurn = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
+    await fixture.service.deleteThread(source.id);
+    await expect(fixture.service.readTurnDetails({
+      threadId: fork.id,
+      turnId: copiedTurn.id,
+    })).resolves.toMatchObject({ diagnostics: { ref, payload } });
+
+    await fixture.service.rollbackThread({ threadId: fork.id, numTurns: 1 });
+    expect(await fixture.stores.payloads.readTurnDiagnostics(fork.id, ref)).toBeNull();
+    await fixture.service.close();
+  });
+
   test('rewrites context cursors and owns every inherited context dependency after source deletion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
@@ -4852,6 +4895,7 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
       modelProvider: 'openai',
       model: 'test-model',
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: {
         input: tokens,
         output: 0,
@@ -4862,6 +4906,44 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
       },
     },
   };
+}
+
+function turnDiagnosticsPayload() {
+  return {
+    schemaVersion: 1,
+    contextEpochId: 'initial',
+    cacheAffinity: 'a'.repeat(64),
+    configuration: {
+      profileName: 'default',
+      developerInstructions: [],
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    },
+    stablePrompt: null,
+    toolSchemas: [],
+    runtime: {
+      provider: 'openai',
+      model: 'test-model',
+      api: 'openai-responses',
+      endpoint: 'https://api.openai.com/v1',
+      transport: 'auto',
+      contextWindow: 128_000,
+      maxOutputTokens: 8_192,
+      thinkingLevel: 'medium',
+      timeoutMs: null,
+      maxRetries: null,
+      maxRetryDelayMs: 60_000,
+      cacheRetention: 'short',
+      toolExecution: 'parallel',
+      steeringMode: 'all',
+    },
+    messages: [],
+    providerCalls: [],
+  } as const;
 }
 
 function projectionModel() {

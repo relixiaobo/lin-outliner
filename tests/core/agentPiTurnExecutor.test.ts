@@ -5,6 +5,7 @@ import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type { AgentCoreNotification } from '../../src/core/agent/protocol';
+import type { TurnDiagnosticsPayload } from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
@@ -493,6 +494,10 @@ describe('PiTurnExecutor event normalization', () => {
         modelProvider: 'openai',
         model: 'test-model',
         reasoningEffort: 'medium',
+        diagnosticsRef: expect.objectContaining({
+          mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+          schemaVersion: 1,
+        }),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
       },
     });
@@ -1110,6 +1115,15 @@ describe('PiTurnExecutor event normalization', () => {
           steer: () => undefined,
           prompt: async (message) => {
             receivedPrompt = message as UserMessage;
+            options.onPayload?.({
+              model: 'test-model',
+              input: [message],
+              response_format: { type: 'json_object' },
+            }, testModel);
+            await options.onResponse?.({
+              status: 200,
+              headers: { 'request-id': 'memory-request-1', 'set-cookie': 'private-cookie' },
+            }, testModel);
           },
         };
       },
@@ -1120,6 +1134,22 @@ describe('PiTurnExecutor event normalization', () => {
     expect(initialState?.systemPrompt).toBe('Return exact Memory JSON.');
     expect(initialState?.tools).toEqual([]);
     expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '{"task":"extract"}' }]);
+    expect(fixture.diagnosticsPayloads).toHaveLength(1);
+    expect(fixture.diagnosticsPayloads[0]).toMatchObject({
+      stablePrompt: null,
+      providerCalls: [{
+        index: 0,
+          requestParameters: {
+            model: 'test-model',
+            input: { omitted: true, source: 'messageWindow', field: 'input' },
+            response_format: { type: 'json_object' },
+          },
+          transportResponse: {
+            httpStatus: 200,
+            requestId: 'memory-request-1',
+          },
+        }],
+    });
   });
 
   test('reconstructs canonical tool calls, results, and reasoning for later Turns', async () => {
@@ -1556,6 +1586,7 @@ function createContext(): {
   context: TurnExecutionContext;
   recorder: ItemRecorder;
   notifications: AgentCoreNotification[];
+  diagnosticsPayloads: TurnDiagnosticsPayload[];
 } {
   const threadId = uuidV7(1_720_000_000_000);
   const turnId = uuidV7(1_720_000_000_100);
@@ -1601,6 +1632,7 @@ function createContext(): {
       modelProvider: 'openai',
       model: 'test-model',
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
     },
     startedAt: 1_720_000_000_100,
@@ -1610,6 +1642,7 @@ function createContext(): {
   const notifications: AgentCoreNotification[] = [];
   const contextPayloads = new Map<string, import('../../src/core/agent/protocol').ThreadContextPayload>();
   const outputPayloads = new Map<string, string>();
+  const diagnosticsPayloads: TurnDiagnosticsPayload[] = [];
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
@@ -1667,13 +1700,23 @@ function createContext(): {
         outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
       }) as import('../../src/core/agent/protocol').ContextEvidenceThreadItem;
     },
+    persistTurnDiagnostics: async (payload) => {
+      const serialized = JSON.stringify(payload);
+      diagnosticsPayloads.push(payload);
+      return {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1,
+      };
+    },
     persistSkillCatalog: async () => null,
     compactContext: async () => null,
     onProviderRetry: () => undefined,
     onSteer: () => undefined,
   };
   context.readContext = async (ref) => contextPayloads.get(ref.id) ?? null;
-  return { context, recorder, notifications };
+  return { context, recorder, notifications, diagnosticsPayloads };
 }
 
 function fixtureResources() {

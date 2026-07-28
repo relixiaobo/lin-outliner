@@ -533,6 +533,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         modelProvider: string;
         model: string;
         reasoningEffort: string;
+        diagnosticsRef: null;
         usage: {
           input: number;
           output: number;
@@ -1757,6 +1758,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               modelProvider: 'openai',
               model: 'openai/gpt-5.4',
               reasoningEffort: 'medium',
+              diagnosticsRef: null,
               usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: null },
             },
             startedAt: timestamp,
@@ -1937,6 +1939,129 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const turns = mockTurns.get(String(input.threadId)) ?? [];
           const data = input.sortDirection === 'desc' ? [...turns].reverse() : turns;
           return clone({ data, nextCursor: null, backwardsCursor: null }) as T;
+        }
+        if (method === 'thread/turn/details/read') {
+          const thread = threadById(String(input.threadId));
+          const turn = (mockTurns.get(thread.id) ?? []).find((candidate) => candidate.id === input.turnId);
+          if (!turn) throw new Error(`Turn not found: ${String(input.turnId)}`);
+          const userItem = turn.items.find((item) => item.type === 'userMessage');
+          if (!userItem) return clone({ thread, turn, diagnostics: null }) as T;
+          const messageId = 'e'.repeat(64);
+          const diagnostics = {
+            schemaVersion: 1,
+            contextEpochId: 'initial',
+            cacheAffinity: 'a'.repeat(64),
+            configuration: {
+              profileName: 'default',
+              developerInstructions: [],
+              model: turn.execution.model,
+              reasoningEffort: turn.execution.reasoningEffort,
+              tools: ['node_read'],
+              skills: [],
+              plugins: [],
+              mcpServers: [],
+            },
+            stablePrompt: {
+              blocks: [{
+                id: 'framework-firmware',
+                layer: 'L0',
+                text: 'Canonical mock system prompt.',
+                fingerprint: '1'.repeat(64),
+              }],
+              fingerprints: {
+                l0: '1'.repeat(64),
+                l1: '2'.repeat(64),
+                l2: '3'.repeat(64),
+                complete: '4'.repeat(64),
+              },
+            },
+            toolSchemas: [{
+              name: 'node_read',
+              description: 'Read a Node',
+              parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+            }],
+            runtime: {
+              provider: turn.execution.modelProvider,
+              model: turn.execution.model,
+              api: 'openai-responses',
+              endpoint: 'https://api.openai.com/v1',
+              transport: 'auto',
+              contextWindow: 128_000,
+              maxOutputTokens: 8_192,
+              thinkingLevel: turn.execution.reasoningEffort,
+              timeoutMs: 30_000,
+              maxRetries: 2,
+              maxRetryDelayMs: 60_000,
+              cacheRetention: 'short',
+              toolExecution: 'parallel',
+              steeringMode: 'all',
+            },
+            messages: [{
+              id: messageId,
+              estimatedTokens: Math.max(1, Math.ceil(JSON.stringify(userItem).length / 4)),
+              value: { role: 'user', content: userItem.content, timestamp: userItem.acceptedAt },
+            }],
+            providerCalls: [{
+              index: 0,
+              requestedAt: turn.startedAt,
+              messageIds: [messageId],
+              protectedFromMessageIndex: 0,
+              estimatedInputTokens: turn.execution.usage.input,
+              inputTokenLimit: 100_000,
+              reservedOutputTokens: 8_192,
+              commonPrefixMessageCount: 0,
+              requestParameters: {
+                model: turn.execution.model,
+                input: { omitted: true, source: 'messageWindow', field: 'input' },
+              },
+              requestFingerprint: '5'.repeat(64),
+              cacheBreakpoints: [],
+              transportResponse: {
+                headersReceivedAt: turn.startedAt,
+                httpStatus: 200,
+                requestId: 'mock-request-1',
+              },
+              response: {
+                receivedAt: turn.completedAt ?? turn.startedAt,
+                stopReason: 'stop',
+                errorMessage: null,
+                usage: {
+                  input: turn.execution.usage.input,
+                  output: turn.execution.usage.output,
+                  cacheRead: turn.execution.usage.cacheRead,
+                  cacheWrite: turn.execution.usage.cacheWrite,
+                  cacheWrite1h: null,
+                  reasoning: null,
+                  totalTokens: turn.execution.usage.totalTokens,
+                  cost: turn.execution.usage.cost
+                    ? {
+                        input: turn.execution.usage.cost.input,
+                        output: turn.execution.usage.cost.output,
+                        cacheRead: turn.execution.usage.cost.cacheRead,
+                        cacheWrite: turn.execution.usage.cost.cacheWrite,
+                        total: turn.execution.usage.cost.total,
+                      }
+                    : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                value: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'Mock response' }],
+                  stopReason: 'stop',
+                },
+              },
+            }],
+          };
+          const ref = {
+            id: 'd'.repeat(64),
+            mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+            byteLength: JSON.stringify(diagnostics).length,
+            schemaVersion: 1,
+          };
+          return clone({
+            thread,
+            turn: { ...turn, execution: { ...turn.execution, diagnosticsRef: ref } },
+            diagnostics: { ref, payload: diagnostics },
+          }) as T;
         }
         if (method === 'thread/items/list') {
           const turns = mockTurns.get(String(input.threadId)) ?? [];

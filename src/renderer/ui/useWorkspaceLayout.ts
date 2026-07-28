@@ -8,7 +8,7 @@ import type {
   FilePreviewPresentation,
   OutlinerPanelView,
   PanelView,
-  ThreadRunDetailsPanelView,
+  ThreadTurnDetailsPanelView,
   WorkspaceContentPanelState,
   WorkspaceLayout,
   WorkspacePanelState,
@@ -77,8 +77,8 @@ function filePreviewView(
   }, scrollTop);
 }
 
-function threadRunDetailsView(threadId: string, turnId: string): ThreadRunDetailsPanelView {
-  return { kind: 'thread-run-details', threadId, turnId };
+function threadTurnDetailsView(threadId: string, turnId: string): ThreadTurnDetailsPanelView {
+  return { kind: 'thread-turn-details', threadId, turnId };
 }
 
 function isWorkspacePanel(
@@ -104,7 +104,7 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 
 function panelViewKey(view: PanelView): string {
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
-  if (view.kind === 'thread-run-details') return `thread-run-details:${view.threadId}:${view.turnId}`;
+  if (view.kind === 'thread-turn-details') return `thread-turn-details:${view.threadId}:${view.turnId}`;
   if (view.nodeId) return `file-preview-node:${view.nodeId}:${view.presentation ?? 'node'}`;
   return `file-preview:${previewTargetKey(view.target)}:${view.presentation ?? 'default'}`;
 }
@@ -165,10 +165,10 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
     return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop, presentation) : null;
   }
-  if (value.kind === 'thread-run-details') {
+  if (value.kind === 'thread-turn-details') {
     return typeof value.threadId === 'string' && value.threadId.length > 0
       && typeof value.turnId === 'string' && value.turnId.length > 0
-      ? threadRunDetailsView(value.threadId, value.turnId)
+      ? threadTurnDetailsView(value.threadId, value.turnId)
       : null;
   }
   return null;
@@ -570,15 +570,15 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openThreadRunDetailsPanel = useCallback((threadId: string, turnId: string) => {
+  const openThreadTurnDetailsPanel = useCallback((threadId: string, turnId: string) => {
     const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
     if (!targetPanel) return;
-    const nextView = threadRunDetailsView(threadId, turnId);
+    const nextView = threadTurnDetailsView(threadId, turnId);
     setActivePanelId(targetPanel.id);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== targetPanel.id) return panel;
       if (samePanelView(panel.view, nextView)) return panel;
-      if (panel.view.kind === 'thread-run-details') {
+      if (panel.view.kind === 'thread-turn-details') {
         return { ...panel, view: nextView };
       }
       return navigateWorkspacePanel(panel, nextView);
@@ -640,7 +640,7 @@ export function useWorkspaceLayout({
     const nextScrollTop = normalizeScrollTop(scrollTop);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
-      if (panel.view.kind === 'thread-run-details') return panel;
+      if (panel.view.kind === 'thread-turn-details') return panel;
       if (panel.view.scrollTop === nextScrollTop) return panel;
       return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
     }));
@@ -662,7 +662,7 @@ export function useWorkspaceLayout({
     navigateRoot,
     openPanel,
     openPreview,
-    openThreadRunDetailsPanel,
+    openThreadTurnDetailsPanel,
     panels,
     repairMissingOutlinerRoots,
     resizePanelPair,

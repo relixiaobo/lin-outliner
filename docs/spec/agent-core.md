@@ -298,7 +298,10 @@ Turn/Item identities. Every context payload and every dependency listed by the o
 Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
 publication; failure deletes the staged fork. The copied Thread therefore remains
 readable after its source is deleted. Content-addressed resource references do not
-contain a Thread path and remain unchanged in the copied Items and payloads.
+contain a Thread path and remain unchanged in the copied Items and payloads. Every
+terminal Turn's diagnostics payload is copied under the fork's ownership with the same
+content-addressed reference before publication, so Turn Details also remains readable
+after source deletion.
 
 ## Persistence
 
@@ -316,6 +319,8 @@ agent/
       <content-hash>.<ext>
       context/
         <content-hash>.json
+      turn-diagnostics/
+        <content-hash>.json
       resources/
         <content-hash>/
           <safe-display-name>
@@ -324,9 +329,10 @@ agent/
 `state.sqlite` is the Thread catalog and configuration snapshot.
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
 owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
-the history source of truth. Complete textual tool outputs, managed attachment
-inputs, managed tool images, and semantic context payloads live in the Thread-owned
-payload directory; canonical Items retain typed content-addressed references.
+the history source of truth. Complete textual tool outputs, managed attachment inputs,
+managed tool images, semantic context payloads, and immutable Turn diagnostics live in
+the Thread-owned payload directory; canonical Items and terminal Turn execution retain
+typed content-addressed references.
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
@@ -353,11 +359,11 @@ collection uses the physical key (content hash plus safe filename), independentl
 of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which
 follow the same Thread deletion lifecycle and are removed when the service
-closes. Startup and rollback remove stale staging data plus managed resources,
-context payloads, and complete text outputs absent from reconciled canonical
-history. Forks copy only payloads referenced by inherited
-Items into their own directory with a distinct inode, so provenance remains
-shared while mutation and deletion remain Thread-local.
+closes. Startup and rollback remove stale staging data plus managed resources, context
+payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
+history. Forks copy only payloads referenced by inherited Items and Turn execution into
+their own directory with a distinct inode, so provenance remains shared while mutation
+and deletion remain Thread-local.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.
@@ -375,7 +381,8 @@ The renderer uses one request channel and one notification channel. Methods are
 grouped by the concept they own:
 
 - `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
-  Turn/Item reads, exact full-output reads, and exact context-evidence reads
+  Turn/Item reads, exact full-output and context-evidence reads, and authoritative
+  Turn Details reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -389,6 +396,13 @@ shape.
 tuple and only returns the primary payload of that `contextEvidence` Item. A digest
 alone cannot probe another Item or Thread, and nested dependencies are not exposed by
 this audit method.
+
+`thread/turn/details/read` resolves one reachable full Turn and its Thread-owned
+diagnostics reference. A Turn without a reference returns `diagnostics: null`; a Turn
+with a reference must return the exact matching payload or fail. Missing bytes,
+digest/length corruption, a mismatched reference, unknown diagnostics fields, and an
+invalid payload version fail closed. Renderer code cannot read diagnostics by digest
+alone.
 
 Recorded lifecycle notifications are the only notifications accepted by
 rollout and history projection stores. `thread/name/updated`, provider-retry
@@ -426,12 +440,15 @@ host-only root-Thread and idle-Turn admission, then records ordinary canonical
 Turns with immutable feature provenance. Schedule definitions and claims never
 enter Core stores. See [`agent-automations.md`](agent-automations.md).
 
-## Renderer Diagnostics
+## Renderer Detail Surfaces
 
-The Thread Details dialog is the canonical diagnostic surface. It renders the
-same Thread, Turn, and Item DTOs used by the transcript and shows their canonical
-IDs, status, source, parent/fork lineage, Item types, and Turn status. It does not
-create a debug projection, execution ledger, or alternative view model.
+Thread Details describes the durable Thread container and its Thread-level controls.
+Turn Details is the complete diagnostic surface for one canonical Turn. It receives one
+main-owned snapshot containing the same Thread, full Turn, Items, and immutable
+provider-boundary diagnostics used by execution. It does not recreate the retired
+conversation/run/round debug projection, derive history from renderer pagination, or
+introduce an alternative execution ledger. The exact page contract lives in
+[`agent-thread-rendering.md`](agent-thread-rendering.md).
 
 ## Trusted Document Transactions
 

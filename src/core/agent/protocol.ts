@@ -146,6 +146,133 @@ export interface TurnExecutionDetails {
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort;
   readonly usage: TurnTokenUsage;
+  readonly diagnosticsRef: TurnDiagnosticsPayloadReference | null;
+}
+
+export interface TurnDiagnosticsPayloadReference {
+  /** Content-addressed lowercase SHA-256 digest. */
+  readonly id: string;
+  readonly mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json';
+  readonly byteLength: number;
+  readonly schemaVersion: 1;
+}
+
+export interface TurnDiagnosticsStablePromptBlock {
+  readonly id: string;
+  readonly layer: 'L0' | 'L1' | 'L2';
+  readonly text: string;
+  readonly fingerprint: string;
+}
+
+export interface TurnDiagnosticsStablePrompt {
+  readonly blocks: readonly TurnDiagnosticsStablePromptBlock[];
+  readonly fingerprints: {
+    readonly l0: string;
+    readonly l1: string;
+    readonly l2: string;
+    readonly complete: string;
+  };
+}
+
+export interface TurnDiagnosticsConfiguration {
+  readonly profileName: string | null;
+  readonly developerInstructions: readonly string[];
+  readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly tools: readonly string[];
+  readonly skills: readonly string[];
+  readonly plugins: readonly string[];
+  readonly mcpServers: readonly string[];
+}
+
+export interface TurnDiagnosticsToolSchema {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: JsonValue;
+}
+
+export interface TurnDiagnosticsRuntime {
+  readonly provider: string;
+  readonly model: string;
+  readonly api: string;
+  readonly endpoint: string;
+  readonly transport: 'sse' | 'websocket' | 'websocket-cached' | 'auto';
+  readonly contextWindow: number;
+  readonly maxOutputTokens: number;
+  readonly thinkingLevel: string;
+  readonly timeoutMs: number | null;
+  readonly maxRetries: number | null;
+  readonly maxRetryDelayMs: number | null;
+  readonly cacheRetention: 'none' | 'short' | 'long';
+  readonly toolExecution: 'parallel';
+  readonly steeringMode: 'all';
+}
+
+export interface TurnDiagnosticsMessage {
+  readonly id: string;
+  readonly estimatedTokens: number;
+  readonly value: JsonValue;
+}
+
+export interface TurnDiagnosticsProviderUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cacheWrite1h: number | null;
+  readonly reasoning: number | null;
+  readonly totalTokens: number;
+  readonly cost: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly total: number;
+  };
+}
+
+export interface TurnDiagnosticsProviderResponse {
+  readonly receivedAt: number;
+  readonly stopReason: 'stop' | 'length' | 'toolUse' | 'error' | 'aborted';
+  readonly errorMessage: string | null;
+  readonly usage: TurnDiagnosticsProviderUsage;
+  readonly value: JsonValue;
+}
+
+export interface TurnDiagnosticsTransportResponse {
+  readonly headersReceivedAt: number;
+  readonly httpStatus: number;
+  readonly requestId: string | null;
+}
+
+export interface TurnDiagnosticsProviderCall {
+  readonly index: number;
+  readonly requestedAt: number;
+  readonly messageIds: readonly string[];
+  readonly protectedFromMessageIndex: number;
+  readonly estimatedInputTokens: number;
+  readonly inputTokenLimit: number;
+  readonly reservedOutputTokens: number;
+  readonly commonPrefixMessageCount: number;
+  /** Provider payload with its repeated message window replaced by a verifiable marker. */
+  readonly requestParameters: JsonValue;
+  readonly requestFingerprint: string;
+  readonly cacheBreakpoints: readonly string[];
+  readonly transportResponse: TurnDiagnosticsTransportResponse | null;
+  readonly response: TurnDiagnosticsProviderResponse | null;
+}
+
+/** Immutable provider-boundary facts for one canonical Turn. */
+export interface TurnDiagnosticsPayload {
+  readonly schemaVersion: 1;
+  readonly contextEpochId: string;
+  readonly cacheAffinity: string;
+  readonly configuration: TurnDiagnosticsConfiguration;
+  readonly stablePrompt: TurnDiagnosticsStablePrompt | null;
+  readonly toolSchemas: readonly TurnDiagnosticsToolSchema[];
+  readonly runtime: TurnDiagnosticsRuntime;
+  readonly messages: readonly TurnDiagnosticsMessage[];
+  readonly providerCalls: readonly TurnDiagnosticsProviderCall[];
 }
 
 export type TurnPlanStepStatus = 'pending' | 'in_progress' | 'completed';
@@ -263,6 +390,7 @@ export interface ThreadItemOutputReference {
 }
 
 export const MAX_THREAD_CONTEXT_PAYLOAD_BYTES = 16 * 1024 * 1024;
+export const MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 export interface ThreadContextPayloadReference {
   /** Content-addressed lowercase SHA-256 digest. */
@@ -918,6 +1046,20 @@ export interface ThreadContextReadResponse {
   } | null;
 }
 
+export interface ThreadTurnDetailsReadRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+}
+
+export interface ThreadTurnDetailsReadResponse {
+  readonly thread: Thread;
+  readonly turn: Turn;
+  readonly diagnostics: {
+    readonly ref: TurnDiagnosticsPayloadReference;
+    readonly payload: TurnDiagnosticsPayload;
+  } | null;
+}
+
 export interface ProviderRetryStatus {
   readonly kind: 'request' | 'stream';
   readonly attempt: number;
@@ -1040,6 +1182,7 @@ export const AGENT_CORE_METHODS = [
   'thread/items/list',
   'thread/item/output/read',
   'thread/context/read',
+  'thread/turn/details/read',
   'turn/start',
   'turn/steer',
   'turn/interrupt',
@@ -1068,6 +1211,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/items/list': ThreadItemsListRequest;
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
   readonly 'thread/context/read': ThreadContextReadRequest;
+  readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
@@ -1094,6 +1238,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/items/list': ThreadItemsListResponse;
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
   readonly 'thread/context/read': ThreadContextReadResponse;
+  readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;

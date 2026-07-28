@@ -82,6 +82,7 @@ function turn(seed: string, items: readonly ThreadItem[]): Turn {
       modelProvider: 'openai',
       model: model.id,
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
     },
     startedAt: seed.length,
