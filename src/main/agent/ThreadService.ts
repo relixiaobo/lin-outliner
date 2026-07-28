@@ -2655,6 +2655,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
           summary,
         ),
         persistTurnDiagnostics: (payload) => this.payloads.writeTurnDiagnostics(active.threadId, payload),
+        onTurnDiagnosticsError: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[agent] Turn diagnostics persistence failed: ${message}`);
+        },
         persistSkillCatalog: (snapshot) => this.threadMutex.run(active.threadId, async () => {
           const catalog = await planSkillCatalogEvidence({
             turns: this.allTurns(active.threadId),

@@ -90,6 +90,7 @@ function capabilityBlocks(
         '# Filesystem access',
         '- This Turn has Full Access through its available tools. Native OS authorization and service login still apply; tool failures are authoritative.',
         '- Put user-facing deliverables under the Thread working directory and reference them as [[file:Display name^/absolute/path]] so the renderer can expose them safely.',
+        '- Input file markers use percent-encoded paths. Percent-decode the path before passing it to file_read or file_glob.',
         '- Use file_read for files and file_glob for directories. Do not rely on names or metadata as if they were file contents.',
       ].join('\n'),
     });

@@ -128,12 +128,13 @@ describe('context compaction reducer', () => {
       roleCatalogHash: null,
       announcedRoles: [],
       userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
       activeObservations: [],
     });
     const summaryRef = store.put({
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'fallback',
+      source: 'deterministic',
       text: 'Earlier context.',
     });
     const preservedTurnId = uuidV7(1_720_000_001_100);
@@ -164,7 +165,37 @@ describe('context compaction reducer', () => {
     }]);
   });
 
-  test('checkpoints inherited catalogs, view, Skills, and observations across repeated compaction', async () => {
+  test('bounds deterministic summaries by retaining the newest complete Turn suffix', async () => {
+    const store = createPayloadStore();
+    const turns = Array.from({ length: 30 }, (_, index) => turn(index, [
+      userMessage(`MESSAGE-${String(index).padStart(2, '0')}:${'x'.repeat(2_000)}`, `message-${index}`),
+    ]));
+
+    const plan = await planContextCompaction({ turns, readContext: store.read });
+
+    expect(plan?.summary.text.length).toBeLessThanOrEqual(24_000);
+    expect(plan?.summary.text).toContain('[Earlier Turns omitted at the deterministic summary limit.]');
+    expect(plan?.summary.text).not.toContain('MESSAGE-00');
+    expect(plan?.summary.text).not.toContain('MESSAGE-15');
+    expect(plan?.summary.text).toContain('MESSAGE-29');
+  });
+
+  test('marks an oversized newest Turn while retaining both ends of its content', async () => {
+    const store = createPayloadStore();
+    const oversized = `LATEST-START:${'x'.repeat(30_000)}:LATEST-END`;
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [userMessage(oversized, 'oversized-message')])],
+      readContext: store.read,
+    });
+
+    expect(plan?.summary.text.length).toBe(24_000);
+    expect(plan?.summary.text).toContain('LATEST-START');
+    expect(plan?.summary.text).toContain('[Turn content truncated at the deterministic summary limit.]');
+    expect(plan?.summary.text).toContain('LATEST-END');
+  });
+
+  test('checkpoints inherited catalogs, view, Thread state, Skills, and observations across repeated compaction', async () => {
     const store = createPayloadStore();
     const skillCatalog = {
       schemaVersion: 1 as const,
@@ -212,6 +243,24 @@ describe('context compaction reducer', () => {
       panels: [],
       truncated: false,
     };
+    const additionalContext = {
+      schemaVersion: 1 as const,
+      kind: 'additionalContext' as const,
+      turnEntries: [{
+        key: 'request-event',
+        source: 'main',
+        authority: 'application' as const,
+        purpose: 'instruction' as const,
+        text: 'This event must not be replayed by compaction.',
+      }],
+      threadState: [{
+        key: 'memory:policy',
+        source: 'extension:memory',
+        authority: 'application' as const,
+        purpose: 'instruction' as const,
+        text: 'Inherited Thread policy.',
+      }],
+    };
     const observed = observation(
       store,
       'inherited-file-read',
@@ -224,6 +273,7 @@ describe('context compaction reducer', () => {
       contextEvidence(store, activeSkill, 'inherited-active-skill'),
       contextEvidence(store, roleCatalog, 'inherited-role-catalog'),
       contextEvidence(store, userView, 'inherited-user-view'),
+      contextEvidence(store, additionalContext, 'inherited-additional-context'),
       ...observed.items,
     ]);
     const inherited = inheritedEvidence(store, [nestedTurn], 'inherited-context');
@@ -238,6 +288,7 @@ describe('context compaction reducer', () => {
       skillCatalogHash: skillCatalog.catalogHash,
       roleCatalogHash: roleCatalog.catalogHash,
       userViewBaselineRef: contextEvidenceRef(nestedTurn, 'userView'),
+      additionalContextBaselineRef: contextEvidenceRef(nestedTurn, 'additionalContext'),
       activeSkills: [{
         name: 'alpha',
         contentHash: activeSkill.contentHash,
@@ -290,13 +341,15 @@ describe('context compaction reducer', () => {
     expect(secondPlan?.restoredState.activeObservations).toEqual(firstPlan.restoredState.activeObservations);
     expect(secondPlan?.restoredState.activeSkills).toEqual(firstPlan.restoredState.activeSkills);
     expect(secondPlan?.restoredState.userViewBaselineRef).toEqual(firstPlan.restoredState.userViewBaselineRef);
+    expect(secondPlan?.restoredState.additionalContextBaselineRef)
+      .toEqual(firstPlan.restoredState.additionalContextBaselineRef);
   });
 });
 
 function contextEvidence(
   store: ReturnType<typeof createPayloadStore>,
   payload: Extract<ThreadContextPayload, {
-    kind: 'skillCatalog' | 'skillInvocation' | 'roleCatalog' | 'userView';
+    kind: 'skillCatalog' | 'skillInvocation' | 'roleCatalog' | 'userView' | 'additionalContext';
   }>,
   id: string,
 ): ContextEvidenceThreadItem {

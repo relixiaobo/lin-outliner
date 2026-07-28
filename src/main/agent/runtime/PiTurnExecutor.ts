@@ -30,7 +30,10 @@ import type {
 } from '../../../core/agent/protocol';
 import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
 import { decodeThreadContextPayload } from '../../../core/agent/codec';
-import { CanonicalContextProjector } from '../context/ContextProjector';
+import {
+  CanonicalContextProjector,
+  type CanonicalContextProjection,
+} from '../context/ContextProjector';
 import {
   ContextCapacityError,
   ContextCompactionRequiredError,
@@ -186,6 +189,12 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         diagnostics.prepareProviderPlan({
           protectedFromMessageIndex: priorMessages.length,
           budget,
+          messagePartProvenance: messages.map((message) => (
+            'content' in message
+              ? (typeof message.content === 'string' ? [message.content] : message.content)
+                .map(() => ({ source: 'unknown' as const }))
+              : []
+          )),
         });
       }
       const transformContext = internalMemory
@@ -321,6 +330,7 @@ async function projectCanonicalProviderContext(
   preparedInitialPrompt: UserMessage,
   onPrepared?: (input: {
     readonly messages: readonly Message[];
+    readonly messagePartProvenance: CanonicalContextProjection['messagePartProvenance'];
     readonly protectedFromMessageIndex: number;
     readonly budget: ReturnType<typeof planContextBudget>;
   }) => void,
@@ -366,11 +376,16 @@ async function projectCanonicalProviderContext(
       messages: projection.messages,
       protectedFromMessageIndex: projection.protectedFromMessageIndex,
     });
-    return { budget, protectedFromMessageIndex: projection.protectedFromMessageIndex };
+    return {
+      budget,
+      messagePartProvenance: projection.messagePartProvenance,
+      protectedFromMessageIndex: projection.protectedFromMessageIndex,
+    };
   };
   const preparedMessages = (prepared: Awaited<ReturnType<typeof plan>>) => {
     onPrepared?.({
       messages: prepared.budget.messages,
+      messagePartProvenance: prepared.messagePartProvenance,
       protectedFromMessageIndex: prepared.protectedFromMessageIndex,
       budget: prepared.budget,
     });
@@ -928,7 +943,12 @@ async function executionDetails(
   usage: TurnExecutionDetails['usage'],
   diagnostics: TurnDiagnosticsCollector,
 ): Promise<TurnExecutionDetails> {
-  const diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
+  let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
+  try {
+    diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
+  } catch (error) {
+    context.onTurnDiagnosticsError(error);
+  }
   return {
     modelProvider: context.thread.modelProvider,
     model: runtime.model.id,

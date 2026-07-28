@@ -56,6 +56,7 @@ describe('Role context reducer', () => {
       roleCatalogHash: baseline.catalogHash,
       announcedRoles: [{ name: 'default', identity: 'built-in:default', contentHash: 'a1' }],
       userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
       activeObservations: [],
     };
     const compactedTurnId = turnId();
@@ -170,7 +171,7 @@ function contextStore() {
       coveredThroughItemId = coveredFromItemId,
     ): ContextCompactionThreadItem {
       const restoredStateRef = put(payload);
-      const summaryRef = put({ schemaVersion: 1, kind: 'compactionSummary', source: 'fallback', text: 'Summary' });
+      const summaryRef = put({ schemaVersion: 1, kind: 'compactionSummary', source: 'deterministic', text: 'Summary' });
       return {
         ...itemBase(`compaction-${++index}`),
         type: 'contextCompaction',

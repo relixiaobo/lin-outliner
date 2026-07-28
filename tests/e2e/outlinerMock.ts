@@ -2038,6 +2038,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 systemPromptFragmentId: instructionFragmentId,
                 toolNames: ['node_read'],
                 messageIds: [messageId],
+                messagePartProvenance: [providerMessage.content.map((_part, index) => (
+                  index === providerMessage.content.length - 1
+                    ? { source: 'contextEvidence' as const, kind: 'turnEnvironment' as const }
+                    : { source: 'userInput' as const }
+                ))],
               },
               protectedFromMessageIndex: 0,
               estimatedInputTokens: turn.execution.usage.input,

@@ -19,7 +19,10 @@ import { toolItemVisibleOutputText, type HistoryToolItem } from './ContextProjec
 import { readInheritedContextPayload } from './InheritedContext';
 import { assertContextPayloadDependencies } from './contextDependencies';
 
-const MAX_FALLBACK_SUMMARY_CHARS = 24_000;
+const MAX_DETERMINISTIC_SUMMARY_CHARS = 24_000;
+const DETERMINISTIC_SUMMARY_PREAMBLE = 'This is a deterministic lossy summary of earlier canonical context.';
+const DETERMINISTIC_SUMMARY_TRUNCATION = '[Earlier Turns omitted at the deterministic summary limit.]';
+const DETERMINISTIC_ENTRY_TRUNCATION = '\n[Turn content truncated at the deterministic summary limit.]\n';
 
 export interface ContextCompactionPlan {
   readonly coveredFrom: ContextCursor;
@@ -61,6 +64,7 @@ export async function planContextCompaction(input: {
   const contextRefs = uniqueContextRefs([
     ...restoredState.activeSkills.map((entry) => entry.payloadRef),
     ...(restoredState.userViewBaselineRef ? [restoredState.userViewBaselineRef] : []),
+    ...(restoredState.additionalContextBaselineRef ? [restoredState.additionalContextBaselineRef] : []),
     ...restoredState.activeObservations.map((entry) => entry.projectionRef),
   ]);
   const outputRefs = uniqueOutputRefs(restoredState.activeObservations.map((entry) => entry.outputRef));
@@ -71,8 +75,8 @@ export async function planContextCompaction(input: {
     summary: {
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'fallback',
-      text: await fallbackSummary(rebuildLocatedTurns(summarized), input.readContext),
+      source: 'deterministic',
+      text: await deterministicSummary(rebuildLocatedTurns(summarized), input.readContext),
     },
     restoredState,
     contextRefs,
@@ -115,6 +119,7 @@ async function buildCompactionRestoredState(
   const roleState = await reduceRoleContext(turns, readContext);
   const selected = selectEffectiveContext(turns).turns;
   const userViewBaselineRef = await latestUserViewBaselineRef(selected, readContext);
+  const additionalContextBaselineRef = await latestAdditionalContextBaselineRef(selected, readContext);
   const activeSkills = [...skillState.activeInvocations.values()]
     .map((skill) => {
       const payloadRef = invocationRefs.get(skill.name);
@@ -140,6 +145,7 @@ async function buildCompactionRestoredState(
       .map(catalogCheckpoint)
       .sort((left, right) => compareStableText(left.name, right.name)),
     userViewBaselineRef,
+    additionalContextBaselineRef,
     activeObservations: await reduceActiveObservations(turns, readContext),
   };
 }
@@ -291,6 +297,41 @@ async function latestUserViewBaselineRef(
   return baseline;
 }
 
+async function latestAdditionalContextBaselineRef(
+  turns: readonly Turn[],
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<ThreadContextPayloadReference | null> {
+  let baseline: ThreadContextPayloadReference | null = null;
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type === 'contextReset') {
+        baseline = null;
+        continue;
+      }
+      if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
+        const inherited = await readInheritedContextPayload(item, readContext);
+        baseline = await latestAdditionalContextBaselineRef(
+          selectEffectiveContext(inherited.turns).turns,
+          readContext,
+        );
+        continue;
+      }
+      if (item.type === 'contextEvidence' && item.kind === 'additionalContext') {
+        const payload = await readContext(item.payloadRef);
+        if (!payload || payload.kind !== 'additionalContext') {
+          throw new Error(`Additional-context payload is unavailable: ${item.payloadRef.id}`);
+        }
+        if (payload.threadState !== null) baseline = item.payloadRef;
+        continue;
+      }
+      if (item.type === 'contextCompaction') {
+        baseline = (await readRestoredState(item, readContext)).additionalContextBaselineRef;
+      }
+    }
+  }
+  return baseline;
+}
+
 async function readRestoredState(
   item: Extract<ThreadItem, { readonly type: 'contextCompaction' }>,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
@@ -383,23 +424,48 @@ function observationInvalidation(item: ThreadItem): ObservationInvalidation {
   return noObservationInvalidation();
 }
 
-async function fallbackSummary(
+async function deterministicSummary(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
 ): Promise<string> {
-  const lines: string[] = ['This is a lossy fallback summary of earlier canonical context.'];
+  const turnSummaries: string[] = [];
   for (const turn of turns) {
+    const lines: string[] = [];
     for (const item of turn.items) {
       const line = await summaryLine(item, readContext);
       if (!line) continue;
       lines.push(line);
-      if (lines.join('\n').length >= MAX_FALLBACK_SUMMARY_CHARS) {
-        lines.push('[Summary truncated at the deterministic fallback limit.]');
-        return lines.join('\n').slice(0, MAX_FALLBACK_SUMMARY_CHARS);
-      }
     }
+    if (lines.length > 0) turnSummaries.push(lines.join('\n'));
   }
-  return lines.join('\n');
+  const complete = [DETERMINISTIC_SUMMARY_PREAMBLE, ...turnSummaries].join('\n');
+  if (complete.length <= MAX_DETERMINISTIC_SUMMARY_CHARS) return complete;
+
+  const prefix = `${DETERMINISTIC_SUMMARY_PREAMBLE}\n${DETERMINISTIC_SUMMARY_TRUNCATION}\n`;
+  const available = MAX_DETERMINISTIC_SUMMARY_CHARS - prefix.length;
+  let retained = '';
+  for (let index = turnSummaries.length - 1; index >= 0; index -= 1) {
+    const turnSummary = turnSummaries[index]!;
+    const candidate = retained ? `${turnSummary}\n${retained}` : turnSummary;
+    if (candidate.length > available) {
+      if (!retained) retained = truncateSummaryEntry(turnSummary, available);
+      break;
+    }
+    retained = candidate;
+  }
+  return `${prefix}${retained}`;
+}
+
+function truncateSummaryEntry(value: string, available: number): string {
+  if (value.length <= available) return value;
+  if (available <= DETERMINISTIC_ENTRY_TRUNCATION.length) {
+    return DETERMINISTIC_ENTRY_TRUNCATION.slice(0, available);
+  }
+  const contentBudget = available - DETERMINISTIC_ENTRY_TRUNCATION.length;
+  const leadingLength = Math.ceil(contentBudget / 2);
+  const trailingLength = contentBudget - leadingLength;
+  const trailing = trailingLength > 0 ? value.slice(-trailingLength) : '';
+  return `${value.slice(0, leadingLength)}${DETERMINISTIC_ENTRY_TRUNCATION}${trailing}`;
 }
 
 async function summaryLine(

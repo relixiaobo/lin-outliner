@@ -12,6 +12,7 @@ import type {
 import type {
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
+  ContextTextEntry,
   ReferencedResourcesContextPayload,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
@@ -22,8 +23,14 @@ import type {
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
+  TurnDiagnosticsMessagePartProvenance,
+  TurnEnvironmentContextPayload,
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
+import {
+  formatFileReferenceMarker,
+  formatNodeReferenceMarker,
+} from '../../../core/referenceMarkup';
 import { assertContextPayloadDependencies } from './contextDependencies';
 import { selectEffectiveContext } from './ContextEpoch';
 import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
@@ -48,12 +55,15 @@ export interface ProjectedUserBoundary extends ProjectedTurnBoundary {
 
 export interface CanonicalContextProjection {
   readonly messages: Message[];
+  readonly messagePartProvenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[];
   readonly turnBoundaries: readonly ProjectedTurnBoundary[];
   readonly userBoundaries: readonly ProjectedUserBoundary[];
 }
 
 export class CanonicalContextProjector {
+  private previousEnvironment: TurnEnvironmentContextPayload | null = null;
   private previousUserView: UserViewContextPayload | null = null;
+  private previousAdditionalContext: ReadonlyMap<string, ContextTextEntry> | null = null;
   private readonly payloads = new Map<string, ThreadContextPayload>();
   private readonly toolOutputProjections = new Map<string, ToolOutputProjectionContextPayload>();
 
@@ -70,6 +80,7 @@ export class CanonicalContextProjector {
     const selectedTurns = selectEffectiveContext(turns).turns;
     await this.prepareToolOutputProjections(selectedTurns);
     const messages: Message[] = [];
+    const messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][] = [];
     const turnBoundaries: ProjectedTurnBoundary[] = [];
     const userBoundaries: ProjectedUserBoundary[] = [];
     for (const turn of selectedTurns) {
@@ -81,8 +92,9 @@ export class CanonicalContextProjector {
         messageIndex: messages.length + boundary.messageIndex,
       })));
       messages.push(...projected.messages);
+      messagePartProvenance.push(...projected.messagePartProvenance);
     }
-    return { messages, turnBoundaries, userBoundaries };
+    return { messages, messagePartProvenance, turnBoundaries, userBoundaries };
   }
 
   private async prepareToolOutputProjections(turns: readonly Turn[]): Promise<void> {
@@ -122,11 +134,14 @@ export class CanonicalContextProjector {
 
   private async projectTurn(turn: Turn, sourceTurns: readonly Turn[]): Promise<{
     readonly messages: Message[];
+    readonly messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][];
     readonly userBoundaries: ProjectedUserBoundary[];
   }> {
     const messages: Message[] = [];
+    const messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][] = [];
     const userBoundaries: ProjectedUserBoundary[] = [];
     let pendingUserContent: Array<TextContent | ImageContent> = [];
+    let pendingUserProvenance: TurnDiagnosticsMessagePartProvenance[] = [];
     let assistantContent: Array<TextContent | ToolCall> = [];
     let toolResults: ToolResultMessage[] = [];
     const flushAssistant = () => {
@@ -137,17 +152,26 @@ export class CanonicalContextProjector {
           this.model,
           toolResults.length > 0 ? 'toolUse' : 'stop',
         ));
+        messagePartProvenance.push(assistantContent.map(() => ({ source: 'assistantHistory' })));
       }
-      messages.push(...toolResults);
+      for (const result of toolResults) {
+        messages.push(result);
+        messagePartProvenance.push(result.content.map(() => ({ source: 'toolResult' })));
+      }
       assistantContent = [];
       toolResults = [];
     };
     const flushPendingUser = (timestamp: number) => {
       flushAssistant();
-      if (pendingUserContent.length === 0) pendingUserContent.push({ type: 'text', text: 'Continue.' });
+      if (pendingUserContent.length === 0) {
+        pendingUserContent.push({ type: 'text', text: 'Continue.' });
+        pendingUserProvenance.push({ source: 'unknown' });
+      }
       const messageIndex = messages.length;
       messages.push({ role: 'user', content: pendingUserContent, timestamp });
+      messagePartProvenance.push(pendingUserProvenance);
       pendingUserContent = [];
+      pendingUserProvenance = [];
       return messageIndex;
     };
 
@@ -161,14 +185,23 @@ export class CanonicalContextProjector {
             throw new Error(`Inherited context kind mismatch: ${item.payloadRef.id}`);
           }
           const inheritedProjector = new CanonicalContextProjector(this.model, this.resources);
-          messages.push(...await inheritedProjector.projectTurns(payload.turns));
+          const inherited = await inheritedProjector.projectTurnsWithBoundaries(payload.turns);
+          messages.push(...inherited.messages);
+          messagePartProvenance.push(...inherited.messagePartProvenance.map((parts) => [...parts]));
           continue;
         }
-        pendingUserContent.push(...await this.projectEvidence(item));
+        const evidence = await this.projectEvidence(item);
+        pendingUserContent.push(...evidence);
+        pendingUserProvenance.push(...evidence.map(() => ({
+          source: 'contextEvidence' as const,
+          kind: item.kind,
+        })));
         continue;
       }
       if (item.type === 'userMessage') {
-        pendingUserContent.push(...await serializeUserContent(item.content, this.resources));
+        const userContent = await serializeUserContent(item.content, this.resources);
+        pendingUserContent.push(...userContent);
+        pendingUserProvenance.push(...userContent.map(() => ({ source: 'userInput' as const })));
         userBoundaries.push({
           turnId: turn.id,
           itemId: item.id,
@@ -179,11 +212,16 @@ export class CanonicalContextProjector {
       if (item.type === 'contextReset') {
         if (toolResults.length > 0) flushAssistant();
         pendingUserContent = [];
+        pendingUserProvenance = [];
+        this.previousEnvironment = null;
         this.previousUserView = null;
+        this.previousAdditionalContext = null;
         continue;
       }
       if (item.type === 'contextCompaction') {
-        pendingUserContent.push(...await this.projectCompaction(item, sourceTurns));
+        const compacted = await this.projectCompaction(item, sourceTurns);
+        pendingUserContent.push(...compacted);
+        pendingUserProvenance.push(...compacted.map(() => ({ source: 'contextCompaction' as const })));
         continue;
       }
       if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
@@ -220,7 +258,7 @@ export class CanonicalContextProjector {
     }
     if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
     flushAssistant();
-    return { messages, userBoundaries };
+    return { messages, messagePartProvenance, userBoundaries };
   }
 
   private async projectCompaction(
@@ -239,6 +277,7 @@ export class CanonicalContextProjector {
       `skill_catalog_hash=${restored.skillCatalogHash ?? 'none'}`,
       `role_catalog_hash=${restored.roleCatalogHash ?? 'none'}`,
       `active_skill_count=${restored.activeSkills.length}`,
+      `additional_context_baseline=${restored.additionalContextBaselineRef?.id ?? 'none'}`,
       `active_observation_count=${restored.activeObservations.length}`,
     ].join('\n'), 'application', 'observation'));
 
@@ -279,6 +318,7 @@ export class CanonicalContextProjector {
     if (restored.userViewBaselineRef) {
       const baseline = await this.readCompactionPayload(item, restored.userViewBaselineRef, 'userView');
       const rendered = renderUserView(null, baseline);
+      if (!rendered.application) throw new Error('Restored user-view baseline did not produce a snapshot.');
       content.push(textEvidence('userView', rendered.application, 'application', 'observation', [
         'restored_after_compaction=true',
       ]));
@@ -289,8 +329,30 @@ export class CanonicalContextProjector {
       }
       this.previousUserView = baseline;
     }
+    if (restored.additionalContextBaselineRef) {
+      const baseline = await this.readCompactionPayload(
+        item,
+        restored.additionalContextBaselineRef,
+        'additionalContext',
+      );
+      if (baseline.threadState === null) {
+        throw new Error('Restored additional-context baseline does not contain Thread state.');
+      }
+      content.push(...this.projectAdditionalThreadState(
+        baseline.threadState,
+        ['restored_after_compaction=true'],
+      ));
+    }
     for (const checkpoint of restored.activeSkills) {
       const skill = await this.readCompactionPayload(item, checkpoint.payloadRef, 'skillInvocation');
+      if (
+        skill.execution !== 'inline'
+        || skill.name !== checkpoint.name
+        || skill.identity !== checkpoint.identity
+        || skill.contentHash !== checkpoint.contentHash
+      ) {
+        throw new Error(`Restored active Skill does not match its checkpoint: ${checkpoint.name}`);
+      }
       content.push(textEvidence('skillInvocation', skill.instructions, 'application', 'instruction', [
         `name=${skill.name}`,
         `identity=${skill.identity}`,
@@ -300,6 +362,9 @@ export class CanonicalContextProjector {
     }
     for (const observation of restored.activeObservations) {
       const projection = await this.readCompactionPayload(item, observation.projectionRef, 'toolOutputProjection');
+      if (!outputReferencesEqual(projection.outputRef, observation.outputRef)) {
+        throw new Error(`Restored observation does not match its frozen projection: ${observation.key}`);
+      }
       const text = await projectedToolOutputText(projection, this.resources);
       content.push(textEvidence('toolOutputProjection', [
         `tool=${observation.tool}`,
@@ -346,37 +411,32 @@ export class CanonicalContextProjector {
     const payload = await this.readEvidencePayload(item);
     switch (payload.kind) {
       case 'turnEnvironment':
-        return [textEvidence(payload.kind, [
-          `accepted_at=${payload.utcInstant}`,
-          `local_date=${payload.localDate}`,
-          `local_time=${payload.localTime}`,
-          `timezone=${payload.timeZone}`,
-          `utc_offset_minutes=${payload.utcOffsetMinutes}`,
-          `locale=${payload.locale}`,
-          `working_directory=${payload.workingDirectory}`,
-          `conversation_mode=${payload.conversationMode}`,
-          `execution_mode=${payload.executionMode}`,
-          `reply_identity=${payload.replyIdentity ?? 'none'}`,
-          `today_node_id=${payload.todayNodeId ?? 'none'}`,
-        ].join('\n'), 'application', 'observation')];
+      {
+        const rendered = renderEnvironment(this.previousEnvironment, payload);
+        this.previousEnvironment = payload;
+        return [
+          ...(rendered.application
+            ? [textEvidence(payload.kind, rendered.application, 'application', 'observation')]
+            : []),
+          ...(rendered.untrusted
+            ? [textEvidence(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
+            : []),
+        ];
+      }
       case 'userView': {
         const rendered = renderUserView(this.previousUserView, payload);
         this.previousUserView = payload;
         return [
-          textEvidence(payload.kind, rendered.application, 'application', 'observation'),
+          ...(rendered.application
+            ? [textEvidence(payload.kind, rendered.application, 'application', 'observation')]
+            : []),
           ...(rendered.untrusted
             ? [textEvidence(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
             : []),
         ];
       }
       case 'additionalContext':
-        return payload.entries.map((entry) => textEvidence(
-          payload.kind,
-          entry.text,
-          entry.authority,
-          entry.purpose,
-          [`key=${entry.key}`, `source=${entry.source}`],
-        ));
+        return this.projectAdditionalContext(payload);
       case 'referencedResources':
         return this.projectReferencedResources(payload);
       case 'skillCatalog':
@@ -413,6 +473,55 @@ export class CanonicalContextProjector {
     }
   }
 
+  private projectAdditionalContext(
+    payload: Extract<ThreadContextPayload, { readonly kind: 'additionalContext' }>,
+  ): TextContent[] {
+    const content = payload.turnEntries.map((entry) => textEvidence(
+      payload.kind,
+      entry.text,
+      entry.authority,
+      entry.purpose,
+      [`key=${entry.key}`, `source=${entry.source}`, 'lifetime=turn'],
+    ));
+    if (payload.threadState === null) return content;
+
+    content.push(...this.projectAdditionalThreadState(payload.threadState));
+    return content;
+  }
+
+  private projectAdditionalThreadState(
+    threadState: readonly ContextTextEntry[],
+    metadata: readonly string[] = [],
+  ): TextContent[] {
+    const content: TextContent[] = [];
+    const next = new Map(threadState.map((entry) => [entry.key, entry]));
+    for (const entry of threadState) {
+      const previous = this.previousAdditionalContext?.get(entry.key);
+      if (previous && contextEntriesEqual(previous, entry)) continue;
+      content.push(textEvidence(
+        'additionalContext',
+        entry.text,
+        entry.authority,
+        entry.purpose,
+        [`key=${entry.key}`, `source=${entry.source}`, 'lifetime=thread', 'state=set', ...metadata],
+      ));
+    }
+    if (this.previousAdditionalContext) {
+      for (const entry of this.previousAdditionalContext.values()) {
+        if (next.has(entry.key)) continue;
+        content.push(textEvidence(
+          'additionalContext',
+          'state=cleared',
+          'application',
+          'observation',
+          [`key=${entry.key}`, `source=${entry.source}`, 'lifetime=thread', ...metadata],
+        ));
+      }
+    }
+    this.previousAdditionalContext = next;
+    return content;
+  }
+
   private async readEvidencePayload(
     item: ContextEvidenceThreadItem,
   ): Promise<Extract<ThreadContextPayload, { readonly kind: ContextEvidenceThreadItem['kind'] }>> {
@@ -447,6 +556,13 @@ export class CanonicalContextProjector {
         `node_id=${resource.nodeId}`,
         `title=${resource.title}`,
         `breadcrumb=${resource.breadcrumb.map((node) => `${node.title} (${node.nodeId})`).join(' / ') || 'none'}`,
+        path && resource.resourceRef
+          ? `file_reference=${formatFileReferenceMarker(
+              resource.title || resource.resourceRef.fileName,
+              path,
+              resource.resourceRef.mimeType === 'inode/directory' ? 'directory' : 'file',
+            )}`
+          : null,
         resource.content ? `snapshot_content:\n${resource.content}` : null,
       ].filter((line): line is string => line !== null).join('\n'), 'untrusted', 'observation'));
       if (resource.inlineImage && resource.resourceRef) {
@@ -464,47 +580,69 @@ export async function serializeUserContent(
   resources: Pick<ProjectionResources, 'readResource' | 'resolveResourceObservationPath'>,
 ): Promise<Array<TextContent | ImageContent>> {
   assertCanonicalUserContent(content);
-  const converted: Array<TextContent | ImageContent> = [];
-  const impliedPrompt = impliedUserPrompt(content);
-  if (impliedPrompt) converted.push({ type: 'text', text: impliedPrompt });
+  const attachments: Array<{
+    readonly part: Extract<ThreadUserContent, { readonly type: 'attachment' }>;
+    readonly location: string;
+  }> = [];
+  const narrative: string[] = [];
   for (const part of content) {
     switch (part.type) {
       case 'text':
-        converted.push({ type: 'text', text: part.text });
+        narrative.push(part.text);
         break;
       case 'nodeReference':
-        converted.push({ type: 'text', text: `[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}` });
+        narrative.push(formatNodeReferenceMarker(part.note ?? part.nodeId, part.nodeId));
         break;
-      case 'attachment':
-        if (part.mimeType.startsWith('image/')) {
-          const promptImage = part.promptImage;
-          if (!promptImage) throw new Error(`Canonical image attachment is missing its prompt snapshot: ${part.name}`);
-          const image = await resources.readResource(promptImage);
-          if (!image) throw new Error(`Attachment prompt image is unavailable or corrupt: ${part.name}`);
-          converted.push({
-            type: 'text',
-            text: `[Attachment image: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]\nThe following image is the immutable prompt snapshot for this attachment.`,
-          });
-          converted.push({ type: 'image', data: image.toString('base64'), mimeType: promptImage.mimeType });
-        } else {
-          const location = part.source.kind === 'localFile'
-            ? part.source.path
-            : await resources.resolveResourceObservationPath(part.source.ref);
-          if (!location) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
-          converted.push({
-            type: 'text',
-            text: [
-              `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]`,
-              `Readable path: ${location}`,
-              part.mimeType === 'inode/directory'
-                ? 'Use file_glob with this path to inspect the directory.'
-                : 'Use file_read with this path to inspect the attachment.',
-              part.extractedText ?? null,
-            ].filter((line): line is string => line !== null).join('\n'),
-          });
-        }
+      case 'attachment': {
+        const location = part.source.kind === 'localFile'
+          ? part.source.path
+          : await resources.resolveResourceObservationPath(part.source.ref);
+        if (!location) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
+        narrative.push(formatFileReferenceMarker(
+          part.name,
+          location,
+          part.mimeType === 'inode/directory' ? 'directory' : 'file',
+        ));
+        attachments.push({ part, location });
         break;
+      }
     }
+  }
+
+  const converted: Array<TextContent | ImageContent> = [];
+  const impliedPrompt = impliedUserPrompt(content);
+  if (impliedPrompt) converted.push({ type: 'text', text: impliedPrompt });
+  const narrativeText = narrative.join('');
+  if (narrativeText) converted.push({ type: 'text', text: narrativeText });
+
+  for (const { part, location } of attachments) {
+    if (part.mimeType.startsWith('image/')) {
+      const promptImage = part.promptImage;
+      if (!promptImage) throw new Error(`Canonical image attachment is missing its prompt snapshot: ${part.name}`);
+      const image = await resources.readResource(promptImage);
+      if (!image) throw new Error(`Attachment prompt image is unavailable or corrupt: ${part.name}`);
+      converted.push({
+        type: 'text',
+        text: [
+          `[Attachment image: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]`,
+          `Readable path: ${location}`,
+          'The following image is the immutable prompt snapshot for this attachment.',
+        ].join('\n'),
+      });
+      converted.push({ type: 'image', data: image.toString('base64'), mimeType: promptImage.mimeType });
+      continue;
+    }
+    converted.push({
+      type: 'text',
+      text: [
+        `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]`,
+        `Readable path: ${location}`,
+        part.mimeType === 'inode/directory'
+          ? 'Use file_glob with this path to inspect the directory.'
+          : 'Use file_read with this path to inspect the attachment.',
+        part.extractedText ?? null,
+      ].filter((line): line is string => line !== null).join('\n'),
+    });
   }
   return converted;
 }
@@ -549,25 +687,39 @@ function textEvidence(
 function renderUserView(
   previous: UserViewContextPayload | null,
   next: UserViewContextPayload,
-): { readonly application: string; readonly untrusted: string | null } {
-  const application = [
-    `projection_mode=${previous ? 'diff' : 'snapshot'}`,
-    `interaction_mode=${next.mode}`,
-  ];
-  const observation = [
-    `active_panel_id=${next.activePanelId ?? 'none'}`,
-    `focused_panel_id=${next.focusedPanelId ?? 'none'}`,
-    `focused_node_id=${next.focusedNode?.nodeId ?? 'none'}`,
-    `focus_surface=${next.focusSurface ?? 'none'}`,
-    `explicit_reference_ids=${next.referencedNodes.map((node) => node.nodeId).join(',') || 'none'}`,
-    `selected_node_ids=${next.selectedNodes.map((node) => node.nodeId).join(',') || 'none'}`,
-    `snapshot_truncated=${next.truncated}`,
-  ];
+): { readonly application: string | null; readonly untrusted: string | null } {
+  if (previous && JSON.stringify(previous) === JSON.stringify(next)) {
+    return { application: null, untrusted: null };
+  }
+  const application = [`projection_mode=${previous ? 'delta' : 'snapshot'}`];
+  if (!previous || previous.mode !== next.mode) application.push(`interaction_mode=${next.mode}`);
+  const observation: string[] = [];
   const labels = new Map<string, string>();
   const recordLabel = (node: { readonly nodeId: string; readonly title: string }) => labels.set(node.nodeId, node.title);
-  if (next.focusedNode) recordLabel(next.focusedNode);
-  next.referencedNodes.forEach(recordLabel);
-  next.selectedNodes.forEach(recordLabel);
+  if (!previous || previous.activePanelId !== next.activePanelId) {
+    observation.push(`active_panel_id=${next.activePanelId ?? 'none'}`);
+  }
+  if (!previous || previous.focusedPanelId !== next.focusedPanelId) {
+    observation.push(`focused_panel_id=${next.focusedPanelId ?? 'none'}`);
+  }
+  if (!previous || !sameJson(previous.focusedNode, next.focusedNode)) {
+    observation.push(`focused_node_id=${next.focusedNode?.nodeId ?? 'none'}`);
+    if (next.focusedNode) recordLabel(next.focusedNode);
+  }
+  if (!previous || previous.focusSurface !== next.focusSurface) {
+    observation.push(`focus_surface=${next.focusSurface ?? 'none'}`);
+  }
+  if (!previous || !sameJson(previous.referencedNodes, next.referencedNodes)) {
+    observation.push(`explicit_reference_ids=${next.referencedNodes.map((node) => node.nodeId).join(',') || 'none'}`);
+    next.referencedNodes.forEach(recordLabel);
+  }
+  if (!previous || !sameJson(previous.selectedNodes, next.selectedNodes)) {
+    observation.push(`selected_node_ids=${next.selectedNodes.map((node) => node.nodeId).join(',') || 'none'}`);
+    next.selectedNodes.forEach(recordLabel);
+  }
+  if (!previous || previous.truncated !== next.truncated) {
+    observation.push(`snapshot_truncated=${next.truncated}`);
+  }
   const previousPanels = new Map(previous?.panels.map((panel) => [panel.panelId, panel]) ?? []);
   for (const panel of next.panels) {
     const before = previousPanels.get(panel.panelId);
@@ -613,6 +765,61 @@ function renderUserView(
     application: application.join('\n'),
     untrusted: observation.join('\n') || null,
   };
+}
+
+function renderEnvironment(
+  previous: TurnEnvironmentContextPayload | null,
+  next: TurnEnvironmentContextPayload,
+): { readonly application: string | null; readonly untrusted: string | null } {
+  const lines = [`projection_mode=${previous ? 'delta' : 'snapshot'}`];
+  const fields = [
+    ['utcInstant', 'accepted_at', next.utcInstant],
+    ['localDate', 'local_date', next.localDate],
+    ['localTime', 'local_time', next.localTime],
+    ['timeZone', 'timezone', next.timeZone],
+    ['utcOffsetMinutes', 'utc_offset_minutes', String(next.utcOffsetMinutes)],
+    ['locale', 'locale', next.locale],
+    ['workingDirectory', 'working_directory', next.workingDirectory],
+    ['conversationMode', 'conversation_mode', next.conversationMode],
+    ['executionMode', 'execution_mode', next.executionMode],
+    ['replyIdentity', 'reply_identity', next.replyIdentity ?? 'none'],
+    ['todayNodeId', 'today_node_id', next.todayNodeId ?? 'none'],
+  ] as const;
+  for (const [property, label, value] of fields) {
+    if (!previous || previous[property] !== next[property]) lines.push(`${label}=${value}`);
+  }
+  const untrusted = !previous || previous.todayNodeTitle !== next.todayNodeTitle
+    ? [
+        `projection_mode=${previous ? 'delta' : 'snapshot'}`,
+        `today_node_title=${next.todayNodeTitle ?? 'none'}`,
+      ].join('\n')
+    : null;
+  return {
+    application: lines.length > 1 ? lines.join('\n') : null,
+    untrusted,
+  };
+}
+
+function contextEntriesEqual(left: ContextTextEntry, right: ContextTextEntry): boolean {
+  return left.key === right.key
+    && left.source === right.source
+    && left.authority === right.authority
+    && left.purpose === right.purpose
+    && left.text === right.text;
+}
+
+function outputReferencesEqual(
+  left: ToolOutputProjectionContextPayload['outputRef'],
+  right: ToolOutputProjectionContextPayload['outputRef'],
+): boolean {
+  return left.id === right.id
+    && left.mimeType === right.mimeType
+    && left.byteLength === right.byteLength
+    && left.summary === right.summary;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function compareStableText(left: string, right: string): number {

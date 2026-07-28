@@ -95,7 +95,16 @@ export class ExtensionRegistry {
   }
 
   async threadContext(thread: Thread): Promise<readonly ThreadContextContribution[]> {
-    return this.collect(async (extension) => extension.contributeThreadContext?.(thread) ?? null);
+    const contributions: ThreadContextContribution[] = [];
+    for (const extension of this.extensions) {
+      if (!extension.contributeThreadContext) continue;
+      const contribution = await extension.contributeThreadContext(thread);
+      if (contribution && contribution.extensionId !== extension.id) {
+        throw new Error(`Extension context contribution owner mismatch: ${extension.id}`);
+      }
+      contributions.push(contribution ?? { extensionId: extension.id, additionalContext: {} });
+    }
+    return contributions;
   }
 
   async tools(thread: Thread): Promise<readonly ExtensionToolContribution[]> {

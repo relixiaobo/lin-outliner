@@ -84,7 +84,7 @@ state machine:
 | --- | --- |
 | local time/date, timezone, UTC offset, locale | `turnEnvironment` evidence |
 | direct-conversation topology and reply identity | `turnEnvironment` plus root/child prompt mode |
-| Outliner Today/current outline context | main-resolved `userView` evidence |
+| Outliner Today/current outline context | main-resolved `turnEnvironment` identity/title plus `userView` evidence |
 | focused panels, visible outline, selection, explicit Node references | bounded `userView` snapshot |
 | attachment marker and referenced-file reminder | structured user content plus `referencedResources` evidence |
 | available and invoked Skill reminders | `skillCatalog` and `skillInvocation` evidence |
@@ -116,7 +116,7 @@ their wrapper spelling:
 | Historical reminder use | Decision |
 | --- | --- |
 | turn environment, Outliner/view state, referenced resources, Memory/Automation context, Skill/Role discovery, and invoked Skill guidance | retain as typed canonical context evidence |
-| compact summary, catalog/invocation restore, recent file observations, and durable child follow-ups | retain as typed compaction summary, reducer checkpoint, and instruction payloads |
+| compact summary, catalog/invocation restore, recent file observations, and child follow-ups | retain as typed compaction summary, reducer checkpoint, active-Turn canonical user input, and preserved tail |
 | child completion delivery, amendments, controller directives, and other still-supported collaboration transitions | represent through canonical collaboration/feature Items or typed context owned by that feature; never recover state from prose |
 | retired Issue delivery and Dream hidden-anchor prompts | do not restore with the retired runtimes; any future equivalent must define a current canonical contract |
 | literal user/model text containing `<system-reminder>` | preserve as ordinary untrusted text with no parsing or authority upgrade |
@@ -308,10 +308,10 @@ therefore have identical history. Execution-generated evidence, such as an invok
 Skill, is appended immediately after the completed initiating tool Item and before that
 tool returns control to the next provider request.
 
-The provider serializer renders every structured image attachment as an adjacent
-identity block (name, MIME type, and source byte length) plus its immutable prompt
-snapshot. This preserves the old attachment marker's model-visible identity without
-restoring a string protocol or parser. Admission rejects an image without a
+The provider serializer renders every attachment with the shared file-reference marker
+at its structured user-content position. Node references use the shared Node marker;
+images place their file marker immediately before the immutable prompt snapshot.
+Canonical state never parses those provider strings. Admission rejects an image without a
 Thread-owned prompt snapshot and rejects a non-image carrying one; projection never
 reinterprets either invalid shape as an ordinary file.
 
@@ -373,7 +373,7 @@ The provider-neutral projection preserves semantic event order:
 - every tool Item becomes a paired call/result unit;
 - reset selects the epoch and is not sent as conversational prose;
 - the selected compaction contributes its summary plus the preserved tail; and
-- model-generated summaries are labelled as lossy derived context, never facts.
+- deterministic summaries are labelled as lossy derived context, never facts.
 
 Budgeting may choose a representation only for a new unit that no provider has seen.
 Once exposed, the persisted evidence and any `toolOutputProjection` decision freeze its
@@ -472,7 +472,9 @@ visibility, Node-label, and truncation state is derived from renderer/document i
 remains an untrusted observation even after main validates IDs and resolves content.
 
 Canonical evidence always stores a snapshot. The planner emits the first snapshot in
-an epoch and deterministic diffs against later snapshots. This recovers compact
+an epoch and deterministic field-level diffs against later snapshots. An unchanged
+snapshot emits no provider block; nullable state and panel removal use explicit
+tombstones. This recovers compact
 snapshot/diff behavior without a runtime view tracker. A reset naturally removes the
 baseline; restart, rollback, compaction, and fork derive the same baseline from Items.
 Headless, Automation, and Memory Turns record an explicit non-interactive view mode and
@@ -480,8 +482,15 @@ never reuse stale renderer state.
 
 `turnEnvironment` records the execution-start UTC instant, local date/time, resolved
 IANA timezone, UTC offset, locale, working directory, conversation/execution mode,
-reply identity, and current Today Node identity when available. It is generated per
-accepted input and serialized in the uncached tail.
+reply identity, and current Today Node identity/title when available. The ID remains
+application authority while the document-authored title is emitted as untrusted
+evidence. It is generated per
+accepted input. The first payload in an epoch projects a complete snapshot; later
+payloads append only changed fields, normally the accepted instant and clock values.
+Stable environment fields are not repeated in each new `system-reminder`.
+Every stateless provider request still includes retained historical reminder messages as
+the byte-identical cacheable prefix. Delta projection governs only newly appended
+current-Turn evidence; it never removes or regenerates an earlier reminder in place.
 
 ### Attachments and referenced Node resources
 
@@ -490,8 +499,14 @@ Keep the current `ThreadUserContent` attachment contract:
 - a path-backed local attachment remains a canonical live path;
 - a pathless upload remains a Thread-owned content-addressed resource;
 - image prompt snapshots remain normalized and bounded; and
-- directories retain explicit directory identity and instruct `file_glob`, while files
-  instruct `file_read`; inline extracted text retains truncation metadata; and
+- provider projection uses `formatFileReferenceMarker` and
+  `formatNodeReferenceMarker` at the original structured part positions;
+- the surrounding text and markers form one position-faithful user narrative, followed
+  by independent attachment identity/read-path blocks and image bytes in attachment
+  order; neither representation replaces the other;
+- directories retain explicit directory identity, while stable instructions define
+  percent-decoding and route directories to `file_glob` and files to `file_read`;
+  inline extracted text retains truncation metadata; and
 - provider conversion occurs only at the request boundary.
 
 Expand explicit `nodeReference` admission in main:
@@ -506,10 +521,12 @@ Expand explicit `nodeReference` admission in main:
    digest, and safe filename. Verify or repair its bytes before a Turn uses it; delete
    the observation with the Thread or during stale-scratch reconciliation.
 
-A plain Node copies no asset bytes. An image Node emits both an identity/path text block
-and an image block when the provider supports vision, so the model never receives
+A plain Node copies no asset bytes. An available attachment/image Node emits both an
+application-authority readable path and the same untrusted-label file marker used by
+composer attachments; an image Node also emits an image block when
+the provider supports vision, so the model never receives
 anonymous pixels. A non-vision provider receives the identity, explicit limitation, and
-readable observation path. Missing, corrupt, unsupported, or over-budget resources emit
+file marker. Missing, corrupt, unsupported, or over-budget resources emit
 typed unavailability; no path or image claim is fabricated.
 
 Replay, steering, compaction expansion, and child inheritance resolve the same immutable
@@ -522,6 +539,19 @@ Replace anonymous `systemContext: string[]` and execution-only `additionalContex
 typed evidence contributions. Existing keys such as `automation_info` retain their
 source and host-assigned authority. Renderer keys cannot shadow a reserved application
 key. Contribution merge order and duplicate handling are deterministic and tested.
+
+Every entry has one explicit lifetime. Direct privileged or renderer
+`additionalContext` is a Turn-local event and is projected whenever that input is
+admitted, even when its bytes match an earlier event. Extension contributions form one
+complete Thread-state snapshot: the first value and later changes project as `set`, an
+unchanged value emits nothing, and an inactive contributor produces a `cleared`
+tombstone. The registry retains empty snapshots for registered inactive contributors so
+ordinary host admission can clear the last active value. A registry with no Thread-context
+contributors emits no empty payload; `null` remains reserved for modes where state was not
+evaluated. Reset starts a fresh baseline.
+Compaction checkpoints the latest complete Thread-state snapshot and restores only that
+state; Turn-local entries in the same payload remain historical events and are not
+replayed.
 
 The provider serializer appends every volatile contribution as one or more hidden user
 content blocks at its canonical tail position. Admission contributions coalesce with
@@ -655,12 +685,14 @@ unit. Image lists follow their existing count/byte bounds and stable payload ref
 Automatic compaction runs when preflight planning cannot retain the configured recent
 tail with the model's reserved output budget. It selects the oldest eligible sequence
 of complete Turns or complete current-Turn tool units, never a partial tool pair. A
-bounded no-tools summarization request produces a lossy summary plus exact covered and
-preserved cursors. It also derives and persists `restoredStateRef` from the effective
-catalogs, active Skill versions, view baseline, and still-active file/Node observations
-at that exact boundary. Durable child follow-ups are stored as
-`compactionInstructions`, not anonymous reminder text. Summary and restore blocks
-receive fixed provider-neutral fingerprints. Only a successful append
+deterministic bounded transcript projection produces a lossy summary plus exact covered
+and preserved cursors. It also derives and persists `restoredStateRef` from the effective
+catalogs, active Skill versions, view baseline, Thread-state extension context, and
+still-active file/Node observations at that exact boundary. Child follow-ups are
+canonical user input in the child Thread: automatic compaction preserves the active
+admission and manual idle compaction summarizes completed follow-up Turns.
+`compactionInstructions` is reserved for explicit manual `/compact` guidance. Summary
+and restore blocks receive fixed provider-neutral fingerprints. Only a successful append
 changes later projection, and that one explicit cache-branch change is never rebuilt
 from current files or runtime trackers.
 
@@ -672,8 +704,9 @@ fails explicitly, preventing retry/compaction loops.
 `/compact [instructions]` is a reserved host command handled before Skill routing. It
 is accepted only while the Thread has no active Turn and creates a completed
 feature-triggered Turn (`feature: 'context.compact'`) containing the manual compaction
-Item. Instructions guide summary emphasis but do not change source coverage. With no
-eligible content it returns a no-op result and creates no phantom boundary.
+Item. Instructions remain typed application guidance after the deterministic summary
+and do not change source coverage. With no eligible content it returns a no-op result
+and creates no phantom boundary.
 
 `/clear` is also a reserved host command and requires an idle Thread. It creates a
 completed feature-triggered Turn (`feature: 'context.clear'`) containing
@@ -769,7 +802,9 @@ bytes and cache topology untouched.
 
 Terminal diagnostics are a versioned content-addressed Thread payload referenced from
 `Turn.execution`, copied on fork, and pruned on rollback/startup/failure when no
-reachable Turn references them. One `thread/turn/details/read` call is the read
+reachable Turn references them. Publication is best-effort and never changes the real
+Turn status, response, or usage when payload validation, quota, or storage fails. One
+`thread/turn/details/read` call is the read
 authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
 renders Overview, then an ordered Provider Call timeline in which each call owns its
 Request, Response, and Local Execution, followed by Audit. Request renders the recorded

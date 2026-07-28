@@ -17,6 +17,17 @@ Renderer input can contribute only bounded structural user-view hints and
 all `application` classifications. Scheduled Turns receive trusted
 `automation_info` from the canonical Automation dispatcher; renderer input
 cannot create it. Extension entries retain `extension:<id>` source identity.
+Direct privileged and renderer entries are Turn-local events and always project for
+their admitted input. Extension contributions form a complete Thread-state snapshot:
+the first value and later changes project as `set`, unchanged entries emit nothing, and
+removal emits an explicit `cleared` tombstone. When the registry contains at least one
+Thread-context contributor, ordinary host admission records its complete snapshot even
+when every registered contributor is currently inactive; this preserves the empty state
+needed to clear a prior value. A registry with no Thread-context contributors emits no
+Thread-state payload, and `null` remains the payload representation for execution modes
+where Thread state was not evaluated. Compaction checkpoints the latest complete snapshot
+by typed payload reference, restores only its Thread-state entries, and never replays
+Turn-local events from the same payload.
 
 The stable system prompt is composed in three deterministic layers: universal
 framework firmware (L0), modules selected from the effective canonical tool
@@ -58,7 +69,17 @@ private steering message, or reminder parser is a second history authority.
 
 For every ordinary input, main records `turnEnvironment` evidence containing the
 accepted UTC instant, local date/time, IANA timezone and offset, locale, working
-directory, execution/conversation mode, reply identity, and Today Node identity.
+directory, execution/conversation mode, reply identity, and Today Node identity/title.
+The Today Node ID is application-owned; its document-authored title projects through a
+separate untrusted evidence block.
+The first environment payload in an epoch projects a complete snapshot. Later payloads
+project only changed fields; the accepted instant is normally the only mandatory delta,
+while stable timezone, locale, working-directory, mode, identity, and Today values do
+not consume repeated provider tokens. Reset or compaction starts a new baseline.
+Stateless provider calls still resend the retained historical messages. Those earlier
+reminder bytes are an unchanged cacheable prefix; they are not regenerated as new
+current-Turn evidence. "No repeat" in this contract means that a later Turn appends only
+its delta rather than appending another copy of unchanged state.
 Hidden internal Memory Turns remain isolated from ordinary environment, view,
 catalog, resource, and extension context.
 
@@ -71,8 +92,10 @@ and depths that the Outliner renders; reference chains use cycle protection, and
 derives child counts from that resolved displayed parent. Expanded table records omit
 authored field entries already represented by visible columns. Panels and text leaves
 use fixed ordering and escaping.
-Projection emits a complete first snapshot and deterministic later diffs; replaying
-the same canonical payload sequence reconstructs the same snapshot/diff bytes.
+Projection emits a complete first snapshot and deterministic later field-level diffs.
+An unchanged snapshot emits no reminder block; changed nullable fields and removed
+panels emit explicit tombstones. Replaying the same canonical payload sequence
+reconstructs the same snapshot/delta bytes.
 Only the host-derived projection mode and interaction mode are application observations.
 Panel/focus/selection/visibility claims originate in renderer state, while Node text is
 document content; the complete resolved view body is therefore serialized as an
@@ -131,10 +154,19 @@ text, the provider serializer adds one deterministic request to review the attac
 files, attached images, and/or referenced Outliner Nodes. That text is derived only at
 the provider boundary; canonical user content continues to record exactly what the user
 submitted.
-Each image is preceded by a deterministic identity block containing its name, MIME type,
-and source byte length, then the immutable prompt snapshot bytes. Multiple images
-therefore retain their user-visible identity and order without reviving attachment
-markers or parsing provider text. Resolved canonical input requires every image to carry
+Every attachment projects as a `[[file:<label>^<provider-readable-path>]]` marker at the
+same structured position where the user placed its composer atom. Every Node reference
+projects as `[[node:<label>^<node-id>]]` at its original position. The serializer joins
+those markers with the surrounding text into one user narrative, preserving whitespace
+and position. It then appends one independent attachment block per file in attachment
+order: name, MIME type, source byte length, readable path, file/directory tool guidance,
+and any bounded extracted text. An image attachment block is followed by its immutable
+prompt snapshot bytes. The inline marker and the independent resource block are both
+required: the marker preserves what the user wrote and where, while the resource block
+describes what the model can inspect. Multiple files, Nodes, and images therefore retain
+one model-visible identity grammar and exact user order without parsing markers back
+into canonical state. Resolved canonical input
+requires every image to carry
 a Thread-owned image `promptImage` and forbids `promptImage` on non-images. Admission
 rejects an invalid shape before publishing the user Item, and projection fails closed if
 corrupt canonical history violates the same invariant; an image never degrades to a
@@ -150,10 +182,13 @@ no shared source-size ceiling. A pathless browser `File` crosses preload in
 failure, cancellation, startup recovery, draft removal, and unreferenced-resource
 reconciliation reclaim incomplete or orphaned data.
 
-Non-image provider input describes a readable path and directs the model to
-`file_read`. A `localFile` uses its live canonical user path; a `threadPayload`
-uses an independent Turn-scoped copy under Agent scratch. The runtime removes
-that observation when execution ends, and model or tool writes to it cannot
+Non-image provider input exposes the readable path through both the file marker and its
+independent attachment block; stable instructions define percent-decoding plus
+`file_read` for files and `file_glob` for directories. A `localFile`
+uses its live canonical user path; a `threadPayload` uses an execution-lifetime copy at
+a deterministic Thread/digest/filename path under Agent scratch. Reprojection across
+Turns and restart therefore preserves the marker bytes and cache prefix. The runtime
+removes that observation when execution ends, and model or tool writes to it cannot
 modify the private content-addressed payload. Images are decoded in main from a
 source of at most 256 MiB, orientation-normalized by the native image pipeline,
 bounded to 2,000 px, and persisted as an immutable prompt snapshot of at most
@@ -172,7 +207,9 @@ Attachment/image Nodes are opened as regular non-symlink files, capped at 50 MiB
 checked against stored byte length and SHA-256 metadata, and copied into the
 owning Thread before the Item is published. Missing, corrupt, unsupported, and
 over-budget resources remain visible as typed unavailable evidence. Up to eight
-supported images add the verified Thread-owned bytes at the provider boundary. The
+supported images add the verified Thread-owned bytes at the provider boundary. An
+available Node resource exposes both an application-authority `readable_path` and the
+same untrusted-label file marker grammar used by composer attachments. The
 owning context Item declares dependencies by complete typed resource reference
 (digest, MIME type, byte length, and safe filename), even when multiple references map
 to one content-addressed physical file.
@@ -291,13 +328,16 @@ canonical Turn boundary, so it preserves the newest complete prior Turns that fi
 the active Turn, never a partial prior Turn. Provider-overflow recovery may compact all
 prior Turns and preserve only the active Turn. Manual `/compact
 [instructions]` may compact the current epoch while the Thread is idle. Both forms store
-exact covered/preserved cursors, a deterministic bounded lossy summary, and a reducer
+exact covered/preserved cursors, a `source=deterministic` bounded lossy summary, and a reducer
 checkpoint for the Skill and Role catalog journals, active inline Skill invocations,
 latest user-view baseline, and non-invalidated file/Node observations. Observation
 checkpoints reference the existing frozen projection and complete output instead of
 copying tool text. Optional manual instructions remain typed application guidance after
 the summary; they are not parsed from reminder text. A compaction with no eligible
-content is an idempotent no-op.
+content is an idempotent no-op. If the deterministic summary itself exceeds its character
+budget, it retains the newest complete summarized Turn suffix. Only a single Turn that
+cannot fit alone is truncated internally, with explicit omission markers and both its
+leading and trailing context retained.
 
 Reducers recursively evaluate typed inherited context and treat an earlier compaction
 checkpoint as authoritative state at that point in the effective history. Consequently,
@@ -373,6 +413,16 @@ budget facts are attached to that same call. System prompt and messages are pool
 stable SHA-256 fingerprints, so a later tool or steering call references its unchanged
 prefix instead of persisting another full copy.
 
+`CanonicalContextProjector` emits an observational provenance sidecar aligned one-to-one
+with those prepared messages and their content parts. It identifies canonical user input,
+typed context evidence and its kind, compaction output, assistant history, and tool
+results. The sidecar is not provider input and does not affect message bytes, ordering,
+budgeting, or cache affinity. Diagnostics persists it with each prepared window, and the
+codec rejects any message or part-count mismatch. The renderer uses only this typed
+sidecar to label context evidence; literal user text that spells a `system-reminder` or
+`context-evidence` wrapper remains a regular text part. Post-adapter payload fragments
+have no invented provenance and are presented according to their recorded wire shape.
+
 Turn-wide audit facts record the exact context epoch and cache affinity, L0/L1/L2
 stable-prompt source blocks and fingerprints, canonical-sorted tool schema pool,
 provider/model/API/configured-base-URL/transport selection, model limits, and retry/cache
@@ -419,4 +469,7 @@ versioned diagnostics payload, writes it content-addressed under the Thread, and
 the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,
 not provider history and not input to future execution. Active Turns and feature Turns
 that never contact a provider have no reference; the renderer never fills that absence
-from current settings.
+from current settings. Diagnostics publication is best-effort after provider execution:
+payload construction, validation, quota, or storage failure leaves `diagnosticsRef: null`
+and reports an internal warning, but never changes the real Turn status, response, or
+usage.

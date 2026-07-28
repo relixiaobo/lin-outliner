@@ -13,6 +13,7 @@ import type {
   Turn,
 } from '../../src/core/agent/protocol';
 import {
+  observedSkillFilePaths,
   planSkillCatalogEvidence,
   reduceSkillContext,
 } from '../../src/main/agent/context/SkillContextReducer';
@@ -104,7 +105,7 @@ describe('Skill context reducer', () => {
     expect(await planSkillCatalogEvidence({ turns, snapshot, readContext: store.read })).toBeNull();
   });
 
-  test('validates compaction checkpoints without inventing sparse catalog fields', async () => {
+  test('restores compaction checkpoints and appends Skills discovered by an old conversation', async () => {
     const store = contextStore();
     const baseline = catalog('1', [entry('alpha', 'a1')]);
     const active = invocation('alpha', 'a1', 'Active instructions');
@@ -124,6 +125,7 @@ describe('Skill context reducer', () => {
       roleCatalogHash: null,
       announcedRoles: [],
       userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
       activeObservations: [],
     };
     const compactedTurnId = turnId(1);
@@ -136,6 +138,16 @@ describe('Skill context reducer', () => {
     const restored = await reduceSkillContext(turns, store.read);
     expect(restored.catalogEntries.get('alpha')).toEqual(baseline.entries[0]);
     expect(restored.activeInvocations.get('alpha')).toEqual(active);
+
+    const expanded = catalog('2', [entry('alpha', 'a1'), entry('beta', 'b1')]);
+    expect(await planSkillCatalogEvidence({ turns, snapshot: expanded, readContext: store.read })).toEqual({
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'delta',
+      previousCatalogHash: baseline.catalogHash,
+      catalogHash: expanded.catalogHash,
+      entries: [{ ...entry('beta', 'b1'), change: 'added' }],
+    });
 
     const mismatched = { ...restoredState, skillCatalogHash: hash('9') };
     const mismatchedBaseline = store.evidence(baseline);
@@ -160,6 +172,35 @@ describe('Skill context reducer', () => {
     await expect(reduceSkillContext([
       turn([store.evidence(baseline), store.evidence(broken)]),
     ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
+  });
+
+  test('observes paths only from successful Core file tools', () => {
+    const dynamicTool = (
+      id: string,
+      namespace: string | null,
+      tool: string,
+      path: string,
+      success = true,
+    ): ThreadItem => ({
+      ...itemBase(id),
+      type: 'dynamicToolCall',
+      namespace,
+      tool,
+      arguments: { file_path: path },
+      status: success ? 'completed' : 'failed',
+      outputRef: null,
+      contentItems: null,
+      success,
+      durationMs: 1,
+    });
+    const turns = [turn([
+      dynamicTool('core-read', null, 'file_read', '/workspace/core.ts'),
+      dynamicTool('extension-read', 'example', 'file_read', '/workspace/extension.ts'),
+      dynamicTool('unknown-file-tool', null, 'file_probe', '/workspace/probe.ts'),
+      dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
+    ])];
+
+    expect(observedSkillFilePaths(turns)).toEqual(['/workspace/core.ts']);
   });
 });
 
@@ -223,7 +264,7 @@ function contextStore() {
       coveredThroughItemId = coveredFromItemId,
     ): ContextCompactionThreadItem {
       const restoredStateRef = put(payload);
-      const summaryRef = put({ schemaVersion: 1, kind: 'compactionSummary', source: 'fallback', text: 'Summary' });
+      const summaryRef = put({ schemaVersion: 1, kind: 'compactionSummary', source: 'deterministic', text: 'Summary' });
       return {
         ...itemBase('context-compaction'),
         type: 'contextCompaction',

@@ -4,8 +4,15 @@ import type { AgentEvent, AgentOptions, AgentTool } from '@earendil-works/pi-age
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
-import type { AgentCoreNotification } from '../../src/core/agent/protocol';
-import type { TurnDiagnosticsPayload } from '../../src/core/agent/protocol';
+import type {
+  AgentCoreNotification,
+  ContextEvidenceThreadItem,
+  ThreadContextPayload,
+  ThreadContextPayloadReference,
+  ThreadItem,
+  Turn,
+  TurnDiagnosticsPayload,
+} from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
@@ -22,6 +29,7 @@ import {
   serializeUserContent,
 } from '../../src/main/agent/context/ContextProjector';
 import { planContextCompaction } from '../../src/main/agent/context/ContextCompaction';
+import { providerCacheAffinity } from '../../src/main/agent/context/ProviderCache';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import {
@@ -206,6 +214,10 @@ describe('PiTurnExecutor event normalization', () => {
       { type: 'text', text: 'Please review the attached files.' },
       {
         type: 'text',
+        text: '[[file:report.pdf^%2Fworkspace%2Fagent-attachments%2Freport.pdf]]',
+      },
+      {
+        type: 'text',
         text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /workspace/agent-attachments/report.pdf\nUse file_read with this path to inspect the attachment.',
       },
     ]);
@@ -218,25 +230,32 @@ describe('PiTurnExecutor event normalization', () => {
       byteLength: 512,
       fileName: 'report.pdf',
     };
-    const content = await serializeUserContent([{
+    const input = [{
       type: 'attachment',
       id: 'managed-attachment',
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 512,
       source: { kind: 'threadPayload', ref },
-    }], {
+    }] as const;
+    const resources = {
       readResource: async () => null,
       resolveResourceObservationPath: async () => '/scratch/agent-attachments/turn/report.pdf',
-    });
+    };
+    const content = await serializeUserContent(input, resources);
 
     expect(content).toEqual([
       { type: 'text', text: 'Please review the attached files.' },
       {
         type: 'text',
+        text: '[[file:report.pdf^%2Fscratch%2Fagent-attachments%2Fturn%2Freport.pdf]]',
+      },
+      {
+        type: 'text',
         text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /scratch/agent-attachments/turn/report.pdf\nUse file_read with this path to inspect the attachment.',
       },
     ]);
+    expect(await serializeUserContent(input, resources)).toEqual(content);
   });
 
   test('encodes only the persisted prompt image at the provider boundary', async () => {
@@ -263,7 +282,11 @@ describe('PiTurnExecutor event normalization', () => {
       { type: 'text', text: 'Please review the attached images.' },
       {
         type: 'text',
-        text: '[Attachment image: source.png, image/png, 4096 bytes]\nThe following image is the immutable prompt snapshot for this attachment.',
+        text: '[[file:source.png^%2Foutside%2Fsource.png]]',
+      },
+      {
+        type: 'text',
+        text: '[Attachment image: source.png, image/png, 4096 bytes]\nReadable path: /outside/source.png\nThe following image is the immutable prompt snapshot for this attachment.',
       },
       {
         type: 'image',
@@ -333,7 +356,41 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'text',
       text: 'Please review the attached files, attached images and referenced Outliner Nodes.',
     });
+    expect(content.filter((part) => part.type === 'text').map((part) => part.text)).toEqual([
+      'Please review the attached files, attached images and referenced Outliner Nodes.',
+      '[[file:report.pdf^%2Fworkspace%2Freport.pdf]][[file:diagram.png^%2Fworkspace%2Fdiagram.png]][[node:node-1^node-1]]',
+      '[Attachment: report.pdf, application/pdf, 10 bytes]\nReadable path: /workspace/report.pdf\nUse file_read with this path to inspect the attachment.',
+      '[Attachment image: diagram.png, image/png, 8 bytes]\nReadable path: /workspace/diagram.png\nThe following image is the immutable prompt snapshot for this attachment.',
+    ]);
     expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
+  });
+
+  test('preserves file and Node marker positions in mixed user content', async () => {
+    const content = await serializeUserContent([
+      { type: 'text', text: 'Compare ' },
+      { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+      { type: 'text', text: ' with ' },
+      {
+        type: 'attachment',
+        id: 'document',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 10,
+        source: { kind: 'localFile', path: '/workspace/report.pdf' },
+      },
+      { type: 'text', text: ' before deciding.' },
+    ], fixtureResources());
+
+    expect(content).toEqual([
+      {
+        type: 'text',
+        text: 'Compare [[node:Plan^node-1]] with [[file:report.pdf^%2Fworkspace%2Freport.pdf]] before deciding.',
+      },
+      {
+        type: 'text',
+        text: '[Attachment: report.pdf, application/pdf, 10 bytes]\nReadable path: /workspace/report.pdf\nUse file_read with this path to inspect the attachment.',
+      },
+    ]);
   });
 
   test('does not create an Agent when Stop arrives during any async initialization stage', async () => {
@@ -446,6 +503,37 @@ describe('PiTurnExecutor event normalization', () => {
     expect(captures[0]?.sessionId).toBe(captures[1]?.sessionId);
     expect(captures[2]?.sessionId).not.toBe(captures[0]?.sessionId);
     expect(captures.every((capture) => capture.sessionId?.length === 64)).toBe(true);
+  });
+
+  test('keeps a successful Turn and usage when diagnostics persistence fails', async () => {
+    const fixture = createContext();
+    const failure = new Error('managed diagnostics quota exceeded');
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createAgent: () => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => undefined,
+      }),
+    });
+
+    const result = await executor.execute({
+      ...fixture.context,
+      persistTurnDiagnostics: async () => { throw failure; },
+    });
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      execution: {
+        diagnosticsRef: null,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+      },
+    });
+    expect(fixture.diagnosticsErrors).toEqual([failure]);
   });
 
   test('runs the pre-provider hook without changing canonical user input', async () => {
@@ -614,6 +702,332 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(providerContexts[1])).toContain('new-skill');
   });
 
+  test('rebuilds complete dynamic context after compaction without replaying Turn-local events', async () => {
+    const fixture = createContext();
+    const payloads = new Map<string, ThreadContextPayload>();
+    const outputRef = {
+      id: 'e'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 20,
+      summary: 'File snapshot',
+    };
+    const put = (payload: ThreadContextPayload): ThreadContextPayloadReference => {
+      const serialized = JSON.stringify(payload);
+      const ref = {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+      payloads.set(ref.id, payload);
+      return ref;
+    };
+    const priorTurnId = uuidV7(1_719_990_000_000);
+    const evidence = (
+      payload: ThreadContextPayload,
+      id: string,
+      dependencies: {
+        readonly contextRefs?: readonly ThreadContextPayloadReference[];
+        readonly outputRefs?: readonly typeof outputRef[];
+      } = {},
+    ): ContextEvidenceThreadItem => {
+      const payloadRef = put(payload);
+      return {
+        type: 'contextEvidence',
+        id,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: priorTurnId,
+          originItemId: id,
+        },
+        kind: payload.kind as ContextEvidenceThreadItem['kind'],
+        payloadRef,
+        summary: payload.kind,
+        contextRefs: dependencies.contextRefs ?? [],
+        resourceRefs: [],
+        outputRefs: dependencies.outputRefs ?? [],
+      };
+    };
+    const skillCatalog = {
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: '1'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'alpha',
+        displayName: 'Alpha',
+        source: 'project' as const,
+        identity: 'project:alpha',
+        contentHash: '2'.repeat(64),
+        description: 'ALPHA CATALOG BASELINE',
+      }],
+    };
+    const roleCatalog = {
+      schemaVersion: 1 as const,
+      kind: 'roleCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: '3'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'worker',
+        displayName: 'Worker',
+        source: 'built-in' as const,
+        identity: 'built-in:worker',
+        contentHash: '4'.repeat(64),
+        description: 'WORKER ROLE BASELINE',
+      }],
+    };
+    const activeSkill = {
+      schemaVersion: 1 as const,
+      kind: 'skillInvocation' as const,
+      name: 'alpha',
+      displayName: 'Alpha',
+      source: 'project' as const,
+      identity: 'project:alpha',
+      resourceRoot: '/workspace/.agents/skills/alpha',
+      contentHash: '2'.repeat(64),
+      instructions: 'ACTIVE ALPHA INSTRUCTIONS',
+      arguments: '',
+      execution: 'inline' as const,
+      invocationSource: 'model' as const,
+      constraints: { allowedTools: [], model: null, effort: null },
+      invokedAt: 1_719_990_000_010,
+    };
+    const baselineView = {
+      schemaVersion: 1 as const,
+      kind: 'userView' as const,
+      mode: 'interactive' as const,
+      activePanelId: 'panel-1',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row' as const,
+      focusedNode: { nodeId: 'node-1', title: 'BASELINE VIEW NODE', panelId: 'panel-1', surface: 'row' },
+      selectedNodes: [],
+      referencedNodes: [],
+      panels: [],
+      truncated: false,
+    };
+    const baselineAdditional = {
+      schemaVersion: 1 as const,
+      kind: 'additionalContext' as const,
+      turnEntries: [{
+        key: 'old_event',
+        source: 'main',
+        authority: 'application' as const,
+        purpose: 'instruction' as const,
+        text: 'OLD TURN EVENT',
+      }],
+      threadState: [{
+        key: 'memory:policy',
+        source: 'extension:memory',
+        authority: 'application' as const,
+        purpose: 'instruction' as const,
+        text: 'MEMORY THREAD STATE',
+      }],
+    };
+    const projection = {
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    };
+    const skillCatalogItem = evidence(skillCatalog, 'skill-catalog-before-compact');
+    const roleCatalogItem = evidence(roleCatalog, 'role-catalog-before-compact');
+    const activeSkillItem = evidence(activeSkill, 'active-skill-before-compact');
+    const viewItem = evidence(baselineView, 'view-before-compact');
+    const additionalItem = evidence(baselineAdditional, 'additional-before-compact');
+    const projectionItem = evidence(projection, 'projection-before-compact', { outputRefs: [outputRef] });
+    const priorUserId = uuidV7(1_719_990_000_020);
+    const priorToolId = uuidV7(1_719_990_000_021);
+    const priorItems: ThreadItem[] = [
+      skillCatalogItem,
+      roleCatalogItem,
+      activeSkillItem,
+      viewItem,
+      additionalItem,
+      {
+        type: 'userMessage',
+        id: priorUserId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: priorTurnId,
+          originItemId: priorUserId,
+        },
+        clientId: null,
+        acceptedAt: 1_719_990_000_020,
+        content: [{ type: 'text', text: 'OLD USER REQUEST' }],
+      },
+      {
+        type: 'dynamicToolCall',
+        id: priorToolId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: priorTurnId,
+          originItemId: priorToolId,
+        },
+        status: 'completed',
+        outputRef,
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: '/workspace/active.md' },
+        contentItems: [{ type: 'text', text: 'bounded file snapshot' }],
+        success: true,
+        durationMs: 1,
+      },
+      projectionItem,
+    ];
+    const priorTurn = completedTurn(fixture.context.turn, priorTurnId, priorItems, 1_719_990_000_000);
+    const summaryRef = put({
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'deterministic',
+      text: 'COMPACTED HISTORY SUMMARY',
+    });
+    const restoredStateRef = put({
+      schemaVersion: 1,
+      kind: 'compactionRestoredState',
+      skillCatalogHash: skillCatalog.catalogHash,
+      announcedSkills: [{ name: 'alpha', identity: 'project:alpha', contentHash: activeSkill.contentHash }],
+      activeSkills: [{
+        name: 'alpha',
+        identity: activeSkill.identity,
+        contentHash: activeSkill.contentHash,
+        payloadRef: activeSkillItem.payloadRef,
+      }],
+      roleCatalogHash: roleCatalog.catalogHash,
+      announcedRoles: [{ name: 'worker', identity: 'built-in:worker', contentHash: '4'.repeat(64) }],
+      userViewBaselineRef: viewItem.payloadRef,
+      additionalContextBaselineRef: additionalItem.payloadRef,
+      activeObservations: [{
+        key: 'file:/workspace/active.md',
+        tool: 'file_read',
+        subject: '/workspace/active.md',
+        outputRef,
+        projectionRef: projectionItem.payloadRef,
+      }],
+    });
+    const compactTurnId = uuidV7(1_719_990_100_000);
+    const compactItemId = uuidV7(1_719_990_100_001);
+    const compactTurn = completedTurn(fixture.context.turn, compactTurnId, [{
+      type: 'contextCompaction',
+      id: compactItemId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: compactTurnId,
+        originItemId: compactItemId,
+      },
+      trigger: 'manual',
+      coveredFrom: { turnId: priorTurnId, itemId: skillCatalogItem.id },
+      coveredThrough: { turnId: priorTurnId, itemId: projectionItem.id },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef: null,
+      contextRefs: [activeSkillItem.payloadRef, viewItem.payloadRef, additionalItem.payloadRef, projectionItem.payloadRef],
+      resourceRefs: [],
+      outputRefs: [outputRef],
+    }], 1_719_990_100_000);
+    const environmentAfter = evidence({
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      utcInstant: '2026-07-28T02:00:00.000Z',
+      localDate: '2026-07-28',
+      localTime: '10:00:00',
+      timeZone: 'Asia/Shanghai',
+      utcOffsetMinutes: 480,
+      locale: 'zh-CN',
+      workingDirectory: '/workspace',
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+      todayNodeTitle: null,
+    }, 'environment-after-compact');
+    const viewAfter = evidence({
+      ...baselineView,
+      focusedNode: { ...baselineView.focusedNode, title: 'CHANGED VIEW NODE' },
+    }, 'view-after-compact');
+    const skillDelta = evidence({
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'delta',
+      previousCatalogHash: skillCatalog.catalogHash,
+      catalogHash: '5'.repeat(64),
+      entries: [{
+        change: 'added',
+        name: 'beta',
+        displayName: 'Beta',
+        source: 'project',
+        identity: 'project:beta',
+        contentHash: '6'.repeat(64),
+        description: 'NEW BETA SKILL DELTA',
+      }],
+    }, 'skill-delta-after-compact');
+    const currentAdditional = evidence({
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [{
+        key: 'current_event',
+        source: 'main',
+        authority: 'application',
+        purpose: 'instruction',
+        text: 'CURRENT TURN EVENT',
+      }],
+      threadState: baselineAdditional.threadState,
+    }, 'additional-after-compact');
+    const currentUser = fixture.context.turn.items[0]!;
+    const currentTurn: Turn = {
+      ...fixture.context.turn,
+      items: [environmentAfter, viewAfter, skillDelta, currentAdditional, currentUser],
+    };
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      historyBeforeTurn: [priorTurn, compactTurn],
+      turn: currentTurn,
+      readContext: async (ref) => payloads.get(ref.id) ?? null,
+      readOutput: async (ref) => ref.id === outputRef.id ? 'ACTIVE FILE OBSERVATION' : null,
+    };
+    let cacheAffinity: string | undefined;
+    let providerMessages: Message[] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => {
+        cacheAffinity = options.sessionId;
+        return {
+          state: { errorMessage: undefined },
+          subscribe: () => () => undefined,
+          abort: () => undefined,
+          steer: () => undefined,
+          prompt: async () => {
+            providerMessages = await options.transformContext!([]);
+          },
+        };
+      },
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    const providerText = JSON.stringify(providerMessages);
+    expect(providerText).toContain('ALPHA CATALOG BASELINE');
+    expect(providerText).toContain('WORKER ROLE BASELINE');
+    expect(providerText).toContain('ACTIVE ALPHA INSTRUCTIONS');
+    expect(providerText).toContain('BASELINE VIEW NODE');
+    expect(providerText).toContain('CHANGED VIEW NODE');
+    expect(providerText).toContain('MEMORY THREAD STATE');
+    expect(providerText.match(/MEMORY THREAD STATE/g)).toHaveLength(1);
+    expect(providerText).toContain('ACTIVE FILE OBSERVATION');
+    expect(providerText).toContain('NEW BETA SKILL DELTA');
+    expect(providerText).toContain('CURRENT TURN EVENT');
+    expect(providerText).toContain('projection_mode=snapshot');
+    expect(providerText).toContain('timezone=Asia/Shanghai');
+    expect(providerText).not.toContain('OLD TURN EVENT');
+    expect(providerText).not.toContain('OLD USER REQUEST');
+    expect(cacheAffinity).toBe(providerCacheAffinity(fixture.context.thread.id, []));
+  });
+
   test('records one automatic compaction and replans before an oversized provider request', async () => {
     const fixture = createContext();
     const priorTurnId = uuidV7(1_719_999_000_000);
@@ -726,7 +1140,7 @@ describe('PiTurnExecutor event normalization', () => {
         const summaryRef = writePayload({
           schemaVersion: 1,
           kind: 'compactionSummary',
-          source: 'fallback',
+          source: 'deterministic',
           text: 'COMPACTED OLD HISTORY',
         });
         const restoredStateRef = writePayload({
@@ -738,6 +1152,7 @@ describe('PiTurnExecutor event normalization', () => {
           roleCatalogHash: null,
           announcedRoles: [],
           userViewBaselineRef: null,
+          additionalContextBaselineRef: null,
           activeObservations: [],
         });
         const id = fixture.recorder.createItemId();
@@ -758,7 +1173,7 @@ describe('PiTurnExecutor event normalization', () => {
         }) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
       },
     };
-    const smallModel = { ...testModel, contextWindow: 2_000, maxTokens: 200 };
+    const smallModel = { ...testModel, contextWindow: 2_020, maxTokens: 200 };
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => ({
@@ -814,13 +1229,14 @@ describe('PiTurnExecutor event normalization', () => {
     const oversizedRef = put({
       schemaVersion: 1,
       kind: 'additionalContext',
-      entries: [{
+      turnEntries: [{
         key: 'oversized_parent_context',
         source: 'parent',
         authority: 'untrusted',
         purpose: 'observation',
         text: `OVERSIZED INHERITED ${'x'.repeat(16_000)}`,
       }],
+      threadState: null,
     });
     const sourceTurn = decodeTurn({
       ...fixture.context.turn,
@@ -862,13 +1278,14 @@ describe('PiTurnExecutor event normalization', () => {
     const currentEvidenceRef = put({
       schemaVersion: 1,
       kind: 'additionalContext',
-      entries: [{
+      turnEntries: [{
         key: 'current_admission',
         source: 'main',
         authority: 'application',
         purpose: 'instruction',
         text: 'CURRENT ADMISSION MUST SURVIVE',
       }],
+      threadState: null,
     });
     const inheritedId = uuidV7(1_720_000_000_102);
     const currentEvidenceId = uuidV7(1_720_000_000_103);
@@ -1614,6 +2031,7 @@ function createContext(): {
   recorder: ItemRecorder;
   notifications: AgentCoreNotification[];
   diagnosticsPayloads: TurnDiagnosticsPayload[];
+  diagnosticsErrors: unknown[];
 } {
   const threadId = uuidV7(1_720_000_000_000);
   const turnId = uuidV7(1_720_000_000_100);
@@ -1670,6 +2088,7 @@ function createContext(): {
   const contextPayloads = new Map<string, import('../../src/core/agent/protocol').ThreadContextPayload>();
   const outputPayloads = new Map<string, string>();
   const diagnosticsPayloads: TurnDiagnosticsPayload[] = [];
+  const diagnosticsErrors: unknown[] = [];
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
@@ -1737,13 +2156,31 @@ function createContext(): {
         schemaVersion: 1,
       };
     },
+    onTurnDiagnosticsError: (error) => diagnosticsErrors.push(error),
     persistSkillCatalog: async () => null,
     compactContext: async () => null,
     onProviderRetry: () => undefined,
     onSteer: () => undefined,
   };
   context.readContext = async (ref) => contextPayloads.get(ref.id) ?? null;
-  return { context, recorder, notifications, diagnosticsPayloads };
+  return { context, recorder, notifications, diagnosticsPayloads, diagnosticsErrors };
+}
+
+function completedTurn(base: Turn, id: string, items: readonly ThreadItem[], startedAt: number): Turn {
+  return {
+    ...base,
+    id,
+    items,
+    provenance: {
+      originThreadId: base.provenance.originThreadId,
+      originTurnId: id,
+      trigger: { kind: 'user' },
+    },
+    status: 'completed',
+    completedAt: startedAt + 100,
+    durationMs: 100,
+    startedAt,
+  };
 }
 
 function fixtureResources() {

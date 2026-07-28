@@ -1830,7 +1830,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       exactKeys(record, [
         'schemaVersion', 'kind', 'acceptedAt', 'utcInstant', 'localDate', 'localTime',
         'timeZone', 'utcOffsetMinutes', 'locale', 'workingDirectory', 'conversationMode',
-        'executionMode', 'replyIdentity', 'todayNodeId',
+        'executionMode', 'replyIdentity', 'todayNodeId', 'todayNodeTitle',
       ], 'contextPayload');
       return deepFreeze({
         schemaVersion: 1,
@@ -1855,6 +1855,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         ),
         replyIdentity: nullableString(record.replyIdentity, 'contextPayload.replyIdentity'),
         todayNodeId: nullableString(record.todayNodeId, 'contextPayload.todayNodeId'),
+        todayNodeTitle: nullableString(record.todayNodeTitle, 'contextPayload.todayNodeTitle'),
       });
     case 'userView': {
       exactKeys(record, [
@@ -1886,11 +1887,16 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       });
     }
     case 'additionalContext': {
-      exactKeys(record, ['schemaVersion', 'kind', 'entries'], 'contextPayload');
-      const entries = arrayValue(record.entries, 'contextPayload.entries')
-        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.entries[${index}]`));
-      requireUnique(entries.map((entry) => entry.key), 'contextPayload.entries', 'keys');
-      return deepFreeze({ schemaVersion: 1, kind, entries });
+      exactKeys(record, ['schemaVersion', 'kind', 'turnEntries', 'threadState'], 'contextPayload');
+      const turnEntries = arrayValue(record.turnEntries, 'contextPayload.turnEntries')
+        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.turnEntries[${index}]`));
+      const threadState = record.threadState === null
+        ? null
+        : arrayValue(record.threadState, 'contextPayload.threadState')
+          .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.threadState[${index}]`));
+      requireUnique(turnEntries.map((entry) => entry.key), 'contextPayload.turnEntries', 'keys');
+      if (threadState) requireUnique(threadState.map((entry) => entry.key), 'contextPayload.threadState', 'keys');
+      return deepFreeze({ schemaVersion: 1, kind, turnEntries, threadState });
     }
     case 'referencedResources':
       exactKeys(record, ['schemaVersion', 'kind', 'resources'], 'contextPayload');
@@ -2024,13 +2030,14 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       return deepFreeze({
         schemaVersion: 1,
         kind,
-        source: enumValue(record.source, ['model', 'fallback'], 'contextPayload.source'),
+        source: enumValue(record.source, ['deterministic'], 'contextPayload.source'),
         text: stringValue(record.text, 'contextPayload.text', true),
       });
     case 'compactionRestoredState':
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
-        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef', 'activeObservations',
+        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef',
+        'additionalContextBaselineRef', 'activeObservations',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -2081,6 +2088,16 @@ function decodeCompactionRestoredState(
           decodeThreadContextPayloadReference(record.userViewBaselineRef, 'contextPayload.userViewBaselineRef'),
           'userView',
           'contextPayload.userViewBaselineRef',
+        ),
+    additionalContextBaselineRef: record.additionalContextBaselineRef === null
+      ? null
+      : expectContextPayloadKind(
+          decodeThreadContextPayloadReference(
+            record.additionalContextBaselineRef,
+            'contextPayload.additionalContextBaselineRef',
+          ),
+          'additionalContext',
+          'contextPayload.additionalContextBaselineRef',
         ),
     activeObservations,
   });
@@ -2495,7 +2512,8 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       fail(`turnDiagnostics.toolSchemas[${index}].name`, 'tool schemas must use canonical name order');
     }
   });
-  const messageIds = new Set(canonicalMessages.map((message) => message.id));
+  const messagesById = new Map(canonicalMessages.map((message) => [message.id, message]));
+  const messageIds = new Set(messagesById.keys());
   const fragmentsById = new Map(requestFragments.map((fragment) => [fragment.id, fragment.value]));
   const fragmentIds = new Set(requestFragments.map((fragment) => fragment.id));
   const canonicalToolNames = toolSchemas.map((tool) => tool.name);
@@ -2513,7 +2531,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     );
     exactKeys(
       preparedContext,
-      ['systemPromptFragmentId', 'toolNames', 'messageIds'],
+      ['systemPromptFragmentId', 'toolNames', 'messageIds', 'messagePartProvenance'],
       `turnDiagnostics.providerCalls[${index}].preparedContext`,
     );
     const systemPromptFragmentId = sha256(
@@ -2557,6 +2575,48 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     if (callMessageIds.some((id) => !messageIds.has(id))) {
       fail(`turnDiagnostics.providerCalls[${index}].preparedContext.messageIds`, 'references an unknown message');
     }
+    const messagePartProvenance = arrayValue(
+      preparedContext.messagePartProvenance,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance`,
+    ).map((parts, messageIndex) => {
+      const path = `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance[${messageIndex}]`;
+      return arrayValue(parts, path).map((entry, partIndex) => {
+        const partPath = `${path}[${partIndex}]`;
+        const provenance = recordValue(entry, partPath);
+        const source = enumValue(provenance.source, [
+          'contextEvidence',
+          'contextCompaction',
+          'userInput',
+          'assistantHistory',
+          'toolResult',
+          'unknown',
+        ], `${partPath}.source`);
+        if (source === 'contextEvidence') {
+          exactKeys(provenance, ['source', 'kind'], partPath);
+          return {
+            source,
+            kind: enumValue(provenance.kind, CONTEXT_EVIDENCE_KINDS, `${partPath}.kind`),
+          };
+        }
+        exactKeys(provenance, ['source'], partPath);
+        return { source };
+      });
+    });
+    if (messagePartProvenance.length !== callMessageIds.length) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance`,
+        'must align with the prepared message window',
+      );
+    }
+    messagePartProvenance.forEach((parts, messageIndex) => {
+      const message = messagesById.get(callMessageIds[messageIndex]!);
+      if (!message || parts.length !== diagnosticContentPartCount(message.value)) {
+        fail(
+          `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance[${messageIndex}]`,
+          'must align with the referenced message content',
+        );
+      }
+    });
     const request = decodeTurnDiagnosticsProviderRequest(
       call.request,
       fragmentIds,
@@ -2604,6 +2664,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
         systemPromptFragmentId,
         toolNames: callToolNames,
         messageIds: callMessageIds,
+        messagePartProvenance,
       },
       protectedFromMessageIndex,
       estimatedInputTokens: nonNegativeInteger(
@@ -2730,6 +2791,13 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     requestFragments,
     providerCalls,
   });
+}
+
+function diagnosticContentPartCount(value: JsonValue): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
+  const content = (value as Readonly<Record<string, JsonValue>>).content;
+  if (Array.isArray(content)) return content.length;
+  return content === undefined || content === null ? 0 : 1;
 }
 
 function decodeTurnDiagnosticsProviderRequest(

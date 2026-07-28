@@ -104,6 +104,7 @@ function contextPayloadDependencies(payload: ThreadContextPayload): ContextPaylo
         contexts: [
           ...payload.activeSkills.map((skill) => skill.payloadRef),
           ...(payload.userViewBaselineRef ? [payload.userViewBaselineRef] : []),
+          ...(payload.additionalContextBaselineRef ? [payload.additionalContextBaselineRef] : []),
           ...payload.activeObservations.map((observation) => observation.projectionRef),
         ],
         resources: [],

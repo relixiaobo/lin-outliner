@@ -249,13 +249,14 @@ class FailingContextPayloadExecutor extends ControlledExecutor {
     this.contextRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'additionalContext',
-      entries: [{
+      turnEntries: [{
         key: 'orphaned-runtime-context',
         source: 'test',
         authority: 'application',
         purpose: 'observation',
         text: 'This payload never reached a canonical Item.',
       }],
+      threadState: [],
     });
     throw new Error('Runtime failed after persisting context');
   }
@@ -296,18 +297,19 @@ class ContextPayloadExecutor extends ControlledExecutor {
       executionMode: 'root',
       replyIdentity: null,
       todayNodeId: null,
+      todayNodeTitle: null,
     } as const;
     const payloadRef = await this.payloads.writeContext(context.thread.id, payload);
     const nestedPayloadRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'fallback',
+      source: 'deterministic',
       text: 'Nested context dependency',
     });
     const summaryRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'model',
+      source: 'deterministic',
       text: 'Compacted context summary',
     });
     const restoredStateRef = await this.payloads.writeContext(context.thread.id, {
@@ -319,6 +321,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       roleCatalogHash: null,
       announcedRoles: [],
       userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
       activeObservations: [],
     });
     const instructionsRef = await this.payloads.writeContext(context.thread.id, {
@@ -1116,7 +1119,7 @@ describe('ThreadService', () => {
     }
     expect(await fixture.stores.payloads.readContext(thread.id, compactItem.summaryRef)).toMatchObject({
       kind: 'compactionSummary',
-      source: 'fallback',
+      source: 'deterministic',
       text: expect.stringContaining('Keep the verified implementation details.'),
     });
     expect(await fixture.stores.payloads.readContext(thread.id, compactItem.instructionsRef)).toMatchObject({
@@ -1194,7 +1197,7 @@ describe('ThreadService', () => {
     expect(compaction).toEqual(executor.compaction);
     expect(await opened.stores.payloads.readContext(thread.id, compaction.summaryRef)).toMatchObject({
       kind: 'compactionSummary',
-      source: 'fallback',
+      source: 'deterministic',
       text: expect.stringContaining('Retain the original implementation decision.'),
     });
     expect(await opened.stores.payloads.readContext(thread.id, compaction.restoredStateRef)).toMatchObject({
@@ -1981,6 +1984,10 @@ describe('ThreadService', () => {
       ? [fixture.stores.payloads.readContext(thread.id, item.payloadRef)]
       : []));
     const userView = payloads.find((payload) => payload?.kind === 'userView');
+    expect(payloads.find((payload) => payload?.kind === 'turnEnvironment')).toMatchObject({
+      todayNodeId: 'root',
+      todayNodeTitle: 'Authoritative root',
+    });
     expect(userView).toMatchObject({
       focusedNode: { nodeId: 'focus', title: 'Authoritative title' },
       selectedNodes: [{ nodeId: 'focus', title: 'Authoritative title' }],
@@ -1994,13 +2001,14 @@ describe('ThreadService', () => {
       }],
     });
     expect(payloads.find((payload) => payload?.kind === 'additionalContext')).toMatchObject({
-      entries: [{
+      turnEntries: [{
         key: 'renderer_note',
         source: 'renderer',
         authority: 'untrusted',
         purpose: 'observation',
         text: 'Renderer observation',
       }],
+      threadState: null,
     });
     const resources = payloads.find((payload) => payload?.kind === 'referencedResources');
     expect(resources).toMatchObject({
@@ -2062,7 +2070,7 @@ describe('ThreadService', () => {
     const payload = await fixture.stores.payloads.readContext(thread.id, evidence.payloadRef);
     expect(payload).toMatchObject({
       kind: 'additionalContext',
-      entries: expect.arrayContaining([
+      turnEntries: expect.arrayContaining([
         {
           key: 'automation_info',
           source: 'main',
@@ -2070,6 +2078,8 @@ describe('ThreadService', () => {
           purpose: 'instruction',
           text: 'Host schedule guidance',
         },
+      ]),
+      threadState: expect.arrayContaining([
         {
           key: 'context-probe:extension_instruction',
           source: 'extension:context-probe',
@@ -2088,6 +2098,59 @@ describe('ThreadService', () => {
     });
 
     fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('records an empty Thread-state snapshot when the last extension value is cleared', async () => {
+    let active = true;
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'state-probe',
+      contributeThreadContext: () => active ? {
+        extensionId: 'state-probe',
+        additionalContext: {
+          policy: { kind: 'application', value: 'ACTIVE THREAD POLICY' },
+        },
+      } : null,
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First request' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+
+    active = false;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Second request' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const secondTurn = fixture.executor.contexts[1]!.turn;
+    const additional = secondTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'additionalContext'
+    ));
+    if (!additional || additional.type !== 'contextEvidence') {
+      throw new Error('Expected empty Thread-state evidence.');
+    }
+    expect(await fixture.stores.payloads.readContext(thread.id, additional.payloadRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [],
+      threadState: [],
+    });
+
+    fixture.executor.finish(1);
     await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
   });
@@ -2363,7 +2426,7 @@ describe('ThreadService', () => {
       .toEqual({
         schemaVersion: 1,
         kind: 'compactionSummary',
-        source: 'fallback',
+        source: 'deterministic',
         text: 'Nested context dependency',
       });
     expect(await stores.payloads.readResource(fork.id, forkEvidence.resourceRefs[0]!))
@@ -2388,7 +2451,7 @@ describe('ThreadService', () => {
     await service.close();
   });
 
-  test('compacts a fork after source deletion with owned Skill and user-view checkpoints', async () => {
+  test('compacts a fork after source deletion with owned Skill, view, and Thread-state checkpoints', async () => {
     const catalog = {
       schemaVersion: 1 as const,
       kind: 'skillCatalog' as const,
@@ -2421,7 +2484,17 @@ describe('ThreadService', () => {
       constraints: { allowedTools: [], model: null, effort: null },
       invokedAt: 1,
     };
-    const fixture = await createFixture(undefined, {
+    const extensions = new ExtensionRegistry();
+    extensions.register({
+      id: 'fork-context',
+      contributeThreadContext: () => ({
+        extensionId: 'fork-context',
+        additionalContext: {
+          policy: { kind: 'application', value: 'Use the fork-owned Thread policy.' },
+        },
+      }),
+    });
+    const fixture = await createFixture(extensions, {
       getDocumentProjection: () => contextProjection([contextNode('root', 'Fork-owned view root')]),
       resolveSkillAdmission: () => ({ catalogSnapshot: catalog, invocation }),
     });
@@ -2462,10 +2535,17 @@ describe('ThreadService', () => {
     });
     expect(restored.userViewBaselineRef?.kind).toBe('userView');
     expect(restored.userViewBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(restored.additionalContextBaselineRef?.kind).toBe('additionalContext');
+    expect(restored.additionalContextBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
     expect(await fixture.stores.payloads.readContext(fork.id, restored.activeSkills[0]!.payloadRef))
       .toMatchObject({ kind: 'skillInvocation', instructions: invocation.instructions });
     expect(await fixture.stores.payloads.readContext(fork.id, restored.userViewBaselineRef!))
       .toMatchObject({ kind: 'userView', panels: [{ rootTitle: 'Fork-owned view root' }] });
+    expect(await fixture.stores.payloads.readContext(fork.id, restored.additionalContextBaselineRef!))
+      .toMatchObject({
+        kind: 'additionalContext',
+        threadState: [{ text: 'Use the fork-owned Thread policy.' }],
+      });
 
     const turns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
     const projected = await new CanonicalContextProjector(projectionModel(), {
@@ -2477,6 +2557,7 @@ describe('ThreadService', () => {
     expect(JSON.stringify(projected)).toContain('Fork-owned Skill description.');
     expect(JSON.stringify(projected)).toContain('Use the fork-owned Skill instructions.');
     expect(JSON.stringify(projected)).toContain('Fork-owned view root');
+    expect(JSON.stringify(projected)).toContain('Use the fork-owned Thread policy.');
     await fixture.service.close();
   });
 

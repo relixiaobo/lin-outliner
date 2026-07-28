@@ -28,6 +28,7 @@ function turnEnvironmentPayload(acceptedAt = 1_720_000_000_000) {
     executionMode: 'root',
     replyIdentity: null,
     todayNodeId: null,
+    todayNodeTitle: null,
   } as const;
 }
 

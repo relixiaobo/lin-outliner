@@ -22,7 +22,7 @@ import {
   admitReferencedResources,
   type ReferencedAssetResolution,
 } from '../capabilities/agentReferencedAssets';
-import { buildUserViewPayload } from './userView';
+import { buildUserViewPayload, nodeTitle } from './userView';
 import { assertContextPayloadDependencies } from './contextDependencies';
 
 export interface ContextEvidenceAdmissionResult {
@@ -93,9 +93,16 @@ export async function admitContextEvidence(input: {
     }
   }
 
-  const additionalContext = additionalContextPayload(input.additionalContext, input.extensionContext);
+  const additionalContext = additionalContextPayload(
+    input.additionalContext,
+    input.extensionContext,
+    input.includeHostContext,
+  );
   if (additionalContext) {
-    await publish(additionalContext, `Additional context (${additionalContext.entries.length})`);
+    await publish(
+      additionalContext,
+      `Additional context (${additionalContext.turnEntries.length} turn, ${additionalContext.threadState?.length ?? 0} state)`,
+    );
   }
 
   if (input.includeHostContext && nodeReferences.length > 0) {
@@ -131,6 +138,7 @@ function turnEnvironment(input: {
   const locale = input.locale ?? resolved.locale ?? 'en-US';
   const timeZone = input.timeZone ?? resolved.timeZone ?? 'Etc/UTC';
   const parts = dateTimeParts(instant, locale, timeZone);
+  const todayNode = input.projection?.nodes.find((node) => node.id === input.projection?.todayId) ?? null;
   return {
     schemaVersion: 1,
     kind: 'turnEnvironment',
@@ -150,30 +158,35 @@ function turnEnvironment(input: {
       ? 'Neva'
       : input.thread.agentNickname ?? input.thread.agentRole,
     todayNodeId: input.projection?.todayId ?? null,
+    todayNodeTitle: todayNode ? nodeTitle(todayNode) : null,
   };
 }
 
 function additionalContextPayload(
   direct: AdditionalContext | undefined,
   extensions: readonly ThreadContextContribution[],
+  includeThreadState: boolean,
 ): AdditionalContextPayload | null {
-  const entries = [
-    ...Object.entries(direct ?? {}).map(([key, entry]) => ({
-      key,
-      source: entry.kind === 'application' ? 'main' : 'renderer',
-      authority: entry.kind,
-      purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
-      text: entry.value,
-    })),
-    ...extensions.flatMap((contribution) => Object.entries(contribution.additionalContext).map(([key, entry]) => ({
-      key: `${contribution.extensionId}:${key}`,
-      source: `extension:${contribution.extensionId}`,
-      authority: entry.kind,
-      purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
-      text: entry.value,
-    }))),
-  ].sort((left, right) => compareStableText(left.key, right.key));
-  return entries.length > 0 ? { schemaVersion: 1, kind: 'additionalContext', entries } : null;
+  const turnEntries = Object.entries(direct ?? {}).map(([key, entry]) => ({
+    key,
+    source: entry.kind === 'application' ? 'main' : 'renderer',
+    authority: entry.kind,
+    purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
+    text: entry.value,
+  }))
+    .sort((left, right) => compareStableText(left.key, right.key));
+  const threadState = includeThreadState && extensions.length > 0
+    ? extensions.flatMap((contribution) => Object.entries(contribution.additionalContext).map(([key, entry]) => ({
+        key: `${contribution.extensionId}:${key}`,
+        source: `extension:${contribution.extensionId}`,
+        authority: entry.kind,
+        purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
+        text: entry.value,
+      }))).sort((left, right) => compareStableText(left.key, right.key))
+    : null;
+  return turnEntries.length > 0 || threadState !== null
+    ? { schemaVersion: 1, kind: 'additionalContext', turnEntries, threadState }
+    : null;
 }
 
 export function contextEvidenceItem(

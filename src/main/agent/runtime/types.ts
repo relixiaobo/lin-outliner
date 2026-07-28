@@ -54,6 +54,7 @@ export interface TurnExecutionContext {
   persistTurnDiagnostics(
     payload: TurnDiagnosticsPayload,
   ): Promise<TurnDiagnosticsPayloadReference>;
+  onTurnDiagnosticsError(error: unknown): void;
   persistSkillCatalog(
     snapshot: SkillCatalogContextPayload,
   ): Promise<ContextEvidenceThreadItem | null>;

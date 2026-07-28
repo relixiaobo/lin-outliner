@@ -4,7 +4,8 @@ import {
   createThreadHistoryRollbackContext,
   createThreadAdmissionBarrierSnapshot,
 } from '../../src/core/agent/extensions';
-import type { ThreadId, TurnId } from '../../src/core/agent/protocol';
+import type { Thread, ThreadId, TurnId } from '../../src/core/agent/protocol';
+import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc' as ThreadId;
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd' as TurnId;
@@ -62,4 +63,61 @@ describe('Codex Agent Core extension contract', () => {
     expect(() => createThreadHistoryRollbackContext('rollback', THREAD_ID, [TURN_ID], 9, 9))
       .toThrow('afterProjectionVersion must be greater than beforeProjectionVersion');
   });
+
+  test('returns complete extension context snapshots including inactive contributors', async () => {
+    const registry = new ExtensionRegistry();
+    let active = true;
+    registry.register({
+      id: 'context-owner',
+      contributeThreadContext: () => active
+        ? {
+            extensionId: 'context-owner',
+            additionalContext: {
+              policy: { kind: 'application', value: 'Current policy' },
+            },
+          }
+        : null,
+    });
+
+    expect(await registry.threadContext(thread())).toEqual([{
+      extensionId: 'context-owner',
+      additionalContext: { policy: { kind: 'application', value: 'Current policy' } },
+    }]);
+    active = false;
+    expect(await registry.threadContext(thread())).toEqual([{
+      extensionId: 'context-owner',
+      additionalContext: {},
+    }]);
+  });
+
+  test('rejects extension context attributed to a different owner', async () => {
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'owner',
+      contributeThreadContext: () => ({ extensionId: 'other', additionalContext: {} }),
+    });
+    await expect(registry.threadContext(thread())).rejects.toThrow('owner mismatch');
+  });
 });
+
+function thread(): Thread {
+  return {
+    id: THREAD_ID,
+    sessionId: '018f0f24-7b2e-7a3f-8a4b-123456789ab0',
+    parentThreadId: null,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: null,
+    name: null,
+    preview: '',
+    ephemeral: false,
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: '/workspace',
+    createdAt: 1,
+    updatedAt: 1,
+    status: { type: 'idle' },
+    historyMode: 'paginated',
+  };
+}

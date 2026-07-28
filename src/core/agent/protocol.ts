@@ -251,7 +251,18 @@ export interface TurnDiagnosticsPreparedContext {
   readonly toolNames: readonly string[];
   /** Canonical messages supplied to the provider adapter, in model-context order. */
   readonly messageIds: readonly string[];
+  /** Typed source for every content part of every canonical message, in the same order. */
+  readonly messagePartProvenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[];
 }
+
+export type TurnDiagnosticsMessagePartProvenance =
+  | {
+      readonly source: 'contextEvidence';
+      readonly kind: ContextEvidenceKind;
+    }
+  | {
+      readonly source: 'contextCompaction' | 'userInput' | 'assistantHistory' | 'toolResult' | 'unknown';
+    };
 
 export interface TurnDiagnosticsProviderUsage {
   readonly input: number;
@@ -488,6 +499,7 @@ export interface TurnEnvironmentContextPayload {
   readonly executionMode: 'root' | 'child' | 'automation' | 'memory' | 'feature';
   readonly replyIdentity: string | null;
   readonly todayNodeId: string | null;
+  readonly todayNodeTitle: string | null;
 }
 
 export interface UserViewNodeSnapshot {
@@ -540,7 +552,10 @@ export type AdditionalContextPayloadEntry = ContextTextEntry;
 export interface AdditionalContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'additionalContext';
-  readonly entries: readonly AdditionalContextPayloadEntry[];
+  /** Events that apply only to the admitted user input and must not be deduplicated. */
+  readonly turnEntries: readonly AdditionalContextPayloadEntry[];
+  /** Complete current Thread state, or null when Thread state was not evaluated. */
+  readonly threadState: readonly AdditionalContextPayloadEntry[] | null;
 }
 
 export type ReferencedResourceUnavailableReason =
@@ -655,7 +670,7 @@ export interface InheritedContextPayload {
 export interface CompactionSummaryContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'compactionSummary';
-  readonly source: 'model' | 'fallback';
+  readonly source: 'deterministic';
   readonly text: string;
 }
 
@@ -686,6 +701,7 @@ export interface CompactionRestoredStateContextPayload {
   readonly roleCatalogHash: string | null;
   readonly announcedRoles: readonly ContextCatalogCheckpointEntry[];
   readonly userViewBaselineRef: ThreadContextPayloadReference | null;
+  readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
 }
 

@@ -13,6 +13,7 @@ import type {
   ThreadTurnDetailsReadResponse,
   Turn,
   TurnDiagnosticsPayload,
+  TurnDiagnosticsMessagePartProvenance,
   TurnDiagnosticsProviderCall,
   TurnDiagnosticsProviderRequest,
   TurnDiagnosticsProviderRequestField,
@@ -432,9 +433,12 @@ function PreparedContextView({
     const tool = toolSchemasByName.get(name);
     return tool ? [tool] : [];
   });
-  const messages = call.preparedContext.messageIds.flatMap((id) => {
+  const messages = call.preparedContext.messageIds.flatMap((id, index) => {
     const message = messagesById.get(id);
-    return message ? [message] : [];
+    return message ? [{
+      message,
+      partProvenance: call.preparedContext.messagePartProvenance[index] ?? [],
+    }] : [];
   });
   return (
     <RequestFieldGroup title={t.agent.turnDetails.preparedModelContext}>
@@ -472,11 +476,12 @@ function PreparedContextView({
         title={t.agent.turnDetails.preparedMessages({ count: messages.length })}
         render={() => (
           <div className="thread-turn-details-request-fragments">
-            {messages.map((message, index) => (
+            {messages.map(({ message, partProvenance }, index) => (
               <ProviderRequestFragmentView
                 fieldName="preparedContext.messages"
                 index={index}
                 key={`${index}:${message.id}`}
+                partProvenance={partProvenance}
                 value={message.value}
               />
             ))}
@@ -560,10 +565,12 @@ function ProviderRequestFieldView({
 function ProviderRequestFragmentView({
   fieldName,
   index,
+  partProvenance,
   value,
 }: {
   readonly fieldName: string;
   readonly index: number;
+  readonly partProvenance?: readonly TurnDiagnosticsMessagePartProvenance[];
   readonly value: JsonValue;
 }) {
   const t = useT();
@@ -590,9 +597,9 @@ function ProviderRequestFragmentView({
       <div className="thread-turn-details-part-list">
         {parts.map((part, partIndex) => (
           <JsonDisclosure
-            metadata={semanticPreview(part)}
+            metadata={semanticPreview(part, partProvenance?.[partIndex])}
             resetKey={`${fieldName}:${index}:${partIndex}`}
-            title={`[${partIndex}] ${semanticLabel(part, t.agent.turnDetails)}`}
+            title={`[${partIndex}] ${semanticLabel(part, t.agent.turnDetails, partProvenance?.[partIndex])}`}
             value={part}
             key={`${partIndex}:${jsonIdentity(part)}`}
           />
@@ -1068,11 +1075,22 @@ function orderedContentParts(value: JsonValue): readonly JsonValue[] {
   return [];
 }
 
-function semanticLabel(value: JsonValue, labels: TurnDetailsLabels): string {
+function semanticLabel(
+  value: JsonValue,
+  labels: TurnDetailsLabels,
+  provenance?: TurnDiagnosticsMessagePartProvenance,
+): string {
+  if (provenance?.source === 'contextEvidence') {
+    return labels.contextEvidence({ kind: provenance.kind });
+  }
+  if (provenance?.source === 'contextCompaction') {
+    return labels.contextCompaction;
+  }
   const text = semanticText(value);
-  const reminderKind = text ? systemReminderKind(text) : null;
-  if (reminderKind) return labels.systemReminder({ kind: reminderKind });
-  if (text?.startsWith('[Attachment image:') || text?.startsWith('[Attachment:')) return labels.attachment;
+  if (
+    provenance?.source === 'userInput'
+    && (text?.startsWith('[Attachment image:') || text?.startsWith('[Attachment:'))
+  ) return labels.attachment;
   const record = jsonRecord(value);
   if (!record) return typeof value === 'string' ? labels.textPart : labels.value;
   const type = stringProperty(record, 'type');
@@ -1087,11 +1105,16 @@ function semanticLabel(value: JsonValue, labels: TurnDetailsLabels): string {
   return type ?? labels.value;
 }
 
-function semanticPreview(value: JsonValue): string {
+function semanticPreview(
+  value: JsonValue,
+  provenance?: TurnDiagnosticsMessagePartProvenance,
+): string {
   const text = semanticText(value);
   if (text) {
-    const reminderKind = systemReminderKind(text);
-    if (reminderKind) return firstReminderBodyLine(text);
+    if (provenance?.source === 'contextEvidence' || provenance?.source === 'contextCompaction') {
+      const body = firstWrappedBodyLine(text);
+      if (body) return body;
+    }
     return compactPreview(text);
   }
   const record = jsonRecord(value);
@@ -1100,6 +1123,13 @@ function semanticPreview(value: JsonValue): string {
     if (name) return name;
   }
   return compactPreview(jsonText(value));
+}
+
+function firstWrappedBodyLine(text: string): string | null {
+  const first = text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('<') && !line.endsWith('>'));
+  return first ? compactPreview(first) : null;
 }
 
 function semanticText(value: JsonValue): string | null {
@@ -1111,17 +1141,6 @@ function semanticText(value: JsonValue): string | null {
     if (text) return text;
   }
   return typeof record.content === 'string' ? record.content : null;
-}
-
-function systemReminderKind(text: string): string | null {
-  if (!text.includes('<system-reminder>')) return null;
-  return /<system-reminder>\s*<context-evidence\s+kind="([^"]+)"\s+authority="(?:application|untrusted)"\s+purpose="(?:instruction|observation)">/.exec(text)?.[1] ?? null;
-}
-
-function firstReminderBodyLine(text: string): string {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const first = lines.find((line) => !line.startsWith('<') && !line.endsWith('>'));
-  return first ? compactPreview(first) : '';
 }
 
 function compactPreview(value: string): string {

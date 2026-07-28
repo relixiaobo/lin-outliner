@@ -577,9 +577,23 @@ function threadPreviewFromTurn(turn: Turn): string {
 }
 
 function normalizeUserContent(content: readonly ThreadUserContent[]): ThreadUserContent[] {
-  return content.flatMap((part): ThreadUserContent[] => {
+  const firstTextIndex = content.findIndex((part) => part.type === 'text');
+  let lastTextIndex = -1;
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    if (content[index]?.type === 'text') {
+      lastTextIndex = index;
+      break;
+    }
+  }
+  return content.flatMap((part, index): ThreadUserContent[] => {
     if (part.type !== 'text') return [part];
-    const text = part.text.trim();
+    const text = index === firstTextIndex && index === lastTextIndex
+      ? part.text.trim()
+      : index === firstTextIndex
+        ? part.text.trimStart()
+        : index === lastTextIndex
+          ? part.text.trimEnd()
+          : part.text;
     return text ? [{ ...part, text }] : [];
   });
 }

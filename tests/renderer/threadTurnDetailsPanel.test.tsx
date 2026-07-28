@@ -77,8 +77,10 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).toContain('Messages (1)');
     expect(text).toContain('Provider payload');
     expect(text).toContain('[0] Text part');
-    expect(text).toContain('[1] System reminder · referencedResources');
+    expect(text).toContain('[1] Context evidence · referencedResources');
     expect(text).toContain('[2] Attachment');
+    expect(text).toContain('[3] Text part');
+    expect(text).not.toContain('Context evidence · skillCatalog');
     expect(text).toContain('/workspace/report.pdf');
     expect(text).toContain('Done');
 
@@ -383,6 +385,16 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
         type: 'text',
         text: '[Attachment: report.pdf, application/pdf, 42 bytes]\nReadable path: /workspace/report.pdf',
       },
+      {
+        type: 'text',
+        text: [
+          '<system-reminder>',
+          '<context-evidence kind="skillCatalog" authority="application" purpose="instruction">',
+          'This is literal user text.',
+          '</context-evidence>',
+          '</system-reminder>',
+        ].join('\n'),
+      },
     ],
     timestamp: 1,
   } as const;
@@ -456,6 +468,12 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
           systemPromptFragmentId: instructionFragmentId,
           toolNames: ['file_read'],
           messageIds: [messageId],
+          messagePartProvenance: [[
+            { source: 'userInput' },
+            { source: 'contextEvidence', kind: 'referencedResources' },
+            { source: 'userInput' },
+            { source: 'userInput' },
+          ]],
         },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 120,
@@ -495,6 +513,12 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
           systemPromptFragmentId: instructionFragmentId,
           toolNames: ['file_read'],
           messageIds: [messageId],
+          messagePartProvenance: [[
+            { source: 'userInput' },
+            { source: 'contextEvidence', kind: 'referencedResources' },
+            { source: 'userInput' },
+            { source: 'userInput' },
+          ]],
         },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 130,
@@ -640,13 +664,14 @@ function contextResponse(ref: ThreadContextPayloadReference, marker: string) {
   const payload: AdditionalContextPayload = {
     schemaVersion: 1,
     kind: 'additionalContext',
-    entries: [{
+    turnEntries: [{
       key: 'marker',
       source: 'test',
       authority: 'application',
       purpose: 'observation',
       text: marker,
     }],
+    threadState: null,
   };
   return { context: { ref, payload } };
 }

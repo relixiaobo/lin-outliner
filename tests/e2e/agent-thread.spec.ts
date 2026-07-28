@@ -557,9 +557,9 @@ test.describe('canonical agent Thread surface', () => {
 
     const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
     expect(start?.args.input).toEqual([
-      { type: 'text', text: 'Before' },
+      { type: 'text', text: 'Before ' },
       { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
-      { type: 'text', text: 'after' },
+      { type: 'text', text: ' after' },
     ]);
   });
 

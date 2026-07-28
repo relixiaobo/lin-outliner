@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
 import type { Api, AssistantMessage, Message, Model, Tool, UserMessage } from '@earendil-works/pi-ai';
 import {
+  decodeTurnDiagnosticsPayload,
   decodeTurnDiagnosticsPayloadJson,
   encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
@@ -195,6 +196,26 @@ describe('Turn diagnostics', () => {
     const secondInputIds = requestFragmentIds(payload, 1, 'input');
     expect(secondInputIds).toEqual([firstInputId, expect.any(String)]);
     expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...payload,
+      providerCalls: [{
+        ...payload.providerCalls[0]!,
+        preparedContext: {
+          ...payload.providerCalls[0]!.preparedContext,
+          messagePartProvenance: [],
+        },
+      }, payload.providerCalls[1]!],
+    })).toThrow('must align with the prepared message window');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...payload,
+      providerCalls: [{
+        ...payload.providerCalls[0]!,
+        preparedContext: {
+          ...payload.providerCalls[0]!.preparedContext,
+          messagePartProvenance: [[{ source: 'unknown' }]],
+        },
+      }, payload.providerCalls[1]!],
+    })).toThrow('must align with the referenced message content');
   });
 });
 
@@ -230,6 +251,12 @@ function prepare(
 ): void {
   collector.prepareProviderPlan({
     protectedFromMessageIndex,
+    messagePartProvenance: messages.map((message) => (
+      'content' in message
+        ? (typeof message.content === 'string' ? [message.content] : message.content)
+          .map(() => ({ source: 'unknown' as const }))
+        : []
+    )),
     budget: {
       messages,
       estimatedInputTokens,

@@ -44,6 +44,21 @@ describe('provider cache topology', () => {
       provenance: provenance(threadId, 'turn-reset', 'reset-boundary'),
       clearedThrough: { turnId: ordinaryTurn.id, itemId: ordinaryTurn.items[0]!.id },
     }]);
+    const compactTurn = turn('turn-compact', [{
+      type: 'contextCompaction',
+      id: 'compact-boundary',
+      provenance: provenance(threadId, 'turn-compact', 'compact-boundary'),
+      trigger: 'manual',
+      coveredFrom: { turnId: ordinaryTurn.id, itemId: ordinaryTurn.items[0]!.id },
+      coveredThrough: { turnId: ordinaryTurn.id, itemId: ordinaryTurn.items[0]!.id },
+      preservedFrom: null,
+      summaryRef: contextRef('compactionSummary', 'a'),
+      restoredStateRef: contextRef('compactionRestoredState', 'b'),
+      instructionsRef: null,
+      contextRefs: [],
+      resourceRefs: [],
+      outputRefs: [],
+    }]);
     const afterTurn = turn('turn-after', [{
       type: 'userMessage',
       id: 'user-after',
@@ -55,7 +70,7 @@ describe('provider cache topology', () => {
 
     const initial = providerCacheAffinity(threadId, []);
     expect(providerCacheAffinity(threadId, [ordinaryTurn])).toBe(initial);
-    expect(providerCacheAffinity(threadId, [ordinaryTurn])).toBe(initial);
+    expect(providerCacheAffinity(threadId, [ordinaryTurn, compactTurn])).toBe(initial);
     const reset = providerCacheAffinity(threadId, [ordinaryTurn, resetTurn]);
     expect(reset).not.toBe(initial);
     expect(providerCacheAffinity(threadId, [ordinaryTurn, resetTurn, afterTurn])).toBe(reset);
@@ -208,5 +223,15 @@ function turn(id: string, items: readonly ThreadItem[]): Turn {
     startedAt: 1,
     completedAt: 2,
     durationMs: 1,
+  };
+}
+
+function contextRef(kind: 'compactionSummary' | 'compactionRestoredState', seed: string) {
+  return {
+    id: seed.repeat(64),
+    mimeType: 'application/vnd.tenon.agent-context+json' as const,
+    byteLength: 1,
+    schemaVersion: 1 as const,
+    kind,
   };
 }

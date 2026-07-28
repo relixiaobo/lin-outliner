@@ -14,6 +14,7 @@ import type {
   JsonValue,
   TurnDiagnosticsPayload,
   TurnDiagnosticsProviderCall,
+  TurnDiagnosticsMessagePartProvenance,
   TurnDiagnosticsProviderRequest,
   TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
@@ -24,6 +25,7 @@ import type { StablePrompt } from './stablePrompt';
 interface PreparedProviderPlan {
   readonly protectedFromMessageIndex: number;
   readonly budget: ContextBudgetPlan;
+  readonly messagePartProvenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[];
 }
 
 interface TurnDiagnosticsCollectorInput {
@@ -70,6 +72,7 @@ export class TurnDiagnosticsCollector {
     if (!this.preparedPlan) throw new Error('Provider request diagnostics are missing the prepared context plan.');
     if (!this.providerContext) throw new Error('Provider request diagnostics are missing the provider context.');
     const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
+    assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
     const normalizedRequest = jsonValue(payload, true);
     this.providerCalls.push({
@@ -79,6 +82,7 @@ export class TurnDiagnosticsCollector {
         systemPromptFragmentId: this.rememberRequestFragment(jsonValue(this.providerContext.systemPrompt, true)),
         toolNames: (this.providerContext.tools ?? []).map((tool) => tool.name),
         messageIds,
+        messagePartProvenance: this.preparedPlan.messagePartProvenance.map((parts) => parts.map((part) => ({ ...part }))),
       },
       protectedFromMessageIndex: this.preparedPlan.protectedFromMessageIndex,
       estimatedInputTokens: this.preparedPlan.budget.estimatedInputTokens,
@@ -216,6 +220,23 @@ export class TurnDiagnosticsCollector {
     if (!this.requestFragments.has(id)) this.requestFragments.set(id, { id, value });
     return id;
   }
+}
+
+function assertMessageProvenance(
+  messages: readonly Message[],
+  provenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[],
+): void {
+  if (messages.length !== provenance.length) {
+    throw new Error('Provider request diagnostics message provenance is not aligned with the provider context.');
+  }
+  messages.forEach((message, index) => {
+    const content = 'content' in message
+      ? typeof message.content === 'string' ? [message.content] : message.content
+      : [];
+    if (content.length !== provenance[index]?.length) {
+      throw new Error(`Provider request diagnostics content provenance is not aligned with message ${index}.`);
+    }
+  });
 }
 
 const PROVIDER_REQUEST_ID_HEADERS = [

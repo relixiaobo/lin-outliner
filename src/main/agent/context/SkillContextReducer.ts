@@ -10,6 +10,15 @@ import type {
 import { selectEffectiveContext } from './ContextEpoch';
 import { readInheritedContextPayload } from './InheritedContext';
 
+const CORE_FILE_PATH_TOOLS = new Set([
+  'file_delete',
+  'file_edit',
+  'file_glob',
+  'file_grep',
+  'file_read',
+  'file_write',
+]);
+
 export interface SkillContextState {
   readonly catalogHash: string | null;
   readonly catalogEntries: ReadonlyMap<string, SkillCatalogEntry>;
@@ -211,13 +220,19 @@ export function observedSkillFilePaths(turns: readonly Turn[]): string[] {
   const paths = new Set<string>();
   for (const turn of turns) {
     for (const item of turn.items) {
-      if (item.type === 'fileChange') {
+      if (item.type === 'fileChange' && item.status === 'completed') {
         for (const change of item.changes) {
           if (change.path.trim()) paths.add(change.path);
         }
         continue;
       }
-      if (item.type !== 'dynamicToolCall' || !item.tool.startsWith('file_')) continue;
+      if (
+        item.type !== 'dynamicToolCall'
+        || item.namespace !== null
+        || item.status !== 'completed'
+        || item.success !== true
+        || !CORE_FILE_PATH_TOOLS.has(item.tool)
+      ) continue;
       if (!item.arguments || typeof item.arguments !== 'object' || Array.isArray(item.arguments)) continue;
       const value = 'file_path' in item.arguments
         ? item.arguments.file_path
