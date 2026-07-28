@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import type { AgentEvent, AgentOptions } from '@earendil-works/pi-agent-core';
-import type { Api, AssistantMessage, Message, Model, UserMessage } from '@earendil-works/pi-ai';
+import type { AgentEvent, AgentOptions, AgentTool } from '@earendil-works/pi-agent-core';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type { AgentCoreNotification } from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
@@ -18,6 +20,7 @@ import {
   CanonicalContextProjector,
   serializeUserContent,
 } from '../../src/main/agent/context/ContextProjector';
+import { planContextCompaction } from '../../src/main/agent/context/ContextCompaction';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import {
@@ -345,6 +348,7 @@ describe('PiTurnExecutor event normalization', () => {
         await release.promise;
       };
       const executor = new PiTurnExecutor({
+        resolveRuntimeSettings: async () => runtimeSettings(),
         resolveRuntime: async () => {
           await waitAt('runtime');
           return runtimeSelection();
@@ -368,6 +372,81 @@ describe('PiTurnExecutor event normalization', () => {
     }
   });
 
+  test('passes canonical tool order and reset-epoch affinity into Agent creation', async () => {
+    const fixture = createContext();
+    const captures: Array<{ sessionId: string | undefined; tools: string }> = [];
+    const execute = async (
+      context: TurnExecutionContext,
+      tools: readonly AgentTool[],
+    ) => {
+      const executor = new PiTurnExecutor({
+        resolveRuntimeSettings: async () => runtimeSettings(),
+        resolveRuntime: async () => runtimeSelection(),
+        createTools: async () => tools,
+        createAgent: (options) => {
+          captures.push({
+            sessionId: options.sessionId,
+            tools: JSON.stringify(options.initialState?.tools?.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            }))),
+          });
+          return {
+            state: { errorMessage: undefined },
+            subscribe: () => () => undefined,
+            abort: () => undefined,
+            steer: () => undefined,
+            prompt: async () => undefined,
+          };
+        },
+      });
+      await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    };
+    const alpha = testTool('alpha', 'First tool');
+    const zeta = testTool('zeta', 'Last tool');
+    await execute(fixture.context, [zeta, alpha]);
+    await execute({
+      ...fixture.context,
+      thread: decodeThread({
+        ...fixture.context.thread,
+        sessionId: uuidV7(1_720_000_000_009),
+      }),
+    }, [alpha, zeta]);
+
+    const resetTurnId = uuidV7(1_720_000_000_080);
+    const resetId = uuidV7(1_720_000_000_081);
+    const resetTurn = decodeTurn({
+      ...fixture.context.turn,
+      id: resetTurnId,
+      items: [{
+        type: 'contextReset',
+        id: resetId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: resetTurnId,
+          originItemId: resetId,
+        },
+        clearedThrough: {
+          turnId: fixture.context.turn.id,
+          itemId: fixture.context.turn.items[0]!.id,
+        },
+      }],
+      status: 'completed',
+      completedAt: 1_720_000_000_090,
+      durationMs: 10,
+    });
+    await execute({ ...fixture.context, historyBeforeTurn: [resetTurn] }, [zeta, alpha]);
+
+    expect(captures[0]?.tools).toBe(captures[1]?.tools);
+    expect(captures[1]?.tools).toBe(captures[2]?.tools);
+    expect(JSON.parse(captures[0]!.tools).map((tool: { name: string }) => tool.name))
+      .toEqual(['alpha', 'zeta']);
+    expect(captures[0]?.sessionId).toBe(captures[1]?.sessionId);
+    expect(captures[2]?.sessionId).not.toBe(captures[0]?.sessionId);
+    expect(captures.every((capture) => capture.sessionId?.length === 64)).toBe(true);
+  });
+
   test('runs the pre-provider hook without changing canonical user input', async () => {
     const fixture = createContext();
     const userItemId = uuidV7(1_720_000_000_110);
@@ -389,6 +468,7 @@ describe('PiTurnExecutor event normalization', () => {
     let transformContext: AgentOptions['transformContext'];
     let providerPreparations = 0;
     const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
       beforeProviderContext: () => {
         providerPreparations += 1;
@@ -465,6 +545,7 @@ describe('PiTurnExecutor event normalization', () => {
       timestamp: 999,
     }];
     const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
       beforeProviderContext: async () => {
         providerBoundary += 1;
@@ -528,6 +609,372 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(providerContexts[1])).toContain('new-skill');
   });
 
+  test('records one automatic compaction and replans before an oversized provider request', async () => {
+    const fixture = createContext();
+    const priorTurnId = uuidV7(1_719_999_000_000);
+    const priorUserId = uuidV7(1_719_999_000_001);
+    const priorAgentId = uuidV7(1_719_999_000_002);
+    const priorTurn = decodeTurn({
+      ...fixture.context.turn,
+      id: priorTurnId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: priorTurnId,
+        trigger: { kind: 'user' },
+      },
+      status: 'completed',
+      startedAt: 1_719_999_000_000,
+      completedAt: 1_719_999_000_100,
+      durationMs: 100,
+      items: [
+        {
+          type: 'userMessage',
+          id: priorUserId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: priorTurnId,
+            originItemId: priorUserId,
+          },
+          clientId: null,
+          acceptedAt: 1_719_999_000_000,
+          content: [{ type: 'text', text: `OLD HISTORY ${'x'.repeat(8_000)}` }],
+        },
+        {
+          type: 'agentMessage',
+          id: priorAgentId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: priorTurnId,
+            originItemId: priorAgentId,
+          },
+          text: 'OLD ANSWER',
+          phase: 'final_answer',
+          memoryCitation: null,
+        },
+      ],
+    });
+    const recentTurnId = uuidV7(1_719_999_500_000);
+    const recentUserId = uuidV7(1_719_999_500_001);
+    const recentAgentId = uuidV7(1_719_999_500_002);
+    const recentTurn = decodeTurn({
+      ...fixture.context.turn,
+      id: recentTurnId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: recentTurnId,
+        trigger: { kind: 'user' },
+      },
+      status: 'completed',
+      startedAt: 1_719_999_500_000,
+      completedAt: 1_719_999_500_100,
+      durationMs: 100,
+      items: [
+        {
+          type: 'userMessage',
+          id: recentUserId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: recentTurnId,
+            originItemId: recentUserId,
+          },
+          clientId: null,
+          acceptedAt: 1_719_999_500_000,
+          content: [{ type: 'text', text: 'RECENT COMPLETE TURN' }],
+        },
+        {
+          type: 'agentMessage',
+          id: recentAgentId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: recentTurnId,
+            originItemId: recentAgentId,
+          },
+          text: 'RECENT ANSWER',
+          phase: 'final_answer',
+          memoryCitation: null,
+        },
+      ],
+    });
+    const payloads = new Map<string, import('../../src/core/agent/protocol').ThreadContextPayload>();
+    const writePayload = (payload: import('../../src/core/agent/protocol').ThreadContextPayload) => {
+      const serialized = JSON.stringify(payload);
+      const ref = {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+      payloads.set(ref.id, payload);
+      return ref;
+    };
+    let compactions = 0;
+    let preservedFrom: import('../../src/core/agent/protocol').ContextCursor | null = null;
+    const providerContexts: Message[][] = [];
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      historyBeforeTurn: [priorTurn, recentTurn],
+      readContext: async (ref) => payloads.get(ref.id) ?? null,
+      compactContext: async (trigger, requestedPreserveFrom) => {
+        compactions += 1;
+        preservedFrom = requestedPreserveFrom ?? null;
+        const summaryRef = writePayload({
+          schemaVersion: 1,
+          kind: 'compactionSummary',
+          source: 'fallback',
+          text: 'COMPACTED OLD HISTORY',
+        });
+        const restoredStateRef = writePayload({
+          schemaVersion: 1,
+          kind: 'compactionRestoredState',
+          skillCatalogHash: null,
+          announcedSkills: [],
+          activeSkills: [],
+          roleCatalogHash: null,
+          announcedRoles: [],
+          userViewBaselineRef: null,
+          activeObservations: [],
+        });
+        const id = fixture.recorder.createItemId();
+        return await fixture.recorder.completedImmediately({
+          type: 'contextCompaction',
+          id,
+          provenance: fixture.recorder.localProvenance(id),
+          trigger,
+          coveredFrom: { turnId: priorTurn.id, itemId: priorUserId },
+          coveredThrough: { turnId: priorTurn.id, itemId: priorAgentId },
+          preservedFrom: { turnId: recentTurn.id, itemId: recentUserId },
+          summaryRef,
+          restoredStateRef,
+          instructionsRef: null,
+          contextRefs: [],
+          resourceRefs: [],
+          outputRefs: [],
+        }) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+      },
+    };
+    const smallModel = { ...testModel, contextWindow: 2_000, maxTokens: 200 };
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => ({
+        model: smallModel,
+        thinkingLevel: 'medium',
+        getApiKey: async () => undefined,
+      }),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!([]));
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(compactions).toBe(1);
+    expect(preservedFrom).toEqual({ turnId: recentTurn.id, itemId: recentUserId });
+    expect(JSON.stringify(providerContexts)).toContain('COMPACTED OLD HISTORY');
+    expect(JSON.stringify(providerContexts)).toContain('RECENT COMPLETE TURN');
+    expect(JSON.stringify(providerContexts)).toContain('RECENT ANSWER');
+    expect(JSON.stringify(providerContexts)).toContain('Test request');
+    expect(JSON.stringify(providerContexts)).not.toContain('x'.repeat(500));
+    expect(JSON.stringify(providerContexts)).not.toContain('OLD ANSWER');
+    expect(fixture.recorder.orderedItems().at(-1)).toMatchObject({
+      type: 'contextCompaction',
+      trigger: 'automaticPreflight',
+    });
+  });
+
+  test('compacts an oversized inherited prefix without dropping current admission evidence', async () => {
+    const fixture = createContext();
+    const payloads = new Map<string, import('../../src/core/agent/protocol').ThreadContextPayload>();
+    const put = (payload: import('../../src/core/agent/protocol').ThreadContextPayload) => {
+      const serialized = JSON.stringify(payload);
+      const ref = {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+      payloads.set(ref.id, payload);
+      return ref;
+    };
+    const sourceThreadId = uuidV7(1_719_000_000_000);
+    const sourceTurnId = uuidV7(1_719_000_000_100);
+    const sourceContextId = uuidV7(1_719_000_000_101);
+    const sourceUserId = uuidV7(1_719_000_000_102);
+    const oversizedRef = put({
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      entries: [{
+        key: 'oversized_parent_context',
+        source: 'parent',
+        authority: 'untrusted',
+        purpose: 'observation',
+        text: `OVERSIZED INHERITED ${'x'.repeat(16_000)}`,
+      }],
+    });
+    const sourceTurn = decodeTurn({
+      ...fixture.context.turn,
+      id: sourceTurnId,
+      provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, trigger: { kind: 'user' } },
+      status: 'completed',
+      completedAt: 1_719_000_000_200,
+      durationMs: 100,
+      items: [
+        {
+          type: 'contextEvidence',
+          id: sourceContextId,
+          provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceContextId },
+          kind: 'additionalContext',
+          payloadRef: oversizedRef,
+          summary: 'Oversized inherited observation',
+          contextRefs: [],
+          resourceRefs: [],
+          outputRefs: [],
+        },
+        {
+          type: 'userMessage',
+          id: sourceUserId,
+          provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceUserId },
+          clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
+          content: [{ type: 'text', text: 'Parent request' }],
+        },
+      ],
+    });
+    const inheritedRef = put({
+      schemaVersion: 1,
+      kind: 'inheritedContext',
+      sourceThreadId,
+      coveredThrough: { turnId: sourceTurnId, itemId: sourceUserId },
+      requestedTurns: 'all',
+      turns: [sourceTurn],
+    });
+    const currentEvidenceRef = put({
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      entries: [{
+        key: 'current_admission',
+        source: 'main',
+        authority: 'application',
+        purpose: 'instruction',
+        text: 'CURRENT ADMISSION MUST SURVIVE',
+      }],
+    });
+    const inheritedId = uuidV7(1_720_000_000_102);
+    const currentEvidenceId = uuidV7(1_720_000_000_103);
+    const currentUserId = uuidV7(1_720_000_000_104);
+    const currentTurn = decodeTurn({
+      ...fixture.context.turn,
+      items: [
+        {
+          type: 'contextEvidence',
+          id: inheritedId,
+          provenance: fixture.recorder.localProvenance(inheritedId),
+          kind: 'inheritedContext',
+          payloadRef: inheritedRef,
+          summary: 'Inherited parent context (1 Turn)',
+          contextRefs: [oversizedRef],
+          resourceRefs: [],
+          outputRefs: [],
+        },
+        {
+          type: 'contextEvidence',
+          id: currentEvidenceId,
+          provenance: fixture.recorder.localProvenance(currentEvidenceId),
+          kind: 'additionalContext',
+          payloadRef: currentEvidenceRef,
+          summary: 'Current admission instruction',
+          contextRefs: [],
+          resourceRefs: [],
+          outputRefs: [],
+        },
+        {
+          type: 'userMessage',
+          id: currentUserId,
+          provenance: fixture.recorder.localProvenance(currentUserId),
+          clientId: null,
+          acceptedAt: fixture.context.turn.startedAt,
+          content: [{ type: 'text', text: 'CURRENT CHILD TASK' }],
+        },
+      ],
+    });
+    let preserveFrom: import('../../src/core/agent/protocol').ContextCursor | null = null;
+    let compactions = 0;
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      turn: currentTurn,
+      readContext: async (ref) => payloads.get(ref.id) ?? null,
+      compactContext: async (trigger, requestedPreserveFrom) => {
+        compactions += 1;
+        preserveFrom = requestedPreserveFrom ?? null;
+        const plan = await planContextCompaction({
+          turns: [{ ...currentTurn, items: [
+            ...currentTurn.items,
+            ...fixture.recorder.orderedItems(),
+          ] }],
+          preserveFrom: requestedPreserveFrom,
+          readContext: async (ref) => payloads.get(ref.id) ?? null,
+        });
+        if (!plan) throw new Error('Expected inherited-prefix compaction plan.');
+        const summaryRef = put(plan.summary);
+        const restoredStateRef = put(plan.restoredState);
+        const id = fixture.recorder.createItemId();
+        return await fixture.recorder.completedImmediately({
+          type: 'contextCompaction',
+          id,
+          provenance: fixture.recorder.localProvenance(id),
+          trigger,
+          coveredFrom: plan.coveredFrom,
+          coveredThrough: plan.coveredThrough,
+          preservedFrom: plan.preservedFrom,
+          summaryRef,
+          restoredStateRef,
+          instructionsRef: null,
+          contextRefs: plan.contextRefs,
+          resourceRefs: [],
+          outputRefs: plan.outputRefs,
+        }) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+      },
+    };
+    const providerContexts: Message[][] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => ({
+        model: { ...testModel, contextWindow: 3_000, maxTokens: 200 },
+        thinkingLevel: 'medium',
+        getApiKey: async () => undefined,
+      }),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!([]));
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(compactions).toBe(1);
+    expect(preserveFrom).toEqual({ turnId: currentTurn.id, itemId: currentEvidenceId });
+    expect(fixture.recorder.orderedItems()).toContainEqual(expect.objectContaining({
+      type: 'contextCompaction',
+      coveredFrom: { turnId: currentTurn.id, itemId: inheritedId },
+      coveredThrough: { turnId: currentTurn.id, itemId: inheritedId },
+      preservedFrom: { turnId: currentTurn.id, itemId: currentEvidenceId },
+    }));
+    expect(JSON.stringify(providerContexts)).toContain('Inherited parent context (1 Turn)');
+    expect(JSON.stringify(providerContexts)).toContain('CURRENT ADMISSION MUST SURVIVE');
+    expect(JSON.stringify(providerContexts)).toContain('CURRENT CHILD TASK');
+    expect(JSON.stringify(providerContexts)).not.toContain('x'.repeat(1_000));
+  });
+
   test('replays tool images from Thread-owned snapshots at the next provider boundary', async () => {
     const fixture = createContext();
     const imageBytes = Buffer.from('provider-visible-image');
@@ -550,6 +997,7 @@ describe('PiTurnExecutor event normalization', () => {
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
       createAgent: (options) => ({
         state: { errorMessage: undefined },
@@ -589,14 +1037,19 @@ describe('PiTurnExecutor event normalization', () => {
 
     await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
     expect(persistedImage).toEqual(imageBytes);
-    expect(fixture.recorder.orderedItems()).toMatchObject([{
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'dynamicToolCall',
       contentItems: [{
         type: 'image',
         source: { kind: 'localFile', path: '/workspace/diagram.png' },
         promptImage: imageRef,
       }],
-    }]);
+    });
+    expect(fixture.recorder.orderedItems()[1]).toMatchObject({
+      type: 'contextEvidence',
+      kind: 'toolOutputProjection',
+      outputRefs: [expect.objectContaining({ id: expect.any(String) })],
+    });
     const replayedResult = providerContexts[1]?.find((message) => message.role === 'toolResult');
     expect(replayedResult?.content).toEqual(expect.arrayContaining([{
       type: 'image',
@@ -639,6 +1092,7 @@ describe('PiTurnExecutor event normalization', () => {
     let initialState: { systemPrompt: string; tools: readonly unknown[] } | null = null;
     let receivedPrompt: UserMessage | null = null;
     const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
       createTools: async () => {
         capabilityCallbacks.push('tools');
@@ -926,6 +1380,79 @@ describe('PiTurnExecutor provider payload', () => {
     });
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
   });
+
+  test('applies one runtime policy to provider requests and retries overflow after canonical compaction', async () => {
+    const fixture = createContext();
+    const seenOptions: SimpleStreamOptions[] = [];
+    const compactionTriggers: string[] = [];
+    let providerCalls = 0;
+    fixture.context.compactContext = async (trigger) => {
+      compactionTriggers.push(trigger);
+      return {} as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+    };
+    const state: { errorMessage?: string } = {};
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => ({
+        ...runtimeSettings(),
+        providerTimeoutMs: 4_321,
+        providerMaxRetries: 2,
+        providerMaxRetryDelayMs: 75,
+        providerCacheRetention: 'short',
+      }),
+      streamSimple: (model, _providerContext, options = {}) => {
+        providerCalls += 1;
+        seenOptions.push(options);
+        const stream = createAssistantMessageEventStream();
+        const message: AssistantMessage = {
+          ...assistantMessage(providerCalls === 1 ? [] : [{ type: 'text', text: 'Recovered' }]),
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          stopReason: providerCalls === 1 ? 'error' : 'stop',
+          ...(providerCalls === 1
+            ? { errorMessage: 'context_length_exceeded: maximum context length reached' }
+            : {}),
+        };
+        queueMicrotask(() => {
+          if (message.stopReason === 'error') {
+            stream.push({ type: 'error', reason: 'error', error: message });
+          } else {
+            stream.push({ type: 'done', reason: 'stop', message });
+          }
+          stream.end(message);
+        });
+        return stream;
+      },
+      createAgent: (options) => ({
+        state,
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          const messages = await options.transformContext!([]) as Message[];
+          const stream = options.streamFn!(testModel, { messages, tools: [] });
+          for await (const _event of stream) { /* drain */ }
+          const result = await stream.result();
+          state.errorMessage = result.errorMessage;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+    expect(providerCalls).toBe(2);
+    expect(compactionTriggers).toEqual(['providerOverflow']);
+    expect(seenOptions).toHaveLength(2);
+    expect(seenOptions.map((options) => ({
+      timeoutMs: options.timeoutMs,
+      maxRetries: options.maxRetries,
+      maxRetryDelayMs: options.maxRetryDelayMs,
+      cacheRetention: options.cacheRetention,
+    }))).toEqual([
+      { timeoutMs: 4_321, maxRetries: 2, maxRetryDelayMs: 75, cacheRetention: 'none' },
+      { timeoutMs: 4_321, maxRetries: 2, maxRetryDelayMs: 75, cacheRetention: 'none' },
+    ]);
+  });
 });
 
 describe('PiTurnExecutor Thread naming', () => {
@@ -1006,6 +1533,17 @@ function runtimeSelection() {
   };
 }
 
+function runtimeSettings() {
+  return {
+    additionalSkillDirectories: [],
+    providerTimeoutMs: null,
+    providerMaxRetries: null,
+    providerMaxRetryDelayMs: 60_000,
+    providerCacheRetention: 'short' as const,
+    disabledSkills: [],
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((settle) => {
@@ -1070,6 +1608,8 @@ function createContext(): {
     durationMs: null,
   });
   const notifications: AgentCoreNotification[] = [];
+  const contextPayloads = new Map<string, import('../../src/core/agent/protocol').ThreadContextPayload>();
+  const outputPayloads = new Map<string, string>();
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
@@ -1090,6 +1630,7 @@ function createContext(): {
     signal: new AbortController().signal,
     recorder,
     readContext: async () => null,
+    readOutput: async (ref) => outputPayloads.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
     readResource: async () => null,
     persistOutputImage: async () => ({
@@ -1098,15 +1639,40 @@ function createContext(): {
       byteLength: 12,
       fileName: 'tool-output.png',
     }),
-    persistOutputText: async (_itemId, text, mimeType, summary) => ({
-      id: 'a'.repeat(64),
-      mimeType,
-      byteLength: Buffer.byteLength(text, 'utf8'),
-      summary,
-    }),
+    persistOutputText: async (_itemId, text, mimeType, summary) => {
+      const id = createHash('sha256').update(text).digest('hex');
+      outputPayloads.set(id, text);
+      return { id, mimeType, byteLength: Buffer.byteLength(text, 'utf8'), summary };
+    },
+    persistContextEvidence: async (payload, summary) => {
+      const serialized = JSON.stringify(payload);
+      const payloadId = createHash('sha256').update(serialized).digest('hex');
+      contextPayloads.set(payloadId, payload);
+      const id = recorder.createItemId();
+      return await recorder.completedImmediately({
+        type: 'contextEvidence',
+        id,
+        provenance: recorder.localProvenance(id),
+        kind: payload.kind,
+        payloadRef: {
+          id: payloadId,
+          mimeType: 'application/vnd.tenon.agent-context+json',
+          byteLength: Buffer.byteLength(serialized),
+          schemaVersion: 1,
+          kind: payload.kind,
+        },
+        summary,
+        contextRefs: [],
+        resourceRefs: [],
+        outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
+      }) as import('../../src/core/agent/protocol').ContextEvidenceThreadItem;
+    },
+    persistSkillCatalog: async () => null,
+    compactContext: async () => null,
     onProviderRetry: () => undefined,
     onSteer: () => undefined,
   };
+  context.readContext = async (ref) => contextPayloads.get(ref.id) ?? null;
   return { context, recorder, notifications };
 }
 
@@ -1115,6 +1681,20 @@ function fixtureResources() {
     readResource: async () => null,
     resolveResourceObservationPath: async () => null,
   };
+}
+
+function testTool(name: string, description: string): AgentTool {
+  return {
+    name,
+    label: name,
+    description,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+    },
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as AgentTool;
 }
 
 function assistantMessage(content: AssistantMessage['content']): AssistantMessage {

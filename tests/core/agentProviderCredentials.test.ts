@@ -579,7 +579,7 @@ describe('provider credential resolver', () => {
     expect(model.reasoning).toBe(true);
   });
 
-  test('custom Responses endpoints keep configured provider prompt cache affinity', () => {
+  test('custom Responses endpoints disable provider prompt cache affinity', () => {
     const catalogModel = piModels().getModel('openai', 'gpt-5.5');
     const runtimeSettings = {
       providerTimeoutMs: null,
@@ -593,7 +593,7 @@ describe('provider credential resolver', () => {
       modelId: 'gpt-5.5',
       baseUrl: 'https://proxy.example.com/v1',
       catalogModel,
-    }))).toMatchObject({ cacheRetention: 'short' });
+    }))).toMatchObject({ cacheRetention: 'none' });
 
     expect(providerStreamOptionsFromRuntimeSettings(runtimeSettings, {
       ...catalogModel!,
@@ -605,7 +605,7 @@ describe('provider credential resolver', () => {
       modelId: 'gpt-5.5',
       baseUrl: 'https://proxy.example.com/v1',
       catalogModel,
-    }))).not.toHaveProperty('cacheRetention');
+    }))).toMatchObject({ cacheRetention: 'none' });
   });
 
   test('custom OpenAI-compatible unknown models fall back to chat completions', () => {
@@ -794,7 +794,7 @@ describe('provider credential resolver', () => {
         id: 'gpt-5.5',
         baseUrl: 'https://proxy.example.com/v1',
       }]);
-      expect(seenOptions).toEqual([{ cacheRetention: 'short' }]);
+      expect(seenOptions).toEqual([{ cacheRetention: 'none' }]);
       expect(seenPayloads).toEqual([{
         instructions: 'Connection probe system prompt.',
         input: [

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -8,6 +9,7 @@ import type {
   ThreadContextPayloadReference,
   Turn,
 } from '../../src/core/agent/protocol';
+import { providerCacheAffinityMaterial } from '../../src/core/agent/cacheAffinity';
 import { ThreadRunDetailsPanel } from '../../src/renderer/agent/components/ThreadRunDetailsPanel';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
@@ -33,6 +35,51 @@ afterEach(() => {
 });
 
 describe('ThreadRunDetailsPanel context payloads', () => {
+  test('shows the exact reset epoch, provider affinity, and cache usage without a new DTO', async () => {
+    const threadId = 'thread-cache';
+    const target = turn(threadId, 'turn-target', contextRef('c'));
+    const targetWithCache: Turn = {
+      ...target,
+      execution: {
+        ...target.execution,
+        usage: { input: 1, output: 1, cacheRead: 3, cacheWrite: 0, totalTokens: 5, cost: null },
+      },
+    };
+    const resetId = 'reset-cache-epoch';
+    const resetTurn: Turn = {
+      ...turn(threadId, 'turn-reset', contextRef('r')),
+      items: [{
+        type: 'contextReset',
+        id: resetId,
+        provenance: {
+          originThreadId: threadId,
+          originTurnId: 'turn-reset',
+          originItemId: resetId,
+        },
+        clearedThrough: { turnId: 'turn-before-reset', itemId: 'item-before-reset' },
+      }],
+    };
+    const rendered = renderPanel(async (method, input) => {
+      if (method === 'thread/read') return { thread: thread(threadId) };
+      if (method === 'thread/turns/list') {
+        return input.cursor === null
+          ? { data: [targetWithCache], nextCursor: 'older', backwardsCursor: null }
+          : { data: [resetTurn], nextCursor: null, backwardsCursor: null };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render(threadId, target.id);
+    await flush();
+
+    const affinity = createHash('sha256')
+      .update(providerCacheAffinityMaterial(threadId, resetId))
+      .digest('hex');
+    expect(rendered.document.body.textContent).toContain(`Context epoch${resetId}`);
+    expect(rendered.document.body.textContent).toContain(`Cache affinity${affinity}`);
+    expect(rendered.document.body.textContent).toContain('Cached: 75%');
+  });
+
   test('cannot apply an old context response after switching Thread and Turn targets', async () => {
     const staleContext = deferred<ReturnType<typeof contextResponse>>();
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];

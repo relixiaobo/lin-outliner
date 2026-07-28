@@ -30,6 +30,21 @@ describe('AgentConfigurationLoader', () => {
       name: 'worker',
       source: 'builtIn',
     });
+    const roleCatalog = loader.buildRoleCatalogSnapshot(cwd);
+    expect(roleCatalog).toMatchObject({
+      kind: 'roleCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+    });
+    expect(roleCatalog.entries.map((entry) => ({
+      name: entry.name,
+      source: entry.source,
+      identity: entry.identity,
+    }))).toEqual([
+      { name: 'default', source: 'built-in', identity: 'built-in:default' },
+      { name: 'explorer', source: 'built-in', identity: 'built-in:explorer' },
+      { name: 'worker', source: 'built-in', identity: 'built-in:worker' },
+    ]);
   });
 
   test('loads user Profiles and lets project Profiles and Roles take precedence', async () => {
@@ -101,6 +116,13 @@ describe('AgentConfigurationLoader', () => {
         tools: ['node_read'],
       },
     });
+    const roleCatalog = loader.buildRoleCatalogSnapshot(cwd);
+    expect(roleCatalog.entries.find((entry) => entry.name === 'reviewer')).toMatchObject({
+      source: 'project',
+      identity: 'project:reviewer',
+      description: 'Review this project.',
+    });
+    expect(roleCatalog.entries.find((entry) => entry.name === 'reviewer')?.contentHash).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   test('fails closed on unknown fields and unavailable selections', async () => {

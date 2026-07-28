@@ -6,6 +6,7 @@ import type {
   ContextEvidenceThreadItem,
   ContextPayloadKind,
   RendererUserViewHints,
+  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
   Thread,
@@ -38,6 +39,7 @@ export async function admitContextEvidence(input: {
   readonly additionalContext?: AdditionalContext;
   readonly extensionContext: readonly ThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
+  readonly roleCatalog?: RoleCatalogContextPayload | null;
   readonly skillInvocation?: SkillInvocationContextPayload | null;
   readonly includeHostContext: boolean;
   readonly projection: DocumentProjection | null;
@@ -82,6 +84,9 @@ export async function admitContextEvidence(input: {
     if (userView) await publish(userView, userViewSummary(userView));
     if (input.skillCatalog) {
       await publish(input.skillCatalog, `Available Skills (${input.skillCatalog.entries.length})`);
+    }
+    if (input.roleCatalog) {
+      await publish(input.roleCatalog, `Available Roles (${input.roleCatalog.entries.length})`);
     }
     if (input.skillInvocation) {
       await publish(input.skillInvocation, `Invoked Skill: ${input.skillInvocation.displayName}`);
@@ -177,6 +182,10 @@ export function contextEvidenceItem(
   payloadRef: ThreadContextPayloadReference,
   summary: string,
   resourceRefs: readonly ThreadResourceReference[],
+  dependencies: {
+    readonly contextRefs?: readonly ThreadContextPayloadReference[];
+    readonly outputRefs?: readonly import('../../../core/agent/protocol').ThreadItemOutputReference[];
+  } = {},
 ): ContextEvidenceThreadItem {
   const id = input.createItemId();
   return decodeThreadItem({
@@ -190,9 +199,9 @@ export function contextEvidenceItem(
     kind,
     payloadRef,
     summary,
-    contextRefs: [],
+    contextRefs: dependencies.contextRefs ?? [],
     resourceRefs,
-    outputRefs: [],
+    outputRefs: dependencies.outputRefs ?? [],
   }) as ContextEvidenceThreadItem;
 }
 

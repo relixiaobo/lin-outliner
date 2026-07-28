@@ -447,6 +447,196 @@ describe('canonical context projection', () => {
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
   });
+
+  test('uses frozen full and inline projections as the tool result without emitting evidence prose', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const fullRef = {
+      id: '1'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 18,
+      summary: 'Complete output',
+    };
+    const inlineRef = {
+      id: '2'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 100_000,
+      summary: 'Large output',
+    };
+    const fullTool = commandToolItem('tool-full', fullRef, 'bounded full output');
+    const inlineTool = commandToolItem('tool-inline', inlineRef, 'mutable bounded output');
+    const fullEvidence = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef: fullRef,
+      projection: { type: 'full' },
+    }, 'projection-full');
+    const inlineEvidence = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef: inlineRef,
+      projection: { type: 'inline', text: 'FROZEN INLINE OUTPUT' },
+    }, 'projection-inline');
+    const messages = await new CanonicalContextProjector(model, projectionResources(
+      payloads,
+      new Map(),
+      new Map([[fullRef.id, 'COMPLETE FULL OUTPUT']]),
+    )).projectTurns([
+      turn(1, [
+        userItem('user-output', 1_720_000_000_123, 'Run both.'),
+        fullTool,
+        fullEvidence,
+        inlineTool,
+        inlineEvidence,
+      ], true),
+    ]);
+
+    expect(messages.map((message) => message.role)).toEqual([
+      'user', 'assistant', 'toolResult', 'toolResult',
+    ]);
+    const results = messages.filter((message) => message.role === 'toolResult');
+    expect(messageText(results[0]!)).toBe('COMPLETE FULL OUTPUT');
+    expect(messageText(results[1]!)).toBe('FROZEN INLINE OUTPUT');
+    expect(JSON.stringify(messages)).not.toContain('toolOutputProjection');
+    expect(JSON.stringify(messages)).not.toContain('mutable bounded output');
+  });
+
+  test('replaces covered history with typed compaction payloads and starts fresh after reset', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const original = turn(1, [
+      userItem('user-before-compact', 1_720_000_000_123, 'ORIGINAL USER DETAIL'),
+      agentItem('agent-before-compact', 'ORIGINAL ASSISTANT DETAIL'),
+    ], true);
+    const summaryRef = storePayload(payloads, {
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'fallback',
+      text: 'FROZEN LOSSY SUMMARY',
+    });
+    const restoredStateRef = storePayload(payloads, {
+      schemaVersion: 1,
+      kind: 'compactionRestoredState',
+      skillCatalogHash: null,
+      announcedSkills: [],
+      activeSkills: [],
+      roleCatalogHash: null,
+      announcedRoles: [],
+      userViewBaselineRef: null,
+      activeObservations: [],
+    });
+    const compactionItem: ThreadItem = {
+      type: 'contextCompaction',
+      id: 'compact-boundary',
+      provenance: {
+        originThreadId: rootThread(1).id,
+        originTurnId: uuidV7(1_720_000_100_002),
+        originItemId: 'compact-boundary',
+      },
+      trigger: 'manual',
+      coveredFrom: { turnId: original.id, itemId: 'user-before-compact' },
+      coveredThrough: { turnId: original.id, itemId: 'agent-before-compact' },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef: null,
+      contextRefs: [],
+      resourceRefs: [],
+      outputRefs: [],
+    };
+    const compacted = turn(2, [compactionItem], true);
+    const projector = new CanonicalContextProjector(model, projectionResources(payloads));
+    const messages = await projector.projectTurns([original, compacted]);
+    expect(messageText(messages[0]!)).toContain('FROZEN LOSSY SUMMARY');
+    expect(messageText(messages[0]!)).toContain('lossy_derived_context=true');
+    expect(JSON.stringify(messages)).not.toContain('ORIGINAL USER DETAIL');
+    expect(JSON.stringify(messages)).not.toContain('ORIGINAL ASSISTANT DETAIL');
+
+    const reset = turn(3, [{
+      type: 'contextReset',
+      id: 'reset-boundary',
+      provenance: {
+        originThreadId: rootThread(1).id,
+        originTurnId: uuidV7(1_720_000_100_003),
+        originItemId: 'reset-boundary',
+      },
+      clearedThrough: { turnId: compacted.id, itemId: compactionItem.id },
+    }], true);
+    const after = turn(4, [userItem('user-after-reset', 1_720_000_200_123, 'AFTER RESET')], true);
+    const resetMessages = await new CanonicalContextProjector(model, projectionResources(payloads))
+      .projectTurns([original, compacted, reset, after]);
+    expect(resetMessages).toHaveLength(1);
+    expect(messageText(resetMessages[0]!)).toBe('AFTER RESET');
+  });
+
+  test('reprojects complete catalog and user-view baselines after compaction', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const skill = skillCatalog();
+    const role = roleCatalog();
+    const baselineView = userView('Before compact');
+    const skillItem = evidence(payloads, skill, 'skill-catalog-before-compact');
+    const roleItem = evidence(payloads, role, 'role-catalog-before-compact');
+    const viewItem = evidence(payloads, baselineView, 'view-before-compact');
+    const original = turn(10, [
+      skillItem,
+      roleItem,
+      viewItem,
+      userItem('user-before-baseline-compact', 1_720_000_300_123, 'Keep the active context.'),
+      agentItem('agent-before-baseline-compact', 'Working.'),
+    ], true);
+    const summaryRef = storePayload(payloads, {
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'fallback',
+      text: 'Earlier work.',
+    });
+    const restoredStateRef = storePayload(payloads, {
+      schemaVersion: 1,
+      kind: 'compactionRestoredState',
+      skillCatalogHash: skill.catalogHash,
+      announcedSkills: skill.entries.map(({ name, identity, contentHash }) => ({ name, identity, contentHash })),
+      activeSkills: [],
+      roleCatalogHash: role.catalogHash,
+      announcedRoles: role.entries.map(({ name, identity, contentHash }) => ({ name, identity, contentHash })),
+      userViewBaselineRef: viewItem.payloadRef,
+      activeObservations: [],
+    });
+    const compactionItem: ThreadItem = {
+      type: 'contextCompaction',
+      id: 'compact-context-baselines',
+      provenance: {
+        originThreadId: rootThread(1).id,
+        originTurnId: uuidV7(1_720_000_400_002),
+        originItemId: 'compact-context-baselines',
+      },
+      trigger: 'automaticPreflight',
+      coveredFrom: { turnId: original.id, itemId: skillItem.id },
+      coveredThrough: { turnId: original.id, itemId: 'agent-before-baseline-compact' },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef: null,
+      contextRefs: [viewItem.payloadRef],
+      resourceRefs: [],
+      outputRefs: [],
+    };
+    const compacted = turn(11, [compactionItem], true);
+    const changed = turn(12, [
+      evidence(payloads, userView('After compact'), 'view-after-compact'),
+      userItem('user-after-baseline-compact', 1_720_000_500_123, 'Continue.'),
+    ], true);
+
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads))
+      .projectTurns([original, compacted, changed]);
+    const compactedText = messageText(messages[0]!);
+    const changedText = messageText(messages[1]!);
+    expect(compactedText).toContain('kind="skillCatalog"');
+    expect(compactedText).toContain('description=Review the current change.');
+    expect(compactedText).toContain('kind="roleCatalog"');
+    expect(compactedText).toContain('description=Review delegated work.');
+    expect(compactedText).toContain('projection_mode=snapshot');
+    expect(compactedText).toContain('node_id=node-1 title=Before compact');
+    expect(changedText).toContain('projection_mode=diff');
+    expect(changedText).toContain('node_id=node-1 title=After compact');
+  });
 });
 
 function rootThread(index: number): Thread {
@@ -516,8 +706,24 @@ function evidence(
     summary: payload.kind,
     contextRefs: [],
     resourceRefs: [],
-    outputRefs: [],
+    outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
   };
+}
+
+function storePayload(
+  payloads: Map<string, ThreadContextPayload>,
+  payload: ThreadContextPayload,
+): ThreadContextPayloadReference {
+  const encoded = encodeThreadContextPayload(payload);
+  const ref: ThreadContextPayloadReference = {
+    id: createHash('sha256').update(encoded).digest('hex'),
+    mimeType: 'application/vnd.tenon.agent-context+json',
+    byteLength: Buffer.byteLength(encoded),
+    schemaVersion: 1,
+    kind: payload.kind,
+  };
+  payloads.set(ref.id, payload);
+  return ref;
 }
 
 function userItem(id: string, acceptedAt: number, text: string): ThreadItem {
@@ -554,6 +760,27 @@ function dynamicToolItem(id: string, tool: string, text: string): ThreadItem {
     outputRef: null,
     contentItems: [{ type: 'text', text }],
     success: true,
+    durationMs: 1,
+  };
+}
+
+function commandToolItem(
+  id: string,
+  outputRef: Extract<ThreadItem, { type: 'commandExecution' }>['outputRef'],
+  aggregatedOutput: string,
+): ThreadItem {
+  return {
+    type: 'commandExecution',
+    id,
+    provenance: { originThreadId: rootThread(1).id, originTurnId: uuidV7(1_720_000_100_001), originItemId: id },
+    command: 'produce output',
+    cwd: '/workspace',
+    processId: null,
+    commandActions: [],
+    status: 'completed',
+    outputRef,
+    aggregatedOutput,
+    exitCode: 0,
     durationMs: 1,
   };
 }
@@ -613,7 +840,7 @@ function userView(title: string): UserViewContextPayload {
   };
 }
 
-function skillCatalog(): ThreadContextPayload {
+function skillCatalog(): Extract<ThreadContextPayload, { kind: 'skillCatalog' }> {
   return {
     schemaVersion: 1,
     kind: 'skillCatalog',
@@ -632,12 +859,33 @@ function skillCatalog(): ThreadContextPayload {
   };
 }
 
+function roleCatalog(): Extract<ThreadContextPayload, { kind: 'roleCatalog' }> {
+  return {
+    schemaVersion: 1,
+    kind: 'roleCatalog',
+    mode: 'baseline',
+    previousCatalogHash: null,
+    catalogHash: 'c'.repeat(64),
+    entries: [{
+      change: 'available',
+      name: 'reviewer',
+      displayName: 'Reviewer',
+      source: 'built-in',
+      identity: 'built-in:reviewer',
+      contentHash: 'd'.repeat(64),
+      description: 'Review delegated work.',
+    }],
+  };
+}
+
 function projectionResources(
   payloads: ReadonlyMap<string, ThreadContextPayload>,
   resources: ReadonlyMap<string, Buffer> = new Map(),
+  outputs: ReadonlyMap<string, string> = new Map(),
 ) {
   return {
     readContext: async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? null,
+    readOutput: async (ref: { readonly id: string }) => outputs.get(ref.id) ?? null,
     readResource: async (ref: ThreadResourceReference) => resources.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
   };

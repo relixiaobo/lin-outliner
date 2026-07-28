@@ -116,12 +116,20 @@ export function ThreadDock({
     try {
       const skills = await api.agentListUserInvocableSkills();
       if (slashCommandsRequestRef.current === request) {
-        setSlashCommands(slashCommandsFromSkills(skills));
+        setSlashCommands(slashCommandsFromSkills(skills, {
+          compactDescription: t.agent.composer.compactCommandDescription,
+          clearDescription: t.agent.composer.clearCommandDescription,
+        }));
       }
     } catch {
-      if (slashCommandsRequestRef.current === request) setSlashCommands([]);
+      if (slashCommandsRequestRef.current === request) {
+        setSlashCommands(runtimeSlashCommands({
+          compactDescription: t.agent.composer.compactCommandDescription,
+          clearDescription: t.agent.composer.clearCommandDescription,
+        }));
+      }
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void threadStore.initialize();
@@ -415,8 +423,35 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function slashCommandsFromSkills(skills: readonly SkillDefinition[]): AgentSlashCommandView[] {
-  return skills
+interface RuntimeSlashCommandLabels {
+  readonly compactDescription: string;
+  readonly clearDescription: string;
+}
+
+function runtimeSlashCommands(labels: RuntimeSlashCommandLabels): AgentSlashCommandView[] {
+  return [
+    {
+      id: 'runtime:compact',
+      kind: 'runtime',
+      label: '/compact',
+      description: labels.compactDescription,
+      insertText: '/compact ',
+    },
+    {
+      id: 'runtime:clear',
+      kind: 'runtime',
+      label: '/clear',
+      description: labels.clearDescription,
+      insertText: '/clear',
+    },
+  ];
+}
+
+function slashCommandsFromSkills(
+  skills: readonly SkillDefinition[],
+  labels: RuntimeSlashCommandLabels,
+): AgentSlashCommandView[] {
+  const skillCommands = skills
     .filter((skill) => skill.userInvocable)
     .map((skill) => ({
       id: `skill:${skill.name}`,
@@ -426,6 +461,7 @@ function slashCommandsFromSkills(skills: readonly SkillDefinition[]): AgentSlash
       insertText: `/${skill.name} `,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
+  return [...runtimeSlashCommands(labels), ...skillCommands];
 }
 
 function slashCommandDescription(skill: SkillDefinition): string {

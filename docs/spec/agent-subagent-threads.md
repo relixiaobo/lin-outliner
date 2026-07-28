@@ -75,3 +75,58 @@ active child Turn and retains the Thread for follow-up work.
 An isolated Skill uses the same child-Thread mechanism with a bounded tool
 catalog. Read-only isolation is a catalog constraint, not an operating-system
 sandbox.
+
+## Inherited Context
+
+`collaboration.spawn_agent` accepts `fork_turns=none|N|all`, where `N` is a positive
+integer and the default is `all`. Selection starts after the parent's latest
+`contextReset`. `none` adds no parent history, `N` selects the last N eligible Turns,
+and `all` selects the complete current epoch. If a selected compaction references an
+earlier cursor, selection expands to keep that cursor reachable rather than emitting an
+invalid partial boundary. The same minimal dependency expansion applies when the selected
+tail begins with a Skill or Role catalog delta: inheritance includes enough preceding
+Turns to make that journal reducible. The payload still records the user's original `N`
+as `requestedTurns`; dependency closure is not a silent change to the request.
+
+Spawn during an active parent Turn snapshots the completed canonical prefix immediately
+before the spawn call. The spawn call itself, in-progress Items, transient Plan state,
+and retry notifications are excluded. The prefix becomes a typed `inheritedContext`
+payload before the child's first user Item, retaining user content, evidence, assistant
+content, reasoning summaries, complete tool exchanges, images, attachments,
+compaction/reset semantics, the source Thread ID, and the exact covered-through cursor.
+It is model context, not a duplicate visible child transcript.
+
+Before child admission, main republishes the payload and copies every nested context,
+resource, and complete-output dependency into child ownership. Content-addressed
+references and payload digests remain stable; only ownership changes. Admission fails
+and cleans the staged child if any dependency cannot be copied. The child therefore
+remains projectable and its managed images remain previewable after the parent Thread is
+deleted.
+
+Inherited payloads are reducer input, not projector-only message bundles. Skill and Role
+catalog reduction, active inline Skill recovery, user-view baseline selection, and
+file/Node observation recovery recursively consume their effective typed Turns. A child
+compaction checkpoints those inherited states with child-owned references; a later
+compaction consumes the prior checkpoint, so repeated compaction does not silently drop
+the inherited state. Conflicting frozen projections or unavailable nested dependencies
+fail closed.
+
+Although the inherited Item and the child's task share the first active Turn, they are
+separate budget units. The protected active boundary starts at the first current
+admission Item after the leading inherited payload. Preflight or provider-overflow
+recovery may therefore cover that inherited Item with exact same-Turn cursors while
+preserving the current environment, view, catalogs, resources, Skill guidance, and user
+task verbatim.
+
+The child's first ordinary admission plans its Skill and Role journals against the
+staged inherited evidence. An unchanged current registry emits no duplicate baseline or
+delta, while a registry added or changed since the inherited boundary appends the normal
+deterministic delta. This keeps the provider prefix stable without hiding newly available
+capabilities from an old or long-running conversation.
+
+Role discovery uses the same canonical journal shape as Skills whenever
+`collaboration.spawn_agent` is available: one bounded built-in/project/user baseline per
+epoch, no evidence for an unchanged registry, and appended added/changed/removed deltas
+for an existing conversation. Compaction validates and checkpoints the announced Role
+identities; `/clear` causes a fresh baseline on the next ordinary admission. The catalog
+informs model selection but never widens the parent's capability ceiling.

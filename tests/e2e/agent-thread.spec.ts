@@ -1004,6 +1004,8 @@ test.describe('canonical agent Thread surface', () => {
     await composer.fill('/');
 
     const menu = page.getByRole('listbox', { name: 'Thread slash commands' });
+    await expect(menu.getByRole('option', { name: /compact/ })).toContainText('Replace earlier context with a durable summary');
+    await expect(menu.getByRole('option', { name: /clear/ })).toContainText('Start a new context epoch without deleting history');
     const skill = menu.getByRole('option', { name: /workspace-review/ });
     await expect(skill).toContainText('Review workspace conventions before automatic use.');
     await skill.click();
@@ -1013,6 +1015,188 @@ test.describe('canonical agent Thread surface', () => {
     expect((await commandCalls(page)).filter((call) => call.cmd === 'agent_list_all_skills').at(-1)?.args)
       .toMatchObject({ userInvocableOnly: true });
   });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`renders context boundaries and reset affinity in ${colorScheme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await createNewThread(page);
+      const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+      await composer.fill('Establish context before reset.');
+      await page.getByRole('button', { name: 'Send' }).click();
+
+      const fixture = await page.evaluate(async () => {
+        const target = window as Window & {
+          lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+          __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+        };
+        const threadResponse = await target.lin!.agentCoreRequest<{
+          data: Array<{ id: string }>;
+        }>('thread/list', {});
+        const threadId = threadResponse.data[0]?.id;
+        if (!threadId) throw new Error('Mock Thread not found');
+        const turnsResponse = await target.lin!.agentCoreRequest<{
+          data: Array<{ id: string; items: Array<{ id: string }> }>;
+        }>('thread/turns/list', { threadId, itemsView: 'full' });
+        const prior = turnsResponse.data.at(-1);
+        const clearedItem = prior?.items.at(-1);
+        if (!prior || !clearedItem) throw new Error('Mock prior Turn not found');
+        const resetTurnId = '01910000-0000-7000-8000-00000000fc01';
+        const resetItemId = '01910000-0000-7000-8000-00000000fc02';
+        const epochTurnId = '01910000-0000-7000-8000-00000000fc03';
+        const epochUserItemId = '01910000-0000-7000-8000-00000000fc04';
+        const epochAgentItemId = '01910000-0000-7000-8000-00000000fc05';
+        const compactionTurnId = '01910000-0000-7000-8000-00000000fc06';
+        const compactionItemId = '01910000-0000-7000-8000-00000000fc07';
+        const execution = {
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.4',
+          reasoningEffort: 'medium',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: null,
+          },
+        };
+        const emitTurn = (turn: unknown, turnId: string) => target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId,
+          turnId,
+          turn,
+        });
+        emitTurn({
+          id: resetTurnId,
+          items: [{
+            id: resetItemId,
+            type: 'contextReset',
+            provenance: { originThreadId: threadId, originTurnId: resetTurnId, originItemId: resetItemId },
+            clearedThrough: { turnId: prior.id, itemId: clearedItem.id },
+          }],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: resetTurnId,
+            trigger: { kind: 'feature', feature: 'context.clear', ref: 'e2e-clear' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 100,
+          completedAt: 101,
+          durationMs: 1,
+        }, resetTurnId);
+
+        const epochItemProvenance = (itemId: string) => ({
+          originThreadId: threadId,
+          originTurnId: epochTurnId,
+          originItemId: itemId,
+        });
+        emitTurn({
+          id: epochTurnId,
+          items: [
+            {
+              id: epochUserItemId,
+              type: 'userMessage',
+              provenance: epochItemProvenance(epochUserItemId),
+              clientId: null,
+              acceptedAt: 102,
+              content: [{ type: 'text', text: 'Establish context after reset.' }],
+            },
+            {
+              id: epochAgentItemId,
+              type: 'agentMessage',
+              provenance: epochItemProvenance(epochAgentItemId),
+              text: 'The new context epoch is active.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: epochTurnId,
+            trigger: { kind: 'user' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 102,
+          completedAt: 103,
+          durationMs: 1,
+        }, epochTurnId);
+
+        const summaryRef = {
+          id: 'a'.repeat(64),
+          mimeType: 'application/vnd.tenon.agent-context+json',
+          byteLength: 100,
+          schemaVersion: 1,
+          kind: 'compactionSummary',
+        };
+        const restoredStateRef = {
+          id: 'b'.repeat(64),
+          mimeType: 'application/vnd.tenon.agent-context+json',
+          byteLength: 100,
+          schemaVersion: 1,
+          kind: 'compactionRestoredState',
+        };
+        emitTurn({
+          id: compactionTurnId,
+          items: [{
+            id: compactionItemId,
+            type: 'contextCompaction',
+            provenance: {
+              originThreadId: threadId,
+              originTurnId: compactionTurnId,
+              originItemId: compactionItemId,
+            },
+            trigger: 'manual',
+            coveredFrom: { turnId: epochTurnId, itemId: epochUserItemId },
+            coveredThrough: { turnId: epochTurnId, itemId: epochAgentItemId },
+            preservedFrom: null,
+            summaryRef,
+            restoredStateRef,
+            instructionsRef: null,
+            contextRefs: [],
+            resourceRefs: [],
+            outputRefs: [],
+          }],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: compactionTurnId,
+            trigger: { kind: 'feature', feature: 'context.compact', ref: 'e2e-compact' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 104,
+          completedAt: 105,
+          durationMs: 1,
+        }, compactionTurnId);
+        return { compactionTurnId, resetItemId };
+      });
+
+      const boundaries = page.locator('.thread-compaction');
+      await expect(boundaries).toHaveText(['Context cleared.', 'Context compacted.']);
+      await expect(boundaries.last()).toBeInViewport();
+      const transcript = page.locator('.thread-transcript');
+      await expect.poll(() => transcript.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+      await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+        .toBe(colorScheme === 'dark');
+
+      const compactionTurn = page.locator(`[data-thread-turn-row="${fixture.compactionTurnId}"]`);
+      await expect(compactionTurn.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
+      await expect(compactionTurn.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
+      await compactionTurn.hover();
+      await compactionTurn.getByRole('button', { name: 'Details' }).click();
+      const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
+      await expect(runDetails).toContainText(`Context epoch${fixture.resetItemId}`);
+      await expect(runDetails).toContainText(/Cache affinity[a-f0-9]{64}/);
+      await expect.poll(() => runDetails.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+    });
+  }
 
   test('keeps Thread actions in an anchored keyboard menu', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 620 });

@@ -51,7 +51,10 @@ import {
   imageModelOptionsForProvider,
   piRefreshImageModels,
 } from '../../piImageModels';
-import { customOpenAIResponsesPayloadProfileOption } from '../../openAIResponsesCompat';
+import {
+  customOpenAIResponsesPayloadProfileOption,
+  isCustomOpenAIResponsesEndpoint,
+} from '../../openAIResponsesCompat';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -257,7 +260,11 @@ export function providerStreamOptionsFromRuntimeSettings(
     options.maxRetryDelayMs = settings.providerMaxRetryDelayMs;
   }
   if (settings?.providerCacheRetention) {
-    options.cacheRetention = settings.providerCacheRetention;
+    options.cacheRetention = isCustomOpenAIResponsesEndpoint(model)
+      ? 'none'
+      : settings.providerCacheRetention;
+  } else if (isCustomOpenAIResponsesEndpoint(model)) {
+    options.cacheRetention = 'none';
   }
   return options;
 }

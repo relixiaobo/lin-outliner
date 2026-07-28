@@ -97,18 +97,22 @@ checks the Turn signal after provider resolution, tool assembly, canonical
 projection, and Agent construction, so Stop cannot
 cross an initialization boundary and still reach the provider.
 
-Prior and active provider input is rebuilt from the complete canonical Item sequence.
+Prior and active provider input is rebuilt from the effective canonical Item sequence
+after context-reset and compaction reduction.
 Messages become assistant content, while reasoning becomes explicitly labelled
 assistant text because canonical history does not retain provider-private
 reasoning signatures. Command, file, MCP, dynamic,
 collaboration, and web Items become paired provider tool-call and tool-result
-messages using the bounded projection already stored on each Item. Dynamic tool
+messages using the frozen projection recorded for each complete output. Dynamic tool
 results retain their ordered text, JSON, and actual image content at the provider
 boundary. Each image is preceded by a stable identity marker derived from its alt text
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
 reset Items select context state rather than becoming user prose; Subagent activity
-and viewed images become textual context, and compaction currently becomes a marker.
+and viewed images become textual context. A compaction serializes its lossy summary,
+validated reducer checkpoint, restored inline Skill instructions and file/Node
+observations, optional durable instructions, then continues with its declared preserved
+tail. The covered raw range is not sent as a second copy.
 Context evidence is serialized at its canonical tail position as an escaped
 `<context-evidence>` envelope inside the provider-facing `<system-reminder>` convention
 described by L0. The wrapper is only a serialization boundary: typed canonical evidence
@@ -210,9 +214,13 @@ the fork's own Thread directory. Managed resource copies use copy-on-write when
 available but always receive a distinct inode. Payload reads resolve through the
 requested Thread, so deleting or corrupting the source Thread cannot invalidate
 inherited text or image results. Payload reads never become provider history
-authority. The current canonical projector replays the bounded Item result; selecting full
-content or an addressable observation is reserved for canonical
-`toolOutputProjection` evidence and the budget planner.
+authority. Before the next provider boundary, the runtime records exactly one
+`toolOutputProjection` for each previously unseen complete output. A result uses its full
+payload when both the per-output and aggregate output shares fit; otherwise it uses a
+bounded inline projection that states the complete byte length and digest. The decision
+is immutable and content-addressed. Later replay, restart, compaction, fork, and child
+inheritance use the same bytes while the complete `outputRef` remains available for UI
+inspection and checkpoint dependencies.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image files
@@ -260,18 +268,66 @@ Item still `inProgress` is completed as `interrupted`; unexpected executor
 failure completes it as `failed`. The terminal Turn records the corresponding
 status and error.
 
-## Context Compaction
+## Context Planning And Compaction
 
-The Core contract represents compaction with exact covered/preserved cursors and
-Thread-owned summary, restored-state, and optional instruction payloads. It also
-represents `/clear` with `contextReset`. The current projector consumes context evidence
-but does not yet perform compaction/epoch reduction: it serializes an existing compaction
-Item only as a marker and resets its in-pass user-view baseline at a reset Item. The
-restored-state schema can checkpoint active file/Node observations
-through complete-output and frozen-projection references, but the executor does not yet
-restore or serialize them. Automatic/manual planning, epoch selection, Skill and
-observation checkpoint restore are subsequent consumers of this protocol, never
-reminder-text parsers.
+Every provider boundary, including post-tool requests and steering, runs one global
+budget plan over the stable prompt, canonical tool schemas, reduced history, current
+evidence, images, and the active Turn. The input limit reserves provider framing plus up
+to one quarter of the model context window for output, capped by the model output limit.
+The active Turn is mandatory. Assistant tool calls and their complete result set form one
+indivisible unit; an orphan, duplicate, or incomplete exchange fails closed. If the
+stable prompt, tools, and active Turn alone cannot fit, the Turn fails with an explicit
+capacity error rather than dropping the current request.
+
+A child Turn's leading `inheritedContext` Item is historical context even though it is
+stored before the task in that same Turn. Its protected boundary begins at the first
+following current-admission Item. Budget recovery may compact the inherited Item with an
+exact item cursor, but it cannot compact the current admission evidence or task.
+
+When older history prevents the protected tail from fitting, preflight records one
+`automaticPreflight` compaction and replans. Runtime compaction covers prior canonical
+history only. The planner aligns its retained provider-message suffix to the next
+canonical Turn boundary, so it preserves the newest complete prior Turns that fit plus
+the active Turn, never a partial prior Turn. Provider-overflow recovery may compact all
+prior Turns and preserve only the active Turn. Manual `/compact
+[instructions]` may compact the current epoch while the Thread is idle. Both forms store
+exact covered/preserved cursors, a deterministic bounded lossy summary, and a reducer
+checkpoint for the Skill and Role catalog journals, active inline Skill invocations,
+latest user-view baseline, and non-invalidated file/Node observations. Observation
+checkpoints reference the existing frozen projection and complete output instead of
+copying tool text. Optional manual instructions remain typed application guidance after
+the summary; they are not parsed from reminder text. A compaction with no eligible
+content is an idempotent no-op.
+
+Reducers recursively evaluate typed inherited context and treat an earlier compaction
+checkpoint as authoritative state at that point in the effective history. Consequently,
+compacting a child or fork after deleting its source Thread preserves inherited
+catalogs, active Skill instructions, the latest view baseline, and active observations;
+compacting that result again preserves the same state until later canonical Items change
+or invalidate it. Every nested context/output dependency is validated before the new
+checkpoint is admitted.
+
+A successful non-preview `node_create`, `node_edit`, or `node_delete` invalidates all
+active Node observations because one bounded `node_read` can project descendants,
+references, and definition-dependent content that cannot be reconstructed from mutation
+arguments alone. Successful `outline_undo_stack` undo/redo has the same effect; list,
+preview, failed, and interrupted calls do not. File observations remain path-keyed and
+invalidate only after a completed mutation of that path.
+
+`/clear` records a `contextReset` in a completed feature Turn without invoking the
+provider. Projection starts after the latest reset, clears the user-view diff baseline,
+catalog journals, active Skill guidance, output-projection budget state, prior
+compaction, and inherited context, then records fresh Skill/Role baselines on the next
+ordinary admission. Earlier Turns remain visible, pageable, searchable, exportable,
+forkable, and available to explicit history tools. Consecutive clears without new
+model-visible content reuse the prior boundary.
+
+A provider context-overflow error is classified before transient transport retry. The
+runtime records one `providerOverflow` compaction, rebuilds the canonical request, and
+retries once without consuming request/stream retry counters. A second overflow, or an
+overflow with no eligible compaction range, fails explicitly. Compaction Items and their
+payload dependencies are durable before retry, so restart reconstructs the same reduced
+request.
 
 ## Provider Independence
 
@@ -283,3 +339,25 @@ Retryable provider request/stream failures use bounded Codex-style backoff. The
 executor emits `turn/providerRetry/changed` only as transient notification state
 and clears it on recovery or terminalization; reconnect attempts do not create
 Items or persist as transcript history.
+
+Timeout, maximum transient retries, maximum retry delay, and cache retention are read
+once at Turn execution start and applied consistently to each provider request. Custom
+OpenAI Responses endpoints always force cache retention to `none`; auxiliary naming also
+uses no cache retention and keeps its separate bounded request contract.
+
+Provider cache affinity is the lowercase SHA-256 of
+`tenon-agent-cache-affinity-v1`, the Thread ID, and the current context epoch ID separated
+by NUL bytes. The initial epoch ID is `initial`; only a recorded `contextReset` starts a
+new affinity. Ordinary Turns, steering, restart, compaction, and changes to the Thread
+tree's grouping `sessionId` retain it. Tools are sorted by exact canonical name before
+Agent construction, so equivalent registries serialize identically regardless of
+assembly order.
+
+Anthropic Messages requests use at most four cache-control breakpoints. The stable
+prompt's structured blocks split it into protected L0 firmware and the remaining stable
+execution prompt; the provider adapter preserves the final tool and final user
+breakpoints already present in the request. If an upstream OAuth identity block would
+exceed the limit, that identity breakpoint is removed before either protected stable
+breakpoint. The adapter matches the sanitized provider text reconstructed from
+`StablePrompt.blocks`, never parses textual markers, and adds no Anthropic metadata to
+other providers.

@@ -633,6 +633,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       return thread;
     };
     const emitAgentCoreNotification = (notification: unknown) => {
+      const event = notification as {
+        type?: unknown;
+        threadId?: unknown;
+        turnId?: unknown;
+        turn?: unknown;
+      };
+      if (
+        (event.type === 'turn/started' || event.type === 'turn/completed')
+        && typeof event.threadId === 'string'
+        && typeof event.turnId === 'string'
+        && event.turn !== null
+        && typeof event.turn === 'object'
+      ) {
+        const turns = mockTurns.get(event.threadId);
+        if (turns) {
+          const turn = clone(event.turn) as unknown as MockTurn;
+          const index = turns.findIndex((candidate) => candidate.id === event.turnId);
+          if (index < 0) turns.push(turn);
+          else turns[index] = turn;
+        }
+      }
       for (const listener of agentCoreListeners) listener(clone(notification));
     };
     const emitAutomationNotification = (notification: unknown) => {
@@ -1913,7 +1934,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ thread, configuration }) as T;
         }
         if (method === 'thread/turns/list') {
-          return clone({ data: mockTurns.get(String(input.threadId)) ?? [], nextCursor: null, backwardsCursor: null }) as T;
+          const turns = mockTurns.get(String(input.threadId)) ?? [];
+          const data = input.sortDirection === 'desc' ? [...turns].reverse() : turns;
+          return clone({ data, nextCursor: null, backwardsCursor: null }) as T;
         }
         if (method === 'thread/items/list') {
           const turns = mockTurns.get(String(input.threadId)) ?? [];
@@ -1992,7 +2015,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             completedAt: startedAt + 24,
             durationMs: 24,
           };
-          mockTurns.get(thread.id)!.push(completedTurn);
           thread.preview = prompt;
           thread.updatedAt = startedAt + 24;
           emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });

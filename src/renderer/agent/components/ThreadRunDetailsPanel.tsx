@@ -12,6 +12,10 @@ import type {
   ThreadUserContent,
   Turn,
 } from '../../../core/agent/protocol';
+import {
+  INITIAL_CONTEXT_EPOCH_ID,
+  providerCacheAffinityMaterial,
+} from '../../../core/agent/cacheAffinity';
 import { api } from '../../api/client';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { formatDateTime, formatNumber } from '../../ui/formatting';
@@ -37,6 +41,8 @@ interface ThreadRunDetailsPanelProps {
 }
 
 interface ThreadRunDetailsData {
+  readonly cacheAffinity: string;
+  readonly contextEpochId: string;
   readonly thread: Thread;
   readonly turn: Turn;
 }
@@ -106,13 +112,20 @@ function useThreadRunDetails(threadId: string, turnId: string) {
     setError(null);
     setLoading(true);
     try {
-      const [threadResponse, turn] = await Promise.all([
+      const [threadResponse, canonical] = await Promise.all([
         api.agentCoreRequest('thread/read', { threadId }),
         readCanonicalTurn(threadId, turnId),
       ]);
       if (requestRef.current !== request) return;
-      if (!turn) throw new Error(t.agent.runDetails.unavailable);
-      setDetail({ thread: threadResponse.thread, turn });
+      if (!canonical) throw new Error(t.agent.runDetails.unavailable);
+      const cacheAffinity = await rendererProviderCacheAffinity(threadId, canonical.contextEpochId);
+      if (requestRef.current !== request) return;
+      setDetail({
+        cacheAffinity,
+        contextEpochId: canonical.contextEpochId,
+        thread: threadResponse.thread,
+        turn: canonical.turn,
+      });
     } catch (caught) {
       if (requestRef.current !== request) return;
       setError(caught instanceof Error && caught.message ? caught.message : t.agent.runDetails.unavailable);
@@ -131,8 +144,12 @@ function useThreadRunDetails(threadId: string, turnId: string) {
   return { detail, error, loading, refresh };
 }
 
-async function readCanonicalTurn(threadId: string, turnId: string): Promise<Turn | null> {
+async function readCanonicalTurn(
+  threadId: string,
+  turnId: string,
+): Promise<{ readonly contextEpochId: string; readonly turn: Turn } | null> {
   let cursor: string | null = null;
+  let target: Turn | null = null;
   const seenCursors = new Set<string>();
   do {
     const page: ThreadTurnsListResponse = await api.agentCoreRequest('thread/turns/list', {
@@ -142,18 +159,32 @@ async function readCanonicalTurn(threadId: string, turnId: string): Promise<Turn
       sortDirection: 'desc',
       threadId,
     });
-    const turn = page.data.find((candidate) => candidate.id === turnId);
-    if (turn) return turn;
+    for (const turn of page.data) {
+      if (!target) {
+        if (turn.id !== turnId) continue;
+        target = turn;
+      }
+      const reset = [...turn.items].reverse().find((item) => item.type === 'contextReset');
+      if (reset) return { contextEpochId: reset.id, turn: target };
+    }
     cursor = page.nextCursor;
     if (cursor && seenCursors.has(cursor)) return null;
     if (cursor) seenCursors.add(cursor);
   } while (cursor);
-  return null;
+  return target ? { contextEpochId: INITIAL_CONTEXT_EPOCH_ID, turn: target } : null;
+}
+
+async function rendererProviderCacheAffinity(threadId: string, epochId: string): Promise<string> {
+  const bytes = new TextEncoder().encode(providerCacheAffinityMaterial(threadId, epochId));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function ThreadRunDetailsView({ detail }: { readonly detail: ThreadRunDetailsData }) {
   const t = useT();
-  const { thread, turn } = detail;
+  const { cacheAffinity, contextEpochId, thread, turn } = detail;
   const userInput = turn.items.flatMap((item): readonly ThreadUserContent[] => (
     item.type === 'userMessage' ? item.content : []
   ));
@@ -181,6 +212,8 @@ function ThreadRunDetailsView({ detail }: { readonly detail: ThreadRunDetailsDat
               <RunDetailsIdentity label={t.agent.runDetails.threadId} value={thread.id} />
               <RunDetailsIdentity label={t.agent.runDetails.turnId} value={turn.id} />
               <RunDetailsIdentity label={t.agent.runDetails.sessionId} value={thread.sessionId} />
+              <RunDetailsIdentity label={t.agent.runDetails.contextEpoch} value={contextEpochId} />
+              <RunDetailsIdentity label={t.agent.runDetails.cacheAffinity} value={cacheAffinity} />
               <RunDetailsIdentity label={t.agent.runDetails.originThreadId} value={turn.provenance.originThreadId} />
               <RunDetailsIdentity label={t.agent.runDetails.originTurnId} value={turn.provenance.originTurnId} />
               <RunDetailsIdentity label={t.agent.runDetails.trigger} value={jsonText(turn.provenance.trigger)} />

@@ -58,11 +58,23 @@ projection reference; it stores neither scratch paths nor another copy of observ
 text. Inherited context accepts only complete terminal Turns and requires its
 covered-through cursor to resolve inside that snapshot. The canonical projector
 consumes admitted environment, user-view, additional-context, referenced-resource,
-and Skill evidence at every provider boundary. The Skill reducer already plans
-baseline/delta catalog evidence and validates Skill compaction checkpoints.
-Role reduction, tool-output selection, compacted epoch projection, `/clear` command
-consumption, and inherited-context planning remain separate consumers of the same
-protocol rather than alternate message stores.
+Skill/Role, inherited-context, tool-output, and compaction evidence at every provider
+boundary. Skill and Role reducers record one catalog baseline per context epoch, append
+only changed entries, restore validated compaction checkpoints, and start a new baseline
+after `contextReset`. A newly discovered Skill or Role can therefore join an existing
+Thread without rebuilding or rewriting its earlier provider prefix.
+
+The effective context begins after the latest `contextReset`. Within that epoch, the
+latest valid `contextCompaction` replaces only its exact covered range with the recorded
+summary and reducer checkpoint, then preserves the declared tail. Automatic preflight
+aligns that tail to a canonical complete-Turn boundary; provider-overflow recovery may
+preserve only the active Turn. Successful document mutations and undo/redo invalidate
+Node observation checkpoints conservatively because a read may contain dependent
+descendant or reference projections. Tool output receives
+one durable full-or-inline projection before the first provider request that can observe
+it; later budget pressure, restart, rollback, fork, and replay reuse that decision.
+Provider planning consumes only this reduced canonical Item sequence. There is no
+runtime-only context state, reminder parser, or alternate message store.
 
 Every nested context payload, managed resource, or complete tool output named by a
 context payload is also an explicit dependency on its owning context Item through
@@ -164,6 +176,13 @@ Starting a Turn follows this order:
 7. Execute the Turn and persist Item events as they occur.
 8. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
+
+`/compact [instructions]` and `/clear` are reserved renderer commands handled before
+Skill routing. They require an idle Thread and create completed feature-triggered Turns
+containing only a canonical `contextCompaction` or `contextReset`; they do not launch a
+model Turn. A command with no new eligible boundary returns the existing boundary as an
+idempotent no-op. Both commands retain the visible and auditable history they stop
+projecting implicitly.
 
 Steering uses the same evidence admission path. Its evidence and user Item become
 durable before the live executor is notified, so queued and immediate steering have

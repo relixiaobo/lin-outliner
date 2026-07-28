@@ -515,6 +515,7 @@ threadService = ThreadService.open(
       request.cwd,
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');

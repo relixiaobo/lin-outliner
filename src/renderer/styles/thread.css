@@ -1692,6 +1692,22 @@ button.thread-inline-activity:focus-visible,
   content: '';
 }
 
+.thread-compaction > .icon-button {
+  display: inline-flex;
+  width: var(--control-size-xs);
+  height: var(--control-size-xs);
+  flex: 0 0 var(--control-size-xs);
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  transition: color var(--motion-fast);
+}
+
+.thread-compaction > .icon-button:hover,
+.thread-compaction > .icon-button:focus-visible {
+  color: var(--text-strong);
+}
+
 .thread-image-view {
   width: 100%;
   border: 0;

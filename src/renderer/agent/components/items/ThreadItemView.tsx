@@ -37,6 +37,7 @@ import {
   FileWriteToolIcon,
   GenericToolIcon,
   ICON_SIZE,
+  InfoIcon,
   LoaderIcon,
   NodeCreateToolIcon,
   NodeDeleteToolIcon,
@@ -95,6 +96,7 @@ interface ThreadItemViewProps {
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -182,10 +184,35 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
     case 'contextEvidence':
-    case 'contextReset':
       return null;
+    case 'contextReset':
+      return (
+        <div className="thread-item thread-compaction">
+          <span>{t.agent.thread.item.contextCleared}</span>
+          {props.onOpenTurnDetails ? (
+            <IconButton
+              icon={InfoIcon}
+              label={t.agent.message.details}
+              onClick={props.onOpenTurnDetails}
+              variant="message"
+            />
+          ) : null}
+        </div>
+      );
     case 'contextCompaction':
-      return <div className="thread-item thread-compaction"><span>{t.agent.thread.item.compaction}</span></div>;
+      return (
+        <div className="thread-item thread-compaction">
+          <span>{t.agent.thread.item.compaction}</span>
+          {props.onOpenTurnDetails ? (
+            <IconButton
+              icon={InfoIcon}
+              label={t.agent.message.details}
+              onClick={props.onOpenTurnDetails}
+              variant="message"
+            />
+          ) : null}
+        </div>
+      );
     default:
       return assertNever(props.item);
   }

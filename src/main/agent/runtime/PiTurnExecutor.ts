@@ -5,28 +5,43 @@ import {
   type AgentState,
   type AgentTool,
 } from '@earendil-works/pi-agent-core';
+import type { AgentRuntimeSettings } from '../../../core/types';
 import type {
   Api,
   AssistantMessage,
   Context,
   Message,
   Model,
+  SimpleStreamOptions,
   TextContent,
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type {
+  ContextCursor,
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
   SkillInvocationContextPayload,
   ThreadItem,
   ThreadItemOutputReference,
+  Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
 import { decodeThreadContextPayload } from '../../../core/agent/codec';
 import { CanonicalContextProjector } from '../context/ContextProjector';
+import {
+  ContextCapacityError,
+  ContextCompactionRequiredError,
+  planContextBudget,
+} from '../context/ContextBudgetPlanner';
+import { freezePendingToolOutputProjections } from '../context/ToolOutputProjection';
+import { cursorFor, selectEffectiveContext } from '../context/ContextEpoch';
 import { composeStablePrompt } from '../context/stablePrompt';
+import {
+  applyAnthropicStablePromptCacheBreakpoints,
+  providerCacheAffinity,
+} from '../context/ProviderCache';
 import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import {
   lowestThinkingLevel,
@@ -89,6 +104,8 @@ export interface PiTurnExecutorOptions {
     context: ThreadNameGenerationContext,
     runtime: PiRuntimeSelection,
   ) => Promise<string | null>;
+  readonly resolveRuntimeSettings?: () => Promise<AgentRuntimeSettings>;
+  readonly streamSimple?: typeof piStreamSimple;
 }
 
 export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
@@ -120,11 +137,17 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const internalMemory = context.thread.threadSource === 'memory_consolidation';
       const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
       if (context.signal.aborted) return { status: 'interrupted' };
-      const tools = internalMemory ? [] : [...(await this.options.createTools?.(context) ?? [])];
+      const runtimeSettings = await (this.options.resolveRuntimeSettings ?? getAgentRuntimeSettings)();
       if (context.signal.aborted) return { status: 'interrupted' };
-      const systemPrompt = internalMemory
-        ? context.configuration.developerInstructions.join('\n\n')
-        : composeStablePrompt({ thread: context.thread, configuration: context.configuration }).text;
+      const tools = internalMemory
+        ? []
+        : canonicalizeAgentTools(await this.options.createTools?.(context) ?? []);
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const stablePrompt = internalMemory
+        ? null
+        : composeStablePrompt({ thread: context.thread, configuration: context.configuration });
+      const systemPrompt = stablePrompt?.text
+        ?? context.configuration.developerInstructions.join('\n\n');
       const projector = new CanonicalContextProjector(runtime.model, context);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
@@ -136,13 +159,39 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
       const normalizer = new PiEventNormalizer(context);
+      const providerOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
       const transformContext = internalMemory
         ? undefined
         : async () => {
             await normalizer.flush();
             await this.options.beforeProviderContext?.(context);
-            return projectCanonicalProviderContext(context, runtime.model, prompt);
+            await freezePendingToolOutputProjections({
+              turns: [...context.historyBeforeTurn, {
+                ...context.turn,
+                items: currentTurnItems(context),
+              }],
+              model: runtime.model,
+              readContext: context.readContext,
+              persist: (payload, summary) => context.persistContextEvidence(payload, summary),
+            });
+            return projectCanonicalProviderContext(
+              context,
+              runtime.model,
+              systemPrompt,
+              tools,
+              prompt,
+            );
           };
+      const streamSimple = this.options.streamSimple ?? piStreamSimple;
+      const configuredStream = (
+        model: Model<Api>,
+        providerContext: Context,
+        options: SimpleStreamOptions = {},
+      ) => streamSimple(
+        model,
+        providerContext,
+        { ...options, ...providerOptions },
+      );
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
           systemPrompt,
@@ -151,16 +200,34 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           tools,
           messages: priorMessages,
         },
-        streamFn: createAbortSettledStreamFn(piStreamSimple, {
+        streamFn: createAbortSettledStreamFn(configuredStream, {
           onProviderRetry: (event) => context.onProviderRetry(event.phase === 'retrying'
             ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
             : null),
+          maxRequestRetries: providerOptions.maxRetries,
+          maxStreamRetries: providerOptions.maxRetries,
+          maxRetryDelayMs: providerOptions.maxRetryDelayMs,
+          ...(transformContext
+            ? {
+                onContextOverflow: async () => {
+                  const compacted = await context.compactContext(
+                    'providerOverflow',
+                    activeAdmissionCursor(context.turn),
+                  );
+                  return compacted ? await transformContext() : null;
+                },
+              }
+            : {}),
         }),
         getApiKey: runtime.getApiKey,
-        onPayload: agentProviderPayload,
+        onPayload: (payload, model) => agentProviderPayload(payload, model, stablePrompt),
         transformContext,
         steeringMode: 'all',
-        sessionId: context.thread.sessionId,
+        sessionId: providerCacheAffinity(
+          context.thread.id,
+          [...context.historyBeforeTurn, context.turn],
+        ),
+        maxRetryDelayMs: runtimeSettings.providerMaxRetryDelayMs ?? undefined,
         toolExecution: 'parallel',
       });
       if (context.signal.aborted) {
@@ -206,20 +273,88 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
 async function projectCanonicalProviderContext(
   context: TurnExecutionContext,
   model: Model<Api>,
+  systemPrompt: string,
+  tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
 ): Promise<Message[]> {
-  const projector = new CanonicalContextProjector(model, context);
-  const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
-  const currentMessages = await projector.projectTurns([{
-    ...context.turn,
-    items: currentTurnItems(context),
-  }]);
-  const initialUserIndex = currentMessages.findIndex((message) => message.role === 'user');
-  if (initialUserIndex < 0) {
-    throw new Error('Canonical Turn projection did not produce an initial user message.');
+  const build = async () => {
+    const sourceTurns = [
+      ...context.historyBeforeTurn,
+      { ...context.turn, items: currentTurnItems(context) },
+    ];
+    const projector = new CanonicalContextProjector(model, context);
+    const projection = await projector.projectTurnsWithBoundaries(sourceTurns);
+    const initialUser = context.turn.items.find((item) => (
+      item.type === 'userMessage' && item.acceptedAt === preparedInitialPrompt.timestamp
+    ));
+    const protectedBoundary = initialUser
+      ? projection.userBoundaries.find((boundary) => (
+          boundary.turnId === context.turn.id && boundary.itemId === initialUser.id
+        ))
+      : null;
+    if (!protectedBoundary) throw new Error('Canonical Turn projection did not preserve the initial user Item.');
+    const selectedTurns = selectEffectiveContext(sourceTurns).turns;
+    return {
+      ...projection,
+      turnBoundaries: projection.turnBoundaries.map((boundary) => {
+        const turn = selectedTurns.find((candidate) => candidate.id === boundary.turnId);
+        if (!turn?.items[0]) throw new Error(`Projected Turn boundary is unreachable: ${boundary.turnId}`);
+        return {
+          ...boundary,
+          preserveFrom: boundary.turnId === context.turn.id
+            ? activeAdmissionCursor(turn)
+            : cursorFor(turn, turn.items[0]),
+        };
+      }),
+      protectedFromMessageIndex: protectedBoundary.messageIndex,
+    };
+  };
+  const plan = async () => {
+    const projection = await build();
+    return planContextBudget({
+      model,
+      systemPrompt,
+      tools,
+      messages: projection.messages,
+      protectedFromMessageIndex: projection.protectedFromMessageIndex,
+    });
+  };
+  try {
+    return [...(await plan()).messages];
+  } catch (error) {
+    if (!(error instanceof ContextCompactionRequiredError)) throw error;
+    const projection = await build();
+    const preserveBoundary = projection.turnBoundaries.find((boundary) => (
+      boundary.messageIndex >= error.retainFromMessageIndex
+    ));
+    const preserveFrom = preserveBoundary?.preserveFrom ?? activeAdmissionCursor(context.turn);
+    const compacted = await context.compactContext('automaticPreflight', preserveFrom);
+    if (!compacted) {
+      throw new ContextCapacityError(
+        'Canonical history exceeds the model input capacity and has no eligible compaction range.',
+        error.estimatedTokens,
+        error.availableTokens,
+      );
+    }
+    try {
+      return [...(await plan()).messages];
+    } catch (retryError) {
+      if (!(retryError instanceof ContextCompactionRequiredError)) throw retryError;
+      throw new ContextCapacityError(
+        'Canonical history still exceeds the model input capacity after automatic compaction.',
+        retryError.estimatedTokens,
+        retryError.availableTokens,
+      );
+    }
   }
-  currentMessages[initialUserIndex] = preparedInitialPrompt;
-  return [...priorMessages, ...currentMessages];
+}
+
+function activeAdmissionCursor(turn: Turn): ContextCursor {
+  const item = turn.items.find((candidate) => (
+    candidate.type !== 'contextEvidence' || candidate.kind !== 'inheritedContext'
+  )) ?? turn.items[0];
+  if (!item) throw new Error(`Active Turn has no canonical admission boundary: ${turn.id}`);
+  return cursorFor(turn, item);
 }
 
 function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] {
@@ -232,13 +367,20 @@ function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] 
   ];
 }
 
-export function agentProviderPayload(payload: unknown, model: Model<Api>): unknown | undefined {
+export function agentProviderPayload(
+  payload: unknown,
+  model: Model<Api>,
+  stablePrompt?: ReturnType<typeof composeStablePrompt> | null,
+): unknown | undefined {
   const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
-  const source = compatiblePayload ?? payload;
+  const cachePayload = stablePrompt
+    ? applyAnthropicStablePromptCacheBreakpoints(compatiblePayload ?? payload, model, stablePrompt)
+    : undefined;
+  const source = cachePayload ?? compatiblePayload ?? payload;
   if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
-    return compatiblePayload;
+    return cachePayload ?? compatiblePayload;
   }
-  if (source.reasoning.summary === 'detailed') return compatiblePayload;
+  if (source.reasoning.summary === 'detailed') return cachePayload ?? compatiblePayload;
   return {
     ...source,
     reasoning: {
@@ -246,6 +388,14 @@ export function agentProviderPayload(payload: unknown, model: Model<Api>): unkno
       summary: 'detailed',
     },
   };
+}
+
+export function canonicalizeAgentTools(tools: readonly AgentTool[]): AgentTool[] {
+  return [...tools].sort((left, right) => {
+    if (left.name < right.name) return -1;
+    if (left.name > right.name) return 1;
+    return 0;
+  });
 }
 
 function isOpenAIResponsesApi(api: Api): boolean {

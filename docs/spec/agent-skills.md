@@ -117,10 +117,19 @@ canonical name from Thread-owned payload Items. It validates any existing compac
 checkpoint against full prior catalog entries and invocation payload references and
 fails closed rather than inventing display metadata from a sparse checkpoint.
 
-The current provider projector still treats compaction as a marker and does not yet
-select a compacted epoch. Activating summary/checkpoint projection and `/clear` command
-consumption belongs to the context-compaction consumer; it will reuse this reducer and
-will not add a reminder-text fallback.
+The provider projector selects the latest context epoch and replaces compacted raw
+history with the summary plus validated checkpoint. It restores the exact active inline
+Skill payload references as application instructions. `/clear` ends the journal and
+active invocation set; the next ordinary admission records a complete baseline from the
+then-current registry. No reducer state is reconstructed from reminder text or current
+Skill files during replay.
+
+Reduction recursively includes typed inherited Turns and prior compaction checkpoints.
+Child admission uses that inherited catalog hash and announced-entry state when comparing
+the current registry: an unchanged registry costs no additional Item or provider tokens,
+while a newly added, changed, or removed Skill appends the same deterministic delta used
+by an older root conversation. Repeated compaction carries active invocation references
+forward instead of re-reading mutable Skill files.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.

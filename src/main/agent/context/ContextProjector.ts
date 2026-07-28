@@ -11,9 +11,13 @@ import type {
 } from '@earendil-works/pi-ai';
 import type {
   ContextEvidenceThreadItem,
+  ContextCompactionThreadItem,
   ReferencedResourcesContextPayload,
+  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   ThreadContextPayload,
+  ThreadContextPayloadReference,
+  ToolOutputProjectionContextPayload,
   ThreadItem,
   ThreadResourceReference,
   ThreadUserContent,
@@ -21,16 +25,37 @@ import type {
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
 import { assertContextPayloadDependencies } from './contextDependencies';
+import { selectEffectiveContext } from './ContextEpoch';
+import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
+import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
 import { assertCanonicalUserContent } from './userContentIntegrity';
 
 interface ProjectionResources {
   readContext(ref: ContextEvidenceThreadItem['payloadRef']): Promise<ThreadContextPayload | null>;
+  readOutput(ref: ToolOutputProjectionContextPayload['outputRef']): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
 }
 
+export interface ProjectedTurnBoundary {
+  readonly turnId: string;
+  readonly messageIndex: number;
+}
+
+export interface ProjectedUserBoundary extends ProjectedTurnBoundary {
+  readonly itemId: string;
+}
+
+export interface CanonicalContextProjection {
+  readonly messages: Message[];
+  readonly turnBoundaries: readonly ProjectedTurnBoundary[];
+  readonly userBoundaries: readonly ProjectedUserBoundary[];
+}
+
 export class CanonicalContextProjector {
   private previousUserView: UserViewContextPayload | null = null;
+  private readonly payloads = new Map<string, ThreadContextPayload>();
+  private readonly toolOutputProjections = new Map<string, ToolOutputProjectionContextPayload>();
 
   constructor(
     private readonly model: Model<Api>,
@@ -38,9 +63,43 @@ export class CanonicalContextProjector {
   ) {}
 
   async projectTurns(turns: readonly Turn[]): Promise<Message[]> {
+    return (await this.projectTurnsWithBoundaries(turns)).messages;
+  }
+
+  async projectTurnsWithBoundaries(turns: readonly Turn[]): Promise<CanonicalContextProjection> {
+    const selectedTurns = selectEffectiveContext(turns).turns;
+    await this.prepareToolOutputProjections(selectedTurns);
     const messages: Message[] = [];
-    for (const turn of turns) messages.push(...await this.projectTurn(turn));
-    return messages;
+    const turnBoundaries: ProjectedTurnBoundary[] = [];
+    const userBoundaries: ProjectedUserBoundary[] = [];
+    for (const turn of selectedTurns) {
+      const projected = await this.projectTurn(turn, turns);
+      if (projected.messages.length === 0) continue;
+      turnBoundaries.push({ turnId: turn.id, messageIndex: messages.length });
+      userBoundaries.push(...projected.userBoundaries.map((boundary) => ({
+        ...boundary,
+        messageIndex: messages.length + boundary.messageIndex,
+      })));
+      messages.push(...projected.messages);
+    }
+    return { messages, turnBoundaries, userBoundaries };
+  }
+
+  private async prepareToolOutputProjections(turns: readonly Turn[]): Promise<void> {
+    for (const turn of turns) {
+      for (const item of turn.items) {
+        if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
+        const payload = await this.readEvidencePayload(item);
+        if (payload.kind !== 'toolOutputProjection') {
+          throw new Error(`Context evidence kind mismatch: ${item.kind}/${item.payloadRef.id}`);
+        }
+        const existing = this.toolOutputProjections.get(payload.outputRef.id);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(payload)) {
+          throw new Error(`Tool output has conflicting frozen projections: ${payload.outputRef.id}`);
+        }
+        this.toolOutputProjections.set(payload.outputRef.id, payload);
+      }
+    }
   }
 
   async projectUserItems(
@@ -61,8 +120,12 @@ export class CanonicalContextProjector {
     return { role: 'user', content, timestamp };
   }
 
-  private async projectTurn(turn: Turn): Promise<Message[]> {
+  private async projectTurn(turn: Turn, sourceTurns: readonly Turn[]): Promise<{
+    readonly messages: Message[];
+    readonly userBoundaries: ProjectedUserBoundary[];
+  }> {
     const messages: Message[] = [];
+    const userBoundaries: ProjectedUserBoundary[] = [];
     let pendingUserContent: Array<TextContent | ImageContent> = [];
     let assistantContent: Array<TextContent | ToolCall> = [];
     let toolResults: ToolResultMessage[] = [];
@@ -82,18 +145,35 @@ export class CanonicalContextProjector {
     const flushPendingUser = (timestamp: number) => {
       flushAssistant();
       if (pendingUserContent.length === 0) pendingUserContent.push({ type: 'text', text: 'Continue.' });
+      const messageIndex = messages.length;
       messages.push({ role: 'user', content: pendingUserContent, timestamp });
       pendingUserContent = [];
+      return messageIndex;
     };
 
     for (const item of turn.items) {
       if (item.type === 'contextEvidence') {
+        if (item.kind === 'inheritedContext') {
+          if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
+          else flushAssistant();
+          const payload = await this.readEvidencePayload(item);
+          if (payload.kind !== 'inheritedContext') {
+            throw new Error(`Inherited context kind mismatch: ${item.payloadRef.id}`);
+          }
+          const inheritedProjector = new CanonicalContextProjector(this.model, this.resources);
+          messages.push(...await inheritedProjector.projectTurns(payload.turns));
+          continue;
+        }
         pendingUserContent.push(...await this.projectEvidence(item));
         continue;
       }
       if (item.type === 'userMessage') {
         pendingUserContent.push(...await serializeUserContent(item.content, this.resources));
-        flushPendingUser(item.acceptedAt);
+        userBoundaries.push({
+          turnId: turn.id,
+          itemId: item.id,
+          messageIndex: flushPendingUser(item.acceptedAt),
+        });
         continue;
       }
       if (item.type === 'contextReset') {
@@ -102,9 +182,14 @@ export class CanonicalContextProjector {
         this.previousUserView = null;
         continue;
       }
+      if (item.type === 'contextCompaction') {
+        pendingUserContent.push(...await this.projectCompaction(item, sourceTurns));
+        continue;
+      }
       if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
-        const tool = await historyTool(item, turn.startedAt, this.resources);
+        const projection = item.outputRef ? this.toolOutputProjections.get(item.outputRef.id) ?? null : null;
+        const tool = await historyTool(item, turn.startedAt, this.resources, projection);
         assistantContent.push(tool.call);
         toolResults.push(tool.result);
         continue;
@@ -131,24 +216,134 @@ export class CanonicalContextProjector {
         case 'imageView':
           assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
           break;
-        case 'contextCompaction':
-          assistantContent.push({ type: 'text', text: '[Context compacted]' });
-          break;
       }
     }
     if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
     flushAssistant();
-    return messages;
+    return { messages, userBoundaries };
+  }
+
+  private async projectCompaction(
+    item: ContextCompactionThreadItem,
+    sourceTurns: readonly Turn[],
+  ): Promise<Array<TextContent | ImageContent>> {
+    const summary = await this.readCompactionPayload(item, item.summaryRef, 'compactionSummary');
+    const restored = await this.readCompactionPayload(item, item.restoredStateRef, 'compactionRestoredState');
+    const content: Array<TextContent | ImageContent> = [textEvidence(
+      'compactionSummary',
+      `source=${summary.source}\nlossy_derived_context=true\n${summary.text}`,
+      'untrusted',
+      'observation',
+    )];
+    content.push(textEvidence('compactionRestoredState', [
+      `skill_catalog_hash=${restored.skillCatalogHash ?? 'none'}`,
+      `role_catalog_hash=${restored.roleCatalogHash ?? 'none'}`,
+      `active_skill_count=${restored.activeSkills.length}`,
+      `active_observation_count=${restored.activeObservations.length}`,
+    ].join('\n'), 'application', 'observation'));
+
+    const skillCatalog = await restoreSkillCatalogCheckpoint(
+      sourceTurns,
+      item.coveredThrough,
+      restored,
+      this.resources.readContext,
+    );
+    if (skillCatalog.catalogHash) {
+      content.push(textEvidence('skillCatalog', renderSkillCatalog({
+        schemaVersion: 1,
+        kind: 'skillCatalog',
+        mode: 'baseline',
+        previousCatalogHash: null,
+        catalogHash: skillCatalog.catalogHash,
+        entries: [...skillCatalog.catalogEntries.values()],
+      }), 'application', 'instruction', ['restored_after_compaction=true']));
+    }
+
+    const roleCatalog = await restoreRoleCatalogCheckpoint(
+      sourceTurns,
+      item.coveredThrough,
+      restored,
+      this.resources.readContext,
+    );
+    if (roleCatalog.catalogHash) {
+      content.push(textEvidence('roleCatalog', renderRoleCatalog({
+        schemaVersion: 1,
+        kind: 'roleCatalog',
+        mode: 'baseline',
+        previousCatalogHash: null,
+        catalogHash: roleCatalog.catalogHash,
+        entries: [...roleCatalog.catalogEntries.values()],
+      }), 'application', 'instruction', ['restored_after_compaction=true']));
+    }
+
+    if (restored.userViewBaselineRef) {
+      const baseline = await this.readCompactionPayload(item, restored.userViewBaselineRef, 'userView');
+      const rendered = renderUserView(null, baseline);
+      content.push(textEvidence('userView', rendered.application, 'application', 'observation', [
+        'restored_after_compaction=true',
+      ]));
+      if (rendered.untrusted) {
+        content.push(textEvidence('userView', rendered.untrusted, 'untrusted', 'observation', [
+          'restored_after_compaction=true',
+        ]));
+      }
+      this.previousUserView = baseline;
+    }
+    for (const checkpoint of restored.activeSkills) {
+      const skill = await this.readCompactionPayload(item, checkpoint.payloadRef, 'skillInvocation');
+      content.push(textEvidence('skillInvocation', skill.instructions, 'application', 'instruction', [
+        `name=${skill.name}`,
+        `identity=${skill.identity}`,
+        `content_hash=${skill.contentHash}`,
+        'restored_after_compaction=true',
+      ]));
+    }
+    for (const observation of restored.activeObservations) {
+      const projection = await this.readCompactionPayload(item, observation.projectionRef, 'toolOutputProjection');
+      const text = await projectedToolOutputText(projection, this.resources);
+      content.push(textEvidence('toolOutputProjection', [
+        `tool=${observation.tool}`,
+        `subject=${observation.subject}`,
+        `output_ref=${observation.outputRef.id}`,
+        'historical_snapshot=true',
+        'Read the current source again before relying on it if it may have changed.',
+        text,
+      ].join('\n'), 'untrusted', 'observation'));
+    }
+    if (item.instructionsRef) {
+      const instructions = await this.readCompactionPayload(item, item.instructionsRef, 'compactionInstructions');
+      for (const entry of instructions.entries) {
+        content.push(textEvidence(
+          instructions.kind,
+          entry.text,
+          entry.authority,
+          entry.purpose,
+          [`key=${entry.key}`, `source=${entry.source}`],
+        ));
+      }
+    }
+    return content;
+  }
+
+  private async readCompactionPayload<K extends ThreadContextPayload['kind']>(
+    item: ContextCompactionThreadItem,
+    ref: ThreadContextPayloadReference,
+    kind: K,
+  ): Promise<Extract<ThreadContextPayload, { readonly kind: K }>> {
+    const cached = this.payloads.get(ref.id);
+    const payload = cached ?? await this.resources.readContext(ref);
+    if (!payload || payload.kind !== kind) {
+      throw new Error(`Compaction context is unavailable or corrupt: ${kind}/${ref.id}`);
+    }
+    assertContextPayloadDependencies(item, payload);
+    this.payloads.set(ref.id, payload);
+    return payload as Extract<ThreadContextPayload, { readonly kind: K }>;
   }
 
   private async projectEvidence(
     item: ContextEvidenceThreadItem,
   ): Promise<Array<TextContent | ImageContent>> {
-    const payload = await this.resources.readContext(item.payloadRef);
-    if (!payload || payload.kind !== item.kind) {
-      throw new Error(`Context evidence is unavailable or corrupt: ${item.kind}/${item.payloadRef.id}`);
-    }
-    assertContextPayloadDependencies(item, payload);
+    const payload = await this.readEvidencePayload(item);
     switch (payload.kind) {
       case 'turnEnvironment':
         return [textEvidence(payload.kind, [
@@ -210,20 +405,25 @@ export class CanonicalContextProjector {
             : []),
         ];
       case 'roleCatalog':
-        return [textEvidence(payload.kind, JSON.stringify(payload), 'application', 'instruction')];
+        return [textEvidence(payload.kind, renderRoleCatalog(payload), 'application', 'instruction')];
       case 'toolOutputProjection':
-        return payload.projection.type === 'full'
-          ? [textEvidence(payload.kind, `output_ref=${payload.outputRef.id}\nprojection=full`, 'application', 'observation')]
-          : [textEvidence(
-              payload.kind,
-              payload.projection.text,
-              'untrusted',
-              'observation',
-              [`output_ref=${payload.outputRef.id}`, `projection=${payload.projection.type}`],
-            )];
+        return [];
       case 'inheritedContext':
-        return [textEvidence(payload.kind, JSON.stringify(payload), 'untrusted', 'observation')];
+        return [];
     }
+  }
+
+  private async readEvidencePayload(
+    item: ContextEvidenceThreadItem,
+  ): Promise<Extract<ThreadContextPayload, { readonly kind: ContextEvidenceThreadItem['kind'] }>> {
+    const cached = this.payloads.get(item.payloadRef.id);
+    const payload = cached ?? await this.resources.readContext(item.payloadRef);
+    if (!payload || payload.kind !== item.kind) {
+      throw new Error(`Context evidence is unavailable or corrupt: ${item.kind}/${item.payloadRef.id}`);
+    }
+    assertContextPayloadDependencies(item, payload);
+    this.payloads.set(item.payloadRef.id, payload);
+    return payload as Extract<ThreadContextPayload, { readonly kind: ContextEvidenceThreadItem['kind'] }>;
   }
 
   private async projectReferencedResources(
@@ -437,6 +637,24 @@ function renderSkillCatalog(payload: SkillCatalogContextPayload): string {
   ].join('\n');
 }
 
+function renderRoleCatalog(payload: RoleCatalogContextPayload): string {
+  return [
+    `mode=${payload.mode}`,
+    `previous_catalog_hash=${payload.previousCatalogHash ?? 'none'}`,
+    `catalog_hash=${payload.catalogHash}`,
+    ...payload.entries.map((entry) => [
+      `- ${entry.name}`,
+      `change=${entry.change}`,
+      `display_name=${entry.displayName}`,
+      `source=${entry.source}`,
+      `identity=${entry.identity}`,
+      `content_hash=${entry.contentHash}`,
+      `description=${entry.description}`,
+    ].join(' ')),
+    'Pass a matching Role name as agent_type when calling collaboration.spawn_agent.',
+  ].join('\n');
+}
+
 function assistantHistoryMessage(
   content: AssistantMessage['content'],
   timestamp: number,
@@ -462,7 +680,7 @@ function assistantHistoryMessage(
   };
 }
 
-type HistoryToolItem = Extract<ThreadItem, {
+export type HistoryToolItem = Extract<ThreadItem, {
   type: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch';
 }>;
 
@@ -478,7 +696,8 @@ function isToolItem(item: ThreadItem): item is HistoryToolItem {
 async function historyTool(
   item: HistoryToolItem,
   timestamp: number,
-  resources: Pick<ProjectionResources, 'readResource'>,
+  resources: Pick<ProjectionResources, 'readOutput' | 'readResource'>,
+  projection: ToolOutputProjectionContextPayload | null,
 ): Promise<{ call: ToolCall; result: ToolResultMessage }> {
   const identity = historyToolIdentity(item);
   const toolName = identity.namespace ? `${identity.namespace}__${identity.name}` : identity.name;
@@ -488,7 +707,7 @@ async function historyTool(
       role: 'toolResult',
       toolCallId: item.id,
       toolName,
-      content: await historyToolResultContent(item, resources),
+      content: await historyToolResultContent(item, resources, projection),
       isError: item.status !== 'completed',
       timestamp,
     },
@@ -528,15 +747,18 @@ function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
 
 async function historyToolResultContent(
   item: HistoryToolItem,
-  resources: Pick<ProjectionResources, 'readResource'>,
+  resources: Pick<ProjectionResources, 'readOutput' | 'readResource'>,
+  projection: ToolOutputProjectionContextPayload | null,
 ): Promise<Array<TextContent | ImageContent>> {
+  const projectedText = await projectedToolOutputText(projection, resources);
   if (item.type === 'dynamicToolCall') {
     const content: Array<TextContent | ImageContent> = [];
+    if (projectedText !== null) content.push({ type: 'text', text: projectedText });
     for (const part of item.contentItems ?? []) {
       if (part.type === 'text') {
-        content.push({ type: 'text', text: part.text });
+        if (projectedText === null) content.push({ type: 'text', text: part.text });
       } else if (part.type === 'json') {
-        content.push({ type: 'text', text: JSON.stringify(part.value) });
+        if (projectedText === null) content.push({ type: 'text', text: JSON.stringify(part.value) });
       } else {
         const ref = 'promptImage' in part ? part.promptImage : part.source.ref;
         const bytes = await resources.readResource(ref);
@@ -547,7 +769,18 @@ async function historyToolResultContent(
     }
     if (content.length > 0) return content;
   }
-  return [{ type: 'text', text: historyToolResultText(item) }];
+  return [{ type: 'text', text: projectedText ?? toolItemVisibleOutputText(item) }];
+}
+
+async function projectedToolOutputText(
+  payload: ToolOutputProjectionContextPayload | null,
+  resources: Pick<ProjectionResources, 'readOutput'>,
+): Promise<string | null> {
+  if (!payload) return null;
+  if (payload.projection.type !== 'full') return payload.projection.text;
+  const text = await resources.readOutput(payload.outputRef);
+  if (text === null) throw new Error(`Full tool output is unavailable or corrupt: ${payload.outputRef.id}`);
+  return text;
 }
 
 function dynamicToolImageIdentity(
@@ -560,7 +793,7 @@ function dynamicToolImageIdentity(
   return `[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes]`;
 }
 
-function historyToolResultText(item: HistoryToolItem): string {
+export function toolItemVisibleOutputText(item: HistoryToolItem): string {
   switch (item.type) {
     case 'commandExecution': return item.aggregatedOutput ?? JSON.stringify({ status: item.status, exitCode: item.exitCode });
     case 'fileChange': return JSON.stringify({ status: item.status, changes: item.changes });

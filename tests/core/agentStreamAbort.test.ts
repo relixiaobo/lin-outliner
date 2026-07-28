@@ -13,6 +13,7 @@ import {
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import {
   createAbortSettledStreamFn,
+  isProviderContextOverflowError,
   isRetryableResponsesRequestError,
   responsesRequestRetryDelayMs,
   wrapStreamWithAbortSettling,
@@ -204,6 +205,131 @@ describe('agent stream abort settling', () => {
     });
   });
 
+  test('uses configured request retry budgets instead of the Responses fallback', async () => {
+    let attempts = 0;
+    const retryEvents: string[] = [];
+    const streamFn = createAbortSettledStreamFn((() => {
+      attempts += 1;
+      return errorStream('OpenAI API error (524): upstream timeout');
+    }) as StreamFn, {
+      maxRequestRetries: 2,
+      requestRetryDelayMs: () => 0,
+      onProviderRetry: (event) => retryEvents.push(`${event.phase}:${event.attempt}/${event.maxRetries}`),
+    });
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    for await (const _event of stream) { /* drain */ }
+
+    expect(attempts).toBe(3);
+    expect(retryEvents).toEqual(['retrying:1/2', 'retrying:2/2', 'cleared:2/2']);
+  });
+
+  test('compacts and rebuilds provider context once before transient retry classification', async () => {
+    let attempts = 0;
+    const providerContexts: Context[] = [];
+    const overflowErrors: string[] = [];
+    const retryEvents: string[] = [];
+    const streamFn = createAbortSettledStreamFn(((model, context) => {
+      attempts += 1;
+      providerContexts.push(context);
+      return attempts === 1
+        ? errorStream('This model\'s maximum context length is 100 tokens.', model)
+        : textStream('recovered after compaction', model);
+    }) as StreamFn, {
+      onContextOverflow: async (errorMessage) => {
+        overflowErrors.push(errorMessage);
+        return [{ role: 'user', content: 'COMPACTED CONTEXT', timestamp: 2 }];
+      },
+      onProviderRetry: (event) => retryEvents.push(event.kind),
+    });
+
+    const stream = streamFn(MODEL, {
+      messages: [{ role: 'user', content: 'OVERSIZED CONTEXT', timestamp: 1 }],
+      tools: [],
+    });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(overflowErrors).toEqual(['This model\'s maximum context length is 100 tokens.']);
+    expect(providerContexts.map((context) => context.messages[0])).toEqual([
+      { role: 'user', content: 'OVERSIZED CONTEXT', timestamp: 1 },
+      { role: 'user', content: 'COMPACTED CONTEXT', timestamp: 2 },
+    ]);
+    expect(retryEvents).toEqual([]);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
+  });
+
+  test('keeps transient and overflow retry budgets separate across alternating failures', async () => {
+    let attempts = 0;
+    let compactions = 0;
+    const retryEvents: string[] = [];
+    const streamFn = createAbortSettledStreamFn(((model) => {
+      attempts += 1;
+      if (attempts === 1 || attempts === 3) {
+        return errorStream('OpenAI API error (524): upstream timeout', model);
+      }
+      if (attempts === 2) {
+        return errorStream('context_length_exceeded: request has too many input tokens', model);
+      }
+      return textStream('recovered after independent retries', model);
+    }) as StreamFn, {
+      onContextOverflow: async () => {
+        compactions += 1;
+        return [{ role: 'user', content: 'COMPACTED CONTEXT', timestamp: 2 }];
+      },
+      maxRequestRetries: 2,
+      requestRetryDelayMs: () => 0,
+      onProviderRetry: (event) => retryEvents.push(
+        `${event.phase}:${event.kind}:${event.attempt}/${event.maxRetries}`,
+      ),
+    });
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    for await (const _event of stream) { /* drain */ }
+
+    expect(attempts).toBe(4);
+    expect(compactions).toBe(1);
+    expect(retryEvents).toEqual([
+      'retrying:request:1/2',
+      'cleared:request:1/2',
+      'retrying:request:2/2',
+      'cleared:request:2/2',
+    ]);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: 'stop',
+      content: [expect.objectContaining({ text: 'recovered after independent retries' })],
+    });
+  });
+
+  test('fails explicitly when provider overflow persists after one compaction retry', async () => {
+    let attempts = 0;
+    let compactions = 0;
+    const streamFn = createAbortSettledStreamFn(((model) => {
+      attempts += 1;
+      return errorStream('context_length_exceeded: request has too many input tokens', model);
+    }) as StreamFn, {
+      onContextOverflow: async () => {
+        compactions += 1;
+        return [{ role: 'user', content: 'smaller', timestamp: 2 }];
+      },
+      maxRequestRetries: 4,
+      requestRetryDelayMs: () => 0,
+    });
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(compactions).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'error',
+      error: { errorMessage: expect.stringContaining('persisted after one canonical compaction retry') },
+    });
+  });
+
   test('classifies only Responses 5xx and bounded transport failures as request-retryable', () => {
     expect(isRetryableResponsesRequestError('OpenAI API error (500): internal error')).toBe(true);
     expect(isRetryableResponsesRequestError('OpenAI API error (524): 524 status code (no body)')).toBe(true);
@@ -219,6 +345,14 @@ describe('agent stream abort settling', () => {
     expect(isRetryableResponsesRequestError('connect ECONNREFUSED 127.0.0.1')).toBe(false);
     expect(isRetryableResponsesRequestError('OpenAI Responses stream ended before a terminal response event')).toBe(false);
     expect(isRetryableResponsesRequestError('stream setup failed')).toBe(false);
+  });
+
+  test('classifies provider context overflow without matching ordinary capacity language', () => {
+    expect(isProviderContextOverflowError('context_length_exceeded')).toBe(true);
+    expect(isProviderContextOverflowError('Prompt is too long: 120000 tokens > 100000 maximum')).toBe(true);
+    expect(isProviderContextOverflowError('The input token count is too long')).toBe(true);
+    expect(isProviderContextOverflowError('The request timed out while reading the response')).toBe(false);
+    expect(isProviderContextOverflowError('Output token limit reached')).toBe(false);
   });
 
   test('uses Codex-style exponential request retry delays with bounded jitter', () => {

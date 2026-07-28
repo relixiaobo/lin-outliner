@@ -1,8 +1,11 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   Thread,
+  ContextCursor,
   ThreadContextPayload,
   ContextEvidenceThreadItem,
+  ContextCompactionThreadItem,
+  ContextEvidenceKind,
   ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
@@ -13,7 +16,6 @@ import type {
   TurnError,
   TurnStatus,
   SkillCatalogContextPayload,
-  SkillInvocationContextPayload,
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
 
@@ -30,6 +32,7 @@ export interface TurnExecutionContext {
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+  readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
@@ -43,12 +46,16 @@ export interface TurnExecutionContext {
     summary: string,
   ): Promise<ThreadItemOutputReference>;
   persistContextEvidence(
-    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem>;
   persistSkillCatalog(
     snapshot: SkillCatalogContextPayload,
   ): Promise<ContextEvidenceThreadItem | null>;
+  compactContext(
+    trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
+    preserveFrom?: ContextCursor,
+  ): Promise<ContextCompactionThreadItem | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }

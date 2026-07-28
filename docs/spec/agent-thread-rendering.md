@@ -67,8 +67,11 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Run Details, with no separate Memory Item or disclosure
-- context evidence and reset Items are hidden from the ordinary transcript in the
-  interface-contract stage; compaction retains its existing history-boundary row
+- context evidence stays hidden from the ordinary transcript; `contextReset` and
+  `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
+  at their exact canonical positions. A completed standalone `/clear` or `/compact`
+  feature Turn exposes Run Details from that boundary and does not synthesize an empty
+  response row with Copy or Continue-in-New-Chat actions
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
@@ -167,8 +170,11 @@ Evidence uses its bounded canonical summary while collapsed. Expanding an eviden
 row issues one exact `(threadId, turnId, itemId, contextId)` audit read and renders the
 decoded semantic payload; it never receives a canonical payload path or gains digest-only
 read authority. Missing, corrupt, rolled-back, or mismatched evidence remains explicitly
-unavailable. Dedicated reset/compaction presentation arrives with their command and
-planner consumers rather than being inferred from protocol presence.
+unavailable. The canonical-context disclosure also shows the context epoch and exact
+64-character provider cache affinity for that Turn. It searches older pages for the
+nearest preceding reset, uses `initial` when none exists, and does not confuse the
+Thread-tree `sessionId` with provider affinity. Summary usage continues to show
+cache-read, cache-write, and cached-share metrics from canonical Turn execution data.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item
@@ -224,11 +230,15 @@ An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.
 
 Typing `/` opens the established composer command menu. It is populated from
-the current user-invocable Skill catalog and inserts `/<skill> ` without
+the reserved `/compact` and `/clear` commands plus the current user-invocable Skill
+catalog. `/compact` inserts a trailing space for optional instructions; `/clear` inserts
+the complete command. Skill entries insert `/<skill> ` without
 flattening other structured composer content. A direct Skill invocation without
 attachments is resolved by the Turn's Skill runtime before the model prompt is
 sent; the canonical userMessage Item retains exactly what the user submitted.
-Messages with attachments and unknown slash text remain ordinary Turn input.
+The two reserved commands are recognized only as the sole text part and require an idle
+Thread; they create completed feature Turns without sending a user message or launching
+the model. Messages with attachments and unknown slash text remain ordinary Turn input.
 
 Only a root user Thread exposes the composer. Child, Automation, Memory, and
 other feature Threads remain fully inspectable but are driven through their
