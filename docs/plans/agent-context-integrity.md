@@ -806,16 +806,19 @@ reachable Turn references them. Publication is best-effort and never changes the
 Turn status, response, or usage when payload validation, quota, or storage fails. One
 `thread/turn/details/read` call is the read
 authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
-renders Overview, then ordered Requests & Results in which each numbered request owns its
-Prepared Context, Sent Provider Payload, Model Response, and Local Execution, followed by
-the Turn Record. Request renders the recorded
+renders Summary, a typed ordered Timeline, and Recorded Evidence. Timeline activities are
+accepted initial/steering input, Model Calls, tool-execution batches, request/stream retries,
+and automatic-preflight/provider-overflow compaction. A Model Call alone owns Request and
+Response; tool batches remain sibling activities linked to their source and consuming Calls.
+Request renders the recorded
 pre-adapter context in semantic order (`system instructions -> tool definitions ->
 messages`) before the provider payload and request metadata. Provider payload object-key
 order is never numbered or used to imply model precedence. There is no separate context
-construction account. Each Request header keeps ordinal and status visible, exposes its
+construction account. Each Model Call header keeps ordinal and status visible, exposes its
 model/provider/timing/usage/cost facts through a hover/focus control, and copies the
-complete ordered, image-sanitized post-adapter payload by materializing the fragment pool
-only when requested. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
+typed request-diagnostics export, including Model Context, ordered image-sanitized Provider
+Payload, runtime selection, and Request Facts, by materializing the fragment pool only when
+requested. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
 run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
 readers.
 
@@ -1035,8 +1038,9 @@ choices together:
       Deleting or corrupting the client-id sidecar before restart still deduplicates from
       the canonical user Item and rebuilds the index.
 - [ ] **AC-19:** Turn Diagnostics tests prove one authoritative read exposes every ordered
-      Request and Result, including local execution; user/file/context reminder
-      content remains in exact request order; and Turn Record exposes stable prompt, tool
+      activity and Model Call Request/Response, including tool batches, retries, compaction,
+      and steering; user/file/context reminder content remains in exact request order; and
+      Recorded Evidence exposes stable prompt, tool
       schemas, cache facts, prepared messages, and canonical Items. Missing/corrupt or
       mismatched diagnostics fail closed; rollback, fork/source deletion, and startup
       pruning preserve the Thread-ownership contract without a legacy reader.

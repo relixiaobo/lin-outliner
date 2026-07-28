@@ -2332,7 +2332,7 @@ describe('ThreadService', () => {
       input: [{ type: 'text', text: 'Inspect the exact provider request' }],
     });
     await fixture.executor.waitUntilWaiting();
-    const payload = turnDiagnosticsPayload();
+    const payload = turnDiagnosticsPayload(accepted.acceptedItemId);
     const ref = await fixture.executor.contexts[0]!.persistTurnDiagnostics(payload);
     const result = completedExecutionResult();
     fixture.executor.finish(0, {
@@ -4989,7 +4989,7 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
   };
 }
 
-function turnDiagnosticsPayload() {
+function turnDiagnosticsPayload(initialItemId = 'input-item') {
   return {
     schemaVersion: 1,
     contextEpochId: 'initial',
@@ -5025,6 +5025,13 @@ function turnDiagnosticsPayload() {
     canonicalMessages: [],
     requestFragments: [],
     providerCalls: [],
+    activities: [{
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: 0,
+      itemIds: [initialItemId],
+      consumedByCallIndex: null,
+    }],
   } as const;
 }
 

@@ -16,6 +16,7 @@ import {
   decodeThreadItemJson,
   decodeThreadJson,
   decodeTurn,
+  decodeTurnDiagnosticsPayload,
   encodeThread,
   encodeThreadContextPayload,
   encodeThreadItem,
@@ -339,10 +340,19 @@ const turnDiagnosticsPayload: TurnDiagnosticsPayload = {
     },
     requestFingerprint: '2'.repeat(64),
     cacheBreakpoints: [],
-    executionItemIds: [],
     transportResponse: null,
     response: null,
   }],
+  activities: [
+    {
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: 100,
+      itemIds: ['item-1'],
+      consumedByCallIndex: 0,
+    },
+    { type: 'modelCall', callIndex: 0 },
+  ],
 };
 
 const thread: Thread = {
@@ -1359,6 +1369,8 @@ describe('Codex Agent Core protocol codec', () => {
 
     const [providerCall] = turnDiagnosticsPayload.providerCalls;
     expect(providerCall).toBeDefined();
+    const { activities: _activities, ...missingActivities } = turnDiagnosticsPayload;
+    expect(() => decodeTurnDiagnosticsPayload(missingActivities)).toThrow('turnDiagnostics.activities');
     const { request: _request, ...missingRequest } = providerCall!;
     expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
       ...response,
@@ -1377,6 +1389,80 @@ describe('Codex Agent Core protocol codec', () => {
         },
       },
     })).toThrow('unknown fields: legacyRoundId');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      providerCalls: [{ ...providerCall, executionItemIds: [] }],
+    })).toThrow('unknown fields: executionItemIds');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      activities: [
+        turnDiagnosticsPayload.activities[0],
+        {
+          type: 'providerRetry',
+          retryKind: 'request',
+          attempt: 1,
+          maxRetries: 2,
+          occurredAt: 101,
+          sourceCallIndex: 0,
+          nextCallIndex: null,
+        },
+        turnDiagnosticsPayload.activities[1],
+      ],
+    })).toThrow('must identify the preceding provider call activity');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      providerCalls: [
+        providerCall,
+        { ...providerCall, index: 1 },
+      ],
+      activities: [
+        turnDiagnosticsPayload.activities[0],
+        turnDiagnosticsPayload.activities[1],
+        {
+          type: 'toolExecutionBatch',
+          sourceCallIndex: 0,
+          consumedByCallIndex: null,
+          executions: [{
+            callId: 'tool-call-1',
+            toolName: 'bash',
+            itemId: null,
+            startedAt: 101,
+            completedAt: 102,
+            status: 'completed',
+          }],
+        },
+        { type: 'modelCall', callIndex: 1 },
+      ],
+    })).toThrow('must identify the next provider call activity');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      activities: [
+        ...turnDiagnosticsPayload.activities,
+        {
+          type: 'toolExecutionBatch',
+          sourceCallIndex: 0,
+          consumedByCallIndex: null,
+          executions: [
+            {
+              callId: 'tool-call-1',
+              toolName: 'bash',
+              itemId: 'tool-item-1',
+              startedAt: 101,
+              completedAt: 102,
+              status: 'completed',
+            },
+            {
+              callId: 'tool-call-2',
+              toolName: 'bash',
+              itemId: 'tool-item-1',
+              startedAt: 101,
+              completedAt: 102,
+              status: 'completed',
+            },
+          ],
+        },
+      ],
+    })).toThrow('duplicate tool Item ids across execution batches');
     expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
       ...response,
       diagnostics: {
@@ -1453,7 +1539,22 @@ describe('Codex Agent Core protocol codec', () => {
         ref,
         payload: {
           ...turnDiagnosticsPayload,
-          providerCalls: [{ ...providerCall, executionItemIds: ['missing-tool-item'] }],
+          activities: [
+            ...turnDiagnosticsPayload.activities,
+            {
+              type: 'toolExecutionBatch',
+              sourceCallIndex: 0,
+              consumedByCallIndex: null,
+              executions: [{
+                callId: 'missing-tool-call',
+                toolName: 'bash',
+                itemId: 'missing-tool-item',
+                startedAt: 110,
+                completedAt: 120,
+                status: 'completed',
+              }],
+            },
+          ],
         },
       },
     })).toThrow('must reference an executable Item in the returned Turn');

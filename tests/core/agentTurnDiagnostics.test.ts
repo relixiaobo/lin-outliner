@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
 import type { Api, AssistantMessage, Message, Model, Tool, UserMessage } from '@earendil-works/pi-ai';
+import type { ThreadItem } from '../../src/core/agent/protocol';
 import {
   decodeTurnDiagnosticsPayload,
   decodeTurnDiagnosticsPayloadJson,
@@ -74,6 +75,10 @@ describe('Turn diagnostics', () => {
         maxRetryDelayMs: 10_000,
         cacheRetention: 'short',
       },
+      initialInput: {
+        acceptedAt: 10,
+        itemIds: ['user-item-1'],
+      },
     });
 
     prepare(collector, [firstMessage], 0, 120);
@@ -95,7 +100,8 @@ describe('Turn diagnostics', () => {
       type: 'message_end',
       message: assistantMessage('First response'),
     } as AgentEvent);
-    collector.captureExecutionItem('tool-item-1');
+    collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
+    collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 
     prepare(collector, [firstMessage, secondMessage], 1, 160);
     collector.captureProviderRequest({
@@ -139,7 +145,6 @@ describe('Turn diagnostics', () => {
       inputTokenLimit: 100_000,
       reservedOutputTokens: 8_192,
       commonPrefixMessageCount: 0,
-      executionItemIds: ['tool-item-1'],
       cacheBreakpoints: ['$.system[0].cache_control'],
       transportResponse: {
         httpStatus: 202,
@@ -188,10 +193,33 @@ describe('Turn diagnostics', () => {
       protectedFromMessageIndex: 1,
       estimatedInputTokens: 160,
       commonPrefixMessageCount: 1,
-      executionItemIds: [],
       transportResponse: null,
       response: null,
     });
+    expect(payload.activities).toEqual([
+      {
+        type: 'acceptedInput',
+        source: 'initial',
+        acceptedAt: 10,
+        itemIds: ['user-item-1'],
+        consumedByCallIndex: 0,
+      },
+      { type: 'modelCall', callIndex: 0 },
+      {
+        type: 'toolExecutionBatch',
+        sourceCallIndex: 0,
+        consumedByCallIndex: 1,
+        executions: [{
+          callId: 'tool-call-1',
+          toolName: 'alpha',
+          itemId: 'tool-item-1',
+          startedAt: 21,
+          completedAt: 22,
+          status: 'completed',
+        }],
+      },
+      { type: 'modelCall', callIndex: 1 },
+    ]);
     const firstInputId = requestFragmentIds(payload, 0, 'input')[0];
     const secondInputIds = requestFragmentIds(payload, 1, 'input');
     expect(secondInputIds).toEqual([firstInputId, expect.any(String)]);
@@ -216,6 +244,110 @@ describe('Turn diagnostics', () => {
         },
       }, payload.providerCalls[1]!],
     })).toThrow('must align with the referenced message content');
+  });
+
+  test('records retry, compaction, steering, and transient tools as ordered activities', () => {
+    const firstMessage: UserMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'Start.' }],
+      timestamp: 10,
+    };
+    const steeringMessage: UserMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'Adjust.' }],
+      timestamp: 20,
+    };
+    const collector = new TurnDiagnosticsCollector({
+      contextEpochId: 'initial',
+      cacheAffinity: 'b'.repeat(64),
+      configuration: {
+        profileName: 'default',
+        developerInstructions: [],
+        model: model.id,
+        reasoningEffort: 'medium',
+        tools: ['alpha', 'zeta'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      },
+      stablePrompt: null,
+      tools: [tool('alpha'), tool('zeta')],
+      model,
+      thinkingLevel: 'medium',
+      providerOptions: {},
+      initialInput: { acceptedAt: 10, itemIds: ['initial-user'] },
+    });
+
+    prepare(collector, [firstMessage], 0, 10);
+    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    collector.captureProviderRetry({ kind: 'request', attempt: 1, maxRetries: 2 }, 11);
+
+    prepare(collector, [firstMessage], 0, 10);
+    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    collector.captureContextCompaction({
+      id: 'overflow-compaction',
+      trigger: 'providerOverflow',
+    } as Extract<ThreadItem, { type: 'contextCompaction' }>, 12);
+    const steeringItem: Extract<ThreadItem, { type: 'userMessage' }> = {
+      type: 'userMessage',
+      id: 'steering-user',
+      provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'steering-user' },
+      clientId: null,
+      acceptedAt: 20,
+      content: [{ type: 'text', text: 'Adjust.' }],
+    };
+    const steeringActivity = collector.captureSteering([steeringItem], steeringItem.acceptedAt);
+    collector.setSteeringDelivered(steeringActivity, true);
+
+    prepare(collector, [firstMessage, steeringMessage], 0, 12);
+    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    collector.captureEvent({
+      type: 'message_end',
+      message: assistantMessage('Planning'),
+    } as AgentEvent);
+    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 21);
+    collector.captureToolExecutionCompleted('plan-call', false, 22);
+
+    prepare(collector, [firstMessage, steeringMessage], 0, 12);
+    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+
+    const payload = collector.payload();
+    expect(payload.activities.map((activity) => activity.type)).toEqual([
+      'acceptedInput',
+      'modelCall',
+      'providerRetry',
+      'modelCall',
+      'contextCompaction',
+      'acceptedInput',
+      'modelCall',
+      'toolExecutionBatch',
+      'modelCall',
+    ]);
+    expect(payload.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'providerRetry',
+        retryKind: 'request',
+        sourceCallIndex: 0,
+        nextCallIndex: 1,
+      }),
+      expect.objectContaining({
+        type: 'contextCompaction',
+        sourceCallIndex: 1,
+        nextCallIndex: 2,
+      }),
+      expect.objectContaining({
+        type: 'acceptedInput',
+        source: 'steering',
+        consumedByCallIndex: 2,
+      }),
+      expect.objectContaining({
+        type: 'toolExecutionBatch',
+        sourceCallIndex: 2,
+        consumedByCallIndex: 3,
+        executions: [expect.objectContaining({ toolName: 'update_plan', itemId: null })],
+      }),
+    ]));
+    expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
   });
 });
 

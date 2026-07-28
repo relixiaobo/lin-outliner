@@ -2075,7 +2075,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               },
               requestFingerprint: '5'.repeat(64),
               cacheBreakpoints: [],
-              executionItemIds: [],
               transportResponse: {
                 headersReceivedAt: turn.startedAt,
                 httpStatus: 200,
@@ -2110,6 +2109,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 },
               },
             }],
+            activities: [
+              {
+                type: 'acceptedInput',
+                source: 'initial',
+                acceptedAt: userItem.acceptedAt,
+                itemIds: [userItem.id],
+                consumedByCallIndex: 0,
+              },
+              { type: 'modelCall', callIndex: 0 },
+            ],
           };
           const ref = {
             id: 'd'.repeat(64),

@@ -309,11 +309,67 @@ export interface TurnDiagnosticsProviderCall {
   readonly request: TurnDiagnosticsProviderRequest;
   readonly requestFingerprint: string;
   readonly cacheBreakpoints: readonly string[];
-  /** Canonical tool Items executed after this response and before the next provider call. */
-  readonly executionItemIds: readonly ThreadItemId[];
   readonly transportResponse: TurnDiagnosticsTransportResponse | null;
   readonly response: TurnDiagnosticsProviderResponse | null;
 }
+
+export interface TurnDiagnosticsAcceptedInputActivity {
+  readonly type: 'acceptedInput';
+  readonly source: 'initial' | 'steering';
+  readonly acceptedAt: number;
+  readonly itemIds: readonly ThreadItemId[];
+  /** The provider call whose prepared context first consumed this input, when observed. */
+  readonly consumedByCallIndex: number | null;
+}
+
+export interface TurnDiagnosticsModelCallActivity {
+  readonly type: 'modelCall';
+  readonly callIndex: number;
+}
+
+export interface TurnDiagnosticsToolExecution {
+  readonly callId: string;
+  readonly toolName: string;
+  /** Null only for deliberately transient tools that have no canonical Thread Item. */
+  readonly itemId: ThreadItemId | null;
+  readonly startedAt: number;
+  readonly completedAt: number | null;
+  readonly status: ItemExecutionStatus;
+}
+
+export interface TurnDiagnosticsToolExecutionBatchActivity {
+  readonly type: 'toolExecutionBatch';
+  readonly sourceCallIndex: number;
+  readonly consumedByCallIndex: number | null;
+  readonly executions: readonly TurnDiagnosticsToolExecution[];
+}
+
+export interface TurnDiagnosticsProviderRetryActivity {
+  readonly type: 'providerRetry';
+  readonly retryKind: 'request' | 'stream';
+  readonly attempt: number;
+  readonly maxRetries: number;
+  readonly occurredAt: number;
+  readonly sourceCallIndex: number;
+  readonly nextCallIndex: number | null;
+}
+
+export interface TurnDiagnosticsContextCompactionActivity {
+  readonly type: 'contextCompaction';
+  readonly trigger: 'automaticPreflight' | 'providerOverflow';
+  readonly itemId: ThreadItemId;
+  readonly completedAt: number;
+  /** Null when compaction happens before the first provider call. */
+  readonly sourceCallIndex: number | null;
+  readonly nextCallIndex: number | null;
+}
+
+export type TurnDiagnosticsActivity =
+  | TurnDiagnosticsAcceptedInputActivity
+  | TurnDiagnosticsModelCallActivity
+  | TurnDiagnosticsToolExecutionBatchActivity
+  | TurnDiagnosticsProviderRetryActivity
+  | TurnDiagnosticsContextCompactionActivity;
 
 /** Immutable provider-boundary facts for one canonical Turn. */
 export interface TurnDiagnosticsPayload {
@@ -327,6 +383,8 @@ export interface TurnDiagnosticsPayload {
   readonly canonicalMessages: readonly TurnDiagnosticsMessage[];
   readonly requestFragments: readonly TurnDiagnosticsRequestFragment[];
   readonly providerCalls: readonly TurnDiagnosticsProviderCall[];
+  /** Ordered runtime activity facts. The renderer must not reconstruct this sequence. */
+  readonly activities: readonly TurnDiagnosticsActivity[];
 }
 
 export type TurnPlanStepStatus = 'pending' | 'in_progress' | 'completed';

@@ -129,7 +129,11 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('keeps update_plan out of the recorded tool Item stream', async () => {
     const fixture = createContext();
-    const normalizer = new PiEventNormalizer(fixture.context);
+    const observed: unknown[] = [];
+    const normalizer = new PiEventNormalizer(fixture.context, {
+      started: (execution) => observed.push({ phase: 'started', ...execution }),
+      completed: (execution) => observed.push({ phase: 'completed', ...execution }),
+    });
     normalizer.handle({
       type: 'tool_execution_start',
       toolCallId: 'call-plan-1',
@@ -147,6 +151,15 @@ describe('PiTurnExecutor event normalization', () => {
 
     expect(fixture.notifications).toEqual([]);
     expect(fixture.recorder.orderedItems()).toEqual([]);
+    expect(observed).toEqual([
+      expect.objectContaining({
+        phase: 'started',
+        callId: 'call-plan-1',
+        toolName: 'update_plan',
+        itemId: null,
+      }),
+      expect.objectContaining({ phase: 'completed', callId: 'call-plan-1', failed: false }),
+    ]);
   });
 
   test('keeps completed Items immutable in the authoritative recorder', async () => {
@@ -1395,6 +1408,14 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(providerContexts)).toContain('CURRENT ADMISSION MUST SURVIVE');
     expect(JSON.stringify(providerContexts)).toContain('CURRENT CHILD TASK');
     expect(JSON.stringify(providerContexts)).not.toContain('x'.repeat(1_000));
+    expect(fixture.diagnosticsPayloads[0]?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'contextCompaction',
+        trigger: 'automaticPreflight',
+        sourceCallIndex: null,
+        nextCallIndex: null,
+      }),
+    ]));
   });
 
   test('replays tool images from Thread-owned snapshots at the next provider boundary', async () => {

@@ -1451,16 +1451,27 @@ function decodeThreadTurnDetailsReadResponse(
   );
   const payload = decodeTurnDiagnosticsPayload(diagnostics.payload);
   const turnItemsById = new Map(turn.items.map((item) => [item.id, item]));
-  payload.providerCalls.forEach((call, callIndex) => {
-    call.executionItemIds.forEach((itemId, itemIndex) => {
-      const item = turnItemsById.get(itemId);
-      if (!item || executionStatusOf(item) === null) {
-        fail(
-          `thread/turn/details/read response.diagnostics.payload.providerCalls[${callIndex}].executionItemIds[${itemIndex}]`,
-          'must reference an executable Item in the returned Turn',
-        );
+  payload.activities.forEach((activity, activityIndex) => {
+    const path = `thread/turn/details/read response.diagnostics.payload.activities[${activityIndex}]`;
+    if (activity.type === 'acceptedInput') {
+      activity.itemIds.forEach((itemId, itemIndex) => {
+        if (!turnItemsById.has(itemId)) {
+          fail(`${path}.itemIds[${itemIndex}]`, 'must reference an Item in the returned Turn');
+        }
+      });
+    } else if (activity.type === 'toolExecutionBatch') {
+      activity.executions.forEach((execution, executionIndex) => {
+        if (execution.itemId === null) return;
+        const item = turnItemsById.get(execution.itemId);
+        if (!item || executionStatusOf(item) === null) {
+          fail(`${path}.executions[${executionIndex}].itemId`, 'must reference an executable Item in the returned Turn');
+        }
+      });
+    } else if (activity.type === 'contextCompaction') {
+      if (turnItemsById.get(activity.itemId)?.type !== 'contextCompaction') {
+        fail(`${path}.itemId`, 'must reference a context compaction Item in the returned Turn');
       }
-    });
+    }
   });
   const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(payload)).byteLength;
   if (byteLength !== ref.byteLength) {
@@ -2449,7 +2460,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
   const record = recordValue(value, 'turnDiagnostics');
   exactKeys(record, [
     'schemaVersion', 'contextEpochId', 'cacheAffinity', 'configuration', 'stablePrompt',
-    'toolSchemas', 'runtime', 'canonicalMessages', 'requestFragments', 'providerCalls',
+    'toolSchemas', 'runtime', 'canonicalMessages', 'requestFragments', 'providerCalls', 'activities',
   ], 'turnDiagnostics');
   if (record.schemaVersion !== 1) fail('turnDiagnostics.schemaVersion', 'expected schema version 1');
   const configuration = recordValue(record.configuration, 'turnDiagnostics.configuration');
@@ -2523,7 +2534,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       'index', 'requestedAt', 'preparedContext', 'protectedFromMessageIndex',
       'estimatedInputTokens', 'inputTokenLimit', 'reservedOutputTokens',
       'commonPrefixMessageCount', 'request', 'requestFingerprint',
-      'cacheBreakpoints', 'executionItemIds', 'transportResponse', 'response',
+      'cacheBreakpoints', 'transportResponse', 'response',
     ], `turnDiagnostics.providerCalls[${index}]`);
     const preparedContext = recordValue(
       call.preparedContext,
@@ -2622,15 +2633,6 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       fragmentIds,
       `turnDiagnostics.providerCalls[${index}].request`,
     );
-    const executionItemIds = stringArray(
-      call.executionItemIds,
-      `turnDiagnostics.providerCalls[${index}].executionItemIds`,
-    );
-    requireUnique(
-      executionItemIds,
-      `turnDiagnostics.providerCalls[${index}].executionItemIds`,
-      'Item ids',
-    );
     const response = call.response === null
       ? null
       : decodeTurnDiagnosticsProviderResponse(
@@ -2686,7 +2688,6 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
         call.cacheBreakpoints,
         `turnDiagnostics.providerCalls[${index}].cacheBreakpoints`,
       ),
-      executionItemIds,
       transportResponse,
       response,
     };
@@ -2728,11 +2729,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       );
     }
   });
-  requireUnique(
-    providerCalls.flatMap((call) => call.executionItemIds),
-    'turnDiagnostics.providerCalls',
-    'execution Item ids across calls',
-  );
+  const activities = decodeTurnDiagnosticsActivities(record.activities, providerCalls);
   return deepFreeze({
     schemaVersion: 1,
     contextEpochId: stringValue(record.contextEpochId, 'turnDiagnostics.contextEpochId'),
@@ -2790,7 +2787,240 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     canonicalMessages,
     requestFragments,
     providerCalls,
+    activities,
   });
+}
+
+function decodeTurnDiagnosticsActivities(
+  value: unknown,
+  providerCalls: readonly TurnDiagnosticsPayload['providerCalls'][number][],
+): TurnDiagnosticsPayload['activities'] {
+  const activities = arrayValue(value, 'turnDiagnostics.activities').map((entry, index) => {
+    const path = `turnDiagnostics.activities[${index}]`;
+    const activity = recordValue(entry, path);
+    const type = enumValue(activity.type, [
+      'acceptedInput',
+      'modelCall',
+      'toolExecutionBatch',
+      'providerRetry',
+      'contextCompaction',
+    ], `${path}.type`);
+    if (type === 'acceptedInput') {
+      exactKeys(activity, ['type', 'source', 'acceptedAt', 'itemIds', 'consumedByCallIndex'], path);
+      const itemIds = stringArray(activity.itemIds, `${path}.itemIds`);
+      requireUnique(itemIds, `${path}.itemIds`, 'Item ids');
+      if (itemIds.length === 0) fail(`${path}.itemIds`, 'must not be empty');
+      return {
+        type,
+        source: enumValue(activity.source, ['initial', 'steering'], `${path}.source`),
+        acceptedAt: nonNegativeNumber(activity.acceptedAt, `${path}.acceptedAt`),
+        itemIds,
+        consumedByCallIndex: nullableDiagnosticsCallIndex(
+          activity.consumedByCallIndex,
+          `${path}.consumedByCallIndex`,
+          providerCalls.length,
+        ),
+      };
+    }
+    if (type === 'modelCall') {
+      exactKeys(activity, ['type', 'callIndex'], path);
+      return {
+        type,
+        callIndex: diagnosticsCallIndex(activity.callIndex, `${path}.callIndex`, providerCalls.length),
+      };
+    }
+    if (type === 'toolExecutionBatch') {
+      exactKeys(activity, ['type', 'sourceCallIndex', 'consumedByCallIndex', 'executions'], path);
+      const executions = arrayValue(activity.executions, `${path}.executions`).map((entry, executionIndex) => {
+        const executionPath = `${path}.executions[${executionIndex}]`;
+        const execution = recordValue(entry, executionPath);
+        exactKeys(execution, [
+          'callId', 'toolName', 'itemId', 'startedAt', 'completedAt', 'status',
+        ], executionPath);
+        const startedAt = nonNegativeNumber(execution.startedAt, `${executionPath}.startedAt`);
+        const completedAt = execution.completedAt === null
+          ? null
+          : nonNegativeNumber(execution.completedAt, `${executionPath}.completedAt`);
+        const status = itemExecutionStatus(execution.status, `${executionPath}.status`);
+        if (completedAt !== null && completedAt < startedAt) {
+          fail(`${executionPath}.completedAt`, 'cannot precede tool execution start');
+        }
+        if ((status === 'inProgress') !== (completedAt === null)) {
+          fail(`${executionPath}.status`, 'must align with tool execution completion');
+        }
+        return {
+          callId: stringValue(execution.callId, `${executionPath}.callId`),
+          toolName: stringValue(execution.toolName, `${executionPath}.toolName`),
+          itemId: nullableString(execution.itemId, `${executionPath}.itemId`),
+          startedAt,
+          completedAt,
+          status,
+        };
+      });
+      if (executions.length === 0) fail(`${path}.executions`, 'must not be empty');
+      requireUnique(executions.map((execution) => execution.callId), `${path}.executions`, 'tool call ids');
+      return {
+        type,
+        sourceCallIndex: diagnosticsCallIndex(
+          activity.sourceCallIndex,
+          `${path}.sourceCallIndex`,
+          providerCalls.length,
+        ),
+        consumedByCallIndex: nullableDiagnosticsCallIndex(
+          activity.consumedByCallIndex,
+          `${path}.consumedByCallIndex`,
+          providerCalls.length,
+        ),
+        executions,
+      };
+    }
+    if (type === 'providerRetry') {
+      exactKeys(activity, [
+        'type', 'retryKind', 'attempt', 'maxRetries', 'occurredAt', 'sourceCallIndex', 'nextCallIndex',
+      ], path);
+      const attempt = positiveInteger(activity.attempt, `${path}.attempt`);
+      const maxRetries = positiveInteger(activity.maxRetries, `${path}.maxRetries`);
+      if (attempt > maxRetries) fail(`${path}.attempt`, 'cannot exceed the retry limit');
+      return {
+        type,
+        retryKind: enumValue(activity.retryKind, ['request', 'stream'], `${path}.retryKind`),
+        attempt,
+        maxRetries,
+        occurredAt: nonNegativeNumber(activity.occurredAt, `${path}.occurredAt`),
+        sourceCallIndex: diagnosticsCallIndex(
+          activity.sourceCallIndex,
+          `${path}.sourceCallIndex`,
+          providerCalls.length,
+        ),
+        nextCallIndex: nullableDiagnosticsCallIndex(
+          activity.nextCallIndex,
+          `${path}.nextCallIndex`,
+          providerCalls.length,
+        ),
+      };
+    }
+    exactKeys(activity, [
+      'type', 'trigger', 'itemId', 'completedAt', 'sourceCallIndex', 'nextCallIndex',
+    ], path);
+    return {
+      type,
+      trigger: enumValue(
+        activity.trigger,
+        ['automaticPreflight', 'providerOverflow'],
+        `${path}.trigger`,
+      ),
+      itemId: stringValue(activity.itemId, `${path}.itemId`),
+      completedAt: nonNegativeNumber(activity.completedAt, `${path}.completedAt`),
+      sourceCallIndex: nullableDiagnosticsCallIndex(
+        activity.sourceCallIndex,
+        `${path}.sourceCallIndex`,
+        providerCalls.length,
+      ),
+      nextCallIndex: nullableDiagnosticsCallIndex(
+        activity.nextCallIndex,
+        `${path}.nextCallIndex`,
+        providerCalls.length,
+      ),
+    };
+  });
+  const initialInputs = activities.filter((activity) => (
+    activity.type === 'acceptedInput' && activity.source === 'initial'
+  ));
+  if (initialInputs.length !== 1 || activities[0] !== initialInputs[0]) {
+    fail('turnDiagnostics.activities', 'must begin with exactly one initial accepted input');
+  }
+  const modelCallIndexes = activities.flatMap((activity) => (
+    activity.type === 'modelCall' ? [activity.callIndex] : []
+  ));
+  if (
+    modelCallIndexes.length !== providerCalls.length
+    || modelCallIndexes.some((callIndex, index) => callIndex !== index)
+  ) {
+    fail('turnDiagnostics.activities', 'must contain every provider call once in canonical order');
+  }
+  const callActivityPositions = new Map<number, number>();
+  activities.forEach((activity, index) => {
+    if (activity.type === 'modelCall') callActivityPositions.set(activity.callIndex, index);
+  });
+  requireUnique(
+    activities.flatMap((activity) => (
+      activity.type === 'toolExecutionBatch'
+        ? activity.executions.map((execution) => execution.callId)
+        : []
+    )),
+    'turnDiagnostics.activities',
+    'tool call ids across execution batches',
+  );
+  requireUnique(
+    activities.flatMap((activity) => (
+      activity.type === 'toolExecutionBatch'
+        ? activity.executions.flatMap((execution) => execution.itemId === null ? [] : [execution.itemId])
+        : []
+    )),
+    'turnDiagnostics.activities',
+    'tool Item ids across execution batches',
+  );
+  activities.forEach((activity, index) => {
+    const path = `turnDiagnostics.activities[${index}]`;
+    const previousCallPosition = [...callActivityPositions.values()]
+      .filter((position) => position < index)
+      .at(-1) ?? null;
+    const nextCallPosition = [...callActivityPositions.values()]
+      .find((position) => position > index) ?? null;
+    if (activity.type === 'acceptedInput') {
+      if (activity.source === 'initial' && activity.consumedByCallIndex !== (providerCalls.length > 0 ? 0 : null)) {
+        fail(`${path}.consumedByCallIndex`, 'must identify the first provider call');
+      }
+      if (
+        activity.consumedByCallIndex !== null
+        && callActivityPositions.get(activity.consumedByCallIndex) !== nextCallPosition
+      ) {
+        fail(`${path}.consumedByCallIndex`, 'must identify the next provider call activity');
+      }
+      return;
+    }
+    if (activity.type === 'modelCall') return;
+    if (activity.type === 'contextCompaction' && activity.trigger === 'providerOverflow' && activity.sourceCallIndex === null) {
+      fail(`${path}.sourceCallIndex`, 'is required for provider-overflow compaction');
+    }
+    if (
+      activity.sourceCallIndex !== null
+      && callActivityPositions.get(activity.sourceCallIndex) !== previousCallPosition
+    ) {
+      fail(`${path}.sourceCallIndex`, 'must identify the preceding provider call activity');
+    }
+    if (activity.type === 'contextCompaction' && activity.sourceCallIndex === null && previousCallPosition !== null) {
+      fail(`${path}.sourceCallIndex`, 'must identify the preceding provider call activity');
+    }
+    const targetCallIndex = activity.type === 'toolExecutionBatch'
+      ? activity.consumedByCallIndex
+      : activity.nextCallIndex;
+    const targetPath = `${path}.${activity.type === 'toolExecutionBatch' ? 'consumedByCallIndex' : 'nextCallIndex'}`;
+    if (
+      targetCallIndex !== null
+      && activity.sourceCallIndex !== null
+      && targetCallIndex <= activity.sourceCallIndex
+    ) {
+      fail(targetPath, 'must follow the source provider call');
+    }
+    if (targetCallIndex !== null && callActivityPositions.get(targetCallIndex) !== nextCallPosition) {
+      fail(targetPath, 'must identify the next provider call activity');
+    }
+    if (targetCallIndex === null && nextCallPosition !== null) {
+      fail(targetPath, 'must identify the next provider call activity');
+    }
+  });
+  return activities;
+}
+
+function diagnosticsCallIndex(value: unknown, path: string, callCount: number): number {
+  const index = nonNegativeInteger(value, path);
+  if (index >= callCount) fail(path, 'references an unknown provider call');
+  return index;
+}
+
+function nullableDiagnosticsCallIndex(value: unknown, path: string, callCount: number): number | null {
+  return value === null ? null : diagnosticsCallIndex(value, path, callCount);
 }
 
 function diagnosticContentPartCount(value: JsonValue): number {

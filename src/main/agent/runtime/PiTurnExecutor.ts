@@ -175,8 +175,24 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         model: runtime.model,
         thinkingLevel: runtime.thinkingLevel,
         providerOptions,
+        initialInput: {
+          acceptedAt: prompt.timestamp,
+          itemIds: context.turn.items.map((item) => item.id),
+        },
       });
-      const normalizer = new PiEventNormalizer(context, (itemId) => diagnostics.captureExecutionItem(itemId));
+      const normalizer = new PiEventNormalizer(context, {
+        started: (execution) => diagnostics.captureToolExecutionStarted(
+          execution.callId,
+          execution.toolName,
+          execution.itemId,
+          execution.startedAt,
+        ),
+        completed: (execution) => diagnostics.captureToolExecutionCompleted(
+          execution.callId,
+          execution.failed,
+          execution.completedAt,
+        ),
+      });
       if (internalMemory) {
         const messages = [...priorMessages, prompt];
         const budget = planContextBudget({
@@ -217,7 +233,10 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               systemPrompt,
               tools,
               prompt,
-              (prepared) => diagnostics.prepareProviderPlan(prepared),
+              {
+                prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
+                compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
+              },
             );
           };
       const streamSimple = this.options.streamSimple ?? piStreamSimple;
@@ -242,9 +261,12 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           messages: priorMessages,
         },
         streamFn: createAbortSettledStreamFn(configuredStream, {
-          onProviderRetry: (event) => context.onProviderRetry(event.phase === 'retrying'
-            ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
-            : null),
+          onProviderRetry: (event) => {
+            if (event.phase === 'retrying') diagnostics.captureProviderRetry(event);
+            context.onProviderRetry(event.phase === 'retrying'
+              ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
+              : null);
+          },
           maxRequestRetries: providerOptions.maxRetries,
           maxStreamRetries: providerOptions.maxRetries,
           maxRetryDelayMs: providerOptions.maxRetryDelayMs,
@@ -255,6 +277,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                     'providerOverflow',
                     activeAdmissionCursor(context.turn),
                   );
+                  if (compacted) diagnostics.captureContextCompaction(compacted);
                   return compacted ? await transformContext() : null;
                 },
               }
@@ -285,24 +308,36 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         await normalizer.flush();
       });
       context.onSteer(async (input) => {
+        const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
-        if (!context.signal.aborted) agent?.steer(message);
+        if (!context.signal.aborted && agent) {
+          diagnostics.setSteeringDelivered(activityIndex, true);
+          try {
+            agent.steer(message);
+          } catch (error) {
+            diagnostics.setSteeringDelivered(activityIndex, false);
+            throw error;
+          }
+        }
       });
       await agent.prompt(prompt);
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
+        diagnostics.finalizeOpenToolExecutions('interrupted');
         return {
           status: 'interrupted',
           execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
         };
       }
       if (agent.state.errorMessage || normalizer.stopReason === 'error') {
+        diagnostics.finalizeOpenToolExecutions('failed');
         return {
           status: 'failed',
           error: { message: agent.state.errorMessage ?? normalizer.errorMessage ?? 'Model execution failed' },
           execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
         };
       }
+      diagnostics.finalizeOpenToolExecutions('failed');
       return {
         status: 'completed',
         execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
@@ -328,12 +363,15 @@ async function projectCanonicalProviderContext(
   systemPrompt: string,
   tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
-  onPrepared?: (input: {
-    readonly messages: readonly Message[];
-    readonly messagePartProvenance: CanonicalContextProjection['messagePartProvenance'];
-    readonly protectedFromMessageIndex: number;
-    readonly budget: ReturnType<typeof planContextBudget>;
-  }) => void,
+  observer?: {
+    readonly prepared?: (input: {
+      readonly messages: readonly Message[];
+      readonly messagePartProvenance: CanonicalContextProjection['messagePartProvenance'];
+      readonly protectedFromMessageIndex: number;
+      readonly budget: ReturnType<typeof planContextBudget>;
+    }) => void;
+    readonly compacted?: (item: Extract<ThreadItem, { type: 'contextCompaction' }>) => void;
+  },
 ): Promise<Message[]> {
   const build = async () => {
     const sourceTurns = [
@@ -383,7 +421,7 @@ async function projectCanonicalProviderContext(
     };
   };
   const preparedMessages = (prepared: Awaited<ReturnType<typeof plan>>) => {
-    onPrepared?.({
+    observer?.prepared?.({
       messages: prepared.budget.messages,
       messagePartProvenance: prepared.messagePartProvenance,
       protectedFromMessageIndex: prepared.protectedFromMessageIndex,
@@ -408,6 +446,7 @@ async function projectCanonicalProviderContext(
         error.availableTokens,
       );
     }
+    observer?.compacted?.(compacted);
     try {
       return preparedMessages(await plan());
     } catch (retryError) {
@@ -597,7 +636,19 @@ export class PiEventNormalizer {
 
   constructor(
     private readonly context: TurnExecutionContext,
-    private readonly onExecutionItem?: (itemId: string) => void,
+    private readonly executionObserver?: {
+      readonly started?: (execution: {
+        readonly callId: string;
+        readonly toolName: string;
+        readonly itemId: string | null;
+        readonly startedAt: number;
+      }) => void;
+      readonly completed?: (execution: {
+        readonly callId: string;
+        readonly failed: boolean;
+        readonly completedAt: number;
+      }) => void;
+    },
   ) {}
 
   handle(event: AgentEvent): void {
@@ -707,18 +758,23 @@ export class PiEventNormalizer {
 
   private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
     const identity = canonicalIdentity(providerName);
+    const startedAt = Date.now();
     if (identity.namespace === null && identity.name === 'update_plan') {
       this.transientToolCallIds.add(callId);
+      this.executionObserver?.started?.({ callId, toolName: providerName, itemId: null, startedAt });
       return;
     }
     const item = startedToolItem(this.context, callId, identity, args);
     const started = await this.context.recorder.started(item);
-    this.toolItems.set(callId, { item: started, startedAt: Date.now() });
-    this.onExecutionItem?.(started.id);
+    this.toolItems.set(callId, { item: started, startedAt });
+    this.executionObserver?.started?.({ callId, toolName: providerName, itemId: started.id, startedAt });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
-    if (this.transientToolCallIds.delete(callId)) return;
+    if (this.transientToolCallIds.delete(callId)) {
+      this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
+      return;
+    }
     const active = this.toolItems.get(callId);
     if (!active) return;
     const completed = await this.context.recorder.completed(await completedToolItem(
@@ -730,6 +786,7 @@ export class PiEventNormalizer {
     ));
     await persistCompletedToolContext(this.context, completed, result, isError);
     this.toolItems.delete(callId);
+    this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
   }
 }
 

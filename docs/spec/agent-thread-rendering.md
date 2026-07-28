@@ -156,11 +156,11 @@ Details from the native message menu, opens Turn Diagnostics in the active works
 pane.
 
 Turn Diagnostics is the complete diagnostic view for one canonical Turn. Its sections
-are Overview, Requests & Results, and Turn Record. There is no independent Context Construction
+are Summary, Timeline, and Recorded Evidence. There is no independent Context Construction
 section: user input, attachments, stable instructions, system reminders, Skill/Role/view/
 compaction evidence, tool definitions, and provider options appear at their recorded
 boundary in each outbound Request.
-Overview reads model, timing, status, Item count, input/output/cache token usage,
+Summary reads model, timing, status, Item count, input/output/cache token usage,
 cost, and any terminal error code/message/detail from the immutable Turn. `Input tokens`
 means `usage.input`; cache reads and writes remain separate facts and are never relabeled
 as input context.
@@ -173,12 +173,17 @@ facts. A Turn without a diagnostics reference explicitly reports that request
 diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
 not match the Turn fails closed instead of appearing absent.
 
-Requests & Results lists every provider invocation observable at the provider stream and
-post-adapter send boundaries in order. Each numbered request is one complete unit: Request
-contains Prepared Context, Sent to Provider, and Request Details; Result contains the
-Model Response, Result Details, and Local Execution caused by that response. Wrapper-level
-retries create another call; retries hidden inside a provider SDK remain part of that SDK
-invocation. Request first renders the recorded Prepared Model Context in its semantic
+Timeline renders the recorded runtime activity union in order; the renderer never derives
+the sequence by scanning canonical Items. Accepted initial and steering input, Model Calls,
+tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow
+compaction are separate timeline activities. A Model Call owns exactly one Request and its
+corresponding Response. Tool execution is a sibling activity after its source Call and before
+the Call that consumes its results, not a child of either Response or Request. Parallel tools
+from one model response form one batch; a transient tool with no canonical Item remains an
+explicit execution fact. Wrapper-level retries create another Call and a typed retry activity;
+retries hidden inside a provider SDK remain part of that SDK invocation.
+
+Request first renders the recorded Model Context in its semantic
 order: System Instructions, Tool Definitions, then Messages. It then renders the
 post-adapter Provider Payload. Payload fields preserve top-level insertion order only as
 a serialization fact; they receive no synthetic numeric context order. `messages`,
@@ -197,20 +202,20 @@ fingerprint, cache-breakpoint paths, complete provider request, and assistant re
 Provider-reported input/output/cache/reasoning usage and
 stop reason, plus locally calculated cost and normalized error details, are typed call
 facts rather than renderer inferences. The
-call summary derives completed, failed, or
+Call summary derives completed, failed, or
 interrupted from the response stop reason rather than treating every response as success.
-The Request header keeps only its ordinal and derived result status in the main reading
+The Model Call header keeps only its ordinal and derived result status in the main reading
 flow. Its trailing information control exposes the recorded model, provider, request time,
 duration, estimated input, provider-reported token/cache/reasoning usage, and calculated
-cost on hover or keyboard focus. The adjacent copy control materializes the complete
-post-adapter provider payload only when invoked and writes its ordered, image-sanitized
-JSON representation to the clipboard; it neither copies a reconstructed pre-adapter view
-nor restores omitted image bytes.
+cost on hover or keyboard focus. The adjacent copy control materializes one typed request
+diagnostics export only when invoked: runtime selection, complete recorded Model Context,
+ordered image-sanitized Provider Payload, and Request Facts. It does not claim to be an HTTP
+request, expose secret headers, or restore omitted image bytes.
 Repetition-heavy request fields use the diagnostics fragment pool without losing a value
 or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
 content is represented by an omission marker containing its byte length and SHA-256.
 
-Turn Record exposes accepted user records, canonical Thread/Turn/Session and provenance
+Recorded Evidence exposes accepted user records, canonical Thread/Turn/Session and provenance
 identities, context epoch, cache affinity, effective configuration, L0/L1/L2 prompt
 blocks and fingerprints, canonical tool schemas, the resolved runtime, the prepared
 message pool, and exhaustive Canonical Items including context evidence, reset,

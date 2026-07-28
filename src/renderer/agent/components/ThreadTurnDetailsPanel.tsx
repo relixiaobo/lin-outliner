@@ -15,6 +15,7 @@ import type {
   ThreadItemOutputReference,
   ThreadTurnDetailsReadResponse,
   Turn,
+  TurnDiagnosticsActivity,
   TurnDiagnosticsPayload,
   TurnDiagnosticsMessagePartProvenance,
   TurnDiagnosticsProviderCall,
@@ -144,15 +145,15 @@ function useThreadTurnDetails(threadId: string, turnId: string) {
 
 function ThreadTurnDetailsView({ detail }: { readonly detail: ThreadTurnDetailsReadResponse }) {
   const t = useT();
-  const callCount = detail.diagnostics?.payload.providerCalls.length ?? 0;
+  const activityCount = detail.diagnostics?.payload.activities.length ?? 0;
   return (
     <div className="thread-turn-details-body">
-      <TurnDetailsSection title={t.agent.turnDetails.overview}>
+      <TurnDetailsSection title={t.agent.turnDetails.summary}>
         <TurnOverview turn={detail.turn} />
       </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.requestsAndResults({ count: callCount })}>
+      <TurnDetailsSection title={t.agent.turnDetails.timeline({ count: activityCount })}>
         {detail.diagnostics ? (
-          <RequestResultSequence
+          <TurnTimeline
             payload={detail.diagnostics.payload}
             threadId={detail.thread.id}
             turn={detail.turn}
@@ -161,7 +162,7 @@ function ThreadTurnDetailsView({ detail }: { readonly detail: ThreadTurnDetailsR
           <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
         )}
       </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.turnRecord}>
+      <TurnDetailsSection title={t.agent.turnDetails.recordedEvidence}>
         <TurnRecord detail={detail} />
       </TurnDetailsSection>
     </div>
@@ -252,7 +253,7 @@ function UsagePopover({ usage }: { readonly usage: Turn['execution']['usage'] })
   );
 }
 
-function RequestResultSequence({
+function TurnTimeline({
   payload,
   threadId,
   turn,
@@ -278,70 +279,245 @@ function RequestResultSequence({
     () => new Map(turn.items.map((item) => [item.id, item])),
     [turn.items],
   );
-  if (payload.providerCalls.length === 0) {
-    return <p className="thread-turn-details-notice">{t.agent.turnDetails.noProviderCalls}</p>;
-  }
+  const callActivities = payload.activities.filter((activity) => activity.type === 'modelCall');
+  const defaultOpenCallIndex = defaultTimelineCallIndex(payload);
   return (
-    <div className="thread-turn-details-call-list">
-      {payload.providerCalls.map((call) => (
-        <RequestResultUnit
-          call={call}
-          defaultOpen={call.index === 0}
-          fragmentsById={fragmentsById}
-          itemsById={itemsById}
-          key={call.index}
-          messagesById={messagesById}
-          runtime={payload.runtime}
-          threadId={threadId}
-          toolSchemasByName={toolSchemasByName}
-          turnId={turn.id}
-        />
-      ))}
+    <div className="thread-turn-details-timeline">
+      {payload.activities.map((activity, index) => {
+        const key = timelineActivityKey(activity, index);
+        if (activity.type === 'acceptedInput') {
+          return (
+            <AcceptedInputActivity
+              activity={activity}
+              itemsById={itemsById}
+              key={key}
+              threadId={threadId}
+              turnId={turn.id}
+            />
+          );
+        }
+        if (activity.type === 'modelCall') {
+          const call = payload.providerCalls[activity.callIndex];
+          return call ? (
+            <ModelCallUnit
+              call={call}
+              defaultOpen={call.index === defaultOpenCallIndex}
+              fragmentsById={fragmentsById}
+              key={key}
+              messagesById={messagesById}
+              runtime={payload.runtime}
+              toolSchemasByName={toolSchemasByName}
+            />
+          ) : null;
+        }
+        if (activity.type === 'toolExecutionBatch') {
+          return (
+            <ToolExecutionBatchActivity
+              activity={activity}
+              itemsById={itemsById}
+              key={key}
+              threadId={threadId}
+              turnId={turn.id}
+            />
+          );
+        }
+        if (activity.type === 'contextCompaction') {
+          return (
+            <ContextCompactionActivity
+              activity={activity}
+              item={itemsById.get(activity.itemId)}
+              key={key}
+              threadId={threadId}
+              turnId={turn.id}
+            />
+          );
+        }
+        return <ProviderRetryActivity activity={activity} key={key} />;
+      })}
+      {callActivities.length === 0 ? (
+        <p className="thread-turn-details-notice">{t.agent.turnDetails.noProviderCalls}</p>
+      ) : null}
     </div>
   );
 }
 
-function RequestResultUnit({
-  call,
-  defaultOpen,
-  fragmentsById,
+function AcceptedInputActivity({
+  activity,
   itemsById,
-  messagesById,
-  runtime,
   threadId,
-  toolSchemasByName,
   turnId,
 }: {
-  readonly call: TurnDiagnosticsProviderCall;
-  readonly defaultOpen: boolean;
-  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly activity: Extract<TurnDiagnosticsActivity, { type: 'acceptedInput' }>;
   readonly itemsById: ReadonlyMap<string, ThreadItem>;
-  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
-  readonly runtime: TurnDiagnosticsPayload['runtime'];
   readonly threadId: string;
-  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
   readonly turnId: string;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(defaultOpen);
-  const status = call.response ? providerCallStatus(call.response.stopReason) : null;
-  const executionItems = call.executionItemIds.flatMap((id) => {
+  const items = activity.itemIds.flatMap((id) => {
     const item = itemsById.get(id);
     return item ? [item] : [];
   });
   return (
-    <details
-      className="thread-turn-details-call"
-      onToggle={(event) => setOpen(isDetailsOpen(event.currentTarget))}
-      open={open}
-    >
-      <summary className="thread-turn-details-call-head">
-        <ChevronDownIcon className="thread-turn-details-summary-chevron" size={ICON_SIZE.tiny} />
-        <strong>{t.agent.turnDetails.modelRequest({ index: call.index + 1 })}</strong>
-        <span>{status ? t.agent.thread.item.status[status] : t.agent.turnDetails.noAssistantResponse}</span>
-        <RequestHeaderActions call={call} fragmentsById={fragmentsById} runtime={runtime} />
-      </summary>
-      {open ? (
+    <TimelineActivityDisclosure
+      defaultOpen={false}
+      metadata={activity.consumedByCallIndex === null
+        ? t.agent.turnDetails.notConsumed
+        : t.agent.turnDetails.consumedByCall({ index: activity.consumedByCallIndex + 1 })}
+      resetKey={`${activity.source}:${activity.acceptedAt}`}
+      title={activity.source === 'initial'
+        ? t.agent.turnDetails.acceptedInputActivity
+        : t.agent.turnDetails.steeringActivity}
+      render={() => (
+        <div className="thread-turn-details-item-list">
+          {items.map((item) => (
+            <CanonicalItemRow item={item} key={item.id} threadId={threadId} turnId={turnId} />
+          ))}
+        </div>
+      )}
+    />
+  );
+}
+
+function ToolExecutionBatchActivity({
+  activity,
+  itemsById,
+  threadId,
+  turnId,
+}: {
+  readonly activity: Extract<TurnDiagnosticsActivity, { type: 'toolExecutionBatch' }>;
+  readonly itemsById: ReadonlyMap<string, ThreadItem>;
+  readonly threadId: string;
+  readonly turnId: string;
+}) {
+  const t = useT();
+  const failed = activity.executions.some((execution) => execution.status === 'failed');
+  const relation = activity.consumedByCallIndex === null
+    ? t.agent.turnDetails.afterCall({ index: activity.sourceCallIndex + 1 })
+    : t.agent.turnDetails.betweenCalls({
+        source: activity.sourceCallIndex + 1,
+        target: activity.consumedByCallIndex + 1,
+      });
+  return (
+    <TimelineActivityDisclosure
+      defaultOpen={failed}
+      metadata={relation}
+      resetKey={`tools:${activity.sourceCallIndex}:${activity.consumedByCallIndex ?? 'none'}`}
+      title={t.agent.turnDetails.toolExecutionBatch({ count: activity.executions.length })}
+      render={() => (
+        <div className="thread-turn-details-item-list">
+          {activity.executions.map((execution) => {
+            const item = execution.itemId ? itemsById.get(execution.itemId) : null;
+            return item ? (
+              <CanonicalItemRow item={item} key={execution.callId} threadId={threadId} turnId={turnId} />
+            ) : (
+              <div className="thread-turn-details-transient-tool" key={execution.callId}>
+                <strong>{execution.toolName}</strong>
+                <span>{t.agent.thread.item.status[execution.status]}</span>
+                <code>{execution.callId}</code>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    />
+  );
+}
+
+function ProviderRetryActivity({
+  activity,
+}: {
+  readonly activity: Extract<TurnDiagnosticsActivity, { type: 'providerRetry' }>;
+}) {
+  const t = useT();
+  return (
+    <div className="thread-turn-details-timeline-fact">
+      <span className="thread-turn-details-timeline-marker" />
+      <strong>{activity.retryKind === 'request'
+        ? t.agent.turnDetails.requestRetry
+        : t.agent.turnDetails.streamRetry}</strong>
+      <span>{t.agent.turnDetails.retryAttempt({ attempt: activity.attempt, max: activity.maxRetries })}</span>
+      <code>{activity.nextCallIndex === null
+        ? t.agent.turnDetails.afterCall({ index: activity.sourceCallIndex + 1 })
+        : t.agent.turnDetails.betweenCalls({
+            source: activity.sourceCallIndex + 1,
+            target: activity.nextCallIndex + 1,
+          })}</code>
+    </div>
+  );
+}
+
+function ContextCompactionActivity({
+  activity,
+  item,
+  threadId,
+  turnId,
+}: {
+  readonly activity: Extract<TurnDiagnosticsActivity, { type: 'contextCompaction' }>;
+  readonly item: ThreadItem | undefined;
+  readonly threadId: string;
+  readonly turnId: string;
+}) {
+  const t = useT();
+  const relation = activity.sourceCallIndex === null
+    ? activity.nextCallIndex === null
+      ? t.agent.turnDetails.beforeAnyModelCall
+      : t.agent.turnDetails.beforeCall({ index: activity.nextCallIndex + 1 })
+    : activity.nextCallIndex === null
+      ? t.agent.turnDetails.afterCall({ index: activity.sourceCallIndex + 1 })
+      : t.agent.turnDetails.betweenCalls({
+          source: activity.sourceCallIndex + 1,
+          target: activity.nextCallIndex + 1,
+        });
+  return (
+    <TimelineActivityDisclosure
+      defaultOpen={false}
+      metadata={relation}
+      resetKey={`compaction:${activity.itemId}`}
+      title={activity.trigger === 'automaticPreflight'
+        ? t.agent.turnDetails.preflightCompaction
+        : t.agent.turnDetails.overflowCompaction}
+      render={() => item ? (
+        <CanonicalItemRow item={item} threadId={threadId} turnId={turnId} />
+      ) : (
+        <p className="thread-turn-details-notice">{t.agent.turnDetails.payloadUnavailable}</p>
+      )}
+    />
+  );
+}
+
+function ModelCallUnit({
+  call,
+  defaultOpen,
+  fragmentsById,
+  messagesById,
+  runtime,
+  toolSchemasByName,
+}: {
+  readonly call: TurnDiagnosticsProviderCall;
+  readonly defaultOpen: boolean;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
+  readonly runtime: TurnDiagnosticsPayload['runtime'];
+  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
+}) {
+  const t = useT();
+  const status = call.response ? providerCallStatus(call.response.stopReason) : null;
+  return (
+    <TimelineActivityDisclosure
+      actions={(
+        <CallHeaderActions
+          call={call}
+          fragmentsById={fragmentsById}
+          messagesById={messagesById}
+          runtime={runtime}
+          toolSchemasByName={toolSchemasByName}
+        />
+      )}
+      defaultOpen={defaultOpen}
+      metadata={status ? t.agent.thread.item.status[status] : t.agent.turnDetails.noAssistantResponse}
+      resetKey={`call:${call.index}`}
+      title={t.agent.turnDetails.modelCall({ index: call.index + 1 })}
+      render={() => (
         <div className="thread-turn-details-call-body">
           <TimelinePhase title={t.agent.turnDetails.request}>
             <ProviderRequestView
@@ -351,39 +527,27 @@ function RequestResultUnit({
               toolSchemasByName={toolSchemasByName}
             />
           </TimelinePhase>
-          <TimelinePhase title={t.agent.turnDetails.result}>
+          <TimelinePhase title={t.agent.turnDetails.response}>
             <ProviderResponseView call={call} />
-            <FlowGroup title={t.agent.turnDetails.localExecution({ count: executionItems.length })}>
-              {executionItems.length > 0 ? (
-                <div className="thread-turn-details-item-list">
-                  {executionItems.map((item) => (
-                    <CanonicalItemRow
-                      item={item}
-                      key={item.id}
-                      threadId={threadId}
-                      turnId={turnId}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="thread-turn-details-notice">{t.agent.turnDetails.noLocalExecution}</p>
-              )}
-            </FlowGroup>
           </TimelinePhase>
         </div>
-      ) : null}
-    </details>
+      )}
+    />
   );
 }
 
-function RequestHeaderActions({
+function CallHeaderActions({
   call,
   fragmentsById,
+  messagesById,
   runtime,
+  toolSchemasByName,
 }: {
   readonly call: TurnDiagnosticsProviderCall;
   readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
   readonly runtime: TurnDiagnosticsPayload['runtime'];
+  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -397,7 +561,13 @@ function RequestHeaderActions({
   }, []);
 
   const copyRequest = async () => {
-    const value = materializeProviderRequest(call.request, fragmentsById);
+    const value = materializeRequestDiagnostics(
+      call,
+      fragmentsById,
+      messagesById,
+      runtime,
+      toolSchemasByName,
+    );
     try {
       await navigator.clipboard.writeText(jsonText(value));
     } catch {
@@ -426,7 +596,7 @@ function RequestHeaderActions({
           className="thread-turn-details-call-action"
           icon={InfoIcon}
           iconSize={ICON_SIZE.menu}
-          label={t.agent.turnDetails.requestInformation}
+          label={t.agent.turnDetails.callInformation}
           onBlur={() => setFactsOpen(false)}
           onFocus={() => setFactsOpen(true)}
           onMouseEnter={() => setFactsOpen(true)}
@@ -448,7 +618,7 @@ function RequestHeaderActions({
         className="thread-turn-details-call-action"
         icon={copied ? CheckIcon : CopyIcon}
         iconSize={ICON_SIZE.menu}
-        label={copied ? t.agent.turnDetails.requestCopied : t.agent.turnDetails.copyCompleteRequest}
+        label={copied ? t.agent.turnDetails.requestDiagnosticsCopied : t.agent.turnDetails.copyRequestDiagnostics}
         onClick={() => void copyRequest()}
         variant="panel"
       />
@@ -501,7 +671,7 @@ function RequestFactsCard({
       style={style}
     >
       <div className="thread-turn-details-request-facts-title">
-        {t.agent.turnDetails.requestInformation}
+        {t.agent.turnDetails.callInformation}
       </div>
       <dl className="thread-response-usage-context">
         <div><dt>{t.agent.message.model}</dt><dd>{runtime.model}</dd></div>
@@ -567,17 +737,17 @@ function ProviderRequestView({
         messagesById={messagesById}
         toolSchemasByName={toolSchemasByName}
       />
-      <FlowGroup title={t.agent.turnDetails.sentRequest}>
+      <FlowGroup title={t.agent.turnDetails.providerPayload}>
         <ProviderPayloadView fragmentsById={fragmentsById} request={call.request} />
         <LazyDisclosure
           resetKey={String(call.index)}
-          title={t.agent.turnDetails.rawProviderRequest}
+          title={t.agent.turnDetails.rawProviderPayload}
           render={() => <JsonCode value={materializeProviderRequest(call.request, fragmentsById)} />}
         />
       </FlowGroup>
       <LazyDisclosure
         resetKey={String(call.index)}
-        title={t.agent.turnDetails.requestDiagnostics}
+        title={t.agent.turnDetails.requestFacts}
         render={() => (
           <>
             <dl className="thread-turn-details-fact-grid is-compact">
@@ -626,7 +796,7 @@ function PreparedContextView({
     }] : [];
   });
   return (
-    <FlowGroup title={t.agent.turnDetails.preparedRequest}>
+    <FlowGroup title={t.agent.turnDetails.modelContext}>
       {systemPrompt && typeof systemPrompt.value === 'string' ? (
         <TextDisclosure
           metadata={systemPrompt.id}
@@ -805,7 +975,7 @@ function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProvider
   if (!call.response) {
     return (
       <div className="thread-turn-details-result">
-        <FlowGroup title={t.agent.turnDetails.modelResponse}>
+        <FlowGroup title={t.agent.turnDetails.modelOutput}>
           <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
         </FlowGroup>
         <ResponseDiagnostics call={call} locale={locale} />
@@ -814,7 +984,7 @@ function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProvider
   }
   return (
     <div className="thread-turn-details-result">
-      <FlowGroup title={t.agent.turnDetails.modelResponse}>
+      <FlowGroup title={t.agent.turnDetails.modelOutput}>
         <SemanticValue value={call.response.value} />
         <JsonDisclosure
           resetKey={`${call.index}:response`}
@@ -832,7 +1002,7 @@ function ResponseDiagnostics({ call, locale }: { readonly call: TurnDiagnosticsP
   return (
     <LazyDisclosure
       resetKey={`${call.index}:response-diagnostics`}
-      title={t.agent.turnDetails.responseDiagnostics}
+      title={t.agent.turnDetails.responseFacts}
       render={() => (
         <>
           <dl className="thread-turn-details-fact-grid is-compact">
@@ -1147,6 +1317,40 @@ function TimelinePhase({ children, title }: { readonly children: ReactNode; read
   );
 }
 
+function TimelineActivityDisclosure({
+  actions,
+  defaultOpen,
+  metadata,
+  render,
+  resetKey,
+  title,
+}: {
+  readonly actions?: ReactNode;
+  readonly defaultOpen: boolean;
+  readonly metadata: string;
+  readonly render: () => ReactNode;
+  readonly resetKey: string;
+  readonly title: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => setOpen(defaultOpen), [defaultOpen, resetKey]);
+  return (
+    <details
+      className="thread-turn-details-timeline-activity"
+      onToggle={(event) => setOpen(isDetailsOpen(event.currentTarget))}
+      open={open}
+    >
+      <summary className="thread-turn-details-activity-head">
+        <ChevronDownIcon className="thread-turn-details-summary-chevron" size={ICON_SIZE.tiny} />
+        <strong>{title}</strong>
+        <span>{metadata}</span>
+        {actions ?? <span aria-hidden="true" />}
+      </summary>
+      {open ? <div className="thread-turn-details-activity-body">{render()}</div> : null}
+    </details>
+  );
+}
+
 function TurnDetailsSection({ children, title }: { readonly children: ReactNode; readonly title: string }) {
   return (
     <section className="thread-turn-details-section">
@@ -1253,6 +1457,78 @@ function materializeProviderRequest(
     return [field.name, field.container === 'array' ? values : values[0] ?? null] as const;
   });
   return Object.fromEntries(entries);
+}
+
+function materializeRequestDiagnostics(
+  call: TurnDiagnosticsProviderCall,
+  fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>,
+  messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>,
+  runtime: TurnDiagnosticsPayload['runtime'],
+  toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>,
+): JsonValue {
+  const systemInstructions = fragmentsById.get(call.preparedContext.systemPromptFragmentId)?.value ?? null;
+  const toolDefinitions = call.preparedContext.toolNames.flatMap((name) => {
+    const tool = toolSchemasByName.get(name);
+    return tool ? [{ name: tool.name, description: tool.description, parameters: tool.parameters }] : [];
+  });
+  const messages = call.preparedContext.messageIds.flatMap((id, index) => {
+    const message = messagesById.get(id);
+    return message ? [{
+      id: message.id,
+      estimatedTokens: message.estimatedTokens,
+      value: message.value,
+      partProvenance: call.preparedContext.messagePartProvenance[index] ?? [],
+    }] : [];
+  });
+  return {
+    format: 'tenon.provider-request-diagnostics/v1',
+    runtime: {
+      provider: runtime.provider,
+      model: runtime.model,
+      api: runtime.api,
+      configuredBaseUrl: runtime.configuredBaseUrl,
+      transportSelection: runtime.transportSelection,
+      timeoutMs: runtime.timeoutMs,
+      maxRetries: runtime.maxRetries,
+      maxRetryDelayMs: runtime.maxRetryDelayMs,
+      cacheRetention: runtime.cacheRetention,
+    },
+    modelContext: {
+      systemInstructions,
+      toolDefinitions,
+      messages,
+    },
+    providerPayload: materializeProviderRequest(call.request, fragmentsById),
+    requestFacts: {
+      callIndex: call.index,
+      requestedAt: call.requestedAt,
+      protectedFromMessageIndex: call.protectedFromMessageIndex,
+      estimatedInputTokens: call.estimatedInputTokens,
+      inputTokenLimit: call.inputTokenLimit,
+      reservedOutputTokens: call.reservedOutputTokens,
+      commonPrefixMessageCount: call.commonPrefixMessageCount,
+      requestFingerprint: call.requestFingerprint,
+      cacheBreakpoints: call.cacheBreakpoints,
+    },
+  };
+}
+
+function defaultTimelineCallIndex(payload: TurnDiagnosticsPayload): number | null {
+  if (payload.providerCalls.length === 0) return null;
+  const exceptional = [...payload.providerCalls].reverse().find((call) => (
+    call.response?.stopReason === 'error' || call.response?.stopReason === 'aborted'
+  ));
+  return exceptional?.index ?? payload.providerCalls.at(-1)!.index;
+}
+
+function timelineActivityKey(activity: TurnDiagnosticsActivity, index: number): string {
+  switch (activity.type) {
+    case 'acceptedInput': return `input:${activity.source}:${activity.acceptedAt}`;
+    case 'modelCall': return `call:${activity.callIndex}`;
+    case 'toolExecutionBatch': return `tools:${activity.sourceCallIndex}:${index}`;
+    case 'providerRetry': return `retry:${activity.sourceCallIndex}:${activity.retryKind}:${activity.attempt}`;
+    case 'contextCompaction': return `compaction:${activity.itemId}`;
+  }
 }
 
 function orderedContentParts(value: JsonValue): readonly JsonValue[] {

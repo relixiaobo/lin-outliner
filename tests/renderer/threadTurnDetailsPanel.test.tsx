@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('ThreadTurnDetailsPanel', () => {
-  test('renders each request and result in wire order with Turn-wide record evidence', async () => {
+  test('renders the typed activity timeline and complete request diagnostics in recorded order', async () => {
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const detail = detailsResponse('thread-a', 'turn-a', 'fresh-a');
     const rendered = renderPanel(async (method, input) => {
@@ -54,50 +54,61 @@ describe('ThreadTurnDetailsPanel', () => {
     await flush();
 
     expect(requests.map((request) => request.method)).toEqual(['thread/turn/details/read']);
-    const text = rendered.document.body.textContent;
-    expect(text).toContain('Turn Diagnostics');
-    expect(text).toContain('Overview');
-    expect(text).toContain('Requests & Results (2)');
-    expect(text).toContain('Turn Record');
-    expect(text).toContain('Canonical Items (3)');
-    expect(text).toContain('Input tokens');
-    expect(text).toContain('Accepted user input');
-    expect(text).toContain('Effective configuration');
-    expect(text).toContain('Stable prompt source blocks');
-    expect(text).toContain('Canonical tool schemas (1)');
-    expect(text).toContain('Resolved runtime configuration');
-    expect(text).toContain('Request 1');
-    expect(text).toContain('Request 2');
-    expect(text).toContain('Request');
-    expect(text).toContain('Result');
-    expect(text).toContain('Local Execution (1)');
-    expect(text).toContain('Prepared context');
-    expect(text).toContain('System instructions');
-    expect(text).toContain('Tool definitions (1)');
-    expect(text).toContain('Messages (1)');
-    expect(text).toContain('Sent to provider');
-    expect(text).toContain('Model response');
-    expect(text).toContain('[0] Text part');
-    expect(text).toContain('[1] Context evidence · referencedResources');
-    expect(text).toContain('[2] Attachment');
-    expect(text).toContain('[3] Text part');
-    expect(text).not.toContain('Context evidence · skillCatalog');
-    expect(text).toContain('/workspace/report.pdf');
-    expect(text).toContain('Done');
+    const initialText = rendered.document.body.textContent;
+    expect(initialText).toContain('Turn Diagnostics');
+    expect(initialText).toContain('Summary');
+    expect(initialText).toContain('Timeline (4)');
+    expect(initialText).toContain('Recorded Evidence');
+    expect(initialText).toContain('Canonical Items (3)');
+    expect(initialText).toContain('Input tokens');
+    expect(initialText).toContain('Accepted user input');
+    expect(initialText).toContain('Effective configuration');
+    expect(initialText).toContain('Stable prompt source blocks');
+    expect(initialText).toContain('Canonical tool schemas (1)');
+    expect(initialText).toContain('Resolved runtime configuration');
+    expect([...rendered.document.querySelectorAll(
+      '.thread-turn-details-timeline > .thread-turn-details-timeline-activity > summary',
+    )].map((summary) => summary.querySelector('strong')?.textContent)).toEqual([
+      'Accepted Input',
+      'Model Call 1',
+      'Tool Execution (1)',
+      'Model Call 2',
+    ]);
+
+    await openDetailsContaining(rendered.document, 'Model Call 1');
+    const firstCall = [...rendered.document.querySelectorAll<HTMLDetailsElement>(
+      '.thread-turn-details-timeline-activity',
+    )].find((details) => details.querySelector(':scope > summary')?.textContent?.includes('Model Call 1'));
+    if (!firstCall) throw new Error('Missing first Model Call');
+    const callText = firstCall.textContent ?? '';
+    expect(callText).toContain('Request');
+    expect(callText).toContain('Response');
+    expect(callText).toContain('Model Context');
+    expect(callText).toContain('System instructions');
+    expect(callText).toContain('Tool definitions (1)');
+    expect(callText).toContain('Messages (1)');
+    expect(callText).toContain('Provider Payload');
+    expect(callText).toContain('Model Output');
+    expect(callText).toContain('[0] Text part');
+    expect(callText).toContain('[1] Context evidence · referencedResources');
+    expect(callText).toContain('[2] Attachment');
+    expect(callText).toContain('[3] Text part');
+    expect(callText).not.toContain('Context evidence · skillCatalog');
+    expect(callText).toContain('/workspace/report.pdf');
+    expect(callText).toContain('Done');
     expect(rendered.document.querySelector('.thread-turn-details-request-facts-card')).toBeNull();
 
-    const firstRequest = rendered.document.querySelector<HTMLDetailsElement>('.thread-turn-details-call');
-    const requestInformation = firstRequest?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Request information"]',
+    const callInformation = firstCall.querySelector<HTMLButtonElement>(
+      'button[aria-label="Model call information"]',
     );
-    if (!firstRequest || !requestInformation) throw new Error('Missing first Request header actions');
+    if (!callInformation) throw new Error('Missing first Model Call header actions');
     await act(async () => {
-      requestInformation.dispatchEvent(new Event('focusin', { bubbles: true }));
+      callInformation.dispatchEvent(new Event('focusin', { bubbles: true }));
       await Promise.resolve();
     });
     await flush();
     const requestFacts = rendered.document.querySelector('.thread-turn-details-request-facts-card');
-    expect(requestFacts?.textContent).toContain('Request information');
+    expect(requestFacts?.textContent).toContain('Model call information');
     expect(requestFacts?.textContent).toContain('Modeltest-model');
     expect(requestFacts?.textContent).toContain('Provideropenai');
     expect(requestFacts?.textContent).toContain('Estimated input tokens120');
@@ -113,42 +124,47 @@ describe('ThreadTurnDetailsPanel', () => {
       configurable: true,
       value: { writeText: async (value: string) => { clipboardWrites.push(value); } },
     });
-    const copyRequest = firstRequest.querySelector<HTMLButtonElement>(
-      'button[aria-label="Copy complete request"]',
+    const copyRequest = firstCall.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy request diagnostics"]',
     );
-    if (!copyRequest) throw new Error('Missing complete Request copy action');
-    const wasOpen = firstRequest.open;
+    if (!copyRequest) throw new Error('Missing Request diagnostics copy action');
+    const wasOpen = firstCall.open;
     await act(async () => {
       copyRequest.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
     await flush();
-    expect(firstRequest.open).toBe(wasOpen);
-    expect(copyRequest.getAttribute('aria-label')).toBe('Request copied');
+    expect(firstCall.open).toBe(wasOpen);
+    expect(copyRequest.getAttribute('aria-label')).toBe('Request diagnostics copied');
     expect(clipboardWrites).toHaveLength(1);
     const copiedRequest = JSON.parse(clipboardWrites[0] ?? '{}') as Record<string, unknown>;
-    expect(Object.keys(copiedRequest)).toEqual(['model', 'instructions', 'input', 'tools']);
-    expect(copiedRequest).toEqual({
-      model: 'test-model',
-      instructions: 'Canonical stable prompt',
-      input: [detail.diagnostics?.payload.canonicalMessages[0]?.value],
-      tools: [{
-        type: 'function',
-        name: 'file_read',
-        description: 'Read a file',
-        parameters: { type: 'object', properties: { path: { type: 'string' } } },
-      }],
+    expect(Object.keys(copiedRequest)).toEqual([
+      'format', 'runtime', 'modelContext', 'providerPayload', 'requestFacts',
+    ]);
+    expect(copiedRequest).toMatchObject({
+      format: 'tenon.provider-request-diagnostics/v1',
+      runtime: { provider: 'openai', model: 'test-model', api: 'openai-responses' },
+      modelContext: {
+        systemInstructions: 'Canonical stable prompt',
+        toolDefinitions: [{ name: 'file_read' }],
+        messages: [{ value: detail.diagnostics?.payload.canonicalMessages[0]?.value }],
+      },
+      providerPayload: {
+        model: 'test-model',
+        instructions: 'Canonical stable prompt',
+        input: [detail.diagnostics?.payload.canonicalMessages[0]?.value],
+      },
+      requestFacts: { callIndex: 0, estimatedInputTokens: 120 },
     });
 
-    expect([...rendered.document.querySelectorAll('.thread-turn-details-phase > h4')]
-      .map((heading) => heading.textContent)).toEqual(['Request', 'Result']);
+    expect([...firstCall.querySelectorAll('.thread-turn-details-phase > h4')]
+      .map((heading) => heading.textContent)).toEqual(['Request', 'Response']);
 
-    const flowGroups = [...rendered.document.querySelectorAll('.thread-turn-details-flow-group')];
+    const flowGroups = [...firstCall.querySelectorAll('.thread-turn-details-flow-group')];
     expect(flowGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
-      'Prepared context',
-      'Sent to provider',
-      'Model response',
-      'Local Execution (1)',
+      'Model Context',
+      'Provider Payload',
+      'Model Output',
     ]);
     const providerFieldList = flowGroups[1]!.querySelector(
       ':scope > .thread-turn-details-flow-fields > .thread-turn-details-flow-fields',
@@ -161,12 +177,12 @@ describe('ThreadTurnDetailsPanel', () => {
       expect.stringContaining('input'),
       expect.stringContaining('tools'),
     ]);
-    expect(text.indexOf('System instructions')).toBeLessThan(text.indexOf('Tool definitions (1)'));
-    expect(text.indexOf('Tool definitions (1)')).toBeLessThan(text.indexOf('Messages (1)'));
-    expect(text.indexOf('Messages (1)')).toBeLessThan(text.indexOf('Sent to provider'));
-    expect(text).not.toContain('0. model');
+    expect(callText.indexOf('System instructions')).toBeLessThan(callText.indexOf('Tool definitions (1)'));
+    expect(callText.indexOf('Tool definitions (1)')).toBeLessThan(callText.indexOf('Messages (1)'));
+    expect(callText.indexOf('Messages (1)')).toBeLessThan(callText.indexOf('Provider Payload'));
+    expect(callText).not.toContain('0. model');
 
-    await openDetailsContaining(rendered.document, 'Result details');
+    await openDetailsContaining(rendered.document, 'Response Facts');
     const responseText = rendered.document.body.textContent;
     expect(responseText).toContain('HTTP headers received at');
     expect(responseText).toContain('Time to HTTP headers');
@@ -180,10 +196,7 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(responseText).toContain('Reported cache write');
     expect(responseText).toContain('Reported reasoning tokens');
     expect(responseText).toContain('Calculated cost');
-    await openDetailsContaining(rendered.document, 'Request 2');
-    expect(rendered.document.body.textContent).toContain('Local Execution (0)');
-    expect(rendered.document.body.textContent).toContain('No local execution was recorded for this request.');
-
+    await openDetailsContaining(rendered.document, 'Tool Execution (1)');
     await openExecutionItem(rendered.document, 'commandExecution');
     await flush();
     expect(requests.at(-1)).toMatchObject({
@@ -200,7 +213,7 @@ describe('ThreadTurnDetailsPanel', () => {
     await openDetailsContaining(rendered.document, 'L0 · framework');
     expect(rendered.document.body.textContent).toContain('Canonical stable prompt');
     expect(rendered.document.body.textContent).toContain('Stable prompt fingerprints');
-    await openDetailsContaining(rendered.document, 'Sent request JSON');
+    await openDetailsContaining(rendered.document, 'Provider payload JSON');
     expect(rendered.document.body.textContent).toContain('<system-reminder>');
     expect(rendered.document.body.textContent).toContain('/workspace/report.pdf');
 
@@ -231,6 +244,70 @@ describe('ThreadTurnDetailsPanel', () => {
     await flush();
     expect(rendered.document.body.textContent).toContain('fresh-b');
     expect(rendered.document.body.textContent).not.toContain('stale-a');
+  });
+
+  test('renders retry, compaction, and steering as sibling timeline activities', async () => {
+    const detail = detailsResponse('thread-a', 'turn-a', 'timeline-a');
+    if (!detail.diagnostics) throw new Error('Missing diagnostics fixture');
+    const [initialInput, firstCall, toolBatch, secondCall] = detail.diagnostics.payload.activities;
+    if (!initialInput || !firstCall || !toolBatch || !secondCall) throw new Error('Missing activity fixture');
+    const expanded: ThreadTurnDetailsReadResponse = {
+      ...detail,
+      diagnostics: {
+        ...detail.diagnostics,
+        payload: {
+          ...detail.diagnostics.payload,
+          activities: [
+            initialInput,
+            firstCall,
+            {
+              type: 'providerRetry',
+              retryKind: 'stream',
+              attempt: 1,
+              maxRetries: 1,
+              occurredAt: 21,
+              sourceCallIndex: 0,
+              nextCallIndex: 1,
+            },
+            {
+              type: 'contextCompaction',
+              trigger: 'automaticPreflight',
+              itemId: 'compaction-item',
+              completedAt: 22,
+              sourceCallIndex: 0,
+              nextCallIndex: 1,
+            },
+            {
+              type: 'acceptedInput',
+              source: 'steering',
+              acceptedAt: 23,
+              itemIds: ['turn-a-user'],
+              consumedByCallIndex: 1,
+            },
+            toolBatch,
+            secondCall,
+          ],
+        },
+      },
+    };
+    const rendered = renderPanel(async () => expanded);
+
+    rendered.render('thread-a', 'turn-a');
+    await flush();
+
+    const timeline = rendered.document.querySelector('.thread-turn-details-timeline')?.textContent ?? '';
+    const labels = [
+      'Model Call 1',
+      'Stream Retry',
+      'Preflight Context Compaction',
+      'Steering Input',
+      'Tool Execution (1)',
+      'Model Call 2',
+    ];
+    labels.forEach((label, index) => {
+      expect(timeline).toContain(label);
+      if (index > 0) expect(timeline.indexOf(labels[index - 1]!)).toBeLessThan(timeline.indexOf(label));
+    });
   });
 
   test('cannot apply an old context response after switching Turn targets', async () => {
@@ -311,9 +388,9 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).toContain('Turn errorProvider rejected the request.');
     expect(text).toContain('Error codeprovider_error');
     expect(text).toContain('Error detailQuota exhausted.');
-    expect(text).toContain('Request 1');
+    expect(text).toContain('Model Call 1');
     expect(text).toContain('Failed');
-    expect(text).toContain('Request 2');
+    expect(text).toContain('Model Call 2');
     expect(text).toContain('Interrupted');
   });
 });
@@ -412,7 +489,7 @@ function installDomGlobals(window: Window): void {
 }
 
 function detailsResponse(threadId: string, turnId: string, marker: string): ThreadTurnDetailsReadResponse {
-  const payload = diagnosticsPayload(marker);
+  const payload = diagnosticsPayload(marker, turnId);
   const ref: TurnDiagnosticsPayloadReference = {
     id: 'd'.repeat(64),
     mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
@@ -427,7 +504,7 @@ function detailsResponse(threadId: string, turnId: string, marker: string): Thre
   };
 }
 
-function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
+function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayload {
   const userMessage = {
     role: 'user',
     content: [
@@ -557,7 +634,6 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
         },
         requestFingerprint: '5'.repeat(64),
         cacheBreakpoints: ['$.system[0].cache_control'],
-        executionItemIds: ['tool-item'],
         transportResponse: { headersReceivedAt: 12, httpStatus: 200, requestId: 'request-1' },
         response: {
           receivedAt: 20,
@@ -602,10 +678,33 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
         },
         requestFingerprint: '6'.repeat(64),
         cacheBreakpoints: [],
-        executionItemIds: [],
         transportResponse: null,
         response: null,
       },
+    ],
+    activities: [
+      {
+        type: 'acceptedInput',
+        source: 'initial',
+        acceptedAt: 1,
+        itemIds: [`${turnId}-user`, 'shared-context-item'],
+        consumedByCallIndex: 0,
+      },
+      { type: 'modelCall', callIndex: 0 },
+      {
+        type: 'toolExecutionBatch',
+        sourceCallIndex: 0,
+        consumedByCallIndex: 1,
+        executions: [{
+          callId: 'tool-call',
+          toolName: 'bash',
+          itemId: 'tool-item',
+          startedAt: 21,
+          completedAt: 29,
+          status: 'completed',
+        }],
+      },
+      { type: 'modelCall', callIndex: 1 },
     ],
   };
 }

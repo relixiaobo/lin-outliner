@@ -448,7 +448,7 @@ behavior.
 Canonical message and request-fragment IDs are SHA-256 digests of their stable JSON
 values. The main-process payload store verifies those content addresses on write, read,
 and fork copy; structural codecs reject unknown fragment/message references and duplicate
-execution ownership before the payload can reach the renderer.
+activity or execution identities before the payload can reach the renderer.
 
 The transport `onResponse` boundary records when HTTP headers arrive, the status code,
 and the first non-empty provider request ID from a fixed allowlist. Arbitrary response
@@ -460,10 +460,17 @@ provides no transport facts.
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.
-A failed or retried
-call may legitimately have no response. Every canonical tool Item accepted after that
-response and before the next Provider Call is linked to that call in acceptance order;
-the response itself remains the provider fact rather than a duplicate Item projection.
+A failed or retried call may legitimately have no response. The collector also appends one
+typed ordered activity stream. Initial and steering admission, every Model Call, parallel
+tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow
+compaction are recorded at their runtime boundaries. Tool executions retain call identity,
+name, timing, status, and an optional canonical Item ID, so transient tools remain visible
+without inventing an Item; non-transient Item ownership is unique across the activity stream.
+Each batch names the immediately preceding source Call and, once observed, the immediately
+following Call that consumes its results. Retry and compaction activities use the same
+adjacent-Call links; preflight compaction before the first Call has a null source. Renderer code
+projects this activity stream and never infers causes from missing tool Items or adjacent
+requests. The response itself remains the provider fact rather than a duplicate Item projection.
 Terminalization canonicalizes the complete
 versioned diagnostics payload, writes it content-addressed under the Thread, and stores
 the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,

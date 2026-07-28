@@ -12,7 +12,9 @@ import type {
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   JsonValue,
+  ThreadItem,
   TurnDiagnosticsPayload,
+  TurnDiagnosticsActivity,
   TurnDiagnosticsProviderCall,
   TurnDiagnosticsMessagePartProvenance,
   TurnDiagnosticsProviderRequest,
@@ -40,25 +42,79 @@ interface TurnDiagnosticsCollectorInput {
     SimpleStreamOptions,
     'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'
   >;
+  readonly initialInput: {
+    readonly acceptedAt: number;
+    readonly itemIds: readonly string[];
+  };
 }
 
 interface MutableProviderCall extends Omit<
   TurnDiagnosticsProviderCall,
-  'executionItemIds' | 'response' | 'transportResponse'
+  'response' | 'transportResponse'
 > {
-  executionItemIds: string[];
   transportResponse: TurnDiagnosticsProviderCall['transportResponse'];
   response: TurnDiagnosticsProviderCall['response'];
 }
+
+type MutableAcceptedInputActivity = Omit<
+  Extract<TurnDiagnosticsActivity, { type: 'acceptedInput' }>,
+  'consumedByCallIndex'
+> & {
+  consumedByCallIndex: number | null;
+  delivered: boolean;
+};
+type MutableToolExecution = {
+  callId: string;
+  toolName: string;
+  itemId: string | null;
+  startedAt: number;
+  completedAt: number | null;
+  status: Extract<TurnDiagnosticsActivity, { type: 'toolExecutionBatch' }>['executions'][number]['status'];
+};
+type MutableToolExecutionBatchActivity = Omit<
+  Extract<TurnDiagnosticsActivity, { type: 'toolExecutionBatch' }>,
+  'consumedByCallIndex' | 'executions'
+> & {
+  consumedByCallIndex: number | null;
+  executions: MutableToolExecution[];
+};
+type MutableProviderRetryActivity = Omit<
+  Extract<TurnDiagnosticsActivity, { type: 'providerRetry' }>,
+  'nextCallIndex'
+> & {
+  nextCallIndex: number | null;
+};
+type MutableContextCompactionActivity = Omit<
+  Extract<TurnDiagnosticsActivity, { type: 'contextCompaction' }>,
+  'nextCallIndex'
+> & {
+  nextCallIndex: number | null;
+};
+type MutableActivity =
+  | MutableAcceptedInputActivity
+  | Extract<TurnDiagnosticsActivity, { type: 'modelCall' }>
+  | MutableToolExecutionBatchActivity
+  | MutableProviderRetryActivity
+  | MutableContextCompactionActivity;
 
 export class TurnDiagnosticsCollector {
   private readonly canonicalMessages = new Map<string, TurnDiagnosticsPayload['canonicalMessages'][number]>();
   private readonly requestFragments = new Map<string, TurnDiagnosticsPayload['requestFragments'][number]>();
   private readonly providerCalls: MutableProviderCall[] = [];
+  private readonly activities: MutableActivity[] = [];
   private preparedPlan: PreparedProviderPlan | null = null;
   private providerContext: Context | null = null;
 
-  constructor(private readonly input: TurnDiagnosticsCollectorInput) {}
+  constructor(private readonly input: TurnDiagnosticsCollectorInput) {
+    this.activities.push({
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: input.initialInput.acceptedAt,
+      itemIds: [...input.initialInput.itemIds],
+      consumedByCallIndex: null,
+      delivered: true,
+    });
+  }
 
   prepareProviderPlan(plan: PreparedProviderPlan): void {
     this.preparedPlan = plan;
@@ -75,8 +131,10 @@ export class TurnDiagnosticsCollector {
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
     const normalizedRequest = jsonValue(payload, true);
+    const index = this.providerCalls.length;
+    this.bindPendingActivities(index);
     this.providerCalls.push({
-      index: this.providerCalls.length,
+      index,
       requestedAt: Date.now(),
       preparedContext: {
         systemPromptFragmentId: this.rememberRequestFragment(jsonValue(this.providerContext.systemPrompt, true)),
@@ -92,16 +150,113 @@ export class TurnDiagnosticsCollector {
       request: this.rememberProviderRequest(normalizedRequest),
       requestFingerprint: fingerprint(stableJson(normalizedRequest)),
       cacheBreakpoints: cacheBreakpointPaths(payload),
-      executionItemIds: [],
       transportResponse: null,
       response: null,
     });
+    this.activities.push({ type: 'modelCall', callIndex: index });
   }
 
-  captureExecutionItem(itemId: string): void {
-    const call = this.providerCalls.at(-1);
-    if (!call) return;
-    if (!call.executionItemIds.includes(itemId)) call.executionItemIds.push(itemId);
+  captureToolExecutionStarted(
+    callId: string,
+    toolName: string,
+    itemId: string | null,
+    startedAt = Date.now(),
+  ): void {
+    const sourceCall = this.providerCalls.at(-1);
+    if (!sourceCall) return;
+    const batch = [...this.activities].reverse().find((activity): activity is MutableToolExecutionBatchActivity => (
+      activity.type === 'toolExecutionBatch'
+      && activity.sourceCallIndex === sourceCall.index
+      && activity.consumedByCallIndex === null
+    )) ?? null;
+    const target = batch ?? {
+      type: 'toolExecutionBatch' as const,
+      sourceCallIndex: sourceCall.index,
+      consumedByCallIndex: null,
+      executions: [],
+    };
+    if (!batch) this.activities.push(target);
+    if (target.executions.some((execution) => execution.callId === callId)) return;
+    target.executions.push({
+      callId,
+      toolName,
+      itemId,
+      startedAt,
+      completedAt: null,
+      status: 'inProgress',
+    });
+  }
+
+  captureToolExecutionCompleted(callId: string, failed: boolean, completedAt = Date.now()): void {
+    for (let index = this.activities.length - 1; index >= 0; index -= 1) {
+      const activity = this.activities[index];
+      if (activity?.type !== 'toolExecutionBatch') continue;
+      const execution = activity.executions.find((candidate) => candidate.callId === callId);
+      if (!execution || execution.completedAt !== null) continue;
+      execution.completedAt = Math.max(execution.startedAt, completedAt);
+      execution.status = failed ? 'failed' : 'completed';
+      return;
+    }
+  }
+
+  captureProviderRetry(
+    event: { readonly kind: 'request' | 'stream'; readonly attempt: number; readonly maxRetries: number },
+    occurredAt = Date.now(),
+  ): void {
+    const sourceCall = this.providerCalls.at(-1);
+    if (!sourceCall) return;
+    this.activities.push({
+      type: 'providerRetry',
+      retryKind: event.kind,
+      attempt: event.attempt,
+      maxRetries: event.maxRetries,
+      occurredAt,
+      sourceCallIndex: sourceCall.index,
+      nextCallIndex: null,
+    });
+  }
+
+  captureContextCompaction(item: Extract<ThreadItem, { type: 'contextCompaction' }>, completedAt = Date.now()): void {
+    if (item.trigger === 'manual') return;
+    this.activities.push({
+      type: 'contextCompaction',
+      trigger: item.trigger,
+      itemId: item.id,
+      completedAt,
+      sourceCallIndex: this.providerCalls.at(-1)?.index ?? null,
+      nextCallIndex: null,
+    });
+  }
+
+  captureSteering(items: readonly ThreadItem[], acceptedAt: number): number {
+    this.activities.push({
+      type: 'acceptedInput',
+      source: 'steering',
+      acceptedAt,
+      itemIds: items.map((item) => item.id),
+      consumedByCallIndex: null,
+      delivered: false,
+    });
+    return this.activities.length - 1;
+  }
+
+  setSteeringDelivered(activityIndex: number, delivered: boolean): void {
+    const activity = this.activities[activityIndex];
+    if (activity?.type !== 'acceptedInput' || activity.source !== 'steering') {
+      throw new Error('Steering diagnostics activity is no longer reachable.');
+    }
+    activity.delivered = delivered;
+  }
+
+  finalizeOpenToolExecutions(status: 'failed' | 'interrupted', completedAt = Date.now()): void {
+    for (const activity of this.activities) {
+      if (activity.type !== 'toolExecutionBatch') continue;
+      for (const execution of activity.executions) {
+        if (execution.completedAt !== null) continue;
+        execution.completedAt = Math.max(execution.startedAt, completedAt);
+        execution.status = status;
+      }
+    }
   }
 
   captureTransportResponse(response: ProviderResponse): void {
@@ -180,7 +335,28 @@ export class TurnDiagnosticsCollector {
       canonicalMessages: [...this.canonicalMessages.values()],
       requestFragments: [...this.requestFragments.values()],
       providerCalls: this.providerCalls.map((call) => ({ ...call })),
+      activities: this.activities.map((activity) => (
+        activity.type === 'acceptedInput'
+          ? acceptedInputActivity(activity)
+          : activity.type === 'toolExecutionBatch'
+            ? { ...activity, executions: activity.executions.map((execution) => ({ ...execution })) }
+            : { ...activity }
+      )),
     };
+  }
+
+  private bindPendingActivities(callIndex: number): void {
+    for (const activity of this.activities) {
+      if (activity.type === 'acceptedInput' && activity.delivered && activity.consumedByCallIndex === null) {
+        activity.consumedByCallIndex = callIndex;
+      } else if (activity.type === 'toolExecutionBatch' && activity.consumedByCallIndex === null) {
+        activity.consumedByCallIndex = callIndex;
+      } else if (activity.type === 'providerRetry' && activity.nextCallIndex === null) {
+        activity.nextCallIndex = callIndex;
+      } else if (activity.type === 'contextCompaction' && activity.nextCallIndex === null) {
+        activity.nextCallIndex = callIndex;
+      }
+    }
   }
 
   private rememberMessage(message: Message): string {
@@ -220,6 +396,13 @@ export class TurnDiagnosticsCollector {
     if (!this.requestFragments.has(id)) this.requestFragments.set(id, { id, value });
     return id;
   }
+}
+
+function acceptedInputActivity(
+  activity: MutableAcceptedInputActivity,
+): Extract<TurnDiagnosticsActivity, { type: 'acceptedInput' }> {
+  const { delivered: _delivered, ...stored } = activity;
+  return stored;
 }
 
 function assertMessageProvenance(

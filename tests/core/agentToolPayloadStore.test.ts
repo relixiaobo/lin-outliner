@@ -68,6 +68,13 @@ function turnDiagnosticsPayload(contextEpochId = 'initial') {
     canonicalMessages: [],
     requestFragments: [],
     providerCalls: [],
+    activities: [{
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: 0,
+      itemIds: ['input-item'],
+      consumedByCallIndex: null,
+    }],
   } as const;
 }
 

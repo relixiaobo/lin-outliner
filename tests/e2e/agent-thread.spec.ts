@@ -105,45 +105,55 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turnDetails).toHaveClass(/active-panel/);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
     await expect(turnDetails).toContainText('Turn Diagnostics');
-    await expect(turnDetails).toContainText('Overview');
-    await expect(turnDetails).toContainText('Requests & Results (1)');
-    await expect(turnDetails).toContainText('Turn Record');
+    await expect(turnDetails).toContainText('Summary');
+    await expect(turnDetails).toContainText('Timeline (2)');
+    await expect(turnDetails).toContainText('Recorded Evidence');
     await expect(turnDetails).toContainText('Canonical Items (2)');
     await expect(turnDetails).toContainText('Stable prompt source blocks');
     await expect(turnDetails).toContainText('Canonical tool schemas (1)');
     await expect(turnDetails).toContainText('Request');
-    await expect(turnDetails).toContainText('Result');
+    await expect(turnDetails).toContainText('Response');
     const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
-    await expect(request).toContainText('Prepared context');
+    await expect(request).toContainText('Model Context');
     await expect(request).toContainText('System instructions');
     await expect(request).toContainText('Tool definitions (1)');
     await expect(request).toContainText('Messages (1)');
-    await expect(request).toContainText('Sent to provider');
-    await expect(request).toContainText('Sent request JSON');
-    const firstRequest = turnDetails.locator('.thread-turn-details-call').first();
-    const requestInformation = firstRequest.getByRole('button', { name: 'Request information' });
-    await requestInformation.hover();
+    await expect(request).toContainText('Provider Payload');
+    await expect(request).toContainText('Provider payload JSON');
+    const firstCall = turnDetails.locator('.thread-turn-details-timeline-activity').filter({ hasText: 'Model Call 1' });
+    const callInformation = firstCall.getByRole('button', { name: 'Model call information' });
+    await callInformation.hover();
     const requestFacts = page.locator('.thread-turn-details-request-facts-card');
     await expect(requestFacts).toBeVisible();
     await expect(requestFacts).toContainText('Modelopenai/gpt-5.4');
     await expect(requestFacts).toContainText('Provideropenai');
     await expect(requestFacts).toContainText('Estimated input tokens');
     await expect(requestFacts).toContainText('Usage details');
-    const copyRequest = firstRequest.locator('button.thread-turn-details-call-action').last();
-    await expect(copyRequest).toHaveAttribute('aria-label', 'Copy complete request');
+    const copyRequest = firstCall.locator('button.thread-turn-details-call-action').last();
+    await expect(copyRequest).toHaveAttribute('aria-label', 'Copy request diagnostics');
     await copyRequest.click();
-    await expect(copyRequest).toHaveAttribute('aria-label', 'Request copied');
-    await expect(firstRequest).toHaveAttribute('open', '');
+    await expect(copyRequest).toHaveAttribute('aria-label', 'Request diagnostics copied');
+    await expect(firstCall).toHaveAttribute('open', '');
     const copiedRequest = JSON.parse(await clipboardText(page)) as Record<string, unknown>;
-    expect(Object.keys(copiedRequest)).toEqual(['model', 'instructions', 'input', 'tools']);
-    expect(copiedRequest.model).toBe('openai/gpt-5.4');
-    expect(copiedRequest.instructions).toBe('Canonical mock system prompt.');
-    expect(copiedRequest.input).toEqual(expect.any(Array));
-    expect(copiedRequest.tools).toEqual(expect.any(Array));
+    expect(Object.keys(copiedRequest)).toEqual([
+      'format', 'runtime', 'modelContext', 'providerPayload', 'requestFacts',
+    ]);
+    expect(copiedRequest.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
+    expect(copiedRequest.modelContext).toMatchObject({
+      systemInstructions: 'Canonical mock system prompt.',
+      messages: expect.any(Array),
+      toolDefinitions: expect.any(Array),
+    });
+    expect(copiedRequest.providerPayload).toMatchObject({
+      model: 'openai/gpt-5.4',
+      instructions: 'Canonical mock system prompt.',
+      input: expect.any(Array),
+      tools: expect.any(Array),
+    });
     const requestText = await request.textContent() ?? '';
     expect(requestText.indexOf('System instructions')).toBeLessThan(requestText.indexOf('Tool definitions (1)'));
     expect(requestText.indexOf('Tool definitions (1)')).toBeLessThan(requestText.indexOf('Messages (1)'));
-    expect(requestText.indexOf('Messages (1)')).toBeLessThan(requestText.indexOf('Sent to provider'));
+    expect(requestText.indexOf('Messages (1)')).toBeLessThan(requestText.indexOf('Provider Payload'));
     expect(requestText).not.toContain('0. model');
     await turnDetails.getByText('Canonical Items (2)', { exact: true }).click();
     const userItemDetails = turnDetails.locator('.thread-turn-details-item').filter({ hasText: 'userMessage' });
