@@ -209,6 +209,33 @@ export interface ThreadNodeReferenceContent {
 
 export type ThreadUserContent = ThreadTextContent | ThreadAttachmentContent | ThreadNodeReferenceContent;
 
+export interface RendererUserViewVisibleNodeHint {
+  readonly nodeId: string;
+  readonly depth: number;
+  readonly expanded: boolean;
+}
+
+export interface RendererUserViewPanelHint {
+  readonly panelId: string;
+  readonly rootNodeId: string;
+  readonly order: number;
+  readonly active: boolean;
+  readonly focused: boolean;
+  readonly visibleNodes: readonly RendererUserViewVisibleNodeHint[];
+  readonly visibleOutlineTruncated: boolean;
+}
+
+/** Renderer-authored structure only. Main resolves all Node content and identity. */
+export interface RendererUserViewHints {
+  readonly activePanelId: string | null;
+  readonly focusedPanelId: string | null;
+  readonly focusSurface: string | null;
+  readonly focusedNodeId: string | null;
+  readonly selectedNodeIds: readonly string[];
+  readonly panels: readonly RendererUserViewPanelHint[];
+  readonly truncated: boolean;
+}
+
 export interface MemoryCitationEntry {
   readonly nodeId: string;
   readonly note: string;
@@ -592,7 +619,18 @@ export interface McpToolCallThreadItem extends ThreadToolItemBase {
 
 export type DynamicToolOutputContent =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image'; readonly source: ThreadFileSource; readonly alt?: string }
+  | {
+      readonly type: 'image';
+      readonly source: Extract<ThreadFileSource, { readonly kind: 'threadPayload' }>;
+      readonly alt?: string;
+    }
+  | {
+      readonly type: 'image';
+      readonly source: Extract<ThreadFileSource, { readonly kind: 'localFile' }>;
+      /** Thread-owned snapshot used to reproduce the exact provider-visible image. */
+      readonly promptImage: ThreadResourceReference;
+      readonly alt?: string;
+    }
   | { readonly type: 'json'; readonly value: JsonValue };
 
 export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
@@ -866,6 +904,20 @@ export interface ThreadItemOutputReadResponse {
   } | null;
 }
 
+export interface ThreadContextReadRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly itemId: ThreadItemId;
+  readonly contextId: string;
+}
+
+export interface ThreadContextReadResponse {
+  readonly context: {
+    readonly ref: ThreadContextPayloadReference;
+    readonly payload: ThreadContextPayload;
+  } | null;
+}
+
 export interface ProviderRetryStatus {
   readonly kind: 'request' | 'stream';
   readonly attempt: number;
@@ -894,6 +946,7 @@ export interface TurnInputRequest {
   readonly input: readonly ThreadUserContent[];
   readonly clientUserMessageId?: string | null;
   readonly additionalContext?: AdditionalContext;
+  readonly userView?: RendererUserViewHints;
 }
 
 export interface RendererTurnStartRequest extends TurnInputRequest {
@@ -986,6 +1039,7 @@ export const AGENT_CORE_METHODS = [
   'thread/turns/list',
   'thread/items/list',
   'thread/item/output/read',
+  'thread/context/read',
   'turn/start',
   'turn/steer',
   'turn/interrupt',
@@ -1013,6 +1067,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/turns/list': ThreadTurnsListRequest;
   readonly 'thread/items/list': ThreadItemsListRequest;
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
+  readonly 'thread/context/read': ThreadContextReadRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
@@ -1038,6 +1093,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/turns/list': ThreadTurnsListResponse;
   readonly 'thread/items/list': ThreadItemsListResponse;
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
+  readonly 'thread/context/read': ThreadContextReadResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;
@@ -1088,6 +1144,13 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly itemId: ThreadItemId;
       readonly item: ThreadItem;
+      readonly completedAt: number;
+    }
+  | {
+      readonly type: 'items/completed';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly items: readonly ThreadItem[];
       readonly completedAt: number;
     }
   | {

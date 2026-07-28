@@ -39,14 +39,20 @@ describe('managed skill runtime integration', () => {
       rootDir: fixture.versionRoot,
       managedContentHash: fixture.hash,
     });
-    expect(await runtime.getActiveSkillReadRoots()).toEqual([]);
-
     runtime.updateDisabledSkills(['runtime-skill']);
-    expect(await runtime.buildSkillListingReminderText()).toContain('runtime-skill');
+    const catalogEntry = (await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => (
+      entry.name === 'runtime-skill'
+    ));
+    expect(catalogEntry).toMatchObject({ source: 'managed' });
     const invocation = await runtime.invokeSkill({ skill: 'runtime-skill', trigger: 'agent' });
     expect(invocation.ok).toBe(true);
     expect(assertions).toEqual([{ id: 'runtime-skill', hash: fixture.hash }]);
-    expect(await runtime.getActiveSkillReadRoots()).toEqual([fixture.versionRoot]);
+    if (!invocation.ok) return;
+    expect(invocation.evidence).toMatchObject({
+      source: 'managed',
+      contentHash: catalogEntry?.contentHash,
+      resourceRoot: fixture.versionRoot,
+    });
     expect(runtime.resolveSkillTarget(path.join(fixture.versionRoot, 'SKILL.md'))).toBeNull();
   });
 
@@ -72,7 +78,6 @@ describe('managed skill runtime integration', () => {
       code: 'managed_skill_unavailable',
       message: 'Managed content changed locally.',
     });
-    expect(await runtime.getActiveSkillReadRoots()).toEqual([]);
   });
 
   test('lets a project skill win if a later local skill takes the managed name', async () => {

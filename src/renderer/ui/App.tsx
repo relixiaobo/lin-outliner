@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
+import { buildRendererUserViewHints } from './agent/userViewContext';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
@@ -192,6 +193,23 @@ export function App() {
   panelCountFitsRef.current = panelCountFitsCapacity;
   reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+  const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
+    activePanelId,
+    panels,
+    index,
+    ui,
+  }) : null, [
+    activePanelId,
+    index,
+    panels,
+    ui.expanded,
+    ui.expandedHiddenFields,
+    ui.focusSurface,
+    ui.focusedId,
+    ui.focusedPanelId,
+    ui.selectedIds,
+    ui.selectionRootId,
+  ]);
 
   const openAgentRail = useCallback(() => {
     if (agentOpenRef.current) return;
@@ -629,6 +647,7 @@ export function App() {
         <ThreadDock
           index={index}
           railState={agentRailState}
+          userView={agentUserView!}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenTurnDetails={openThreadRunDetailsPanel}
           onResizeKeyDown={resizeAgentWithKeyboard}

@@ -18,8 +18,10 @@ Canonical identity is the directory name. A loaded Skill records source,
 resolved file identity, content hash, metadata, and resource root. Symlinked
 paths that resolve to the same file are deduplicated.
 
-Built-in resource paths are display-safe pseudo identities and are never exposed
-as writable local paths. Mutable Skills resolve to their real `SKILL.md` files.
+Built-in identities are display-safe pseudo paths and are never presented as mutable
+Skill definitions. A resource-backed built-in may separately expose its normalized
+bundle directory as a live read locator. Mutable Skills resolve to their real
+`SKILL.md` files.
 
 ## Format
 
@@ -33,17 +35,65 @@ Execution mode is `inline` or `isolated`:
 - `isolated` creates a child Thread with a bounded tool catalog and returns its
   terminal output to the parent Item.
 
-Invalid frontmatter fails the Skill load rather than silently changing mode.
+Inline Skills are side-effect-free instructions. `allowed-tools`, `model`, `effort`,
+`shell`, and embedded shell expansion are valid only with `execution: isolated`;
+file-tool authoring and runtime loading both reject an inline declaration or body
+containing any execution override. Invalid content fails instead of silently changing
+mode or partially applying metadata.
 
 ## Discovery And Invocation
 
-The runtime lists available Skills in compact system context. Listing state is
-tracked per Thread execution so the same unchanged catalog is not repeatedly
-announced. A changed file identity is announced again.
+Every ordinary start or steering admission refreshes the current Skill registry and
+builds one deterministic bounded snapshot. The canonical reducer compares it with the
+Thread journal and records:
 
-The `skill` model tool invokes a selected Skill. User-invocable Skills may also
-be adapted to slash input. Loading is idempotent within the active Thread: once
-instructions are present, a repeated call does not duplicate them.
+- one complete `skillCatalog` baseline for the first model-visible Turn in an epoch;
+- no Item and no provider tokens when the catalog hash is unchanged; or
+- one delta containing only added, changed, and removed entries, chained to the
+  previous catalog hash.
+
+Registry results are filtered through the Turn-stable Configuration Profile or Role
+Skill ceiling before cataloging or invocation. `*` keeps every discovered Skill,
+an explicit name list is an allow-list, and an empty list disables all Skills. The same
+filter applies to catalog evidence, composer slash choices, direct slash admission, and
+the model `skill` tool.
+
+Catalog evidence is appended at the current user tail, never interpolated into the
+stable system prompt, so a new or changed Skill preserves every previously exposed
+provider byte. Refresh preserves activated path-conditional Skills and dynamically
+discovered nested Skill directories. A Skill created through file tools can append a
+delta before the next provider request in the same Turn; a Skill added or edited
+outside Tenon appears on the next accepted input in an existing Thread.
+
+The runtime acknowledges a pending refresh checkpoint only after the canonical catalog
+Item is published. A failed publication therefore remains retryable, and a concurrent
+later refresh cannot be consumed by an older snapshot.
+
+The `skill` model tool invokes a selected Skill. User-invocable inline Skills may also
+be resolved from direct slash input. An isolated slash Skill remains ordinary user
+input until the model invokes it through the canonical `skill` tool. Both paths publish typed `skillInvocation`
+evidence before instructions can affect the model. Direct invocation evidence is
+admitted before the unchanged canonical `userMessage`; model invocation evidence is
+durable after the complete Skill tool Item and before the next provider request.
+
+An invocation snapshots canonical identity, content hash, exact rendered instructions,
+arguments, source, execution mode, resource root, constraints, invocation source, and
+time. Inline instructions project as application guidance; isolated instructions remain
+child-only while the parent receives identity, constraints, and the tool result for
+audit. There is no prompt overlay, private steering queue, or text parser. Restart
+replays the same payload bytes from canonical Items. A later invocation of the same
+canonical name is authoritative from that point forward without deleting or rebinding
+older evidence.
+
+`resourceRoot` is deliberately a live Skill-bundle locator, not a Thread-owned payload
+or a compatibility copy. Skill support files are external executable inputs and are read
+through the ordinary Full Access file tools and capability policy; the runtime does not
+maintain a second Skill-specific read-root authority. Once read, their exact observed
+content is frozen by the canonical tool Item and complete output reference. If the live
+bundle later changes or disappears, a new read observes that current state or fails
+normally, while replay of prior instructions and tool results remains unchanged. Forking
+copies only resources already admitted into canonical Thread history; it does not clone
+an installed Skill bundle.
 
 Path-conditional Skills become available after matching files are touched.
 Dynamic discovery respects project ignore rules and can observe a Skill created
@@ -51,19 +101,26 @@ after an earlier miss.
 
 ## Tool Ceiling
 
-Skill metadata may narrow the tool set but cannot widen the effective Thread
-catalog. Isolated execution intersects the Skill list with the parent ceiling;
-read-only isolation removes write action kinds. Plugins and MCP servers obey the
-same parent ceiling through child configuration.
+Only isolated Skill metadata may select tools or execution settings, and it cannot
+widen the effective parent catalog. Isolated execution intersects its declared tools
+with the parent ceiling; read-only isolation removes write action kinds. Plugins and
+MCP servers obey the same parent ceiling through child configuration.
 
-Embedded shell snippets execute through the standard shell capability and its
-Full Access capability evaluation. A Skill never bypasses explicit blocks.
+Embedded shell snippets are valid only in isolated Skills and execute from the already
+recorded canonical `skill` tool Item through the standard shell capability and its Full
+Access capability evaluation. A Skill never bypasses explicit blocks.
 
 ## Compaction Restore
 
-Structured reminders preserve which Skill identities and content hashes were
-listed or invoked. After context compaction, the runtime restores the minimum
-state needed to avoid duplicate listing and to retain active guidance.
+The reducer reconstructs catalog state and the latest active inline invocation for each
+canonical name from Thread-owned payload Items. It validates any existing compaction
+checkpoint against full prior catalog entries and invocation payload references and
+fails closed rather than inventing display metadata from a sparse checkpoint.
+
+The current provider projector still treats compaction as a marker and does not yet
+select a compacted epoch. Activating summary/checkpoint projection and `/clear` command
+consumption belongs to the context-compaction consumer; it will reuse this reducer and
+will not add a reminder-text fallback.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
@@ -94,4 +151,8 @@ application bundle.
 
 Agent settings control additional directories and disabled Skill identities.
 Changes apply to newly assembled tool catalogs and to active per-Turn Skill
-runtimes through a catalog refresh. Settings do not rewrite Thread history.
+runtimes through a catalog refresh. Accept, revoke, and undo actions refresh every
+active runtime from persisted provenance; undo also reloads the restored bytes and
+appends a catalog delta before the next provider request when the content hash changed.
+An unchanged trust-only catalog comparison emits no Item. Settings never rewrite
+Thread history.

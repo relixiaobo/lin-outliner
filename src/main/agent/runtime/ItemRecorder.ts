@@ -17,6 +17,7 @@ export class ItemRecorder {
   private readonly items = new Map<string, ThreadItem>();
   private readonly order: string[] = [];
   private readonly completedItemIds = new Set<string>();
+  private readonly pendingItemIds = new Set<string>();
 
   constructor(
     readonly threadId: ThreadId,
@@ -24,7 +25,10 @@ export class ItemRecorder {
     initialItems: readonly ThreadItem[],
     private readonly writeNotification: NotificationWriter,
   ) {
-    for (const item of initialItems) this.putInitial(item);
+    for (const item of initialItems) {
+      this.putInitial(item);
+      this.completedItemIds.add(item.id);
+    }
   }
 
   createItemId(): string {
@@ -42,17 +46,24 @@ export class ItemRecorder {
   async started(itemInput: ThreadItem, startedAt = Date.now()): Promise<ThreadItem> {
     const item = decodeThreadItem(itemInput);
     this.assertLocalEnvelope(item);
-    if (this.items.has(item.id)) throw new Error(`Thread Item already exists: ${item.id}`);
-    this.items.set(item.id, item);
-    this.order.push(item.id);
-    await this.writeNotification({
-      type: 'item/started',
-      threadId: this.threadId,
-      turnId: this.turnId,
-      itemId: item.id,
-      item,
-      startedAt,
-    });
+    if (this.items.has(item.id) || this.pendingItemIds.has(item.id)) {
+      throw new Error(`Thread Item already exists: ${item.id}`);
+    }
+    this.pendingItemIds.add(item.id);
+    try {
+      await this.writeNotification({
+        type: 'item/started',
+        threadId: this.threadId,
+        turnId: this.turnId,
+        itemId: item.id,
+        item,
+        startedAt,
+      });
+      this.items.set(item.id, item);
+      this.order.push(item.id);
+    } finally {
+      this.pendingItemIds.delete(item.id);
+    }
     return item;
   }
 
@@ -90,23 +101,39 @@ export class ItemRecorder {
   }
 
   async completedImmediately(item: ThreadItem, at = Date.now()): Promise<ThreadItem> {
-    await this.started(item, at);
-    return this.completed(item, at);
+    return (await this.completedImmediatelyBatch([item], at))[0]!;
   }
 
-  async completeInitial(itemId: string, completedAt = Date.now()): Promise<void> {
-    const item = this.items.get(itemId);
-    if (!item) throw new Error(`Initial Thread Item not found: ${itemId}`);
-    if (this.completedItemIds.has(itemId)) throw new Error(`Thread Item was already completed: ${itemId}`);
-    await this.writeNotification({
-      type: 'item/completed',
-      threadId: this.threadId,
-      turnId: this.turnId,
-      itemId,
-      item,
-      completedAt,
-    });
-    this.completedItemIds.add(itemId);
+  async completedImmediatelyBatch(itemsInput: readonly ThreadItem[], at = Date.now()): Promise<readonly ThreadItem[]> {
+    if (itemsInput.length === 0) return [];
+    const items = itemsInput.map((item) => decodeThreadItem(item));
+    const itemIds = new Set<string>();
+    for (const item of items) {
+      this.assertLocalEnvelope(item);
+      if (itemIds.has(item.id)) throw new Error(`Duplicate immediate Thread Item: ${item.id}`);
+      itemIds.add(item.id);
+      if (this.items.has(item.id) || this.pendingItemIds.has(item.id)) {
+        throw new Error(`Thread Item already exists: ${item.id}`);
+      }
+    }
+    for (const item of items) this.pendingItemIds.add(item.id);
+    try {
+      await this.writeNotification({
+        type: 'items/completed',
+        threadId: this.threadId,
+        turnId: this.turnId,
+        items,
+        completedAt: at,
+      });
+      for (const item of items) {
+        this.items.set(item.id, item);
+        this.order.push(item.id);
+        this.completedItemIds.add(item.id);
+      }
+    } finally {
+      for (const item of items) this.pendingItemIds.delete(item.id);
+    }
+    return items;
   }
 
   item(itemId: string): ThreadItem | null {

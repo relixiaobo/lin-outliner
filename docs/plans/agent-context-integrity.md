@@ -24,7 +24,7 @@ This restores and unifies all context-bearing behavior:
 - faithful Subagent `fork_turns` inheritance; and
 - provider runtime settings and prompt-cache boundaries.
 
-This plan has shape **(b): a set of complete features**, delivered as six PRs ordered
+This plan has shape **(b): a set of complete features**, delivered as five PRs ordered
 by genuine protocol and runtime dependencies. The first PR is the repository-mandated
 shared-interface-first contract change; each later PR leaves its restored capability
 complete and independently verifiable.
@@ -43,6 +43,9 @@ complete and independently verifiable.
 - Do not copy ordinary path-backed attachments into Thread storage. Their existing
   live-path contract remains; this plan snapshots only managed inputs and resources
   reached through an explicit Outliner Node reference.
+- Do not copy complete Skill bundles into Thread storage. Invocation instructions are
+  canonical evidence; support files remain live resources until ordinary tools observe
+  them and freeze the resulting tool output.
 - Do not add migration or legacy fallback. This is a pre-release format change; dev
   data is wiped when the interface PR lands.
 - Do not change document, tool, Skill, Role, or provider capability authority. Context
@@ -291,7 +294,8 @@ compaction Items retain dedicated visible boundary rows.
 3. Resolve environment, user view, catalogs, Node identities, and managed resources in
    main.
 4. Publish payloads, then append the resulting `contextEvidence` Items immediately
-   before their `userMessage` Item.
+   before their `userMessage` Item. Initial admission uses one `turn/started` event;
+   steering uses one `items/completed` event.
 5. Return acceptance only after the user Item and all required evidence are durable.
 6. Start or notify the executor.
 
@@ -300,6 +304,31 @@ The same sequence applies to steering. `turn/steer` persists its evidence and
 therefore have identical history. Execution-generated evidence, such as an invoked
 Skill, is appended immediately after the completed initiating tool Item and before that
 tool returns control to the next provider request.
+
+The provider serializer renders every structured image attachment as an adjacent
+identity block (name, MIME type, and source byte length) plus its immutable prompt
+snapshot. This preserves the old attachment marker's model-visible identity without
+restoring a string protocol or parser. Admission rejects an image without a
+Thread-owned prompt snapshot and rejects a non-image carrying one; projection never
+reinterprets either invalid shape as an ordinary file.
+
+Each immediate group is one rollout event and one projection transaction. Recorder state
+changes only after that publication succeeds, so admission failure cannot leave a client
+binding, evidence Item, user Item, or orphaned payload. Renderer listeners and extension
+observers run after canonical commit and are best-effort delivery; their failures are
+logged without rolling history back or reporting a false admission failure. Streaming
+and executable Items retain the normal `item/started` / `item/completed` lifecycle.
+Post-commit status bookkeeping and steering delivery follow the same acceptance
+boundary: a failure terminalizes the already-accepted Turn instead of rejecting the
+input. Steering delivery is serialized, and terminalization closes admission before it
+freezes the final Item list.
+
+`clientUserMessageId` remains a Thread-scoped idempotency key across initial and
+steering admission. Once its canonical `userMessage` exists, a response-loss retry
+returns the original acceptance even after Turn terminalization or process restart;
+the sidecar is only a rebuildable index. A missing or unresolved binding is recovered
+by scanning reachable canonical Turns and then re-indexed; sidecar state can neither
+grant acceptance without the exact Item nor permit duplicate canonical admission.
 
 An unavailable referenced Node asset is valid evidence with a typed reason such as
 `missing`, `corrupt`, `unsupported`, or `quotaExceeded`; it is never represented as if
@@ -330,8 +359,9 @@ validated in tests, but it is not accepted as history input by the planner.
 
 The current `preparePrompt`, direct steering `modelUserMessage`, independent
 `historyMessages`, Skill steering queue, and Subagent text flattener are removed.
-`modelUserMessage` survives only as a private provider serializer for an already planned
-content block.
+`CanonicalContextProjector` owns provider serialization for both complete Turns and
+newly admitted steering Items; none of the removed message builders remains as a
+compatibility path.
 
 The provider-neutral projection preserves semantic event order:
 
@@ -410,7 +440,7 @@ Cache topology is append-only within one context epoch:
 Dynamic application context must not be inserted into a native system/developer block
 ahead of tools or history. Doing so would preserve only the short system prefix and
 invalidate the expensive conversation prefix whenever time, view, or a Skill changes.
-The L0 firmware gives host-appended reminder blocks their interpretation; canonical
+The L0 firmware gives host-appended evidence blocks their interpretation; canonical
 evidence, not provider role or wrapper spelling, remains the application trust source.
 
 No current time, locale instant, Thread roster, view data, Skill/Role catalog, resource
@@ -434,8 +464,9 @@ creates a complete bounded `userView` snapshot. The historical bounds remain the
 at most 6 breadcrumb Nodes, 80 visible Nodes, depth 5, and 50 selected Nodes, with an
 explicit total serialized-byte limit. Document titles, breadcrumbs, outline text,
 selection content, and filenames remain untrusted observations. Application-owned
-panel labels, Node IDs, and truncation/availability markers remain application
-observations.
+projection/interaction modes remain application observations. Panel, focus, selection,
+visibility, Node-label, and truncation state is derived from renderer/document input and
+remains an untrusted observation even after main validates IDs and resolves content.
 
 Canonical evidence always stores a snapshot. The planner emits the first snapshot in
 an epoch and deterministic diffs against later snapshots. This recovers compact
@@ -482,7 +513,7 @@ Replay, steering, compaction expansion, and child inheritance resolve the same i
 resource bytes. The original document asset may later change or disappear without
 rewriting what the historical model input referenced.
 
-### Additional context and reminder serialization
+### Additional context serialization
 
 Replace anonymous `systemContext: string[]` and execution-only `additionalContext` with
 typed evidence contributions. Existing keys such as `automation_info` retain their
@@ -495,9 +526,11 @@ the current user message; a Skill or catalog change discovered after a tool resu
 becomes a new hidden user block after that complete tool pair. No volatile contribution
 rewrites the system prompt, tool list, or an older message.
 
-A `system-reminder` compatibility wrapper labels the serialized context after the
-planner has assigned authority; the wrapper itself grants none. The serializer escapes
-payload text, identifies source/purpose, and never scans model or user text for tags.
+An escaped `<context-evidence>` envelope inside the provider-facing `<system-reminder>`
+convention labels serialized context after the planner has assigned authority. The
+outer wrapper is only a convention explained by L0; tag spelling itself grants no
+authority. The serializer identifies source/purpose and never scans model or user text
+for tags.
 There is no `unwrapSystemReminder`, `parseLoadedSkillFromText`, or equivalent recovery
 path. A literal user-authored wrapper remains ordinary untrusted user content. The
 authority field protects host behavior and reconstruction; L0 explains the hidden
@@ -505,7 +538,10 @@ block convention to the model without pretending XML is a cryptographic trust ch
 
 ### Skill execution integrity
 
-Skill discovery remains configuration-selected. `skillCatalog` is a versioned,
+Skill discovery remains configuration-selected. The built-in Profile uses `*` to
+preserve the complete discovered registry; explicit names form a hard allow-list and
+an empty list disables Skills. Child Roles may narrow but never widen that ceiling.
+`skillCatalog` is a versioned,
 append-only announcement journal rather than a catalog repeated every Turn:
 
 - the first model-visible Turn in an epoch records one bounded `baseline` with catalog
@@ -715,8 +751,10 @@ The following are explicit, user-visible failures or evidence states:
 | Required prompt/current input cannot fit | Fail Turn with model-capacity guidance |
 | Compaction summary request fails | Keep canonical history; use a safe projection if possible, otherwise fail |
 | Provider overflows after one compact retry | Fail without another retry loop |
-| Inline Skill declares execution overrides | Fail Skill validation |
+| Inline Skill declares execution overrides or embedded shell | Fail Skill validation |
 | Inherited payload copy fails | Fail child admission and clean staged child payloads |
+| Renderer listener or extension observer fails after persistence | Log delivery failure; keep the canonical admission committed |
+| Post-commit status bookkeeping or steering delivery fails | Keep the admission accepted; fail the active Turn |
 | Renderer attempts application authority | Reject at codec/IPC boundary |
 | User text contains reminder tags | Preserve as ordinary untrusted user text |
 
@@ -740,12 +778,18 @@ Primary files:
 - `src/main/agent/persistence/RolloutStore.ts`
 - canonical Item/rollout/store tests
 
-#### PR 2: unified composer and input/resource integrity
+#### PR 2: unified composer, input/resource integrity, and Skill execution integrity
 
 Add the stable prompt composer, canonical history projector, evidence admission,
 initial/steering parity, environment, bounded user view, additional context, attachment
 projection, Node resource snapshots, Neva/root and child Role prompt composition, and
-context audit details. Delete every alternate message builder in the paths it replaces.
+context audit details. Persist Skill catalog and invocation evidence, remove reminder
+parsing and the private steering queue, implement baseline/delta announcements for new
+Skills in existing conversations, restore inline guidance from canonical Items, make
+inline execution instruction-only, retain isolated capability ceilings, and publish each
+admission's evidence plus user input as one atomic rollout event. Skill bundle
+support files remain live resources whose tool observations become canonical history.
+Delete every alternate message builder in the paths it replaces.
 
 Primary files:
 
@@ -755,30 +799,17 @@ Primary files:
 - `src/main/agent/runtime/types.ts`
 - new `src/main/agent/context/` composer, evidence, planner, and serializer modules
 - `src/main/agent/capabilities/agentReferencedAssets.ts`
+- `src/main/agent/capabilities/agentSkills.ts`
 - `src/main/agent/AgentConfigurationLoader.ts`
 - `src/main/main.ts`
 - `src/renderer/ui/App.tsx`
 - restored bounded renderer `userViewContext.ts`
 - Thread store/view/details/composer tests
 
-#### PR 3: Skill execution integrity
-
-Persist catalog and invocation evidence, remove reminder parsing and the private
-steering queue, implement baseline/delta announcements for new Skills in existing
-conversations, restore inline guidance across restart/compaction, make inline execution
-instruction-only, and retain isolated capability ceilings.
-
-Primary files:
-
-- `src/main/agent/capabilities/agentSkills.ts`
-- `src/main/agent/runtime/ToolRuntime.ts`
-- context planner Skill reducer/tests
-- Skill loader/validation/integration tests
-
 This PR must be sequenced with the active `agent-skills-authoring` plan if that plan
 starts changing the same loader or spec. Authoring behavior is otherwise orthogonal.
 
-#### PR 4: global context budget, `/compact`, and `/clear`
+#### PR 3: global context budget, `/compact`, and `/clear`
 
 Implement token planning on every provider request, full-output observations,
 preflight/reactive/manual compaction, one overflow retry, epoch selection, reserved
@@ -797,7 +828,7 @@ Primary files:
 - `src/renderer/agent/components/ThreadComposerEditor.tsx`
 - boundary rendering and E2E tests
 
-#### PR 5: Subagent inheritance fidelity
+#### PR 4: Subagent inheritance fidelity
 
 Replace flattened `fork_turns` context with structured snapshots, exact source
 boundaries, child-owned payload copies, planner integration, and Details provenance.
@@ -809,7 +840,7 @@ Primary files:
 - context payload copy/projector modules
 - Subagent protocol/runtime/persistence tests
 
-#### PR 6: provider controls and prompt cache
+#### PR 5: provider controls and prompt cache
 
 Apply ordinary Turn runtime settings, split context overflow from transient retries,
 restore provider cache retention, add Anthropic L0/per-execution breakpoints, add the
@@ -884,7 +915,8 @@ choices together:
       baselines, authoritative Node resolution, and headless behavior.
 - [ ] **AC-07:** Attachment and Node-resource tests cover local paths, managed payloads, image
       identity plus bytes, missing/corrupt assets, scratch cleanup, replay, and source
-      Thread deletion.
+      Thread deletion. They reject missing or misplaced prompt snapshots and preserve
+      every distinct typed resource dependency even when bytes and filenames match.
 - [ ] **AC-08:** Skill tests cover slash and model invocation, exact content hashes, restart,
       compaction, `/clear`, changed files, path conditions, invalid inline overrides,
       and isolated ceilings.
@@ -916,3 +948,8 @@ choices together:
       added/changed/removed deltas, same-Turn validated authoring discovery, next-Turn
       external discovery, invocation-after-tool placement, hash supersession,
       compaction checkpoint restore, and `/clear` re-baselining.
+- [ ] **AC-18:** Initial and steering admission tests prove evidence plus user input commit
+      as one batch, publication failure leaves no Item, binding, or payload residue, and
+      post-commit renderer/extension observer failure cannot produce a false rejection.
+      Deleting or corrupting the client-id sidecar before restart still deduplicates from
+      the canonical user Item and rebuilds the index.

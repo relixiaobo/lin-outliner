@@ -428,7 +428,7 @@ export function decodeThreadItemJson(encoded: string): ThreadItem {
 
 export function decodeRendererTurnStartRequest(value: unknown): RendererTurnStartRequest {
   const record = recordValue(value, 'turnStart');
-  exactKeys(record, ['threadId', 'input', 'clientUserMessageId', 'additionalContext'], 'turnStart');
+  exactKeys(record, ['threadId', 'input', 'clientUserMessageId', 'additionalContext', 'userView'], 'turnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'turnStart.threadId'),
     input: arrayValue(record.input, 'turnStart.input').map(decodeUserContent),
@@ -438,13 +438,14 @@ export function decodeRendererTurnStartRequest(value: unknown): RendererTurnStar
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
   });
 }
 
 export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurnStartRequest {
   const record = recordValue(value, 'privilegedTurnStart');
   exactKeys(record, [
-    'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'trigger',
+    'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'userView', 'trigger',
   ], 'privilegedTurnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnStart.threadId'),
@@ -456,8 +457,69 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, true) }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
     trigger: decodeTurnTrigger(record.trigger),
   });
+}
+
+function decodeRendererUserViewHints(value: unknown) {
+  const record = recordValue(value, 'userView');
+  exactKeys(record, [
+    'activePanelId', 'focusedPanelId', 'focusSurface', 'focusedNodeId',
+    'selectedNodeIds', 'panels', 'truncated',
+  ], 'userView');
+  const selectedNodeIds = arrayValue(record.selectedNodeIds, 'userView.selectedNodeIds')
+    .map((entry, index) => nonEmptyTrimmedString(entry, `userView.selectedNodeIds[${index}]`));
+  if (selectedNodeIds.length > 50) fail('userView.selectedNodeIds', 'exceeds the 50-node limit');
+  requireUnique(selectedNodeIds, 'userView.selectedNodeIds', 'Node ids');
+  const panels = arrayValue(record.panels, 'userView.panels').map((entry, panelIndex) => {
+    const panel = recordValue(entry, `userView.panels[${panelIndex}]`);
+    exactKeys(panel, [
+      'panelId', 'rootNodeId', 'order', 'active', 'focused', 'visibleNodes',
+      'visibleOutlineTruncated',
+    ], `userView.panels[${panelIndex}]`);
+    return {
+      panelId: nonEmptyTrimmedString(panel.panelId, `userView.panels[${panelIndex}].panelId`),
+      rootNodeId: nonEmptyTrimmedString(panel.rootNodeId, `userView.panels[${panelIndex}].rootNodeId`),
+      order: nonNegativeInteger(panel.order, `userView.panels[${panelIndex}].order`),
+      active: booleanValue(panel.active, `userView.panels[${panelIndex}].active`),
+      focused: booleanValue(panel.focused, `userView.panels[${panelIndex}].focused`),
+      visibleNodes: arrayValue(panel.visibleNodes, `userView.panels[${panelIndex}].visibleNodes`)
+        .map((visible, visibleIndex) => {
+          const path = `userView.panels[${panelIndex}].visibleNodes[${visibleIndex}]`;
+          const node = recordValue(visible, path);
+          exactKeys(node, ['nodeId', 'depth', 'expanded'], path);
+          const depth = nonNegativeInteger(node.depth, `${path}.depth`);
+          if (depth > 5) fail(`${path}.depth`, 'exceeds the depth-5 limit');
+          return {
+            nodeId: nonEmptyTrimmedString(node.nodeId, `${path}.nodeId`),
+            depth,
+            expanded: booleanValue(node.expanded, `${path}.expanded`),
+          };
+        }),
+      visibleOutlineTruncated: booleanValue(
+        panel.visibleOutlineTruncated,
+        `userView.panels[${panelIndex}].visibleOutlineTruncated`,
+      ),
+    };
+  });
+  if (panels.reduce((total, panel) => total + panel.visibleNodes.length, 0) > 80) {
+    fail('userView.panels', 'exceeds the 80-visible-node limit');
+  }
+  requireUnique(panels.map((panel) => panel.panelId), 'userView.panels', 'panel ids');
+  const decoded = {
+    activePanelId: nullableString(record.activePanelId, 'userView.activePanelId'),
+    focusedPanelId: nullableString(record.focusedPanelId, 'userView.focusedPanelId'),
+    focusSurface: nullableString(record.focusSurface, 'userView.focusSurface'),
+    focusedNodeId: nullableString(record.focusedNodeId, 'userView.focusedNodeId'),
+    selectedNodeIds,
+    panels,
+    truncated: booleanValue(record.truncated, 'userView.truncated'),
+  };
+  if (new TextEncoder().encode(JSON.stringify(decoded)).byteLength > 64 * 1024) {
+    fail('userView', 'exceeds the 64 KiB serialized limit');
+  }
+  return decoded;
 }
 
 export function decodeAdditionalContext(
@@ -491,6 +553,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'item/started',
     'item/delta',
     'item/completed',
+    'items/completed',
     'turn/completed',
     'turn/providerRetry/changed',
     'turn/plan/updated',
@@ -537,6 +600,9 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       if (turn.id !== turnId) fail('notification.turnId', 'must match turn.id');
       if (type === 'turn/started' && turn.status !== 'inProgress') {
         fail('notification.turn', 'turn/started requires an in-progress Turn');
+      }
+      if (type === 'turn/started' && turn.items.some((item) => executionStatusOf(item) === 'inProgress')) {
+        fail('notification.turn', 'turn/started initial Items must already be complete');
       }
       if (type === 'turn/completed' && turn.status === 'inProgress') {
         fail('notification.turn', 'turn/completed requires a terminal Turn');
@@ -616,6 +682,27 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       result = type === 'item/started'
         ? { type, ...common, startedAt: finiteNumber(record.startedAt, 'notification.startedAt') }
         : { type, ...common, completedAt: finiteNumber(record.completedAt, 'notification.completedAt') };
+      break;
+    }
+    case 'items/completed': {
+      exactKeys(record, ['type', 'threadId', 'turnId', 'items', 'completedAt'], 'notification');
+      const items = arrayValue(record.items, 'notification.items').map((item, index) => {
+        const decoded = decodeThreadItem(item);
+        if (executionStatusOf(decoded) === 'inProgress') {
+          fail(`notification.items[${index}]`, 'items/completed requires terminal executable Items');
+        }
+        return decoded;
+      });
+      if (items.length === 0) fail('notification.items', 'must not be empty');
+      const itemIds = items.map((item) => item.id);
+      if (new Set(itemIds).size !== itemIds.length) fail('notification.items', 'must not contain duplicate Item ids');
+      result = {
+        type,
+        threadId: uuidV7(record.threadId, 'notification.threadId'),
+        turnId: uuidV7(record.turnId, 'notification.turnId'),
+        items,
+        completedAt: finiteNumber(record.completedAt, 'notification.completedAt'),
+      };
       break;
     }
     case 'item/delta':
@@ -734,17 +821,23 @@ function validateContextItemReferences(item: ThreadItem): void {
     }
   }
   requireUnique(
-    item.contextRefs.map((ref) => `${ref.id}\0${ref.schemaVersion}`),
+    item.contextRefs.map((ref) => [
+      ref.id,
+      ref.mimeType,
+      ref.byteLength,
+      ref.schemaVersion,
+      ref.kind,
+    ].join('\0')),
     'item.contextRefs',
     'references',
   );
   requireUnique(
-    item.resourceRefs.map((ref) => `${ref.id}\0${ref.fileName}`),
+    item.resourceRefs.map((ref) => [ref.id, ref.mimeType, ref.byteLength, ref.fileName].join('\0')),
     'item.resourceRefs',
     'references',
   );
   requireUnique(
-    item.outputRefs.map((ref) => `${ref.id}\0${ref.mimeType}`),
+    item.outputRefs.map((ref) => [ref.id, ref.mimeType, ref.byteLength, ref.summary].join('\0')),
     'item.outputRefs',
     'references',
   );
@@ -839,6 +932,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/item/output/read':
       decoded = decodeThreadItemOutputReadRequest(value);
       break;
+    case 'thread/context/read':
+      decoded = decodeThreadContextReadRequest(value);
+      break;
     case 'turn/start':
       decoded = decodeRendererTurnStartRequest(value);
       break;
@@ -908,6 +1004,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/item/output/read':
       decoded = decodeThreadItemOutputReadResponse(value);
+      break;
+    case 'thread/context/read':
+      decoded = decodeThreadContextReadResponse(value);
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
@@ -1154,10 +1253,27 @@ function decodeThreadItemOutputReadRequest(
   });
 }
 
+function decodeThreadContextReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/context/read'] {
+  const record = recordValue(value, 'thread/context/read');
+  exactKeys(record, ['threadId', 'turnId', 'itemId', 'contextId'], 'thread/context/read');
+  const contextId = stringValue(record.contextId, 'thread/context/read.contextId');
+  if (!SHA_256_PATTERN.test(contextId)) {
+    fail('thread/context/read.contextId', 'expected a lowercase SHA-256 digest');
+  }
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/context/read.threadId'),
+    turnId: uuidV7(record.turnId, 'thread/context/read.turnId'),
+    itemId: stringValue(record.itemId, 'thread/context/read.itemId'),
+    contextId,
+  });
+}
+
 function decodeRendererTurnSteerRequest(value: unknown): AgentCoreRequestByMethod['turn/steer'] {
   const record = recordValue(value, 'turn/steer');
   exactKeys(record, [
-    'threadId', 'expectedTurnId', 'input', 'clientUserMessageId', 'additionalContext',
+    'threadId', 'expectedTurnId', 'input', 'clientUserMessageId', 'additionalContext', 'userView',
   ], 'turn/steer');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'turn/steer.threadId'),
@@ -1169,6 +1285,7 @@ function decodeRendererTurnSteerRequest(value: unknown): AgentCoreRequestByMetho
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
   });
 }
 
@@ -1271,6 +1388,26 @@ function decodeThreadItemOutputReadResponse(
     fail('thread/item/output/read response.output.text', 'byte length must match the output reference');
   }
   return deepFreeze({ output: { ref, text } });
+}
+
+function decodeThreadContextReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/context/read'] {
+  const record = recordValue(value, 'thread/context/read response');
+  exactKeys(record, ['context'], 'thread/context/read response');
+  if (record.context === null) return deepFreeze({ context: null });
+  const context = recordValue(record.context, 'thread/context/read response.context');
+  exactKeys(context, ['ref', 'payload'], 'thread/context/read response.context');
+  const ref = decodeThreadContextPayloadReference(context.ref, 'thread/context/read response.context.ref');
+  const payload = decodeThreadContextPayload(context.payload);
+  if (ref.kind !== payload.kind) {
+    fail('thread/context/read response.context.payload.kind', 'must match the context reference kind');
+  }
+  const byteLength = new TextEncoder().encode(encodeThreadContextPayload(payload)).byteLength;
+  if (byteLength !== ref.byteLength) {
+    fail('thread/context/read response.context.payload', 'byte length must match the context reference');
+  }
+  return deepFreeze({ context: { ref, payload } });
 }
 
 function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['turn/start'] {
@@ -2263,15 +2400,38 @@ function decodeDynamicToolOutput(value: unknown): DynamicToolOutputContent {
     return deepFreeze({ type, text: stringValue(record.text, 'dynamicToolOutput.text', true) });
   }
   if (type === 'image') {
+    const source = decodeThreadFileSource(record.source, 'dynamicToolOutput.source');
+    if (source.kind === 'localFile') {
+      exactKeys(record, ['type', 'source', 'promptImage', 'alt'], 'dynamicToolOutput');
+      return deepFreeze({
+        type,
+        source,
+        promptImage: decodeImageResourceReference(record.promptImage, 'dynamicToolOutput.promptImage'),
+        ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
+      });
+    }
     exactKeys(record, ['type', 'source', 'alt'], 'dynamicToolOutput');
+    assertImageResourceReference(source.ref, 'dynamicToolOutput.source.ref');
     return deepFreeze({
       type,
-      source: decodeThreadFileSource(record.source, 'dynamicToolOutput.source'),
+      source,
       ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
     });
   }
   exactKeys(record, ['type', 'value'], 'dynamicToolOutput');
   return deepFreeze({ type, value: jsonValue(record.value, 'dynamicToolOutput.value') });
+}
+
+function decodeImageResourceReference(value: unknown, field: string): ThreadResourceReference {
+  const ref = decodeThreadResourceReference(value, field);
+  assertImageResourceReference(ref, field);
+  return ref;
+}
+
+function assertImageResourceReference(ref: ThreadResourceReference, field: string): void {
+  if (!/^image\/[a-z0-9][a-z0-9.+-]*$/u.test(ref.mimeType)) {
+    fail(`${field}.mimeType`, 'expected an image MIME type');
+  }
 }
 
 function decodeItemDelta(value: unknown): ThreadItemDelta {

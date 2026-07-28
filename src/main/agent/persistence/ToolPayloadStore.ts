@@ -640,12 +640,16 @@ export class ToolPayloadStore {
     dataBase64: string,
     mimeType: string,
   ): Promise<WrittenThreadResource> {
+    const normalizedMimeType = mimeType.trim().toLowerCase();
+    if (!/^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalizedMimeType)) {
+      throw new Error('Tool image payload MIME type must be an image.');
+    }
     const measurement = measureToolPayloadImage(dataBase64);
     if (!measurement.ok) throw new Error(`Tool image payload rejected: ${measurement.reason}`);
     const bytes = Buffer.from(dataBase64, 'base64');
     if (bytes.length !== measurement.byteLength) throw new Error('Tool image payload decoded to an unexpected size');
-    const extension = MIME_EXTENSIONS[mimeType.toLowerCase()] ?? '.bin';
-    return this.writeResourceWithStatus(threadId, bytes, mimeType, `tool-output${extension}`);
+    const extension = MIME_EXTENSIONS[normalizedMimeType] ?? '.bin';
+    return this.writeResourceWithStatus(threadId, bytes, normalizedMimeType, `tool-output${extension}`);
   }
 
   async deleteThread(threadId: ThreadId): Promise<void> {

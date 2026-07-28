@@ -5,6 +5,7 @@ import type {
   ProviderRetryStatus,
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  RendererUserViewHints,
   Thread,
   ThreadConfigurationSummary,
   ThreadForkResponse,
@@ -178,7 +179,10 @@ export class ThreadStore {
     if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
   }
 
-  async send(contentInput: readonly ThreadUserContent[]): Promise<void> {
+  async send(
+    contentInput: readonly ThreadUserContent[],
+    userView?: RendererUserViewHints,
+  ): Promise<void> {
     const content = normalizeUserContent(contentInput);
     const threadId = this.snapshot.selectedThreadId;
     if (!threadId || content.length === 0) return;
@@ -189,12 +193,14 @@ export class ThreadStore {
         expectedTurnId: active.id,
         input: content,
         clientUserMessageId: crypto.randomUUID(),
+        ...(userView ? { userView } : {}),
       });
     } else {
       await this.client.agentCoreRequest('turn/start', {
         threadId,
         input: content,
         clientUserMessageId: crypto.randomUUID(),
+        ...(userView ? { userView } : {}),
       });
     }
   }
@@ -248,6 +254,7 @@ export class ThreadStore {
   async rollbackAndSend(
     threadId: ThreadId,
     contentInput: readonly ThreadUserContent[],
+    userView?: RendererUserViewHints,
   ): Promise<void> {
     const content = normalizeUserContent(contentInput);
     if (content.length === 0) return;
@@ -264,6 +271,7 @@ export class ThreadStore {
       threadId,
       input: content,
       clientUserMessageId: crypto.randomUUID(),
+      ...(userView ? { userView } : {}),
     });
   }
 
@@ -380,6 +388,7 @@ export class ThreadStore {
       || notification.type === 'turn/completed'
       || notification.type === 'item/started'
       || notification.type === 'item/completed'
+      || notification.type === 'items/completed'
       || notification.type === 'item/delta'
     );
     const historyLoaded = historyNotification
@@ -466,6 +475,15 @@ export class ThreadStore {
       case 'item/completed':
         if (!historyLoaded) return;
         this.updateItem(notification.threadId, notification.turnId, notification.item);
+        return;
+      case 'items/completed':
+        if (!historyLoaded) return;
+        this.updateTurnItems(notification.threadId, notification.turnId, (currentItems) => (
+          notification.items.reduce<readonly ThreadItem[]>(
+            (items, item) => upsertById(items, item),
+            currentItems,
+          )
+        ));
         return;
       case 'item/delta':
         if (!historyLoaded) return;

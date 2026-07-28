@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   AGENT_GENERATED_IMAGE_DIR,
   AGENT_SCRATCH_TTL_MS,
+  createManagedAttachmentObservation,
   isPathInside,
   pruneAgentScratch,
 } from '../../src/main/agent/capabilities/agentAttachmentMaterialization';
@@ -64,6 +65,60 @@ describe('agent scratch lifecycle', () => {
   test('pruneAgentScratch is a no-op when the scratch root does not exist', async () => {
     const scratchRoot = path.join(await mkdtempRoot('lin-agent-scratch-'), 'never-created');
     await expect(pruneAgentScratch(scratchRoot)).resolves.toBeUndefined();
+  });
+
+  test('replays managed resources through a stable provider observation path', async () => {
+    const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
+    const ref = {
+      id: 'a'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 5,
+      fileName: 'report.pdf',
+    };
+    const materialize = async (_ref: typeof ref, targetDirectory: string) => {
+      const file = path.join(targetDirectory, ref.fileName);
+      await writeFile(file, 'bytes');
+      return file;
+    };
+    const first = createManagedAttachmentObservation(scratchRoot, materialize, {
+      stableWorkspaceKey: 'thread-1',
+    });
+    const firstPath = await first.resolvePath(ref);
+    await first.dispose();
+    const replay = createManagedAttachmentObservation(scratchRoot, materialize, {
+      stableWorkspaceKey: 'thread-1',
+    });
+    const replayPath = await replay.resolvePath(ref);
+
+    expect(replayPath).toBe(firstPath);
+    expect(replayPath).toContain(`/provider-thread-1/${ref.id}/${ref.fileName}`);
+    await replay.dispose();
+  });
+
+  test('materializes same-content resources with distinct file names in one stable workspace', async () => {
+    const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
+    const firstRef = {
+      id: 'b'.repeat(64),
+      mimeType: 'text/plain',
+      byteLength: 5,
+      fileName: 'first.txt',
+    };
+    const secondRef = { ...firstRef, fileName: 'second.txt' };
+    const observation = createManagedAttachmentObservation(scratchRoot, async (ref, targetDirectory) => {
+      const file = path.join(targetDirectory, ref.fileName);
+      await writeFile(file, 'bytes');
+      return file;
+    }, { stableWorkspaceKey: 'thread-1' });
+
+    const [firstPath, secondPath] = await Promise.all([
+      observation.resolvePath(firstRef),
+      observation.resolvePath(secondRef),
+    ]);
+
+    expect(firstPath).toContain(`/${firstRef.id}/${firstRef.fileName}`);
+    expect(secondPath).toContain(`/${secondRef.id}/${secondRef.fileName}`);
+    expect(firstPath).not.toBe(secondPath);
+    await observation.dispose();
   });
 
   async function mkdtempRoot(prefix: string): Promise<string> {

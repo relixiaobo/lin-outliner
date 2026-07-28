@@ -1995,11 +1995,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           mockTurns.get(thread.id)!.push(completedTurn);
           thread.preview = prompt;
           thread.updatedAt = startedAt + 24;
+          emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });
           thread.status = { type: 'active', activeFlags: [] };
           emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
-          emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });
           if (!options.agentTurnFailure) {
-            emitAgentCoreNotification({ type: 'item/completed', threadId: thread.id, turnId, itemId: responseItemId, item: responseItem });
+            emitAgentCoreNotification({
+              type: 'item/started',
+              threadId: thread.id,
+              turnId,
+              itemId: responseItemId,
+              item: { ...responseItem, text: '' },
+              startedAt: startedAt + 1,
+            });
+            emitAgentCoreNotification({
+              type: 'item/completed',
+              threadId: thread.id,
+              turnId,
+              itemId: responseItemId,
+              item: responseItem,
+              completedAt: startedAt + 23,
+            });
           }
           thread.status = { type: 'idle' };
           emitAgentCoreNotification({ type: 'turn/completed', threadId: thread.id, turnId, turn: completedTurn });
@@ -2007,9 +2022,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
         }
         if (method === 'turn/steer') {
+          const threadId = String(input.threadId);
+          const turnId = String(input.expectedTurnId);
+          const acceptedAt = ++now;
+          const acceptedItemId = nextCanonicalId();
+          const item: MockThreadItem = {
+            id: acceptedItemId,
+            type: 'userMessage',
+            provenance: itemProvenance(threadId, turnId, acceptedItemId),
+            clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
+            acceptedAt,
+            content: Array.isArray(input.input) ? clone(input.input) as NonNullable<MockThreadItem['content']> : [],
+          };
+          emitAgentCoreNotification({
+            type: 'items/completed',
+            threadId,
+            turnId,
+            items: [item],
+            completedAt: acceptedAt,
+          });
           return clone({
-            turnId: String(input.expectedTurnId),
-            acceptedItemId: nextCanonicalId(),
+            turnId,
+            acceptedItemId,
             deduplicated: false,
           }) as T;
         }

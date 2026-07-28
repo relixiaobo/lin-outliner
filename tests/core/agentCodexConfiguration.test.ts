@@ -53,6 +53,33 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
     expect(Object.isFrozen(child.mcpServers)).toBe(true);
   });
 
+  test('lets wildcard parents preserve all capabilities while Roles can still narrow them', () => {
+    const wildcardParent: EffectiveThreadConfiguration = {
+      ...parent,
+      skills: ['*'],
+    };
+    const inherited = resolveChildConfiguration(wildcardParent, {
+      role: {
+        name: 'default',
+        source: 'builtIn',
+        description: 'Default child.',
+        developerInstructions: 'Work on the task.',
+      },
+    });
+    const narrowed = resolveChildConfiguration(wildcardParent, {
+      role: {
+        name: 'researcher',
+        source: 'user',
+        description: 'Research child.',
+        developerInstructions: 'Research the task.',
+        overrides: { skills: ['research'] },
+      },
+    });
+
+    expect(inherited.skills).toEqual(['*']);
+    expect(narrowed.skills).toEqual(['research']);
+  });
+
   test('defines one Goal per Thread with the exact Codex lifecycle statuses', () => {
     expect(THREAD_GOAL_STATUSES).toEqual([
       'active',

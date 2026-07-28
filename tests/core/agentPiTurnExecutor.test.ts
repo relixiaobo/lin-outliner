@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentEvent } from '@earendil-works/pi-agent-core';
-import type { Api, AssistantMessage, Model, UserMessage } from '@earendil-works/pi-ai';
+import type { AgentEvent, AgentOptions } from '@earendil-works/pi-agent-core';
+import type { Api, AssistantMessage, Message, Model, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type { AgentCoreNotification } from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
@@ -12,10 +12,12 @@ import {
   PiEventNormalizer,
   PiTurnExecutor,
   agentProviderPayload,
-  historyMessages,
-  modelUserMessage,
   normalizeThreadName,
 } from '../../src/main/agent/runtime/PiTurnExecutor';
+import {
+  CanonicalContextProjector,
+  serializeUserContent,
+} from '../../src/main/agent/context/ContextProjector';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import {
@@ -187,19 +189,22 @@ describe('PiTurnExecutor event normalization', () => {
   });
 
   test('gives the model a readable path for non-image attachments', async () => {
-    const message = await modelUserMessage([{
+    const content = await serializeUserContent([{
       type: 'attachment',
       id: 'attachment-1',
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 512,
       source: { kind: 'localFile', path: '/workspace/agent-attachments/report.pdf' },
-    }], 1_720_000_000_000);
+    }], fixtureResources());
 
-    expect(message.content).toEqual([{
-      type: 'text',
-      text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /workspace/agent-attachments/report.pdf\nUse file_read with this path to inspect the attachment.',
-    }]);
+    expect(content).toEqual([
+      { type: 'text', text: 'Please review the attached files.' },
+      {
+        type: 'text',
+        text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /workspace/agent-attachments/report.pdf\nUse file_read with this path to inspect the attachment.',
+      },
+    ]);
   });
 
   test('uses a scratch observation path for managed non-image attachments', async () => {
@@ -209,22 +214,25 @@ describe('PiTurnExecutor event normalization', () => {
       byteLength: 512,
       fileName: 'report.pdf',
     };
-    const message = await modelUserMessage([{
+    const content = await serializeUserContent([{
       type: 'attachment',
       id: 'managed-attachment',
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 512,
       source: { kind: 'threadPayload', ref },
-    }], 1_720_000_000_000, {
+    }], {
       readResource: async () => null,
       resolveResourceObservationPath: async () => '/scratch/agent-attachments/turn/report.pdf',
     });
 
-    expect(message.content).toEqual([{
-      type: 'text',
-      text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /scratch/agent-attachments/turn/report.pdf\nUse file_read with this path to inspect the attachment.',
-    }]);
+    expect(content).toEqual([
+      { type: 'text', text: 'Please review the attached files.' },
+      {
+        type: 'text',
+        text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /scratch/agent-attachments/turn/report.pdf\nUse file_read with this path to inspect the attachment.',
+      },
+    ]);
   });
 
   test('encodes only the persisted prompt image at the provider boundary', async () => {
@@ -234,7 +242,7 @@ describe('PiTurnExecutor event normalization', () => {
       byteLength: 8,
       fileName: 'prompt.png',
     };
-    const message = await modelUserMessage([{
+    const content = await serializeUserContent([{
       type: 'attachment',
       id: 'attachment-image',
       name: 'source.png',
@@ -242,20 +250,90 @@ describe('PiTurnExecutor event normalization', () => {
       sizeBytes: 4096,
       source: { kind: 'localFile', path: '/outside/source.png' },
       promptImage,
-    }], 1_720_000_000_000, {
+    }], {
       readResource: async (ref) => ref.id === promptImage.id ? Buffer.from('snapshot') : null,
       resolveResourceObservationPath: async () => null,
     });
 
-    expect(message.content).toEqual([{
-      type: 'image',
-      data: Buffer.from('snapshot').toString('base64'),
+    expect(content).toEqual([
+      { type: 'text', text: 'Please review the attached images.' },
+      {
+        type: 'text',
+        text: '[Attachment image: source.png, image/png, 4096 bytes]\nThe following image is the immutable prompt snapshot for this attachment.',
+      },
+      {
+        type: 'image',
+        data: Buffer.from('snapshot').toString('base64'),
+        mimeType: 'image/png',
+      },
+    ]);
+  });
+
+  test('rejects non-canonical image attachment shapes instead of projecting a file fallback', async () => {
+    await expect(serializeUserContent([{
+      type: 'attachment',
+      id: 'missing-prompt-image',
+      name: 'source.png',
       mimeType: 'image/png',
-    }]);
+      sizeBytes: 4096,
+      source: { kind: 'localFile', path: '/outside/source.png' },
+    }], fixtureResources())).rejects.toThrow('missing its prompt snapshot');
+
+    await expect(serializeUserContent([{
+      type: 'attachment',
+      id: 'unexpected-prompt-image',
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 512,
+      source: { kind: 'localFile', path: '/workspace/report.pdf' },
+      promptImage: {
+        id: 'e'.repeat(64),
+        mimeType: 'image/png',
+        byteLength: 8,
+        fileName: 'prompt.png',
+      },
+    }], fixtureResources())).rejects.toThrow('Non-image attachment cannot carry a prompt image');
+  });
+
+  test('adds one deterministic intent for attachment and Node-only input', async () => {
+    const content = await serializeUserContent([
+      {
+        type: 'attachment',
+        id: 'document',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 10,
+        source: { kind: 'localFile', path: '/workspace/report.pdf' },
+      },
+      {
+        type: 'attachment',
+        id: 'image',
+        name: 'diagram.png',
+        mimeType: 'image/png',
+        sizeBytes: 8,
+        source: { kind: 'localFile', path: '/workspace/diagram.png' },
+        promptImage: {
+          id: 'd'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: 8,
+          fileName: 'diagram.png',
+        },
+      },
+      { type: 'nodeReference', nodeId: 'node-1' },
+    ], {
+      readResource: async () => Buffer.from('snapshot'),
+      resolveResourceObservationPath: async () => null,
+    });
+
+    expect(content[0]).toEqual({
+      type: 'text',
+      text: 'Please review the attached files, attached images and referenced Outliner Nodes.',
+    });
+    expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
   });
 
   test('does not create an Agent when Stop arrives during any async initialization stage', async () => {
-    for (const stage of ['runtime', 'tools', 'skills', 'systemPrompt', 'preparePrompt'] as const) {
+    for (const stage of ['runtime', 'tools'] as const) {
       const fixture = createContext();
       const controller = new AbortController();
       const entered = deferred<void>();
@@ -275,18 +353,6 @@ describe('PiTurnExecutor event normalization', () => {
           await waitAt('tools');
           return [];
         },
-        skillListing: async () => {
-          await waitAt('skills');
-          return null;
-        },
-        systemPrompt: async () => {
-          await waitAt('systemPrompt');
-          return 'system';
-        },
-        preparePrompt: async (_context, prompt) => {
-          await waitAt('preparePrompt');
-          return prompt;
-        },
         createAgent: () => {
           agentCreations += 1;
           throw new Error('Agent must not be created after Stop');
@@ -302,7 +368,7 @@ describe('PiTurnExecutor event normalization', () => {
     }
   });
 
-  test('uses a prepared user prompt without changing the canonical Turn input', async () => {
+  test('runs the pre-provider hook without changing canonical user input', async () => {
     const fixture = createContext();
     const userItemId = uuidV7(1_720_000_000_110);
     const context: TurnExecutionContext = {
@@ -320,21 +386,25 @@ describe('PiTurnExecutor event normalization', () => {
       },
     };
     let receivedPrompt: UserMessage | null = null;
+    let transformContext: AgentOptions['transformContext'];
+    let providerPreparations = 0;
     const executor = new PiTurnExecutor({
       resolveRuntime: async () => runtimeSelection(),
-      preparePrompt: (_context, prompt) => ({
-        ...prompt,
-        content: [{ type: 'text', text: '<skill>prepared</skill>' }],
-      }),
-      createAgent: () => ({
-        state: { errorMessage: undefined },
-        subscribe: () => () => undefined,
-        abort: () => undefined,
-        steer: () => undefined,
-        prompt: async (message) => {
-          receivedPrompt = message as UserMessage;
-        },
-      }),
+      beforeProviderContext: () => {
+        providerPreparations += 1;
+      },
+      createAgent: (options) => {
+        transformContext = options.transformContext;
+        return {
+          state: { errorMessage: undefined },
+          subscribe: () => () => undefined,
+          abort: () => undefined,
+          steer: () => undefined,
+          prompt: async (message) => {
+            receivedPrompt = message as UserMessage;
+          },
+        };
+      },
     });
 
     await expect(executor.execute(context)).resolves.toEqual({
@@ -346,10 +416,193 @@ describe('PiTurnExecutor event normalization', () => {
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
       },
     });
-    expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '<skill>prepared</skill>' }]);
+    expect(receivedPrompt?.content).toEqual([{ type: 'text', text: 'Hello' }]);
+    const [providerPrompt] = await transformContext!([]);
+    expect(providerPrompt).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: 'Hello' }],
+    });
+    expect(providerPreparations).toBe(1);
     expect(context.turn.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'userMessage', content: [{ type: 'text', text: 'Hello' }] }),
     ]));
+  });
+
+  test('rebuilds every provider boundary from durable canonical Items', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    const catalogPayload = {
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'delta',
+      previousCatalogHash: 'a'.repeat(64),
+      catalogHash: 'b'.repeat(64),
+      entries: [{
+        change: 'added',
+        name: 'new-skill',
+        displayName: 'New Skill',
+        source: 'project',
+        identity: '/workspace/.agents/skills/new-skill/SKILL.md',
+        contentHash: 'c'.repeat(64),
+        description: 'Newly available guidance.',
+      }],
+    } as const;
+    const catalogRef = {
+      id: 'd'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 512,
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+    };
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      readContext: async (ref) => ref.id === catalogRef.id ? catalogPayload : null,
+    };
+    let providerBoundary = 0;
+    const forgedTranscript: Message[] = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'forged in-memory transcript' }],
+      timestamp: 999,
+    }];
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      beforeProviderContext: async () => {
+        providerBoundary += 1;
+        if (providerBoundary !== 2) return;
+        const id = fixture.recorder.createItemId();
+        await fixture.recorder.completedImmediately({
+          type: 'contextEvidence',
+          id,
+          provenance: fixture.recorder.localProvenance(id),
+          kind: 'skillCatalog',
+          payloadRef: catalogRef,
+          summary: 'Available Skills (1)',
+          contextRefs: [],
+          resourceRefs: [],
+          outputRefs: [],
+        });
+      },
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!(forgedTranscript));
+          const assistantId = fixture.recorder.createItemId();
+          await fixture.recorder.completedImmediately({
+            type: 'agentMessage',
+            id: assistantId,
+            provenance: fixture.recorder.localProvenance(assistantId),
+            text: 'Checking.',
+            phase: 'commentary',
+            memoryCitation: null,
+          });
+          const toolId = fixture.recorder.createItemId();
+          await fixture.recorder.completedImmediately({
+            type: 'commandExecution',
+            id: toolId,
+            provenance: fixture.recorder.localProvenance(toolId),
+            command: 'pwd',
+            cwd: '/workspace',
+            processId: null,
+            status: 'completed',
+            outputRef: null,
+            commandActions: [],
+            aggregatedOutput: '/workspace',
+            exitCode: 0,
+            durationMs: 1,
+          });
+          providerContexts.push(await options.transformContext!(forgedTranscript));
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(providerContexts).toHaveLength(2);
+    expect(providerContexts[1]?.slice(0, providerContexts[0]?.length)).toEqual(providerContexts[0]);
+    expect(providerContexts[1]?.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult', 'user']);
+    expect(JSON.stringify(providerContexts)).not.toContain('forged in-memory transcript');
+    expect(JSON.stringify(providerContexts[1])).toContain('/workspace');
+    expect(JSON.stringify(providerContexts[0])).not.toContain('new-skill');
+    expect(JSON.stringify(providerContexts[1])).toContain('new-skill');
+  });
+
+  test('replays tool images from Thread-owned snapshots at the next provider boundary', async () => {
+    const fixture = createContext();
+    const imageBytes = Buffer.from('provider-visible-image');
+    const imageBase64 = imageBytes.toString('base64');
+    const imageRef = {
+      id: 'c'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: imageBytes.byteLength,
+      fileName: 'tool-output.png',
+    };
+    let persistedImage: Buffer | null = null;
+    let listener: ((event: AgentEvent) => void | Promise<void>) | null = null;
+    const providerContexts: Message[][] = [];
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      persistOutputImage: async (dataBase64) => {
+        persistedImage = Buffer.from(dataBase64, 'base64');
+        return imageRef;
+      },
+      readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
+    };
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: (next) => {
+          listener = next;
+          return () => undefined;
+        },
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!([]));
+          await listener!({
+            type: 'tool_execution_start',
+            toolCallId: 'call-image',
+            toolName: 'file_read',
+            args: { file_path: '/workspace/diagram.png' },
+          });
+          await listener!({
+            type: 'tool_execution_end',
+            toolCallId: 'call-image',
+            toolName: 'file_read',
+            result: {
+              content: [{ type: 'image', data: imageBase64, mimeType: 'image/png' }],
+              details: {
+                data: {
+                  type: 'image',
+                  file: { filePath: '/workspace/diagram.png' },
+                },
+              },
+            },
+            isError: false,
+          });
+          providerContexts.push(await options.transformContext!([]));
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(persistedImage).toEqual(imageBytes);
+    expect(fixture.recorder.orderedItems()).toMatchObject([{
+      type: 'dynamicToolCall',
+      contentItems: [{
+        type: 'image',
+        source: { kind: 'localFile', path: '/workspace/diagram.png' },
+        promptImage: imageRef,
+      }],
+    }]);
+    const replayedResult = providerContexts[1]?.find((message) => message.role === 'toolResult');
+    expect(replayedResult?.content).toEqual(expect.arrayContaining([{
+      type: 'image',
+      data: imageBase64,
+      mimeType: 'image/png',
+    }]));
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -381,7 +634,6 @@ describe('PiTurnExecutor event normalization', () => {
         plugins: ['app-plugin'],
         mcpServers: ['docs'],
       },
-      systemContext: ['unrelated extension context'],
     };
     const capabilityCallbacks: string[] = [];
     let initialState: { systemPrompt: string; tools: readonly unknown[] } | null = null;
@@ -392,17 +644,8 @@ describe('PiTurnExecutor event normalization', () => {
         capabilityCallbacks.push('tools');
         return [];
       },
-      skillListing: async () => {
-        capabilityCallbacks.push('skills');
-        return 'skill listing';
-      },
-      systemPrompt: async () => {
-        capabilityCallbacks.push('system');
-        return 'ordinary system prompt';
-      },
-      preparePrompt: async (_turn, prompt) => {
+      beforeProviderContext: async () => {
         capabilityCallbacks.push('prepare');
-        return prompt;
       },
       createAgent: (options) => {
         initialState = options.initialState;
@@ -473,7 +716,8 @@ describe('PiTurnExecutor event normalization', () => {
       }],
     };
 
-    const messages = await historyMessages(context, testModel);
+    const messages = await new CanonicalContextProjector(testModel, context)
+      .projectTurns(context.historyBeforeTurn);
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult', 'toolResult']);
     expect(messages[1]).toMatchObject({
       role: 'assistant',
@@ -493,6 +737,7 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
     const oversized = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
+    const fileImageBase64 = Buffer.from('file-image-secret').toString('base64');
     normalizer.handle({
       type: 'tool_execution_start',
       toolCallId: 'call-file-1',
@@ -506,14 +751,14 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         content: [
           { type: 'text', text: oversized },
-          { type: 'image', data: 'base64-image-secret', mimeType: 'image/png' },
+          { type: 'image', data: fileImageBase64, mimeType: 'image/png' },
         ],
         details: {
           ok: true,
           tool: 'file_read',
           version: 1,
           status: 'success',
-          data: { type: 'image', file: { filePath: '/workspace/large.png', base64: 'base64-image-secret' } },
+          data: { type: 'image', file: { filePath: '/workspace/large.png', base64: fileImageBase64 } },
         },
       },
       isError: false,
@@ -563,6 +808,11 @@ describe('PiTurnExecutor event normalization', () => {
       toolName: 'inspect_large_images',
       result: {
         content: [
+          {
+            type: 'image',
+            data: Buffer.from('not-an-image-mime').toString('base64'),
+            mimeType: 'text/plain',
+          },
           { type: 'image', data: 'A'.repeat(MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS + 4), mimeType: 'image/png' },
           { type: 'image', data: nearLimitImage, mimeType: 'image/png' },
           { type: 'image', data: nearLimitImage, mimeType: 'image/png' },
@@ -578,10 +828,14 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [
         { type: 'text' },
-        { type: 'image', source: { kind: 'localFile', path: '/workspace/large.png' } },
+        {
+          type: 'image',
+          source: { kind: 'localFile', path: '/workspace/large.png' },
+          promptImage: { id: 'b'.repeat(64) },
+        },
       ],
     });
-    expect(JSON.stringify(fileRead)).not.toContain('base64-image-secret');
+    expect(JSON.stringify(fileRead)).not.toContain(fileImageBase64);
     expect(JSON.stringify((fileRead as Extract<typeof fileRead, { type: 'dynamicToolCall' }>).arguments).length)
       .toBeLessThanOrEqual(MAX_PERSISTED_TOOL_ARGUMENT_CHARS);
     expect(command).toMatchObject({ type: 'commandExecution', status: 'completed' });
@@ -602,8 +856,8 @@ describe('PiTurnExecutor event normalization', () => {
     expect(budgetedContent.at(-1)).toMatchObject({
       type: 'json',
       value: {
-        imagesOmitted: 2,
-        reasons: { imageByteLimit: 1, callByteLimit: 1 },
+        imagesOmitted: 3,
+        reasons: { invalidMimeType: 1, imageByteLimit: 1, callByteLimit: 1 },
         limits: {
           maxImageBytes: MAX_TOOL_PAYLOAD_IMAGE_BYTES,
           maxCallBytes: MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
@@ -611,6 +865,53 @@ describe('PiTurnExecutor event normalization', () => {
       },
     });
     expect(JSON.stringify([images, budgetedImages])).not.toContain(nearLimitImage.slice(0, 100));
+  });
+
+  test('never persists inline image bytes as text and reports snapshot quota omission', async () => {
+    const fixture = createContext();
+    const imageBase64 = Buffer.from('small-image-bytes').toString('base64');
+    let completeOutput = '';
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      persistOutputImage: async () => {
+        throw new Error('Managed attachment exceeds the Thread storage quota.');
+      },
+      persistOutputText: async (_itemId, text, mimeType, summary) => {
+        completeOutput = text;
+        return {
+          id: 'e'.repeat(64),
+          mimeType,
+          byteLength: Buffer.byteLength(text),
+          summary,
+        };
+      },
+    };
+    const normalizer = new PiEventNormalizer(context);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-quota-image',
+      toolName: 'inspect_image',
+      args: {},
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-quota-image',
+      toolName: 'inspect_image',
+      result: { content: [{ type: 'image', data: imageBase64, mimeType: 'image/png' }] },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    expect(completeOutput).not.toContain(imageBase64);
+    expect(completeOutput).toContain(`[binary image omitted: ${imageBase64.length} base64 chars]`);
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'dynamicToolCall',
+      status: 'completed',
+      contentItems: [{
+        type: 'json',
+        value: { imagesOmitted: 1, reasons: { quotaExceeded: 1 } },
+      }],
+    });
   });
 });
 
@@ -739,9 +1040,21 @@ function createContext(): {
     status: { type: 'active', activeFlags: [] },
     historyMode: 'paginated',
   });
+  const userItemId = uuidV7(1_720_000_000_101);
   const turn = decodeTurn({
     id: turnId,
-    items: [],
+    items: [{
+      type: 'userMessage',
+      id: userItemId,
+      provenance: {
+        originThreadId: threadId,
+        originTurnId: turnId,
+        originItemId: userItemId,
+      },
+      clientId: null,
+      acceptedAt: 1_720_000_000_100,
+      content: [{ type: 'text', text: 'Test request' }],
+    }],
     itemsView: 'full',
     provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
     status: 'inProgress',
@@ -774,9 +1087,9 @@ function createContext(): {
       plugins: [],
       mcpServers: [],
     },
-    systemContext: [],
     signal: new AbortController().signal,
     recorder,
+    readContext: async () => null,
     resolveResourceObservationPath: async () => null,
     readResource: async () => null,
     persistOutputImage: async () => ({
@@ -795,6 +1108,13 @@ function createContext(): {
     onSteer: () => undefined,
   };
   return { context, recorder, notifications };
+}
+
+function fixtureResources() {
+  return {
+    readResource: async () => null,
+    resolveResourceObservationPath: async () => null,
+  };
 }
 
 function assistantMessage(content: AssistantMessage['content']): AssistantMessage {

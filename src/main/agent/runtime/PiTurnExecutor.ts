@@ -9,12 +9,9 @@ import type {
   Api,
   AssistantMessage,
   Context,
-  ImageContent,
   Message,
   Model,
   TextContent,
-  ToolCall,
-  ToolResultMessage,
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
@@ -22,11 +19,14 @@ import type {
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
+  SkillInvocationContextPayload,
   ThreadItem,
   ThreadItemOutputReference,
   TurnExecutionDetails,
-  ThreadUserContent,
 } from '../../../core/agent/protocol';
+import { decodeThreadContextPayload } from '../../../core/agent/codec';
+import { CanonicalContextProjector } from '../context/ContextProjector';
+import { composeStablePrompt } from '../context/stablePrompt';
 import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import {
   lowestThinkingLevel,
@@ -82,9 +82,7 @@ export type ModelRuntimeToolFactory = (
 
 export interface PiTurnExecutorOptions {
   readonly createTools?: ModelRuntimeToolFactory;
-  readonly preparePrompt?: (context: TurnExecutionContext, prompt: UserMessage) => UserMessage | Promise<UserMessage>;
-  readonly systemPrompt?: (context: TurnExecutionContext) => string | Promise<string>;
-  readonly skillListing?: (context: TurnExecutionContext) => string | null | Promise<string | null>;
+  readonly beforeProviderContext?: (context: TurnExecutionContext) => void | Promise<void>;
   readonly resolveRuntime?: (context: PiRuntimeContext) => Promise<PiRuntimeSelection>;
   readonly createAgent?: (options: AgentOptions) => PiAgentRuntime;
   readonly completeName?: (
@@ -103,7 +101,7 @@ export interface PiRuntimeSelection {
 
 export interface PiAgentRuntime {
   readonly state: Pick<AgentState, 'errorMessage'>;
-  subscribe(listener: (event: AgentEvent) => void): () => void;
+  subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void;
   abort(): void;
   steer(message: Message): void;
   prompt(message: Message): Promise<void>;
@@ -124,20 +122,27 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       if (context.signal.aborted) return { status: 'interrupted' };
       const tools = internalMemory ? [] : [...(await this.options.createTools?.(context) ?? [])];
       if (context.signal.aborted) return { status: 'interrupted' };
-      const skillListing = internalMemory ? null : await this.options.skillListing?.(context) ?? null;
-      if (context.signal.aborted) return { status: 'interrupted' };
       const systemPrompt = internalMemory
         ? context.configuration.developerInstructions.join('\n\n')
-        : await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
-      if (context.signal.aborted) return { status: 'interrupted' };
-      const initialPrompt = await currentPrompt(context);
-      const prompt = internalMemory
-        ? initialPrompt
-        : await this.options.preparePrompt?.(context, initialPrompt) ?? initialPrompt;
+        : composeStablePrompt({ thread: context.thread, configuration: context.configuration }).text;
+      const projector = new CanonicalContextProjector(runtime.model, context);
+      const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
+      const currentMessages = await projector.projectTurns([context.turn]);
+      const initialPrompt = currentMessages.at(-1);
+      if (!initialPrompt || initialPrompt.role !== 'user') {
+        throw new Error('Canonical Turn projection did not produce a trailing user message.');
+      }
+      priorMessages.push(...currentMessages.slice(0, -1));
+      const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
       const normalizer = new PiEventNormalizer(context);
-      const priorMessages = await historyMessages(context, runtime.model);
-      if (context.signal.aborted) return { status: 'interrupted' };
+      const transformContext = internalMemory
+        ? undefined
+        : async () => {
+            await normalizer.flush();
+            await this.options.beforeProviderContext?.(context);
+            return projectCanonicalProviderContext(context, runtime.model, prompt);
+          };
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
           systemPrompt,
@@ -153,6 +158,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         }),
         getApiKey: runtime.getApiKey,
         onPayload: agentProviderPayload,
+        transformContext,
         steeringMode: 'all',
         sessionId: context.thread.sessionId,
         toolExecution: 'parallel',
@@ -161,9 +167,12 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         agent.abort();
         return { status: 'interrupted' };
       }
-      unsubscribe = agent.subscribe((event) => normalizer.handle(event));
+      unsubscribe = agent.subscribe(async (event) => {
+        normalizer.handle(event);
+        await normalizer.flush();
+      });
       context.onSteer(async (input) => {
-        const message = await modelUserMessage(input.content, Date.now(), context);
+        const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted) agent?.steer(message);
       });
       await agent.prompt(prompt);
@@ -192,6 +201,35 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
     const raw = await (this.options.completeName ?? completeThreadName)(context, runtime);
     return raw === null ? null : normalizeThreadName(raw);
   }
+}
+
+async function projectCanonicalProviderContext(
+  context: TurnExecutionContext,
+  model: Model<Api>,
+  preparedInitialPrompt: UserMessage,
+): Promise<Message[]> {
+  const projector = new CanonicalContextProjector(model, context);
+  const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
+  const currentMessages = await projector.projectTurns([{
+    ...context.turn,
+    items: currentTurnItems(context),
+  }]);
+  const initialUserIndex = currentMessages.findIndex((message) => message.role === 'user');
+  if (initialUserIndex < 0) {
+    throw new Error('Canonical Turn projection did not produce an initial user message.');
+  }
+  currentMessages[initialUserIndex] = preparedInitialPrompt;
+  return [...priorMessages, ...currentMessages];
+}
+
+function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] {
+  const recorded = context.recorder.orderedItems();
+  const recordedById = new Map(recorded.map((item) => [item.id, item]));
+  const initialIds = new Set(context.turn.items.map((item) => item.id));
+  return [
+    ...context.turn.items.map((item) => recordedById.get(item.id) ?? item),
+    ...recorded.filter((item) => !initialIds.has(item.id)),
+  ];
 }
 
 export function agentProviderPayload(payload: unknown, model: Model<Api>): unknown | undefined {
@@ -456,14 +494,43 @@ export class PiEventNormalizer {
     if (this.transientToolCallIds.delete(callId)) return;
     const active = this.toolItems.get(callId);
     if (!active) return;
-    await this.context.recorder.completed(await completedToolItem(
+    const completed = await this.context.recorder.completed(await completedToolItem(
       this.context,
       active.item,
       result,
       isError,
       Math.max(0, Date.now() - active.startedAt),
     ));
+    await persistCompletedToolContext(this.context, completed, result, isError);
     this.toolItems.delete(callId);
+  }
+}
+
+export async function persistCompletedToolContext(
+  context: TurnExecutionContext,
+  item: ThreadItem,
+  result: unknown,
+  isError: boolean,
+): Promise<void> {
+  if (
+    isError
+    || item.type !== 'dynamicToolCall'
+    || item.namespace !== null
+    || item.tool !== 'skill'
+  ) return;
+  const invocation = skillInvocationEvidence(result);
+  if (!invocation) throw new Error('Completed Skill tool result is missing invocation evidence.');
+  await context.persistContextEvidence(invocation, `Invoked Skill: ${invocation.displayName}`);
+}
+
+function skillInvocationEvidence(result: unknown): SkillInvocationContextPayload | null {
+  const details = toolDetails(result);
+  if (!isRecord(details) || !details.ok || details.tool !== 'skill' || !isRecord(details.data)) return null;
+  try {
+    const payload = decodeThreadContextPayload(details.data.invocationEvidence);
+    return payload.kind === 'skillInvocation' ? payload : null;
+  } catch {
+    return null;
   }
 }
 
@@ -746,6 +813,9 @@ function withoutInlineBinary(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutInlineBinary);
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (value.type === 'image' && key === 'data' && typeof entry === 'string') {
+      return [key, `[binary image omitted: ${entry.length} base64 chars]`];
+    }
     if (
       typeof entry === 'string'
       && (key.toLowerCase().includes('base64') || key === 'data')
@@ -834,275 +904,6 @@ function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 
   return 'completed';
 }
 
-function defaultSystemPrompt(context: TurnExecutionContext, skillListing: string | null): string {
-  return [
-    'You are Tenon, an agent working directly in the user\'s Outliner and local workspace.',
-    'Use Thread, Turn, Item, Goal, Subagent, Memory, and Automation as the canonical product vocabulary.',
-    'You have Full Access through the tools present in this Turn. Native tool failures are authoritative.',
-    'Do not invent approval, sandbox, permission-profile, or legacy agent entities.',
-    ...context.configuration.developerInstructions,
-    ...context.systemContext,
-    skillListing,
-  ].filter(Boolean).join('\n\n');
-}
-
-export async function historyMessages(context: TurnExecutionContext, model: Model<Api>): Promise<Message[]> {
-  const messages: Message[] = [];
-  for (const turn of context.historyBeforeTurn) {
-    let assistantContent: Array<TextContent | ToolCall> = [];
-    let toolResults: ToolResultMessage[] = [];
-    const flushAssistant = () => {
-      if (assistantContent.length > 0) {
-        messages.push(assistantHistoryMessage(
-          assistantContent,
-          turn.completedAt ?? turn.startedAt,
-          model,
-          toolResults.length > 0 ? 'toolUse' : 'stop',
-        ));
-      }
-      messages.push(...toolResults);
-      assistantContent = [];
-      toolResults = [];
-    };
-    for (const item of turn.items) {
-      if (item.type === 'userMessage') {
-        flushAssistant();
-        messages.push(await modelUserMessage(item.content, turn.startedAt, context));
-        continue;
-      }
-      if (isToolItem(item)) {
-        const tool = historyTool(item, turn.completedAt ?? turn.startedAt);
-        assistantContent.push(tool.call);
-        toolResults.push(tool.result);
-        continue;
-      }
-      if (toolResults.length > 0) flushAssistant();
-      switch (item.type) {
-        case 'agentMessage':
-          if (item.text) assistantContent.push({ type: 'text', text: item.text });
-          break;
-        case 'reasoning':
-          if (item.summary.length > 0 || item.content.length > 0) {
-            assistantContent.push({
-              type: 'text',
-              text: `[Reasoning]\n${[...item.summary, ...item.content].join('\n')}`,
-            });
-          }
-          break;
-        case 'subAgentActivity':
-          assistantContent.push({
-            type: 'text',
-            text: `[Subagent ${item.kind}: ${item.agentPath} (${item.agentThreadId})]`,
-          });
-          break;
-        case 'imageView':
-          assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
-          break;
-        case 'contextEvidence':
-        case 'contextReset':
-          break;
-        case 'contextCompaction':
-          assistantContent.push({ type: 'text', text: '[Context compacted]' });
-          break;
-      }
-    }
-    flushAssistant();
-  }
-  return messages;
-}
-
-async function currentPrompt(context: TurnExecutionContext): Promise<UserMessage> {
-  const input = context.turn.items
-    .filter((item) => item.type === 'userMessage')
-    .flatMap((item) => item.content);
-  const additional = context.additionalContext
-    ? Object.entries(context.additionalContext).map(([key, entry]) => ({
-        type: 'text' as const,
-        text: `[${entry.kind} context: ${key}]\n${entry.value}`,
-      }))
-    : [];
-  return modelUserMessage([...input, ...additional], context.turn.startedAt, context);
-}
-
-export async function modelUserMessage(
-  content: readonly ThreadUserContent[],
-  timestamp = Date.now(),
-  resources?: Pick<TurnExecutionContext, 'readResource' | 'resolveResourceObservationPath'>,
-): Promise<UserMessage> {
-  const converted: Array<TextContent | ImageContent> = [];
-  for (const part of content) {
-    switch (part.type) {
-      case 'text':
-        converted.push({ type: 'text', text: part.text });
-        break;
-      case 'nodeReference':
-        converted.push({ type: 'text', text: `[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}` });
-        break;
-      case 'attachment':
-        if (part.mimeType.startsWith('image/') && part.promptImage) {
-          if (!resources) throw new Error('Attachment image resources are unavailable.');
-          const image = await resources.readResource(part.promptImage);
-          if (!image) throw new Error(`Attachment prompt image is unavailable or corrupt: ${part.name}`);
-          converted.push({ type: 'image', data: image.toString('base64'), mimeType: part.promptImage.mimeType });
-        } else {
-          const location = part.source.kind === 'localFile'
-            ? `\nReadable path: ${part.source.path}\nUse file_read with this path to inspect the attachment.`
-            : resources
-              ? await resources.resolveResourceObservationPath(part.source.ref).then((path) => {
-                  if (!path) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
-                  return `\nReadable path: ${path}\nUse file_read with this path to inspect the attachment.`;
-                })
-              : `\nManaged payload: ${part.source.ref.id}`;
-          converted.push({
-            type: 'text',
-            text: `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]${location}${part.extractedText ? `\n${part.extractedText}` : ''}`,
-          });
-        }
-        break;
-    }
-  }
-  if (converted.length === 0) converted.push({ type: 'text', text: 'Continue.' });
-  return { role: 'user', content: converted, timestamp };
-}
-
-function assistantHistoryMessage(
-  content: AssistantMessage['content'],
-  timestamp: number,
-  model: Model<Api>,
-  stopReason: AssistantMessage['stopReason'],
-): AssistantMessage {
-  return {
-    role: 'assistant',
-    content,
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason,
-    timestamp,
-  };
-}
-
-type HistoryToolItem = Extract<ThreadItem, {
-  type:
-    | 'commandExecution'
-    | 'fileChange'
-    | 'mcpToolCall'
-    | 'dynamicToolCall'
-    | 'collabAgentToolCall'
-    | 'webSearch';
-}>;
-
-function isToolItem(item: ThreadItem): item is HistoryToolItem {
-  return item.type === 'commandExecution'
-    || item.type === 'fileChange'
-    || item.type === 'mcpToolCall'
-    || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
-    || item.type === 'webSearch';
-}
-
-function historyTool(item: HistoryToolItem, timestamp: number): { call: ToolCall; result: ToolResultMessage } {
-  const identity = historyToolIdentity(item);
-  const toolName = identity.namespace ? `${identity.namespace}__${identity.name}` : identity.name;
-  const call: ToolCall = {
-    type: 'toolCall',
-    id: item.id,
-    name: toolName,
-    arguments: historyToolArguments(item),
-  };
-  const result: ToolResultMessage = {
-    role: 'toolResult',
-    toolCallId: item.id,
-    toolName,
-    content: [{ type: 'text', text: historyToolResultText(item) }],
-    isError: item.status !== 'completed',
-    timestamp,
-  };
-  return { call, result };
-}
-
-function historyToolIdentity(item: HistoryToolItem): { namespace: string | null; name: string } {
-  switch (item.type) {
-    case 'commandExecution':
-      return { namespace: null, name: 'bash' };
-    case 'fileChange': {
-      const kinds = new Set(item.changes.map((change) => change.kind));
-      const name = kinds.size === 1 && kinds.has('add')
-        ? 'file_write'
-        : kinds.size === 1 && kinds.has('delete')
-          ? 'file_delete'
-          : 'file_edit';
-      return { namespace: null, name };
-    }
-    case 'mcpToolCall':
-      return { namespace: item.server, name: item.tool };
-    case 'dynamicToolCall':
-      return { namespace: item.namespace, name: item.tool };
-    case 'collabAgentToolCall':
-      return { namespace: 'collaboration', name: item.tool };
-    case 'webSearch':
-      return { namespace: null, name: 'web_search' };
-  }
-}
-
-function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
-  switch (item.type) {
-    case 'commandExecution':
-      return { command: item.command, cwd: item.cwd };
-    case 'fileChange':
-      return { changes: item.changes };
-    case 'mcpToolCall':
-    case 'dynamicToolCall':
-      return isRecord(item.arguments) ? item.arguments : { value: item.arguments };
-    case 'collabAgentToolCall':
-      return {
-        ...(item.prompt === null ? {} : { message: item.prompt }),
-        ...(item.model === null ? {} : { model: item.model }),
-        ...(item.reasoningEffort === null ? {} : { reasoning_effort: item.reasoningEffort }),
-      };
-    case 'webSearch':
-      return { query: item.query };
-  }
-}
-
-function historyToolResultText(item: HistoryToolItem): string {
-  switch (item.type) {
-    case 'commandExecution':
-      return item.aggregatedOutput ?? JSON.stringify({ status: item.status, exitCode: item.exitCode });
-    case 'fileChange':
-      return JSON.stringify({ status: item.status, changes: item.changes });
-    case 'mcpToolCall':
-      return item.error ?? JSON.stringify(item.result ?? { status: item.status });
-    case 'dynamicToolCall':
-      return (item.contentItems ?? []).map((content) => {
-        if (content.type === 'text') return content.text;
-        if (content.type === 'image') {
-          const label = content.source.kind === 'localFile'
-            ? content.source.path
-            : content.source.ref.fileName;
-          return `[Image output: ${label}]`;
-        }
-        return JSON.stringify(content.value);
-      }).join('\n') || JSON.stringify({ status: item.status, success: item.success });
-    case 'collabAgentToolCall':
-      return JSON.stringify({
-        status: item.status,
-        receiverThreadIds: item.receiverThreadIds,
-        agentsStates: item.agentsStates,
-      });
-    case 'webSearch':
-      return item.error ?? JSON.stringify(item.results);
-  }
-}
-
 function messagePhase(message: AssistantMessage): MessagePhase {
   if (message.stopReason === 'toolUse') return 'commentary';
   const signature = message.content.find((part): part is TextContent => part.type === 'text')?.textSignature;
@@ -1140,8 +941,10 @@ async function dynamicOutput(
   const omittedImages: Record<ImageOmissionReason, number> = {
     countLimit: 0,
     invalidBase64: 0,
+    invalidMimeType: 0,
     imageByteLimit: 0,
     callByteLimit: 0,
+    quotaExceeded: 0,
   };
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
@@ -1157,29 +960,39 @@ async function dynamicOutput(
         omittedImages.countLimit += 1;
         continue;
       }
-      const mimeType = typeof part.mimeType === 'string' ? part.mimeType : 'image/png';
-      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      let source: Extract<DynamicToolOutputContent, { type: 'image' }>['source'];
-      if (existingPath) {
-        source = { kind: 'localFile', path: existingPath };
-      } else {
-        const measurement = measureToolPayloadImage(part.data);
-        if (!measurement.ok) {
-          omittedImages[measurement.reason] += 1;
-          continue;
-        }
-        if (persistedImageBytes + measurement.byteLength > MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES) {
-          omittedImages.callByteLimit += 1;
-          continue;
-        }
-        const ref = await context.persistOutputImage(part.data, mimeType);
-        source = { kind: 'threadPayload', ref };
-        persistedImageBytes += measurement.byteLength;
+      const measurement = measureToolPayloadImage(part.data);
+      if (!measurement.ok) {
+        omittedImages[measurement.reason] += 1;
+        continue;
       }
-      content.push({
-        type: 'image',
-        source,
+      if (persistedImageBytes + measurement.byteLength > MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES) {
+        omittedImages.callByteLimit += 1;
+        continue;
+      }
+      const mimeType = dynamicImageMimeType(part.mimeType);
+      if (!mimeType) {
+        omittedImages.invalidMimeType += 1;
+        continue;
+      }
+      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
+      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
+        if (isThreadResourceQuotaError(error)) return null;
+        throw error;
       });
+      if (!promptImage) {
+        omittedImages.quotaExceeded += 1;
+        continue;
+      }
+      persistedImageBytes += measurement.byteLength;
+      if (existingPath) {
+        content.push({
+          type: 'image',
+          source: { kind: 'localFile', path: existingPath },
+          promptImage,
+        });
+      } else {
+        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
+      }
       persistedImages += 1;
     }
   }
@@ -1207,7 +1020,24 @@ async function dynamicOutput(
   return content;
 }
 
-type ImageOmissionReason = 'countLimit' | 'invalidBase64' | 'imageByteLimit' | 'callByteLimit';
+type ImageOmissionReason =
+  | 'countLimit'
+  | 'invalidBase64'
+  | 'invalidMimeType'
+  | 'imageByteLimit'
+  | 'callByteLimit'
+  | 'quotaExceeded';
+
+function dynamicImageMimeType(value: unknown): string | null {
+  if (value === undefined) return 'image/png';
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
+}
+
+function isThreadResourceQuotaError(error: unknown): boolean {
+  return error instanceof Error && /\bquota\b/iu.test(error.message);
+}
 
 function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
   const details = toolDetails(result);

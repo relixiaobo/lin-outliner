@@ -23,6 +23,7 @@ describe('AgentConfigurationLoader', () => {
       profileName: 'default',
       model: 'inherit',
       reasoningEffort: 'medium',
+      skills: ['*'],
     });
     expect(loader.resolveProfile(undefined, cwd).tools).toContain('collaboration.spawn_agent');
     expect(loader.resolveRole('worker', cwd)).toMatchObject({
@@ -84,7 +85,7 @@ describe('AgentConfigurationLoader', () => {
       model: 'project-model',
       reasoningEffort: 'medium',
       tools: ['node_read'],
-      skills: [],
+      skills: ['*'],
       plugins: [],
       mcpServers: [],
     });
