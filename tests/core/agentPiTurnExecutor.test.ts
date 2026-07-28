@@ -1106,6 +1106,24 @@ describe('PiTurnExecutor event normalization', () => {
       beforeProviderContext: async () => {
         capabilityCallbacks.push('prepare');
       },
+      streamSimple: (model, _providerContext, options = {}) => {
+        const stream = createAssistantMessageEventStream();
+        const response = assistantMessage([]);
+        queueMicrotask(async () => {
+          await options.onPayload?.({
+            model: 'test-model',
+            input: _providerContext.messages,
+            response_format: { type: 'json_object' },
+          }, model);
+          await options.onResponse?.({
+            status: 200,
+            headers: { 'request-id': 'memory-request-1', 'set-cookie': 'private-cookie' },
+          }, model);
+          stream.push({ type: 'done', reason: 'stop', message: response });
+          stream.end(response);
+        });
+        return stream;
+      },
       createAgent: (options) => {
         initialState = options.initialState;
         return {
@@ -1115,15 +1133,15 @@ describe('PiTurnExecutor event normalization', () => {
           steer: () => undefined,
           prompt: async (message) => {
             receivedPrompt = message as UserMessage;
-            options.onPayload?.({
-              model: 'test-model',
-              input: [message],
-              response_format: { type: 'json_object' },
-            }, testModel);
-            await options.onResponse?.({
-              status: 200,
-              headers: { 'request-id': 'memory-request-1', 'set-cookie': 'private-cookie' },
-            }, testModel);
+            const stream = options.streamFn!(testModel, {
+              systemPrompt: 'Return exact Memory JSON.',
+              tools: [],
+              messages: [message as UserMessage],
+            }, {
+              onPayload: options.onPayload,
+              onResponse: options.onResponse,
+            });
+            for await (const _event of stream) { /* drain */ }
           },
         };
       },
@@ -1139,10 +1157,19 @@ describe('PiTurnExecutor event normalization', () => {
       stablePrompt: null,
       providerCalls: [{
         index: 0,
-          requestParameters: {
-            model: 'test-model',
-            input: { omitted: true, source: 'messageWindow', field: 'input' },
-            response_format: { type: 'json_object' },
+          request: {
+            kind: 'object',
+            fields: [
+              { name: 'model', representation: 'inline', value: 'test-model' },
+              {
+                name: 'input',
+                representation: 'fragments',
+                container: 'array',
+                fragmentIds: [expect.any(String)],
+              },
+              { name: 'response_format', representation: 'inline', value: { type: 'json_object' } },
+              { name: 'text', representation: 'inline', value: { verbosity: 'low' } },
+            ],
           },
           transportResponse: {
             httpStatus: 200,

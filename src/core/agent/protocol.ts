@@ -195,8 +195,8 @@ export interface TurnDiagnosticsRuntime {
   readonly provider: string;
   readonly model: string;
   readonly api: string;
-  readonly endpoint: string;
-  readonly transport: 'sse' | 'websocket' | 'websocket-cached' | 'auto';
+  readonly configuredBaseUrl: string;
+  readonly transportSelection: 'sse' | 'websocket' | 'websocket-cached' | 'auto';
   readonly contextWindow: number;
   readonly maxOutputTokens: number;
   readonly thinkingLevel: string;
@@ -212,6 +212,45 @@ export interface TurnDiagnosticsMessage {
   readonly id: string;
   readonly estimatedTokens: number;
   readonly value: JsonValue;
+}
+
+export interface TurnDiagnosticsRequestFragment {
+  /** Content-addressed lowercase SHA-256 digest of `value`. */
+  readonly id: string;
+  readonly value: JsonValue;
+}
+
+export type TurnDiagnosticsProviderRequestField =
+  | {
+      readonly name: string;
+      readonly representation: 'inline';
+      readonly value: JsonValue;
+    }
+  | {
+      readonly name: string;
+      readonly representation: 'fragments';
+      readonly container: 'array' | 'value';
+      readonly fragmentIds: readonly string[];
+    };
+
+export type TurnDiagnosticsProviderRequest =
+  | {
+      readonly kind: 'object';
+      /** Preserves the post-adapter payload's top-level insertion order. */
+      readonly fields: readonly TurnDiagnosticsProviderRequestField[];
+    }
+  | {
+      readonly kind: 'value';
+      readonly value: JsonValue;
+    };
+
+export interface TurnDiagnosticsPreparedContext {
+  /** Content-addressed exact system prompt supplied to the provider adapter. */
+  readonly systemPromptFragmentId: string;
+  /** Canonical tool schemas supplied to the provider adapter, in runtime order. */
+  readonly toolNames: readonly string[];
+  /** Canonical messages supplied to the provider adapter, in model-context order. */
+  readonly messageIds: readonly string[];
 }
 
 export interface TurnDiagnosticsProviderUsage {
@@ -236,6 +275,7 @@ export interface TurnDiagnosticsProviderResponse {
   readonly stopReason: 'stop' | 'length' | 'toolUse' | 'error' | 'aborted';
   readonly errorMessage: string | null;
   readonly usage: TurnDiagnosticsProviderUsage;
+  /** Provider-neutral assistant message emitted by the model runtime. */
   readonly value: JsonValue;
 }
 
@@ -248,16 +288,18 @@ export interface TurnDiagnosticsTransportResponse {
 export interface TurnDiagnosticsProviderCall {
   readonly index: number;
   readonly requestedAt: number;
-  readonly messageIds: readonly string[];
+  readonly preparedContext: TurnDiagnosticsPreparedContext;
   readonly protectedFromMessageIndex: number;
   readonly estimatedInputTokens: number;
   readonly inputTokenLimit: number;
   readonly reservedOutputTokens: number;
   readonly commonPrefixMessageCount: number;
-  /** Provider payload with its repeated message window replaced by a verifiable marker. */
-  readonly requestParameters: JsonValue;
+  /** Reconstructable, image-sanitized request captured at the post-adapter send boundary. */
+  readonly request: TurnDiagnosticsProviderRequest;
   readonly requestFingerprint: string;
   readonly cacheBreakpoints: readonly string[];
+  /** Canonical tool Items executed after this response and before the next provider call. */
+  readonly executionItemIds: readonly ThreadItemId[];
   readonly transportResponse: TurnDiagnosticsTransportResponse | null;
   readonly response: TurnDiagnosticsProviderResponse | null;
 }
@@ -271,7 +313,8 @@ export interface TurnDiagnosticsPayload {
   readonly stablePrompt: TurnDiagnosticsStablePrompt | null;
   readonly toolSchemas: readonly TurnDiagnosticsToolSchema[];
   readonly runtime: TurnDiagnosticsRuntime;
-  readonly messages: readonly TurnDiagnosticsMessage[];
+  readonly canonicalMessages: readonly TurnDiagnosticsMessage[];
+  readonly requestFragments: readonly TurnDiagnosticsRequestFragment[];
   readonly providerCalls: readonly TurnDiagnosticsProviderCall[];
 }
 

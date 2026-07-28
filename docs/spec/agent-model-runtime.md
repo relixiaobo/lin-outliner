@@ -365,24 +365,40 @@ other providers.
 ## Turn Diagnostics
 
 `PiTurnExecutor` creates one `TurnDiagnosticsCollector` from the effective configuration
-and resolved runtime at Turn start. At every provider boundary it records the exact
-context epoch and cache affinity, L0/L1/L2 stable-prompt blocks and fingerprints,
-canonical-sorted tool schemas, provider/model/API/endpoint/transport limits and
-retry/cache settings, the planned protected boundary and token budget, and the normalized
-provider message window. Endpoint diagnostics remove URL userinfo, query, and fragment
-data before persistence. Messages are pooled by a stable SHA-256 fingerprint so a later
-tool or steering call references its unchanged prefix instead of persisting another full
-copy.
+and resolved runtime at Turn start. Every Provider Call records two different facts. At
+the pre-adapter stream boundary, the collector reads the actual provider `Context`: the
+exact system prompt, canonical-sorted tool definitions, and ordered messages/content
+parts after projection, budgeting, and compaction. Planned protected-boundary and token
+budget facts are attached to that same call. System prompt and messages are pooled by
+stable SHA-256 fingerprints, so a later tool or steering call references its unchanged
+prefix instead of persisting another full copy.
 
-The post-adapter provider payload is also observed at the send boundary. Diagnostics
-retain provider-specific non-message parameters, a SHA-256 fingerprint of the complete
-canonical diagnostic request representation, and every cache-control path. The repeated
-top-level `input`, `messages`, `contents`, or `prompt` field is replaced by a verifiable
-field/digest/byte-length marker
-because the normalized message window is already pooled. Binary, base64 image, and image
-data-URL bytes are never copied into diagnostics; an omission marker retains encoding,
-MIME when known, byte length, and digest. This bounds the diagnostic copy without
-changing the provider request or its prompt-cache bytes.
+Turn-wide audit facts record the exact context epoch and cache affinity, L0/L1/L2
+stable-prompt source blocks and fingerprints, canonical-sorted tool schema pool,
+provider/model/API/configured-base-URL/transport selection, model limits, and retry/cache
+settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragment data
+before persistence. These audit facts explain how the call was prepared; they are not a
+renderer-reconstructed request or another context authority.
+
+The post-adapter provider payload is observed after compatibility, reasoning-summary,
+and cache-breakpoint policy and immediately before provider transport. Diagnostics
+retain the complete image-sanitized request as an ordered, reconstructable representation,
+a SHA-256 fingerprint of that representation, and every cache-control path. Top-level
+field insertion order is retained only to reproduce the payload; JSON object-key order
+does not define model context order or precedence. Repetition-heavy `contents`, `input`, `instructions`,
+`messages`, `prompt`, `system`, `systemPrompt`, and `tools` fields reference an ordered
+content-addressed fragment pool, so unchanged stable prompts, tool schemas, and message
+prefixes are stored once without replacing wire content with a non-reconstructable
+summary. Array element order and message content-part order are never sorted or grouped.
+Binary, base64 image, and image data-URL bytes are never copied into diagnostics; an
+omission marker retains encoding, MIME when known, byte length, and digest. Capture is
+observational only and cannot change provider request bytes, ordering, or prompt-cache
+behavior.
+
+Canonical message and request-fragment IDs are SHA-256 digests of their stable JSON
+values. The main-process payload store verifies those content addresses on write, read,
+and fork copy; structural codecs reject unknown fragment/message references and duplicate
+execution ownership before the payload can reach the renderer.
 
 The transport `onResponse` boundary records when HTTP headers arrive, the status code,
 and the first non-empty provider request ID from a fixed allowlist. Arbitrary response
@@ -392,9 +408,13 @@ separate from the completed assistant response because headers may exist even wh
 streaming later fails. An adapter or non-HTTP transport that exposes no response hook
 provides no transport facts.
 
-An assistant `message_end` closes the latest open Provider Call with its normalized
-response, real usage, stop reason, error details, and receive time. A failed or retried
-call may legitimately have no response. Terminalization canonicalizes the complete
+An assistant `message_end` closes the latest open Provider Call with its provider-neutral
+normalized assistant message, real usage, stop reason, error details, and receive time.
+A failed or retried
+call may legitimately have no response. Every canonical tool Item accepted after that
+response and before the next Provider Call is linked to that call in acceptance order;
+the response itself remains the provider fact rather than a duplicate Item projection.
+Terminalization canonicalizes the complete
 versioned diagnostics payload, writes it content-addressed under the Thread, and stores
 the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,
 not provider history and not input to future execution. Active Turns and feature Turns

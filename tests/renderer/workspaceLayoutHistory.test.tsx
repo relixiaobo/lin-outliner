@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
-  test('opens Thread Turn Details in the current pane and preserves Back navigation', () => {
+  test('opens Turn Diagnostics in the current pane and preserves Back navigation', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
       panels: [{
@@ -66,7 +66,7 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
-  test('restores a same-day Thread Turn Details view with its outliner history', () => {
+  test('restores a same-day Turn Diagnostics view with its outliner history', () => {
     const h = renderLayout({
       activePanelId: 'panel-debug',
       panels: [{
@@ -90,7 +90,7 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
-  test('global root navigation leaves active Turn Details and reuses an existing outliner pane', () => {
+  test('global root navigation leaves active Turn Diagnostics and reuses an existing outliner pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',
       panels: [
@@ -138,7 +138,7 @@ describe('useWorkspaceLayout history focus', () => {
     ]);
   });
 
-  test('global root navigation adds an outliner beside a lone Turn Details pane', () => {
+  test('global root navigation adds an outliner beside a lone Turn Diagnostics pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',
       panels: [{

@@ -297,8 +297,8 @@ const turnDiagnosticsPayload: TurnDiagnosticsPayload = {
     provider: 'openai',
     model: 'openai/gpt-5',
     api: 'openai-responses',
-    endpoint: 'https://api.openai.com/v1',
-    transport: 'auto',
+    configuredBaseUrl: 'https://api.openai.com/v1',
+    transportSelection: 'auto',
     contextWindow: 128_000,
     maxOutputTokens: 8_192,
     thinkingLevel: 'high',
@@ -309,19 +309,31 @@ const turnDiagnosticsPayload: TurnDiagnosticsPayload = {
     toolExecution: 'parallel',
     steeringMode: 'all',
   },
-  messages: [],
+  canonicalMessages: [],
+  requestFragments: [{
+    id: '12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126',
+    value: '',
+  }],
   providerCalls: [{
     index: 0,
     requestedAt: 100,
-    messageIds: [],
+    preparedContext: {
+      systemPromptFragmentId: '12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126',
+      toolNames: [],
+      messageIds: [],
+    },
     protectedFromMessageIndex: 0,
     estimatedInputTokens: 100,
     inputTokenLimit: 100_000,
     reservedOutputTokens: 8_192,
     commonPrefixMessageCount: 0,
-    requestParameters: { model: 'openai/gpt-5' },
+    request: {
+      kind: 'object',
+      fields: [{ name: 'model', representation: 'inline', value: 'openai/gpt-5' }],
+    },
     requestFingerprint: '2'.repeat(64),
     cacheBreakpoints: [],
+    executionItemIds: [],
     transportResponse: null,
     response: null,
   }],
@@ -1297,7 +1309,7 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('unknown fields: turnId');
   });
 
-  test('fails closed when Turn Details diagnostics are absent, mismatched, or malformed', () => {
+  test('fails closed when Turn Diagnostics are absent, mismatched, or malformed', () => {
     const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(turnDiagnosticsPayload)).byteLength;
     const ref = {
       id: '3'.repeat(64),
@@ -1336,14 +1348,14 @@ describe('Codex Agent Core protocol codec', () => {
 
     const [providerCall] = turnDiagnosticsPayload.providerCalls;
     expect(providerCall).toBeDefined();
-    const { requestParameters: _requestParameters, ...missingRequestParameters } = providerCall!;
+    const { request: _request, ...missingRequest } = providerCall!;
     expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
       ...response,
       diagnostics: {
         ref,
-        payload: { ...turnDiagnosticsPayload, providerCalls: [missingRequestParameters] },
+        payload: { ...turnDiagnosticsPayload, providerCalls: [missingRequest] },
       },
-    })).toThrow('requestParameters');
+    })).toThrow('request');
     expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
       ...response,
       diagnostics: {
@@ -1354,6 +1366,85 @@ describe('Codex Agent Core protocol codec', () => {
         },
       },
     })).toThrow('unknown fields: legacyRoundId');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{
+            ...providerCall,
+            request: {
+              kind: 'object',
+              fields: [{
+                name: 'input',
+                representation: 'fragments',
+                container: 'array',
+                fragmentIds: ['9'.repeat(64)],
+              }],
+            },
+          }],
+        },
+      },
+    })).toThrow('references an unknown request fragment');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{
+            ...providerCall,
+            preparedContext: {
+              ...providerCall!.preparedContext,
+              systemPromptFragmentId: '9'.repeat(64),
+            },
+          }],
+        },
+      },
+    })).toThrow('references an unknown request fragment');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{
+            ...providerCall,
+            preparedContext: {
+              ...providerCall!.preparedContext,
+              toolNames: ['unknown_tool'],
+            },
+          }],
+        },
+      },
+    })).toThrow('must match canonical tool schema order');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{
+            ...providerCall,
+            preparedContext: {
+              ...providerCall!.preparedContext,
+              messageIds: ['8'.repeat(64)],
+            },
+          }],
+        },
+      },
+    })).toThrow('references an unknown message');
+    expect(() => decodeAgentCoreResponse('thread/turn/details/read', {
+      ...response,
+      diagnostics: {
+        ref,
+        payload: {
+          ...turnDiagnosticsPayload,
+          providerCalls: [{ ...providerCall, executionItemIds: ['missing-tool-item'] }],
+        },
+      },
+    })).toThrow('must reference an executable Item in the returned Turn');
   });
 
   test('exposes only the ratified response-menu actions', () => {

@@ -300,7 +300,7 @@ publication; failure deletes the staged fork. The copied Thread therefore remain
 readable after its source is deleted. Content-addressed resource references do not
 contain a Thread path and remain unchanged in the copied Items and payloads. Every
 terminal Turn's diagnostics payload is copied under the fork's ownership with the same
-content-addressed reference before publication, so Turn Details also remains readable
+content-addressed reference before publication, so Turn Diagnostics also remains readable
 after source deletion.
 
 ## Persistence
@@ -382,7 +382,7 @@ grouped by the concept they own:
 
 - `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
   Turn/Item reads, exact full-output and context-evidence reads, and authoritative
-  Turn Details reads
+  Turn Diagnostics reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -443,7 +443,7 @@ enter Core stores. See [`agent-automations.md`](agent-automations.md).
 ## Renderer Detail Surfaces
 
 Thread Details describes the durable Thread container and its Thread-level controls.
-Turn Details is the complete diagnostic surface for one canonical Turn. It receives one
+Turn Diagnostics is the complete diagnostic surface for one canonical Turn. It receives one
 main-owned snapshot containing the same Thread, full Turn, Items, and immutable
 provider-boundary diagnostics used by execution. It does not recreate the retired
 conversation/run/round debug projection, derive history from renderer pagination, or

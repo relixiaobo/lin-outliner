@@ -103,7 +103,7 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane hosts an outliner, file-preview, or Agent Turn Details view. All tile
+A pane hosts an outliner, file-preview, or Turn Diagnostics view. All tile
 identically and share the same per-pane navigation history.
 
 Agent dock:
@@ -236,7 +236,7 @@ File preview uses the same workspace panel host and the same history stack:
 }
 ```
 
-Agent Turn Details is a workspace panel view that stores only the canonical
+Turn Diagnostics is a workspace panel view that stores only the canonical
 location needed to read the current data:
 
 ```ts
@@ -252,9 +252,9 @@ location needed to read the current data:
 }
 ```
 
-Opening Turn Details replaces the active pane's current view and pushes that view
+Opening Turn Diagnostics replaces the active pane's current view and pushes that view
 onto its Back stack; it never adds a pane. A different Turn replaces the current
-Turn Details target without adding another history entry. Back and the Details
+Turn Diagnostics target without adding another history entry. Back and the Diagnostics
 close action return to the originating view.
 
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
@@ -276,7 +276,7 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent Thread transcript, scroll, or input. A Turn Details view persists only
+- Agent Thread transcript, scroll, or input. A Turn Diagnostics view persists only
   its canonical Thread and Turn IDs, never a second transcript projection.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
@@ -843,14 +843,14 @@ The active pane is the pane that receives outline keyboard commands when focus i
 in the workspace canvas.
 
 Page-history Back/Forward (`Cmd+[` / `Cmd+]`) follows the active workspace pane's
-view history, including Turn Details and file previews. "Open the active root in
+view history, including Turn Diagnostics and file previews. "Open the active root in
 a pane" (`Cmd+M`) requires the active view to be an outliner; while another view
 is active it no-ops rather than reaching across to another pane. Untargeted navigation
 (`navigateRoot` — sidebar plain click, command palette, "go to root") targets the
 active outliner pane if there is one, else an existing outliner pane, else opens
 one; it never replaces the whole canvas. Ambient UI that merely needs "the
 outliner the user is looking at" (sidebar root highlight, drag-selection scope)
-falls back to the first outliner pane when Turn Details holds the active slot.
+falls back to the first outliner pane when Turn Diagnostics holds the active slot.
 
 ## Tiled Layout
 

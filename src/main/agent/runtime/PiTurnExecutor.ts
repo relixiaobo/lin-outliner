@@ -160,7 +160,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       priorMessages.push(...currentMessages.slice(0, -1));
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const normalizer = new PiEventNormalizer(context);
       const providerOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
       const contextTurns = [...context.historyBeforeTurn, context.turn];
       const cacheAffinity = providerCacheAffinity(context.thread.id, contextTurns);
@@ -174,6 +173,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         thinkingLevel: runtime.thinkingLevel,
         providerOptions,
       });
+      const normalizer = new PiEventNormalizer(context, (itemId) => diagnostics.captureExecutionItem(itemId));
       if (internalMemory) {
         const messages = [...priorMessages, prompt];
         const budget = planContextBudget({
@@ -183,8 +183,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           messages,
           protectedFromMessageIndex: priorMessages.length,
         });
-        diagnostics.prepareProviderContext({
-          messages: budget.messages,
+        diagnostics.prepareProviderPlan({
           protectedFromMessageIndex: priorMessages.length,
           budget,
         });
@@ -209,7 +208,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               systemPrompt,
               tools,
               prompt,
-              (prepared) => diagnostics.prepareProviderContext(prepared),
+              (prepared) => diagnostics.prepareProviderPlan(prepared),
             );
           };
       const streamSimple = this.options.streamSimple ?? piStreamSimple;
@@ -217,11 +216,14 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         model: Model<Api>,
         providerContext: Context,
         options: SimpleStreamOptions = {},
-      ) => streamSimple(
-        model,
-        providerContext,
-        { ...options, ...providerOptions },
-      );
+      ) => {
+        diagnostics.captureProviderContext(providerContext);
+        return streamSimple(
+          model,
+          providerContext,
+          { ...options, ...providerOptions },
+        );
+      };
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
           systemPrompt,
@@ -578,7 +580,10 @@ export class PiEventNormalizer {
   private readonly transientToolCallIds = new Set<string>();
   private tail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly context: TurnExecutionContext) {}
+  constructor(
+    private readonly context: TurnExecutionContext,
+    private readonly onExecutionItem?: (itemId: string) => void,
+  ) {}
 
   handle(event: AgentEvent): void {
     this.tail = this.tail.then(() => this.process(event));
@@ -692,7 +697,9 @@ export class PiEventNormalizer {
       return;
     }
     const item = startedToolItem(this.context, callId, identity, args);
-    this.toolItems.set(callId, { item: await this.context.recorder.started(item), startedAt: Date.now() });
+    const started = await this.context.recorder.started(item);
+    this.toolItems.set(callId, { item: started, startedAt: Date.now() });
+    this.onExecutionItem?.(started.id);
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {

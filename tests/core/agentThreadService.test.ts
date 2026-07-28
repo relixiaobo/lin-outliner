@@ -4929,8 +4929,8 @@ function turnDiagnosticsPayload() {
       provider: 'openai',
       model: 'test-model',
       api: 'openai-responses',
-      endpoint: 'https://api.openai.com/v1',
-      transport: 'auto',
+      configuredBaseUrl: 'https://api.openai.com/v1',
+      transportSelection: 'auto',
       contextWindow: 128_000,
       maxOutputTokens: 8_192,
       thinkingLevel: 'medium',
@@ -4941,7 +4941,8 @@ function turnDiagnosticsPayload() {
       toolExecution: 'parallel',
       steeringMode: 'all',
     },
-    messages: [],
+    canonicalMessages: [],
+    requestFragments: [],
     providerCalls: [],
   } as const;
 }

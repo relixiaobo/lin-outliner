@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { AgentEvent, AgentState } from '@earendil-works/pi-agent-core';
 import type {
   Api,
+  Context,
   Message,
   Model,
   ProviderResponse,
@@ -13,13 +14,14 @@ import type {
   JsonValue,
   TurnDiagnosticsPayload,
   TurnDiagnosticsProviderCall,
+  TurnDiagnosticsProviderRequest,
+  TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
 
-interface PreparedProviderContext {
-  readonly messages: readonly Message[];
+interface PreparedProviderPlan {
   readonly protectedFromMessageIndex: number;
   readonly budget: ContextBudgetPlan;
 }
@@ -38,42 +40,64 @@ interface TurnDiagnosticsCollectorInput {
   >;
 }
 
-interface MutableProviderCall extends Omit<TurnDiagnosticsProviderCall, 'response' | 'transportResponse'> {
+interface MutableProviderCall extends Omit<
+  TurnDiagnosticsProviderCall,
+  'executionItemIds' | 'response' | 'transportResponse'
+> {
+  executionItemIds: string[];
   transportResponse: TurnDiagnosticsProviderCall['transportResponse'];
   response: TurnDiagnosticsProviderCall['response'];
 }
 
 export class TurnDiagnosticsCollector {
-  private readonly messages = new Map<string, TurnDiagnosticsPayload['messages'][number]>();
+  private readonly canonicalMessages = new Map<string, TurnDiagnosticsPayload['canonicalMessages'][number]>();
+  private readonly requestFragments = new Map<string, TurnDiagnosticsPayload['requestFragments'][number]>();
   private readonly providerCalls: MutableProviderCall[] = [];
-  private prepared: PreparedProviderContext | null = null;
+  private preparedPlan: PreparedProviderPlan | null = null;
+  private providerContext: Context | null = null;
 
   constructor(private readonly input: TurnDiagnosticsCollectorInput) {}
 
-  prepareProviderContext(prepared: PreparedProviderContext): void {
-    this.prepared = prepared;
+  prepareProviderPlan(plan: PreparedProviderPlan): void {
+    this.preparedPlan = plan;
+  }
+
+  captureProviderContext(context: Context): void {
+    this.providerContext = context;
   }
 
   captureProviderRequest(payload: unknown): void {
-    if (!this.prepared) throw new Error('Provider request diagnostics are missing prepared canonical context.');
-    const messageIds = this.prepared.messages.map((message) => this.rememberMessage(message));
-    const previous = this.providerCalls.at(-1)?.messageIds ?? [];
+    if (!this.preparedPlan) throw new Error('Provider request diagnostics are missing the prepared context plan.');
+    if (!this.providerContext) throw new Error('Provider request diagnostics are missing the provider context.');
+    const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
+    const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
     const normalizedRequest = jsonValue(payload, true);
     this.providerCalls.push({
       index: this.providerCalls.length,
       requestedAt: Date.now(),
-      messageIds,
-      protectedFromMessageIndex: this.prepared.protectedFromMessageIndex,
-      estimatedInputTokens: this.prepared.budget.estimatedInputTokens,
-      inputTokenLimit: this.prepared.budget.inputTokenLimit,
-      reservedOutputTokens: this.prepared.budget.reservedOutputTokens,
+      preparedContext: {
+        systemPromptFragmentId: this.rememberRequestFragment(jsonValue(this.providerContext.systemPrompt, true)),
+        toolNames: (this.providerContext.tools ?? []).map((tool) => tool.name),
+        messageIds,
+      },
+      protectedFromMessageIndex: this.preparedPlan.protectedFromMessageIndex,
+      estimatedInputTokens: this.preparedPlan.budget.estimatedInputTokens,
+      inputTokenLimit: this.preparedPlan.budget.inputTokenLimit,
+      reservedOutputTokens: this.preparedPlan.budget.reservedOutputTokens,
       commonPrefixMessageCount: commonPrefixLength(previous, messageIds),
-      requestParameters: providerRequestParameters(normalizedRequest),
+      request: this.rememberProviderRequest(normalizedRequest),
       requestFingerprint: fingerprint(stableJson(normalizedRequest)),
       cacheBreakpoints: cacheBreakpointPaths(payload),
+      executionItemIds: [],
       transportResponse: null,
       response: null,
     });
+  }
+
+  captureExecutionItem(itemId: string): void {
+    const call = this.providerCalls.at(-1);
+    if (!call) return;
+    if (!call.executionItemIds.includes(itemId)) call.executionItemIds.push(itemId);
   }
 
   captureTransportResponse(response: ProviderResponse): void {
@@ -137,8 +161,8 @@ export class TurnDiagnosticsCollector {
         provider: model.provider,
         model: model.id,
         api: model.api,
-        endpoint: diagnosticEndpoint(model.baseUrl),
-        transport: 'auto',
+        configuredBaseUrl: diagnosticBaseUrl(model.baseUrl),
+        transportSelection: 'auto',
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
         thinkingLevel,
@@ -149,7 +173,8 @@ export class TurnDiagnosticsCollector {
         toolExecution: 'parallel',
         steeringMode: 'all',
       },
-      messages: [...this.messages.values()],
+      canonicalMessages: [...this.canonicalMessages.values()],
+      requestFragments: [...this.requestFragments.values()],
       providerCalls: this.providerCalls.map((call) => ({ ...call })),
     };
   }
@@ -157,13 +182,38 @@ export class TurnDiagnosticsCollector {
   private rememberMessage(message: Message): string {
     const value = jsonValue(message, true);
     const id = fingerprint(stableJson(value));
-    if (!this.messages.has(id)) {
-      this.messages.set(id, {
+    if (!this.canonicalMessages.has(id)) {
+      this.canonicalMessages.set(id, {
         id,
         estimatedTokens: estimateProviderMessageTokens(message),
         value,
       });
     }
+    return id;
+  }
+
+  private rememberProviderRequest(value: JsonValue): TurnDiagnosticsProviderRequest {
+    if (!isRecord(value)) return { kind: 'value', value };
+    const fields: TurnDiagnosticsProviderRequestField[] = [];
+    for (const [name, fieldValue] of Object.entries(value)) {
+      if (!PROVIDER_REQUEST_FRAGMENT_FIELDS.has(name)) {
+        fields.push({ name, representation: 'inline', value: fieldValue as JsonValue });
+        continue;
+      }
+      const values = Array.isArray(fieldValue) ? fieldValue : [fieldValue as JsonValue];
+      fields.push({
+        name,
+        representation: 'fragments',
+        container: Array.isArray(fieldValue) ? 'array' : 'value',
+        fragmentIds: values.map((entry) => this.rememberRequestFragment(entry as JsonValue)),
+      });
+    }
+    return { kind: 'object', fields };
+  }
+
+  private rememberRequestFragment(value: JsonValue): string {
+    const id = fingerprint(stableJson(value));
+    if (!this.requestFragments.has(id)) this.requestFragments.set(id, { id, value });
     return id;
   }
 }
@@ -186,7 +236,7 @@ function providerRequestId(headers: Readonly<Record<string, string>>): string | 
   return null;
 }
 
-function diagnosticEndpoint(value: string): string {
+function diagnosticBaseUrl(value: string): string {
   if (!value) return '';
   try {
     const endpoint = new URL(value);
@@ -222,28 +272,16 @@ function cacheBreakpointPaths(value: unknown): string[] {
   return paths;
 }
 
-const PROVIDER_MESSAGE_FIELDS = new Set(['contents', 'input', 'messages', 'prompt']);
-
-function providerRequestParameters(value: JsonValue): JsonValue {
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-    key,
-    PROVIDER_MESSAGE_FIELDS.has(key)
-      ? repeatedProviderFieldMarker(key, entry as JsonValue)
-      : entry as JsonValue,
-  ]));
-}
-
-function repeatedProviderFieldMarker(field: string, value: JsonValue): JsonValue {
-  const encoded = stableJson(value);
-  return {
-    omitted: true,
-    source: 'messageWindow',
-    field,
-    byteLength: Buffer.byteLength(encoded, 'utf8'),
-    sha256: fingerprint(encoded),
-  };
-}
+const PROVIDER_REQUEST_FRAGMENT_FIELDS = new Set([
+  'contents',
+  'input',
+  'instructions',
+  'messages',
+  'prompt',
+  'system',
+  'systemPrompt',
+  'tools',
+]);
 
 function jsonValue(value: unknown, omitImageBytes: boolean): JsonValue {
   if (value === null || typeof value === 'boolean') return value;

@@ -9,10 +9,13 @@ import {
 import type {
   JsonValue,
   ThreadItem,
+  ThreadItemOutputReference,
   ThreadTurnDetailsReadResponse,
   Turn,
   TurnDiagnosticsPayload,
   TurnDiagnosticsProviderCall,
+  TurnDiagnosticsProviderRequest,
+  TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -37,6 +40,9 @@ interface ThreadTurnDetailsPanelProps {
   readonly threadId: string;
   readonly turnId: string;
 }
+
+type TurnDetailsLabels = ReturnType<typeof useT>['agent']['turnDetails'];
+type JsonRecord = Readonly<Record<string, JsonValue>>;
 
 export function ThreadTurnDetailsPanel({
   canGoBack,
@@ -126,35 +132,25 @@ function useThreadTurnDetails(threadId: string, turnId: string) {
 
 function ThreadTurnDetailsView({ detail }: { readonly detail: ThreadTurnDetailsReadResponse }) {
   const t = useT();
-  const { diagnostics, thread, turn } = detail;
+  const callCount = detail.diagnostics?.payload.providerCalls.length ?? 0;
   return (
     <div className="thread-turn-details-body">
       <TurnDetailsSection title={t.agent.turnDetails.overview}>
-        <TurnOverview turn={turn} />
+        <TurnOverview turn={detail.turn} />
       </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.requestConstruction}>
-        <RequestConstruction detail={detail} />
-      </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.providerCalls({
-        count: diagnostics?.payload.providerCalls.length ?? 0,
-      })}>
-        {diagnostics ? (
-          <ProviderCallList payload={diagnostics.payload} />
+      <TurnDetailsSection title={t.agent.turnDetails.executionTimeline({ count: callCount })}>
+        {detail.diagnostics ? (
+          <ProviderCallTimeline
+            payload={detail.diagnostics.payload}
+            threadId={detail.thread.id}
+            turn={detail.turn}
+          />
         ) : (
           <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
         )}
       </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.canonicalItems({ count: turn.items.length })}>
-        <div className="thread-turn-details-item-list">
-          {turn.items.map((item) => (
-            <CanonicalItemRow
-              item={item}
-              key={`${turn.id}:${item.id}`}
-              threadId={thread.id}
-              turnId={turn.id}
-            />
-          ))}
-        </div>
+      <TurnDetailsSection title={t.agent.turnDetails.audit}>
+        <TurnAudit detail={detail} />
       </TurnDetailsSection>
     </div>
   );
@@ -172,10 +168,7 @@ function TurnOverview({ turn }: { readonly turn: Turn }) {
   return (
     <div className="thread-turn-details-overview">
       <dl className="thread-turn-details-fact-grid">
-        <div>
-          <dt>{t.agent.thread.status}</dt>
-          <dd>{t.agent.thread.item.status[turn.status]}</dd>
-        </div>
+        <Fact label={t.agent.thread.status} value={t.agent.thread.item.status[turn.status]} />
         <div>
           <dt>{t.agent.message.model}</dt>
           <dd>{turn.execution.model}</dd>
@@ -205,7 +198,11 @@ function TurnOverview({ turn }: { readonly turn: Turn }) {
         <div>
           <dt>{t.agent.turnDetails.outputTokens}</dt>
           <dd>{formatCompactTokens(usage.output)}</dd>
-          <small>{t.agent.message.cost}: {usage.cost ? formatUsageCost(usage.cost.total) : t.agent.message.usageUnavailable}</small>
+          <small>
+            {t.agent.message.cost}: {usage.cost
+              ? formatUsageCost(usage.cost.total)
+              : t.agent.message.usageUnavailable}
+          </small>
         </div>
       </dl>
       {turn.error ? (
@@ -243,102 +240,31 @@ function UsagePopover({ usage }: { readonly usage: Turn['execution']['usage'] })
   );
 }
 
-function RequestConstruction({ detail }: { readonly detail: ThreadTurnDetailsReadResponse }) {
-  const t = useT();
-  const { diagnostics, thread, turn } = detail;
-  const userItems = turn.items.filter((item) => item.type === 'userMessage');
-  return (
-    <div className="thread-turn-details-disclosure-stack">
-      <JsonDisclosure
-        defaultOpen
-        resetKey={turn.id}
-        title={t.agent.turnDetails.acceptedUserInput}
-        value={userItems.map((item) => ({
-          itemId: item.id,
-          acceptedAt: item.acceptedAt,
-          content: item.content,
-        }))}
-      />
-      <LazyDisclosure resetKey={turn.id} title={t.agent.turnDetails.requestIdentity} render={() => (
-        <dl className="thread-turn-details-identity-list">
-          <Identity label={t.agent.turnDetails.threadId} value={thread.id} />
-          <Identity label={t.agent.turnDetails.turnId} value={turn.id} />
-          <Identity label={t.agent.turnDetails.sessionId} value={thread.sessionId} />
-          {diagnostics ? <Identity label={t.agent.turnDetails.contextEpoch} value={diagnostics.payload.contextEpochId} /> : null}
-          {diagnostics ? <Identity label={t.agent.turnDetails.cacheAffinity} value={diagnostics.payload.cacheAffinity} /> : null}
-          <Identity label={t.agent.turnDetails.originThreadId} value={turn.provenance.originThreadId} />
-          <Identity label={t.agent.turnDetails.originTurnId} value={turn.provenance.originTurnId} />
-          <Identity label={t.agent.turnDetails.trigger} value={jsonText(turn.provenance.trigger)} />
-          {diagnostics ? <Identity label={t.agent.turnDetails.diagnosticsDigest} value={diagnostics.ref.id} /> : null}
-        </dl>
-      )} />
-      {diagnostics ? <DiagnosticsConstruction payload={diagnostics.payload} resetKey={turn.id} /> : (
-        <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
-      )}
-    </div>
-  );
-}
-
-function DiagnosticsConstruction({
+function ProviderCallTimeline({
   payload,
-  resetKey,
+  threadId,
+  turn,
 }: {
   readonly payload: TurnDiagnosticsPayload;
-  readonly resetKey: string;
+  readonly threadId: string;
+  readonly turn: Turn;
 }) {
   const t = useT();
-  return (
-    <>
-      <JsonDisclosure
-        resetKey={resetKey}
-        title={t.agent.turnDetails.effectiveConfiguration}
-        value={payload.configuration}
-      />
-      <LazyDisclosure resetKey={resetKey} title={t.agent.turnDetails.stablePrompt} render={() => (
-        payload.stablePrompt ? (
-          <div className="thread-turn-details-nested-list">
-            {payload.stablePrompt.blocks.map((block) => (
-              <TextDisclosure
-                key={`${block.layer}:${block.id}`}
-                metadata={block.fingerprint}
-                resetKey={resetKey}
-                text={block.text}
-                title={t.agent.turnDetails.promptBlock({ layer: block.layer, id: block.id })}
-              />
-            ))}
-            <JsonDisclosure
-              resetKey={resetKey}
-              title={t.agent.turnDetails.stablePromptFingerprints}
-              value={payload.stablePrompt.fingerprints}
-            />
-          </div>
-        ) : <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
-      )} />
-      <LazyDisclosure
-        resetKey={resetKey}
-        title={t.agent.turnDetails.toolSchemas({ count: payload.toolSchemas.length })}
-        render={() => (
-          <div className="thread-turn-details-nested-list">
-            {payload.toolSchemas.map((tool) => (
-              <JsonDisclosure key={tool.name} resetKey={resetKey} title={tool.name} value={tool} />
-            ))}
-          </div>
-        )}
-      />
-      <JsonDisclosure
-        resetKey={resetKey}
-        title={t.agent.turnDetails.runtimeSettings}
-        value={payload.runtime}
-      />
-    </>
+  const fragmentsById = useMemo(
+    () => new Map(payload.requestFragments.map((fragment) => [fragment.id, fragment])),
+    [payload.requestFragments],
   );
-}
-
-function ProviderCallList({ payload }: { readonly payload: TurnDiagnosticsPayload }) {
-  const t = useT();
   const messagesById = useMemo(
-    () => new Map(payload.messages.map((message) => [message.id, message])),
-    [payload.messages],
+    () => new Map(payload.canonicalMessages.map((message) => [message.id, message])),
+    [payload.canonicalMessages],
+  );
+  const toolSchemasByName = useMemo(
+    () => new Map(payload.toolSchemas.map((tool) => [tool.name, tool])),
+    [payload.toolSchemas],
+  );
+  const itemsById = useMemo(
+    () => new Map(turn.items.map((item) => [item.id, item])),
+    [turn.items],
   );
   if (payload.providerCalls.length === 0) {
     return <p className="thread-turn-details-notice">{t.agent.turnDetails.noProviderCalls}</p>;
@@ -349,8 +275,13 @@ function ProviderCallList({ payload }: { readonly payload: TurnDiagnosticsPayloa
         <ProviderCallCard
           call={call}
           defaultOpen={call.index === 0}
+          fragmentsById={fragmentsById}
+          itemsById={itemsById}
           key={call.index}
           messagesById={messagesById}
+          threadId={threadId}
+          toolSchemasByName={toolSchemasByName}
+          turnId={turn.id}
         />
       ))}
     </div>
@@ -360,20 +291,33 @@ function ProviderCallList({ payload }: { readonly payload: TurnDiagnosticsPayloa
 function ProviderCallCard({
   call,
   defaultOpen,
+  fragmentsById,
+  itemsById,
   messagesById,
+  threadId,
+  toolSchemasByName,
+  turnId,
 }: {
   readonly call: TurnDiagnosticsProviderCall;
   readonly defaultOpen: boolean;
-  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['messages'][number]>;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly itemsById: ReadonlyMap<string, ThreadItem>;
+  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
+  readonly threadId: string;
+  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
+  readonly turnId: string;
 }) {
   const t = useT();
-  const { locale } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
   const status = call.response ? providerCallStatus(call.response.stopReason) : null;
+  const executionItems = call.executionItemIds.flatMap((id) => {
+    const item = itemsById.get(id);
+    return item ? [item] : [];
+  });
   return (
     <details
       className="thread-turn-details-call"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => setOpen(isDetailsOpen(event.currentTarget))}
       open={open}
     >
       <summary className="thread-turn-details-call-head">
@@ -384,6 +328,317 @@ function ProviderCallCard({
       </summary>
       {open ? (
         <div className="thread-turn-details-call-body">
+          <TimelinePhase title={t.agent.turnDetails.request}>
+            <ProviderRequestView
+              call={call}
+              fragmentsById={fragmentsById}
+              messagesById={messagesById}
+              toolSchemasByName={toolSchemasByName}
+            />
+          </TimelinePhase>
+          <TimelinePhase title={t.agent.turnDetails.response}>
+            <ProviderResponseView call={call} />
+          </TimelinePhase>
+          <TimelinePhase title={t.agent.turnDetails.localExecution({ count: executionItems.length })}>
+            {executionItems.length > 0 ? (
+              <div className="thread-turn-details-item-list">
+                {executionItems.map((item) => (
+                  <CanonicalItemRow
+                    item={item}
+                    key={item.id}
+                    threadId={threadId}
+                    turnId={turnId}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="thread-turn-details-notice">{t.agent.turnDetails.noLocalExecution}</p>
+            )}
+          </TimelinePhase>
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function ProviderRequestView({
+  call,
+  fragmentsById,
+  messagesById,
+  toolSchemasByName,
+}: {
+  readonly call: TurnDiagnosticsProviderCall;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
+  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
+}) {
+  const t = useT();
+  return (
+    <div className="thread-turn-details-request">
+      <PreparedContextView
+        call={call}
+        fragmentsById={fragmentsById}
+        messagesById={messagesById}
+        toolSchemasByName={toolSchemasByName}
+      />
+      <RequestFieldGroup title={t.agent.turnDetails.providerPayload}>
+        <ProviderPayloadView fragmentsById={fragmentsById} request={call.request} />
+      </RequestFieldGroup>
+      <LazyDisclosure
+        resetKey={String(call.index)}
+        title={t.agent.turnDetails.rawProviderRequest}
+        render={() => <JsonCode value={materializeProviderRequest(call.request, fragmentsById)} />}
+      />
+      <LazyDisclosure
+        resetKey={String(call.index)}
+        title={t.agent.turnDetails.requestDiagnostics}
+        render={() => (
+          <>
+            <dl className="thread-turn-details-fact-grid is-compact">
+              <Fact label={t.agent.turnDetails.estimatedInputTokens} value={formatNumber(call.estimatedInputTokens)} />
+              <Fact label={t.agent.turnDetails.inputTokenLimit} value={formatNumber(call.inputTokenLimit)} />
+              <Fact label={t.agent.turnDetails.reservedOutputTokens} value={formatNumber(call.reservedOutputTokens)} />
+              <Fact label={t.agent.turnDetails.protectedBoundary} value={formatNumber(call.protectedFromMessageIndex)} />
+              <Fact label={t.agent.turnDetails.commonPrefixMessages} value={formatNumber(call.commonPrefixMessageCount)} />
+            </dl>
+            <dl className="thread-turn-details-identity-list">
+              <Identity label={t.agent.turnDetails.requestFingerprint} value={call.requestFingerprint} />
+              <Identity
+                label={t.agent.turnDetails.cacheBreakpoints}
+                value={call.cacheBreakpoints.length > 0 ? jsonText(call.cacheBreakpoints) : '-'}
+              />
+            </dl>
+          </>
+        )}
+      />
+    </div>
+  );
+}
+
+function PreparedContextView({
+  call,
+  fragmentsById,
+  messagesById,
+  toolSchemasByName,
+}: {
+  readonly call: TurnDiagnosticsProviderCall;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
+  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
+}) {
+  const t = useT();
+  const systemPrompt = fragmentsById.get(call.preparedContext.systemPromptFragmentId);
+  const tools = call.preparedContext.toolNames.flatMap((name) => {
+    const tool = toolSchemasByName.get(name);
+    return tool ? [tool] : [];
+  });
+  const messages = call.preparedContext.messageIds.flatMap((id) => {
+    const message = messagesById.get(id);
+    return message ? [message] : [];
+  });
+  return (
+    <RequestFieldGroup title={t.agent.turnDetails.preparedModelContext}>
+      {systemPrompt && typeof systemPrompt.value === 'string' ? (
+        <TextDisclosure
+          metadata={systemPrompt.id}
+          resetKey={`${call.index}:prepared-system-prompt`}
+          text={systemPrompt.value}
+          title={t.agent.turnDetails.systemInstructions}
+        />
+      ) : systemPrompt ? (
+        <JsonDisclosure
+          metadata={systemPrompt.id}
+          resetKey={`${call.index}:prepared-system-prompt`}
+          title={t.agent.turnDetails.systemInstructions}
+          value={systemPrompt.value}
+        />
+      ) : null}
+      <LazyDisclosure
+        metadata={t.agent.turnDetails.orderedValues({ count: tools.length })}
+        resetKey={`${call.index}:prepared-tools`}
+        title={t.agent.turnDetails.preparedTools({ count: tools.length })}
+        render={() => (
+          <div className="thread-turn-details-nested-list">
+            {tools.map((tool) => (
+              <JsonDisclosure key={tool.name} resetKey={String(call.index)} title={tool.name} value={tool} />
+            ))}
+          </div>
+        )}
+      />
+      <LazyDisclosure
+        defaultOpen
+        metadata={t.agent.turnDetails.orderedValues({ count: messages.length })}
+        resetKey={`${call.index}:prepared-messages`}
+        title={t.agent.turnDetails.preparedMessages({ count: messages.length })}
+        render={() => (
+          <div className="thread-turn-details-request-fragments">
+            {messages.map((message, index) => (
+              <ProviderRequestFragmentView
+                fieldName="preparedContext.messages"
+                index={index}
+                key={`${index}:${message.id}`}
+                value={message.value}
+              />
+            ))}
+          </div>
+        )}
+      />
+    </RequestFieldGroup>
+  );
+}
+
+function ProviderPayloadView({
+  fragmentsById,
+  request,
+}: {
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly request: TurnDiagnosticsProviderRequest;
+}) {
+  if (request.kind === 'value') return <SemanticValue value={request.value} />;
+  return (
+    <div className="thread-turn-details-request-fields">
+      {request.fields.map((field) => (
+        <ProviderRequestFieldView field={field} fragmentsById={fragmentsById} key={field.name} />
+      ))}
+    </div>
+  );
+}
+
+function RequestFieldGroup({ children, title }: { readonly children: ReactNode; readonly title: string }) {
+  return (
+    <section className="thread-turn-details-request-group">
+      <h5>{title}</h5>
+      <div className="thread-turn-details-request-fields">{children}</div>
+    </section>
+  );
+}
+
+function ProviderRequestFieldView({
+  field,
+  fragmentsById,
+}: {
+  readonly field: TurnDiagnosticsProviderRequestField;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+}) {
+  const t = useT();
+  const resetKey = `provider-payload:${field.name}`;
+  if (field.representation === 'inline') {
+    return isPrimitiveJson(field.value) ? (
+      <div className="thread-turn-details-inline-field">
+        <code>{field.name}</code>
+        <span>{primitiveText(field.value)}</span>
+      </div>
+    ) : (
+      <JsonDisclosure resetKey={resetKey} title={field.name} value={field.value} />
+    );
+  }
+  const fragments = field.fragmentIds.flatMap((id) => {
+    const fragment = fragmentsById.get(id);
+    return fragment ? [fragment] : [];
+  });
+  return (
+    <LazyDisclosure
+      metadata={t.agent.turnDetails.orderedValues({ count: fragments.length })}
+      resetKey={resetKey}
+      title={field.name}
+      render={() => (
+        <div className="thread-turn-details-request-fragments">
+          {fragments.map((fragment, fragmentIndex) => (
+            <ProviderRequestFragmentView
+              fieldName={field.name}
+              index={fragmentIndex}
+              key={`${fragmentIndex}:${fragment.id}`}
+              value={fragment.value}
+            />
+          ))}
+        </div>
+      )}
+    />
+  );
+}
+
+function ProviderRequestFragmentView({
+  fieldName,
+  index,
+  value,
+}: {
+  readonly fieldName: string;
+  readonly index: number;
+  readonly value: JsonValue;
+}) {
+  const t = useT();
+  const parts = orderedContentParts(value);
+  const label = semanticLabel(value, t.agent.turnDetails);
+  const preview = semanticPreview(value);
+  if (parts.length === 0) {
+    return (
+      <JsonDisclosure
+        metadata={preview}
+        resetKey={`${fieldName}:${index}`}
+        title={`[${index}] ${label}`}
+        value={value}
+      />
+    );
+  }
+  return (
+    <div className="thread-turn-details-request-message">
+      <div className="thread-turn-details-request-message-head">
+        <code>[{index}]</code>
+        <strong>{label}</strong>
+        {preview ? <span>{preview}</span> : null}
+      </div>
+      <div className="thread-turn-details-part-list">
+        {parts.map((part, partIndex) => (
+          <JsonDisclosure
+            metadata={semanticPreview(part)}
+            resetKey={`${fieldName}:${index}:${partIndex}`}
+            title={`[${partIndex}] ${semanticLabel(part, t.agent.turnDetails)}`}
+            value={part}
+            key={`${partIndex}:${jsonIdentity(part)}`}
+          />
+        ))}
+      </div>
+      <JsonDisclosure
+        resetKey={`${fieldName}:${index}:raw`}
+        title={t.agent.turnDetails.rawMessage}
+        value={value}
+      />
+    </div>
+  );
+}
+
+function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProviderCall }) {
+  const t = useT();
+  const { locale } = useI18n();
+  if (!call.response) {
+    return (
+      <>
+        <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
+        <ResponseDiagnostics call={call} locale={locale} />
+      </>
+    );
+  }
+  return (
+    <div className="thread-turn-details-response">
+      <SemanticValue value={call.response.value} />
+      <JsonDisclosure
+        resetKey={`${call.index}:response`}
+        title={t.agent.turnDetails.rawProviderResponse}
+        value={call.response.value}
+      />
+      <ResponseDiagnostics call={call} locale={locale} />
+    </div>
+  );
+}
+
+function ResponseDiagnostics({ call, locale }: { readonly call: TurnDiagnosticsProviderCall; readonly locale: string }) {
+  const t = useT();
+  return (
+    <LazyDisclosure
+      resetKey={`${call.index}:response-diagnostics`}
+      title={t.agent.turnDetails.responseDiagnostics}
+      render={() => (
+        <>
           <dl className="thread-turn-details-fact-grid is-compact">
             <Fact label={t.agent.turnDetails.requestedAt} value={formatTimestamp(call.requestedAt, locale)} />
             <Fact
@@ -436,58 +691,147 @@ function ProviderCallCard({
                 ) : null}
               </>
             ) : null}
-            <Fact label={t.agent.turnDetails.estimatedInputTokens} value={formatNumber(call.estimatedInputTokens)} />
-            <Fact label={t.agent.turnDetails.inputTokenLimit} value={formatNumber(call.inputTokenLimit)} />
-            <Fact label={t.agent.turnDetails.reservedOutputTokens} value={formatNumber(call.reservedOutputTokens)} />
-            <Fact label={t.agent.turnDetails.protectedBoundary} value={formatNumber(call.protectedFromMessageIndex)} />
-            <Fact label={t.agent.turnDetails.commonPrefixMessages} value={formatNumber(call.commonPrefixMessageCount)} />
           </dl>
           <dl className="thread-turn-details-identity-list">
-            <Identity label={t.agent.turnDetails.requestFingerprint} value={call.requestFingerprint} />
-            <Identity
-              label={t.agent.turnDetails.requestId}
-              value={call.transportResponse?.requestId ?? '-'}
-            />
-            <Identity
-              label={t.agent.turnDetails.cacheBreakpoints}
-              value={call.cacheBreakpoints.length > 0 ? jsonText(call.cacheBreakpoints) : '-'}
-            />
+            <Identity label={t.agent.turnDetails.requestId} value={call.transportResponse?.requestId ?? '-'} />
           </dl>
-          <JsonDisclosure
-            resetKey={String(call.index)}
-            title={t.agent.turnDetails.requestParameters}
-            value={call.requestParameters}
-          />
-          <LazyDisclosure
-            resetKey={String(call.index)}
-            title={t.agent.turnDetails.messageWindow({ count: call.messageIds.length })}
-            render={() => (
-              <div className="thread-turn-details-nested-list">
-                {call.messageIds.map((messageId, index) => {
-                  const message = messagesById.get(messageId);
-                  return message ? (
-                    <JsonDisclosure
-                      key={`${index}:${messageId}`}
-                      metadata={`${formatNumber(message.estimatedTokens)} tokens · ${messageId}`}
-                      resetKey={String(call.index)}
-                      title={`${index + 1}. ${messageRole(message.value)}`}
-                      value={message.value}
-                    />
-                  ) : null;
-                })}
-              </div>
-            )}
-          />
-          {call.response ? (
+        </>
+      )}
+    />
+  );
+}
+
+function SemanticValue({ value }: { readonly value: JsonValue }) {
+  const t = useT();
+  const parts = orderedContentParts(value);
+  if (parts.length === 0) return <JsonCode value={value} />;
+  return (
+    <div className="thread-turn-details-part-list">
+      {parts.map((part, index) => (
+        <JsonDisclosure
+          metadata={semanticPreview(part)}
+          resetKey={`semantic:${index}`}
+          title={`[${index}] ${semanticLabel(part, t.agent.turnDetails)}`}
+          value={part}
+          key={`${index}:${jsonIdentity(part)}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TurnAudit({ detail }: { readonly detail: ThreadTurnDetailsReadResponse }) {
+  const t = useT();
+  const { diagnostics, thread, turn } = detail;
+  const userItems = turn.items.filter((item) => item.type === 'userMessage');
+  return (
+    <div className="thread-turn-details-disclosure-stack">
+      <LazyDisclosure resetKey={turn.id} title={t.agent.turnDetails.requestIdentity} render={() => (
+        <dl className="thread-turn-details-identity-list">
+          <Identity label={t.agent.turnDetails.threadId} value={thread.id} />
+          <Identity label={t.agent.turnDetails.turnId} value={turn.id} />
+          <Identity label={t.agent.turnDetails.sessionId} value={thread.sessionId} />
+          {diagnostics ? <Identity label={t.agent.turnDetails.contextEpoch} value={diagnostics.payload.contextEpochId} /> : null}
+          {diagnostics ? <Identity label={t.agent.turnDetails.cacheAffinity} value={diagnostics.payload.cacheAffinity} /> : null}
+          <Identity label={t.agent.turnDetails.originThreadId} value={turn.provenance.originThreadId} />
+          <Identity label={t.agent.turnDetails.originTurnId} value={turn.provenance.originTurnId} />
+          <Identity label={t.agent.turnDetails.trigger} value={jsonText(turn.provenance.trigger)} />
+          {diagnostics ? <Identity label={t.agent.turnDetails.diagnosticsDigest} value={diagnostics.ref.id} /> : null}
+        </dl>
+      )} />
+      <JsonDisclosure
+        resetKey={turn.id}
+        title={t.agent.turnDetails.acceptedUserInput}
+        value={userItems.map((item) => ({
+          itemId: item.id,
+          acceptedAt: item.acceptedAt,
+          content: item.content,
+        }))}
+      />
+      {diagnostics ? <DiagnosticsAudit payload={diagnostics.payload} resetKey={turn.id} /> : (
+        <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
+      )}
+      <LazyDisclosure
+        metadata={formatNumber(turn.items.length)}
+        resetKey={turn.id}
+        title={t.agent.turnDetails.canonicalItems({ count: turn.items.length })}
+        render={() => (
+          <div className="thread-turn-details-item-list">
+            {turn.items.map((item) => (
+              <CanonicalItemRow
+                item={item}
+                key={`${turn.id}:${item.id}`}
+                threadId={thread.id}
+                turnId={turn.id}
+              />
+            ))}
+          </div>
+        )}
+      />
+    </div>
+  );
+}
+
+function DiagnosticsAudit({ payload, resetKey }: { readonly payload: TurnDiagnosticsPayload; readonly resetKey: string }) {
+  const t = useT();
+  return (
+    <>
+      <JsonDisclosure
+        resetKey={resetKey}
+        title={t.agent.turnDetails.effectiveConfiguration}
+        value={payload.configuration}
+      />
+      <LazyDisclosure resetKey={resetKey} title={t.agent.turnDetails.stablePrompt} render={() => (
+        payload.stablePrompt ? (
+          <div className="thread-turn-details-nested-list">
+            {payload.stablePrompt.blocks.map((block) => (
+              <TextDisclosure
+                key={`${block.layer}:${block.id}`}
+                metadata={block.fingerprint}
+                resetKey={resetKey}
+                text={block.text}
+                title={t.agent.turnDetails.promptBlock({ layer: block.layer, id: block.id })}
+              />
+            ))}
             <JsonDisclosure
-              resetKey={String(call.index)}
-              title={t.agent.turnDetails.assistantResponse}
-              value={call.response.value}
+              resetKey={resetKey}
+              title={t.agent.turnDetails.stablePromptFingerprints}
+              value={payload.stablePrompt.fingerprints}
             />
-          ) : <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>}
-        </div>
-      ) : null}
-    </details>
+          </div>
+        ) : <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
+      )} />
+      <LazyDisclosure
+        resetKey={resetKey}
+        title={t.agent.turnDetails.toolSchemas({ count: payload.toolSchemas.length })}
+        render={() => (
+          <div className="thread-turn-details-nested-list">
+            {payload.toolSchemas.map((tool) => (
+              <JsonDisclosure key={tool.name} resetKey={resetKey} title={tool.name} value={tool} />
+            ))}
+          </div>
+        )}
+      />
+      <JsonDisclosure resetKey={resetKey} title={t.agent.turnDetails.runtimeSettings} value={payload.runtime} />
+      <LazyDisclosure
+        metadata={formatNumber(payload.canonicalMessages.length)}
+        resetKey={resetKey}
+        title={t.agent.turnDetails.canonicalMessages}
+        render={() => (
+          <div className="thread-turn-details-nested-list">
+            {payload.canonicalMessages.map((message, index) => (
+              <JsonDisclosure
+                key={`${index}:${message.id}`}
+                metadata={`${formatNumber(message.estimatedTokens)} tokens · ${message.id}`}
+                resetKey={resetKey}
+                title={`[${index}] ${messageRole(message.value)}`}
+                value={message.value}
+              />
+            ))}
+          </div>
+        )}
+      />
+    </>
   );
 }
 
@@ -503,50 +847,66 @@ function CanonicalItemRow({
   const t = useT();
   const [open, setOpen] = useState(false);
   const [contextPayload, setContextPayload] = useState<unknown | null>(null);
-  const [contextLoading, setContextLoading] = useState(false);
-  const [contextError, setContextError] = useState<string | null>(null);
+  const [output, setOutput] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const outputRef = itemOutputReference(item);
 
   useEffect(() => {
     requestRef.current += 1;
     setOpen(false);
     setContextPayload(null);
-    setContextLoading(false);
-    setContextError(null);
+    setOutput(null);
+    setLoading(false);
+    setLoadError(null);
   }, [item.id, threadId, turnId]);
 
-  const loadContext = useCallback(async () => {
-    if (item.type !== 'contextEvidence' || contextLoading || contextPayload !== null) return;
+  const loadPayload = useCallback(async () => {
+    if (loading || contextPayload !== null || output !== null) return;
+    if (item.type !== 'contextEvidence' && !outputRef) return;
     const request = requestRef.current + 1;
     requestRef.current = request;
-    setContextLoading(true);
-    setContextError(null);
+    setLoading(true);
+    setLoadError(null);
     try {
-      const response = await api.agentCoreRequest('thread/context/read', {
-        threadId,
-        turnId,
-        itemId: item.id,
-        contextId: item.payloadRef.id,
-      });
-      if (!response.context) throw new Error(t.agent.turnDetails.contextUnavailable);
-      if (requestRef.current === request) setContextPayload(response.context.payload);
+      if (item.type === 'contextEvidence') {
+        const response = await api.agentCoreRequest('thread/context/read', {
+          threadId,
+          turnId,
+          itemId: item.id,
+          contextId: item.payloadRef.id,
+        });
+        if (!response.context) throw new Error(t.agent.turnDetails.contextUnavailable);
+        if (requestRef.current === request) setContextPayload(response.context.payload);
+      } else if (outputRef) {
+        const response = await api.agentCoreRequest('thread/item/output/read', {
+          threadId,
+          turnId,
+          itemId: item.id,
+          outputId: outputRef.id,
+        });
+        if (!response.output) throw new Error(t.agent.turnDetails.outputUnavailable);
+        if (requestRef.current === request) setOutput(response.output.text);
+      }
     } catch (caught) {
       if (requestRef.current === request) {
-        setContextError(caught instanceof Error && caught.message
+        setLoadError(caught instanceof Error && caught.message
           ? caught.message
-          : t.agent.turnDetails.contextUnavailable);
+          : t.agent.turnDetails.payloadUnavailable);
       }
     } finally {
-      if (requestRef.current === request) setContextLoading(false);
+      if (requestRef.current === request) setLoading(false);
     }
-  }, [contextLoading, contextPayload, item, t.agent.turnDetails.contextUnavailable, threadId, turnId]);
+  }, [contextPayload, item, loading, output, outputRef, t.agent.turnDetails, threadId, turnId]);
 
   return (
     <details
       className="thread-turn-details-item"
       onToggle={(event) => {
-        setOpen(event.currentTarget.open);
-        if (event.currentTarget.open) void loadContext();
+        const nextOpen = isDetailsOpen(event.currentTarget);
+        setOpen(nextOpen);
+        if (nextOpen) void loadPayload();
       }}
       open={open}
     >
@@ -559,23 +919,35 @@ function CanonicalItemRow({
       {open ? (
         <div className="thread-turn-details-row-body">
           <JsonCode value={item} />
-          {item.type === 'contextEvidence' ? (
-            <div className="thread-turn-details-context-payload">
-              {contextLoading ? <span className="is-muted">{t.agent.turnDetails.loadingContext}</span> : null}
-              {contextError ? (
-                <div className="thread-turn-details-context-error">
-                  <span>{contextError}</span>
-                  <Button onClick={() => void loadContext()} size="sm" variant="ghost">
-                    {t.agent.turnDetails.retry}
-                  </Button>
-                </div>
-              ) : null}
-              {contextPayload ? <JsonCode value={contextPayload} /> : null}
+          {loading ? <span className="is-muted">{t.agent.turnDetails.loadingPayload}</span> : null}
+          {loadError ? (
+            <div className="thread-turn-details-context-error">
+              <span>{loadError}</span>
+              <Button onClick={() => void loadPayload()} size="sm" variant="ghost">
+                {t.agent.turnDetails.retry}
+              </Button>
             </div>
+          ) : null}
+          {contextPayload ? <JsonCode value={contextPayload} /> : null}
+          {output !== null && outputRef ? (
+            <ReadOnlyCodeBlock
+              className="thread-turn-details-code-block"
+              code={output}
+              language={outputRef.mimeType === 'application/json' ? 'json' : 'text'}
+            />
           ) : null}
         </div>
       ) : null}
     </details>
+  );
+}
+
+function TimelinePhase({ children, title }: { readonly children: ReactNode; readonly title: string }) {
+  return (
+    <section className="thread-turn-details-phase">
+      <h4>{title}</h4>
+      {children}
+    </section>
   );
 }
 
@@ -606,7 +978,7 @@ function LazyDisclosure({
   return (
     <details
       className="thread-turn-details-disclosure"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => setOpen(isDetailsOpen(event.currentTarget))}
       open={open}
     >
       <summary>
@@ -674,12 +1046,129 @@ function JsonCode({ value }: { readonly value: unknown }) {
   );
 }
 
+function materializeProviderRequest(
+  request: TurnDiagnosticsProviderRequest,
+  fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>,
+): JsonValue {
+  if (request.kind === 'value') return request.value;
+  const entries: Array<readonly [string, JsonValue]> = request.fields.map((field) => {
+    if (field.representation === 'inline') return [field.name, field.value] as const;
+    const values = field.fragmentIds.map((id) => fragmentsById.get(id)?.value ?? null);
+    return [field.name, field.container === 'array' ? values : values[0] ?? null] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
+function orderedContentParts(value: JsonValue): readonly JsonValue[] {
+  const record = jsonRecord(value);
+  if (!record) return [];
+  if (Array.isArray(record.content)) return record.content;
+  if (Array.isArray(record.parts)) return record.parts;
+  if (record.content !== undefined && record.content !== null) return [record.content];
+  return [];
+}
+
+function semanticLabel(value: JsonValue, labels: TurnDetailsLabels): string {
+  const text = semanticText(value);
+  const reminderKind = text ? systemReminderKind(text) : null;
+  if (reminderKind) return labels.systemReminder({ kind: reminderKind });
+  if (text?.startsWith('[Attachment image:') || text?.startsWith('[Attachment:')) return labels.attachment;
+  const record = jsonRecord(value);
+  if (!record) return typeof value === 'string' ? labels.textPart : labels.value;
+  const type = stringProperty(record, 'type');
+  if (type && /^(?:input_|output_)?text$/i.test(type)) return labels.textPart;
+  if (type && /image/i.test(type)) return labels.imagePart;
+  if (type && /tool[_-]?(?:use|call)|function_call/i.test(type)) return labels.toolCallPart;
+  if (type && /tool[_-]?result|function_call_output/i.test(type)) return labels.toolResultPart;
+  const role = stringProperty(record, 'role');
+  if (role) return role;
+  const name = stringProperty(record, 'name');
+  if (name) return name;
+  return type ?? labels.value;
+}
+
+function semanticPreview(value: JsonValue): string {
+  const text = semanticText(value);
+  if (text) {
+    const reminderKind = systemReminderKind(text);
+    if (reminderKind) return firstReminderBodyLine(text);
+    return compactPreview(text);
+  }
+  const record = jsonRecord(value);
+  if (record) {
+    const name = stringProperty(record, 'name');
+    if (name) return name;
+  }
+  return compactPreview(jsonText(value));
+}
+
+function semanticText(value: JsonValue): string | null {
+  if (typeof value === 'string') return value;
+  const record = jsonRecord(value);
+  if (!record) return null;
+  for (const key of ['text', 'input_text', 'output_text']) {
+    const text = stringProperty(record, key);
+    if (text) return text;
+  }
+  return typeof record.content === 'string' ? record.content : null;
+}
+
+function systemReminderKind(text: string): string | null {
+  if (!text.includes('<system-reminder>')) return null;
+  return /<system-reminder>\s*<context-evidence\s+kind="([^"]+)"\s+authority="(?:application|untrusted)"\s+purpose="(?:instruction|observation)">/.exec(text)?.[1] ?? null;
+}
+
+function firstReminderBodyLine(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const first = lines.find((line) => !line.startsWith('<') && !line.endsWith('>'));
+  return first ? compactPreview(first) : '';
+}
+
+function compactPreview(value: string): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
+
+function jsonRecord(value: JsonValue): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+}
+
+function stringProperty(record: JsonRecord, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value ? value : null;
+}
+
+function isPrimitiveJson(value: JsonValue): boolean {
+  return value === null || typeof value !== 'object';
+}
+
+function primitiveText(value: JsonValue): string {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function isDetailsOpen(details: HTMLDetailsElement): boolean {
+  return typeof details.open === 'boolean' ? details.open : details.hasAttribute('open');
+}
+
+function jsonIdentity(value: JsonValue): string {
+  const record = jsonRecord(value);
+  return record
+    ? stringProperty(record, 'id') ?? stringProperty(record, 'type') ?? semanticPreview(value)
+    : semanticPreview(value);
+}
+
 function Identity({ label, value }: { readonly label: string; readonly value: string }) {
   return <div><dt>{label}</dt><dd><code>{value}</code></dd></div>;
 }
 
 function Fact({ label, value }: { readonly label: string; readonly value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
+}
+
+function itemOutputReference(item: ThreadItem): ThreadItemOutputReference | null {
+  return 'outputRef' in item ? item.outputRef : null;
 }
 
 function isToolItem(item: ThreadItem): boolean {
@@ -714,9 +1203,7 @@ function itemSummary(item: ThreadItem): string {
 }
 
 function messageRole(value: JsonValue): string {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'message';
-  const role = (value as Readonly<Record<string, JsonValue>>).role;
-  return typeof role === 'string' ? role : 'message';
+  return jsonRecord(value) ? stringProperty(jsonRecord(value)!, 'role') ?? 'message' : 'message';
 }
 
 function providerCallStatus(

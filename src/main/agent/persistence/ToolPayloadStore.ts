@@ -13,6 +13,7 @@ import {
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   type ContextPayloadKind,
+  type JsonValue,
   type ThreadContextPayload,
   type ThreadContextPayloadReference,
   type ThreadId,
@@ -558,6 +559,7 @@ export class ToolPayloadStore {
     payload: unknown,
   ): Promise<TurnDiagnosticsPayloadReference> {
     const decoded = decodeTurnDiagnosticsPayload(payload);
+    validateTurnDiagnosticsPoolDigests(decoded);
     const encoded = encodeTurnDiagnosticsPayload(decoded);
     const bytes = Buffer.from(encoded, 'utf8');
     validateTurnDiagnosticsPayloadByteLength(bytes.byteLength);
@@ -606,7 +608,10 @@ export class ToolPayloadStore {
     if (!directory) return null;
     const path = join(directory, turnDiagnosticsFileName(ref));
     const bytes = await readVerifiedPayloadBytes(path, ref);
-    return bytes ? decodeTurnDiagnosticsPayloadJson(bytes.toString('utf8')) : null;
+    if (!bytes) return null;
+    const payload = decodeTurnDiagnosticsPayloadJson(bytes.toString('utf8'));
+    validateTurnDiagnosticsPoolDigests(payload);
+    return payload;
   }
 
   async copyTurnDiagnosticsToThread(
@@ -620,7 +625,7 @@ export class ToolPayloadStore {
     const sourcePath = join(sourceDirectory, turnDiagnosticsFileName(ref));
     const sourceBytes = await readVerifiedPayloadBytes(sourcePath, ref);
     if (!sourceBytes) return false;
-    decodeTurnDiagnosticsPayloadJson(sourceBytes.toString('utf8'));
+    validateTurnDiagnosticsPoolDigests(decodeTurnDiagnosticsPayloadJson(sourceBytes.toString('utf8')));
     return this.withResourceLock(targetThreadId, async () => {
       const targetDirectory = await this.ensureManagedDirectory(targetThreadId, TURN_DIAGNOSTICS_DIR);
       const targetPath = join(targetDirectory, turnDiagnosticsFileName(ref));
@@ -1184,6 +1189,32 @@ function validateTurnDiagnosticsPayloadByteLength(byteLength: number): void {
   if (byteLength > MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES) {
     throw new Error('Turn diagnostics exceed the managed payload budget.');
   }
+}
+
+function validateTurnDiagnosticsPoolDigests(payload: TurnDiagnosticsPayload): void {
+  for (const message of payload.canonicalMessages) {
+    if (message.id !== diagnosticsValueDigest(message.value)) {
+      throw new Error('Canonical diagnostics message digest does not match its value.');
+    }
+  }
+  for (const fragment of payload.requestFragments) {
+    if (fragment.id !== diagnosticsValueDigest(fragment.value)) {
+      throw new Error('Provider request fragment digest does not match its value.');
+    }
+  }
+}
+
+function diagnosticsValueDigest(value: JsonValue): string {
+  return createHash('sha256').update(stableJsonValue(value), 'utf8').digest('hex');
+}
+
+function stableJsonValue(value: JsonValue): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJsonValue).join(',')}]`;
+  const record = value as Readonly<Record<string, JsonValue>>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${stableJsonValue(record[key])}`
+  )).join(',')}}`;
 }
 
 function validateTextPayloadReference(ref: ThreadItemOutputReference): void {

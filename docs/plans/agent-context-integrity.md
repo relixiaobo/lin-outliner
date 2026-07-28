@@ -282,7 +282,7 @@ Renderer IPC may author only `untrusted/observation`. Main owns every applicatio
 classification. A payload may contain both application metadata and untrusted document
 values, but the two become separate blocks at projection time.
 
-Context evidence is hidden from the ordinary message transcript. Turn Details and
+Context evidence is hidden from the ordinary message transcript. Turn Diagnostics and
 exports expose its bounded summary, kind, source, hash, and availability for audit;
 full untrusted payload text is loaded only through an explicit details action. Reset and
 compaction Items retain dedicated visible boundary rows.
@@ -711,7 +711,7 @@ images, context evidence, assistant text, reasoning summaries, complete tool pai
 resource references, and compaction/reset semantics. Store it as one
 `inheritedContext` payload in the child before the child's task `userMessage`.
 Inherited history is model context but not duplicated as visible child transcript rows.
-Child Turn Details expose the parent Thread ID, exact source cursor, selected Turn count,
+Child Turn Diagnostics expose the parent Thread ID, exact source cursor, selected Turn count,
 and payload hash.
 
 Copy every referenced managed payload into the child's ownership using the existing
@@ -742,30 +742,41 @@ adds no tokens; a Role created during an old conversation is appended at the nex
 admission without changing prior history. The `spawn_agent` tool still validates Role
 identity and capability ceilings; the catalog only makes accepted values discoverable.
 
-### Turn diagnostics and Details
+### Turn Diagnostics
 
-Replace the partial post-rewrite Details view with one complete Turn-scoped audit
-surface. `PiTurnExecutor` records provider-boundary facts rather than asking the
-renderer to reconstruct them: effective configuration, layered stable prompt and
-fingerprints, canonical-sorted tool schemas, resolved provider settings, context epoch,
-cache affinity, each planned message window and budget, provider-specific parameters,
-request fingerprint, cache breakpoints, HTTP status and request identity, response,
+Replace the partial post-rewrite diagnostics view with one complete Turn-scoped audit
+surface. `PiTurnExecutor` records two authoritative request boundaries rather than asking
+the renderer to reconstruct either one. The pre-adapter boundary records the actual
+provider `Context` passed to the stream: exact system instructions, canonical-sorted tool
+definitions, and the ordered message/content-part window after projection, budgeting,
+and compaction. The post-adapter boundary records the final provider payload after local
+compatibility, reasoning-summary, and cache-breakpoint policies. It also records the
+effective configuration, layered stable prompt and fingerprints, resolved provider
+settings, context epoch, cache affinity, planned budget, request fingerprint,
+cache-breakpoint paths, HTTP status and request identity, normalized assistant response,
 usage, and stop/error facts. Transport diagnostics retain only an allowlisted provider
 request ID rather than arbitrary response headers.
 
-Repeated normalized messages form one content-fingerprint pool shared by all Provider
-Calls in the Turn. Provider payload message fields become verifiable digest/length
-markers instead of a second full message copy. Binary and image bytes likewise become
-typed omission markers. This preserves the complete inspectable construction while
-keeping diagnostics bounded and leaves the outbound request untouched, so the cache
-topology above remains authoritative.
+Repeated prepared messages form one content-fingerprint pool shared by all Provider
+Calls in the Turn. The complete image-sanitized post-adapter request remains
+reconstructable: its top-level field insertion order is retained as a payload
+serialization fact, never presented as model context order, while repetition-heavy
+system, instruction, tool, prompt, and message fields reference an ordered
+content-addressed fragment pool. Binary and image bytes become typed omission markers.
+This preserves every request value and array/content-part position while keeping
+repeated stable prefixes bounded. Diagnostics remain observational and leave outbound
+bytes and cache topology untouched.
 
 Terminal diagnostics are a versioned content-addressed Thread payload referenced from
 `Turn.execution`, copied on fork, and pruned on rollback/startup/failure when no
 reachable Turn references them. One `thread/turn/details/read` call is the read
-authority and fails closed on missing, corrupt, or mismatched bytes. Turn Details
-renders Overview, Request Construction, Provider Calls, and Canonical Items; context
-payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
+authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
+renders Overview, then an ordered Provider Call timeline in which each call owns its
+Request, Response, and Local Execution, followed by Audit. Request renders the recorded
+pre-adapter context in semantic order (`system instructions -> tool definitions ->
+messages`) before the provider payload and request metadata. Provider payload object-key
+order is never numbered or used to imply model precedence. There is no separate context
+construction account. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
 run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
 readers.
 
@@ -921,7 +932,7 @@ choices together:
 
 - canonical context evidence rather than restoration of runtime state;
 - Neva as the root persona and Tenon as the product name;
-- context evidence hidden from ordinary transcript but auditable in Details/export;
+- context evidence hidden from ordinary transcript but auditable in Turn Diagnostics/export;
 - `/clear` as a visible, non-destructive context epoch boundary;
 - `/compact` as non-destructive summary context with exact source cursors;
 - inline Skills as instruction-only, with execution overrides restricted to isolation;
@@ -984,8 +995,9 @@ choices together:
       post-commit renderer/extension observer failure cannot produce a false rejection.
       Deleting or corrupting the client-id sidecar before restart still deduplicates from
       the canonical user Item and rebuilds the index.
-- [ ] **AC-19:** Turn Details tests prove one authoritative read exposes stable prompt,
-      tool schemas, file/context reminders, every Provider Call, parameters, normalized
-      message windows, responses, cache facts, and canonical Items. Missing/corrupt or
+- [ ] **AC-19:** Turn Diagnostics tests prove one authoritative read exposes every ordered
+      Provider Call Request, Response, and Local Execution; user/file/context reminder
+      content remains in exact request order; and Audit exposes stable prompt, tool
+      schemas, cache facts, prepared messages, and canonical Items. Missing/corrupt or
       mismatched diagnostics fail closed; rollback, fork/source deletion, and startup
       pruning preserve the Thread-ownership contract without a legacy reader.

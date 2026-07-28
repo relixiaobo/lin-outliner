@@ -15,6 +15,7 @@ import { ThreadTurnDetailsPanel } from '../../src/renderer/agent/components/Thre
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const mounted: Array<() => void> = [];
+const FULL_TOOL_OUTPUT = '/workspace\nfull diagnostic output';
 const GLOBAL_KEYS = [
   'document',
   'window',
@@ -36,13 +37,16 @@ afterEach(() => {
 });
 
 describe('ThreadTurnDetailsPanel', () => {
-  test('renders one authoritative Turn snapshot with complete request construction and Provider Calls', async () => {
+  test('renders each Provider Call in wire order with request, response, local execution, and audit evidence', async () => {
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const detail = detailsResponse('thread-a', 'turn-a', 'fresh-a');
     const rendered = renderPanel(async (method, input) => {
       requests.push({ method, input });
       if (method === 'thread/turn/details/read') return detail;
       if (method === 'thread/context/read') return contextResponse(contextRef('c'), 'context-payload');
+      if (method === 'thread/item/output/read') {
+        return { output: { ref: toolOutputRef(), text: FULL_TOOL_OUTPUT } };
+      }
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -51,46 +55,89 @@ describe('ThreadTurnDetailsPanel', () => {
 
     expect(requests.map((request) => request.method)).toEqual(['thread/turn/details/read']);
     const text = rendered.document.body.textContent;
-    expect(text).toContain('Turn Details');
+    expect(text).toContain('Turn Diagnostics');
     expect(text).toContain('Overview');
-    expect(text).toContain('Request Construction');
-    expect(text).toContain('Provider Calls (2)');
-    expect(text).toContain('Canonical Items (2)');
+    expect(text).toContain('Execution Timeline (2)');
+    expect(text).toContain('Audit');
+    expect(text).toContain('Canonical Items (3)');
     expect(text).toContain('Input tokens');
     expect(text).toContain('Accepted user input');
     expect(text).toContain('Effective configuration');
-    expect(text).toContain('Stable system prompt');
-    expect(text).toContain('Tool schemas (1)');
-    expect(text).toContain('Provider runtime');
+    expect(text).toContain('Stable prompt source blocks');
+    expect(text).toContain('Canonical tool schemas (1)');
+    expect(text).toContain('Resolved runtime configuration');
     expect(text).toContain('Provider Call 1');
     expect(text).toContain('Provider Call 2');
-    expect(text).toContain('Provider request parameters');
-    expect(text).toContain('Normalized message window (1)');
-    expect(text).toContain('Assistant response');
-    expect(text).toContain('HTTP headers received at');
-    expect(text).toContain('Time to HTTP headers');
-    expect(text).toContain('Assistant response completed at');
-    expect(text).toContain('Total call duration');
-    expect(text).toContain('HTTP status');
-    expect(text).toContain('Provider request ID');
-    expect(text).toContain('request-1');
-    expect(text).toContain('Stop reason');
-    expect(text).toContain('Reported cache read');
-    expect(text).toContain('Reported cache write');
-    expect(text).toContain('Reported reasoning tokens');
-    expect(text).toContain('Calculated cost');
+    expect(text).toContain('Request');
+    expect(text).toContain('Response');
+    expect(text).toContain('Local Execution (1)');
+    expect(text).toContain('Prepared model context');
+    expect(text).toContain('System instructions');
+    expect(text).toContain('Tool definitions (1)');
+    expect(text).toContain('Messages (1)');
+    expect(text).toContain('Provider payload');
+    expect(text).toContain('[0] Text part');
+    expect(text).toContain('[1] System reminder · referencedResources');
+    expect(text).toContain('[2] Attachment');
+    expect(text).toContain('/workspace/report.pdf');
+    expect(text).toContain('Done');
 
-    await openDetailsContaining(rendered.document, 'Request identity');
+    const requestGroups = [...rendered.document.querySelectorAll('.thread-turn-details-request-group')];
+    expect(requestGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
+      'Prepared model context',
+      'Provider payload',
+    ]);
+    const providerFieldList = requestGroups[1]!.querySelector(
+      ':scope > .thread-turn-details-request-fields > .thread-turn-details-request-fields',
+    );
+    expect(providerFieldList).not.toBeNull();
+    const providerFields = [...providerFieldList!.children].map((element) => element.textContent?.trim());
+    expect(providerFields).toEqual([
+      'modeltest-model',
+      expect.stringContaining('instructions'),
+      expect.stringContaining('input'),
+      expect.stringContaining('tools'),
+    ]);
+    expect(text.indexOf('System instructions')).toBeLessThan(text.indexOf('Tool definitions (1)'));
+    expect(text.indexOf('Tool definitions (1)')).toBeLessThan(text.indexOf('Messages (1)'));
+    expect(text.indexOf('Messages (1)')).toBeLessThan(text.indexOf('Provider payload'));
+    expect(text).not.toContain('0. model');
+
+    await openDetailsContaining(rendered.document, 'Response diagnostics');
+    const responseText = rendered.document.body.textContent;
+    expect(responseText).toContain('HTTP headers received at');
+    expect(responseText).toContain('Time to HTTP headers');
+    expect(responseText).toContain('Assistant response completed at');
+    expect(responseText).toContain('Total call duration');
+    expect(responseText).toContain('HTTP status');
+    expect(responseText).toContain('Provider request ID');
+    expect(responseText).toContain('request-1');
+    expect(responseText).toContain('Stop reason');
+    expect(responseText).toContain('Reported cache read');
+    expect(responseText).toContain('Reported cache write');
+    expect(responseText).toContain('Reported reasoning tokens');
+    expect(responseText).toContain('Calculated cost');
+    await openDetailsContaining(rendered.document, 'Provider Call 2');
+    expect(rendered.document.body.textContent).toContain('Local Execution (0)');
+    expect(rendered.document.body.textContent).toContain('No local execution was recorded for this call.');
+
+    await openExecutionItem(rendered.document, 'commandExecution');
+    await flush();
+    expect(requests.at(-1)).toMatchObject({
+      method: 'thread/item/output/read',
+      input: { threadId: 'thread-a', turnId: 'turn-a', itemId: 'tool-item' },
+    });
+    expect(rendered.document.body.textContent).toContain(FULL_TOOL_OUTPUT);
+
+    await openDetailsContaining(rendered.document, 'Turn identity');
     expect(rendered.document.body.textContent).toContain('Context epochinitial');
     expect(rendered.document.body.textContent).toContain(`Cache affinity${'a'.repeat(64)}`);
     expect(rendered.document.body.textContent).toContain(`Diagnostics payload digest${'d'.repeat(64)}`);
-    await openDetailsContaining(rendered.document, 'Stable system prompt');
+    await openDetailsContaining(rendered.document, 'Stable prompt source blocks');
     await openDetailsContaining(rendered.document, 'L0 · framework');
     expect(rendered.document.body.textContent).toContain('Canonical stable prompt');
     expect(rendered.document.body.textContent).toContain('Stable prompt fingerprints');
-    await openDetailsContaining(rendered.document, 'Provider Call 1');
-    await openDetailsContaining(rendered.document, 'Normalized message window (1)');
-    await openDetailsContaining(rendered.document, '1. user');
+    await openDetailsContaining(rendered.document, 'Provider payload JSON');
     expect(rendered.document.body.textContent).toContain('<system-reminder>');
     expect(rendered.document.body.textContent).toContain('/workspace/report.pdf');
 
@@ -115,11 +162,11 @@ describe('ThreadTurnDetailsPanel', () => {
     await flush();
     rendered.render('thread-b', 'turn-b');
     await flush();
-    expect(rendered.document.body.textContent).toContain('Request turn-b');
+    expect(rendered.document.body.textContent).toContain('fresh-b');
 
     stale.resolve(detailsResponse('thread-a', 'turn-a', 'stale-a'));
     await flush();
-    expect(rendered.document.body.textContent).toContain('Request turn-b');
+    expect(rendered.document.body.textContent).toContain('fresh-b');
     expect(rendered.document.body.textContent).not.toContain('stale-a');
   });
 
@@ -247,6 +294,7 @@ async function openDetailsContaining(document: Document, text: string): Promise<
     throw new Error(`Missing disclosure: ${text}. Available: ${summaries}`);
   }
   await act(async () => {
+    details.setAttribute('open', '');
     details.open = true;
     details.dispatchEvent(new Event('toggle'));
     await Promise.resolve();
@@ -254,10 +302,24 @@ async function openDetailsContaining(document: Document, text: string): Promise<
 }
 
 async function openCanonicalContextItem(document: Document): Promise<void> {
+  await openDetailsContaining(document, 'Canonical Items');
   const row = [...document.querySelectorAll<HTMLDetailsElement>('.thread-turn-details-item')]
     .find((candidate) => candidate.textContent?.includes('contextEvidence'));
   if (!row) throw new Error('Missing canonical context Item');
   await act(async () => {
+    row.setAttribute('open', '');
+    row.open = true;
+    row.dispatchEvent(new Event('toggle'));
+    await Promise.resolve();
+  });
+}
+
+async function openExecutionItem(document: Document, itemType: string): Promise<void> {
+  const row = [...document.querySelectorAll<HTMLDetailsElement>('.thread-turn-details-item')]
+    .find((candidate) => candidate.textContent?.includes(itemType));
+  if (!row) throw new Error(`Missing execution Item: ${itemType}`);
+  await act(async () => {
+    row.setAttribute('open', '');
     row.open = true;
     row.dispatchEvent(new Event('toggle'));
     await Promise.resolve();
@@ -305,13 +367,29 @@ function detailsResponse(threadId: string, turnId: string, marker: string): Thre
 function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
   const userMessage = {
     role: 'user',
-    content: [{
-      type: 'text',
-      text: `${marker}\n<system-reminder>Referenced file: /workspace/report.pdf</system-reminder>`,
-    }],
+    content: [
+      { type: 'text', text: marker },
+      {
+        type: 'text',
+        text: [
+          '<system-reminder>',
+          '<context-evidence kind="referencedResources" authority="application" purpose="observation">',
+          'readable_path=/workspace/report.pdf',
+          '</context-evidence>',
+          '</system-reminder>',
+        ].join('\n'),
+      },
+      {
+        type: 'text',
+        text: '[Attachment: report.pdf, application/pdf, 42 bytes]\nReadable path: /workspace/report.pdf',
+      },
+    ],
     timestamp: 1,
   } as const;
   const messageId = 'e'.repeat(64);
+  const inputFragmentId = '6'.repeat(64);
+  const instructionFragmentId = '7'.repeat(64);
+  const toolFragmentId = '8'.repeat(64);
   return {
     schemaVersion: 1,
     contextEpochId: 'initial',
@@ -344,8 +422,8 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
       provider: 'openai',
       model: 'test-model',
       api: 'openai-responses',
-      endpoint: 'https://api.openai.com/v1',
-      transport: 'auto',
+      configuredBaseUrl: 'https://api.openai.com/v1',
+      transportSelection: 'auto',
       contextWindow: 128_000,
       maxOutputTokens: 8_192,
       thinkingLevel: 'medium',
@@ -356,20 +434,51 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
       toolExecution: 'parallel',
       steeringMode: 'all',
     },
-    messages: [{ id: messageId, estimatedTokens: 20, value: userMessage }],
+    canonicalMessages: [{ id: messageId, estimatedTokens: 20, value: userMessage }],
+    requestFragments: [
+      { id: inputFragmentId, value: userMessage },
+      { id: instructionFragmentId, value: 'Canonical stable prompt' },
+      {
+        id: toolFragmentId,
+        value: {
+          type: 'function',
+          name: 'file_read',
+          description: 'Read a file',
+          parameters: { type: 'object', properties: { path: { type: 'string' } } },
+        },
+      },
+    ],
     providerCalls: [
       {
         index: 0,
         requestedAt: 10,
-        messageIds: [messageId],
+        preparedContext: {
+          systemPromptFragmentId: instructionFragmentId,
+          toolNames: ['file_read'],
+          messageIds: [messageId],
+        },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 120,
         inputTokenLimit: 100_000,
         reservedOutputTokens: 8_192,
         commonPrefixMessageCount: 0,
-        requestParameters: { model: 'test-model', input: { omitted: true, source: 'messageWindow' } },
+        request: {
+          kind: 'object',
+          fields: [
+            { name: 'model', representation: 'inline', value: 'test-model' },
+            {
+              name: 'instructions',
+              representation: 'fragments',
+              container: 'value',
+              fragmentIds: [instructionFragmentId],
+            },
+            { name: 'input', representation: 'fragments', container: 'array', fragmentIds: [inputFragmentId] },
+            { name: 'tools', representation: 'fragments', container: 'array', fragmentIds: [toolFragmentId] },
+          ],
+        },
         requestFingerprint: '5'.repeat(64),
         cacheBreakpoints: ['$.system[0].cache_control'],
+        executionItemIds: ['tool-item'],
         transportResponse: { headersReceivedAt: 12, httpStatus: 200, requestId: 'request-1' },
         response: {
           receivedAt: 20,
@@ -382,15 +491,33 @@ function diagnosticsPayload(marker: string): TurnDiagnosticsPayload {
       {
         index: 1,
         requestedAt: 30,
-        messageIds: [messageId],
+        preparedContext: {
+          systemPromptFragmentId: instructionFragmentId,
+          toolNames: ['file_read'],
+          messageIds: [messageId],
+        },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 130,
         inputTokenLimit: 100_000,
         reservedOutputTokens: 8_192,
         commonPrefixMessageCount: 1,
-        requestParameters: { model: 'test-model', input: { omitted: true, source: 'messageWindow' } },
+        request: {
+          kind: 'object',
+          fields: [
+            { name: 'model', representation: 'inline', value: 'test-model' },
+            {
+              name: 'instructions',
+              representation: 'fragments',
+              container: 'value',
+              fragmentIds: [instructionFragmentId],
+            },
+            { name: 'input', representation: 'fragments', container: 'array', fragmentIds: [inputFragmentId] },
+            { name: 'tools', representation: 'fragments', container: 'array', fragmentIds: [toolFragmentId] },
+          ],
+        },
         requestFingerprint: '6'.repeat(64),
         cacheBreakpoints: [],
+        executionItemIds: [],
         transportResponse: null,
         response: null,
       },
@@ -458,6 +585,20 @@ function turn(threadId: string, turnId: string, ref: ThreadContextPayloadReferen
         resourceRefs: [],
         outputRefs: [],
       },
+      {
+        type: 'commandExecution',
+        id: 'tool-item',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: 'tool-item' },
+        status: 'completed',
+        outputRef: toolOutputRef(),
+        command: 'pwd',
+        cwd: '/workspace',
+        processId: 'process-1',
+        commandActions: [],
+        aggregatedOutput: '/workspace',
+        exitCode: 0,
+        durationMs: 10,
+      },
     ],
     itemsView: 'full',
     provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
@@ -483,6 +624,15 @@ function contextRef(seed: string): ThreadContextPayloadReference {
     byteLength: 1,
     schemaVersion: 1,
     kind: 'additionalContext',
+  };
+}
+
+function toolOutputRef() {
+  return {
+    id: '9'.repeat(64),
+    mimeType: 'text/plain' as const,
+    byteLength: new TextEncoder().encode(FULL_TOOL_OUTPUT).byteLength,
+    summary: 'Full command output',
   };
 }
 

@@ -1947,6 +1947,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const userItem = turn.items.find((item) => item.type === 'userMessage');
           if (!userItem) return clone({ thread, turn, diagnostics: null }) as T;
           const messageId = 'e'.repeat(64);
+          const instructionFragmentId = '6'.repeat(64);
+          const toolFragmentId = '7'.repeat(64);
+          const providerMessage = {
+            role: 'user',
+            content: [
+              ...userItem.content,
+              {
+                type: 'text',
+                text: [
+                  '<system-reminder>',
+                  '<context-evidence kind="turnEnvironment" authority="application" purpose="observation">',
+                  'working_directory=/workspace',
+                  '</context-evidence>',
+                  '</system-reminder>',
+                ].join('\n'),
+              },
+            ],
+            timestamp: userItem.acceptedAt,
+          };
+          const providerTool = {
+            type: 'function',
+            name: 'node_read',
+            description: 'Read a Node',
+            parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+          };
           const diagnostics = {
             schemaVersion: 1,
             contextEpochId: 'initial',
@@ -1984,8 +2009,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               provider: turn.execution.modelProvider,
               model: turn.execution.model,
               api: 'openai-responses',
-              endpoint: 'https://api.openai.com/v1',
-              transport: 'auto',
+              configuredBaseUrl: 'https://api.openai.com/v1',
+              transportSelection: 'auto',
               contextWindow: 128_000,
               maxOutputTokens: 8_192,
               thinkingLevel: turn.execution.reasoningEffort,
@@ -1996,26 +2021,56 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               toolExecution: 'parallel',
               steeringMode: 'all',
             },
-            messages: [{
+            canonicalMessages: [{
               id: messageId,
               estimatedTokens: Math.max(1, Math.ceil(JSON.stringify(userItem).length / 4)),
-              value: { role: 'user', content: userItem.content, timestamp: userItem.acceptedAt },
+              value: providerMessage,
             }],
+            requestFragments: [
+              { id: instructionFragmentId, value: 'Canonical mock system prompt.' },
+              { id: messageId, value: providerMessage },
+              { id: toolFragmentId, value: providerTool },
+            ],
             providerCalls: [{
               index: 0,
               requestedAt: turn.startedAt,
-              messageIds: [messageId],
+              preparedContext: {
+                systemPromptFragmentId: instructionFragmentId,
+                toolNames: ['node_read'],
+                messageIds: [messageId],
+              },
               protectedFromMessageIndex: 0,
               estimatedInputTokens: turn.execution.usage.input,
               inputTokenLimit: 100_000,
               reservedOutputTokens: 8_192,
               commonPrefixMessageCount: 0,
-              requestParameters: {
-                model: turn.execution.model,
-                input: { omitted: true, source: 'messageWindow', field: 'input' },
+              request: {
+                kind: 'object',
+                fields: [
+                  { name: 'model', representation: 'inline', value: turn.execution.model },
+                  {
+                    name: 'instructions',
+                    representation: 'fragments',
+                    container: 'value',
+                    fragmentIds: [instructionFragmentId],
+                  },
+                  {
+                    name: 'input',
+                    representation: 'fragments',
+                    container: 'array',
+                    fragmentIds: [messageId],
+                  },
+                  {
+                    name: 'tools',
+                    representation: 'fragments',
+                    container: 'array',
+                    fragmentIds: [toolFragmentId],
+                  },
+                ],
               },
               requestFingerprint: '5'.repeat(64),
               cacheBreakpoints: [],
+              executionItemIds: [],
               transportResponse: {
                 headersReceivedAt: turn.startedAt,
                 httpStatus: 200,

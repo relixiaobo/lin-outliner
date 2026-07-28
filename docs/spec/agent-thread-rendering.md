@@ -66,11 +66,11 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   child Thread
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Turn Details, with no separate Memory Item or disclosure
+  in the process and Turn Diagnostics, with no separate Memory Item or disclosure
 - context evidence stays hidden from the ordinary transcript; `contextReset` and
   `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
   at their exact canonical positions. A completed standalone `/clear` or `/compact`
-  feature Turn exposes Turn Details from that boundary and does not synthesize an empty
+  feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
 A completed Turn with a final answer and known duration folds its process Items
@@ -152,11 +152,14 @@ duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card containing timestamp, provider, model, reasoning effort,
 and the complete token/cost usage breakdown. The card is anchored in a portal
 and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens Turn Details in the active workspace
+Details from the native message menu, opens Turn Diagnostics in the active workspace
 pane.
 
-Turn Details is the complete diagnostic view for one canonical Turn. Its four
-sections are Overview, Request Construction, Provider Calls, and Canonical Items.
+Turn Diagnostics is the complete diagnostic view for one canonical Turn. Its sections
+are Overview, Execution Timeline, and Audit. There is no independent Context Construction
+section: user input, attachments, stable instructions, system reminders, Skill/Role/view/
+compaction evidence, tool definitions, and provider options appear at their recorded
+boundary in each outbound Request.
 Overview reads model, timing, status, Item count, input/output/cache token usage,
 cost, and any terminal error code/message/detail from the immutable Turn. `Input tokens`
 means `usage.input`; cache reads and writes remain separate facts and are never relabeled
@@ -170,40 +173,51 @@ facts. A Turn without a diagnostics reference explicitly reports that request
 diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
 not match the Turn fails closed instead of appearing absent.
 
-Request Construction exposes the accepted user Items, canonical Thread/Turn/Session,
-provenance and trigger identities, context epoch, cache affinity, effective
-configuration, L0/L1/L2 stable-prompt blocks and fingerprints, canonical-sorted tool
-schemas, and resolved provider runtime settings including endpoint and transport.
-Provider Calls lists every provider invocation observable at the post-adapter send
-boundary in order. Wrapper-level retries create another call; retries hidden inside a
-provider SDK remain part of that SDK invocation. Each call distinguishes request time,
+Execution Timeline lists every provider invocation observable at the provider stream and
+post-adapter send boundaries in order. Each call renders Request, Response, then Local Execution. Wrapper-level
+retries create another call; retries hidden inside a provider SDK remain part of that SDK
+invocation. Request first renders the recorded Prepared Model Context in its semantic
+order: System Instructions, Tool Definitions, then Messages. It then renders the
+post-adapter Provider Payload. Payload fields preserve top-level insertion order only as
+a serialization fact; they receive no synthetic numeric context order. `messages`,
+`input`, `contents`, and equivalent sequence fields preserve element order and every
+message's content-part order. The renderer may add presentation labels such as attachment
+or system reminder, but never derives authority, reorders, merges, or substitutes the
+recorded value. The complete image-sanitized provider payload is available as JSON from
+the same call.
+
+Each call distinguishes request time,
 HTTP-headers time and latency,
 and assistant-response completion time and total duration. It exposes an HTTP status and
 allowlisted provider request ID when available, but never arbitrary response headers. It
 also exposes the protected message boundary, token budget, common-prefix count, request
-fingerprint, cache-breakpoint paths, provider parameters, exact normalized message
-window, and assistant response. Provider-reported input/output/cache/reasoning usage and
+fingerprint, cache-breakpoint paths, complete provider request, and assistant response.
+Provider-reported input/output/cache/reasoning usage and
 stop reason, plus locally calculated cost and normalized error details, are typed call
 facts rather than renderer inferences. The
 call summary derives completed, failed, or
 interrupted from the response stop reason rather than treating every response as success.
-Repeated message windows use the diagnostics message fingerprint pool; provider request
-parameters replace their repeated wire-message field with a digest/length marker. Image
-bytes are never returned to the renderer: binary/base64/data-URL content is represented
-by an omission marker containing its byte length and SHA-256.
+Repetition-heavy request fields use the diagnostics fragment pool without losing a value
+or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
+content is represented by an omission marker containing its byte length and SHA-256.
 
-Canonical Items is exhaustive, including context evidence, reset, and compaction
-Items. Large prompt blocks, schemas, provider messages, responses, and Item JSON mount
+Audit exposes accepted user records, canonical Thread/Turn/Session and provenance
+identities, context epoch, cache affinity, effective configuration, L0/L1/L2 prompt
+blocks and fingerprints, canonical tool schemas, the resolved runtime, the prepared
+message pool, and exhaustive Canonical Items including context evidence, reset,
+and compaction Items. These facts explain or verify a request; they do not compete with
+the post-adapter Request as a second account of what was sent. Large prompt blocks,
+schemas, provider messages, responses, and Item JSON mount
 only while their disclosure is open. Expanding an evidence Item issues one exact
 `(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
 payload; it never receives a canonical payload path or gains digest-only read authority.
 Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
-Opening Details pushes the current view onto the pane's Back stack and never creates a
-split. Opening another Turn while Turn Details is current replaces only the target,
+Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
+split. Opening another Turn while Turn Diagnostics is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
-ID. Turn Details and diagnostics must show the same Thread, Turn, and Item
+ID. Turn Diagnostics must show the same Thread, Turn, and Item
 identities as the transport.
 
 Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.

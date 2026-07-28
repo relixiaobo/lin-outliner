@@ -165,7 +165,7 @@ export function App() {
     preparePanelCount,
   });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
-  // history, including Turn Details and file previews.
+  // history, including Turn Diagnostics and file previews.
   const pageHistoryPanel = activeWorkspacePanel;
 
   const {

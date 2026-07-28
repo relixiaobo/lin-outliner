@@ -22,7 +22,7 @@ const model = {
 } as Model<Api>;
 
 describe('Turn diagnostics', () => {
-  test('records stable construction, pooled message windows, provider parameters, and responses', () => {
+  test('records reconstructable ordered requests, pooled prefixes, execution Items, and responses', () => {
     const imageBytes = Buffer.from('diagnostic image');
     const firstMessage: UserMessage = {
       role: 'user',
@@ -94,6 +94,7 @@ describe('Turn diagnostics', () => {
       type: 'message_end',
       message: assistantMessage('First response'),
     } as AgentEvent);
+    collector.captureExecutionItem('tool-item-1');
 
     prepare(collector, [firstMessage, secondMessage], 1, 160);
     collector.captureProviderRequest({
@@ -108,14 +109,14 @@ describe('Turn diagnostics', () => {
     expect(payload.runtime).toMatchObject({
       provider: 'openai',
       model: 'test-model',
-      endpoint: 'https://example.test/v1',
-      transport: 'auto',
+      configuredBaseUrl: 'https://example.test/v1',
+      transportSelection: 'auto',
       contextWindow: 128_000,
       maxOutputTokens: 8_192,
       cacheRetention: 'short',
     });
-    expect(payload.messages).toHaveLength(2);
-    expect(payload.messages[0]?.value).toMatchObject({
+    expect(payload.canonicalMessages).toHaveLength(2);
+    expect(payload.canonicalMessages[0]?.value).toMatchObject({
       content: [
         { type: 'text', text: 'Inspect this image.' },
         {
@@ -129,6 +130,7 @@ describe('Turn diagnostics', () => {
         },
       ],
     });
+    expect(payload.requestFragments).toHaveLength(4);
     expect(payload.providerCalls).toHaveLength(2);
     expect(payload.providerCalls[0]).toMatchObject({
       protectedFromMessageIndex: 0,
@@ -136,18 +138,7 @@ describe('Turn diagnostics', () => {
       inputTokenLimit: 100_000,
       reservedOutputTokens: 8_192,
       commonPrefixMessageCount: 0,
-      requestParameters: {
-        model: 'test-model',
-        input: { omitted: true, source: 'messageWindow', field: 'input' },
-        temperature: 0.2,
-        image_url: {
-          omitted: true,
-          encoding: 'data-url',
-          mimeType: 'image/png',
-          byteLength: imageBytes.byteLength,
-          sha256: digest(imageBytes),
-        },
-      },
+      executionItemIds: ['tool-item-1'],
       cacheBreakpoints: ['$.system[0].cache_control'],
       transportResponse: {
         httpStatus: 202,
@@ -160,17 +151,76 @@ describe('Turn diagnostics', () => {
         value: { role: 'assistant', content: [{ type: 'text', text: 'First response' }] },
       },
     });
+    expect(payload.providerCalls[0]?.request.kind).toBe('object');
+    expect(payload.providerCalls[0]?.request.kind === 'object'
+      ? payload.providerCalls[0].request.fields.map((field) => field.name)
+      : []).toEqual(['model', 'input', 'temperature', 'image_url', 'system']);
+    expect(materializeRequest(payload, 0)).toMatchObject({
+      model: 'test-model',
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Inspect this image.' },
+          {
+            type: 'image',
+            data: {
+              omitted: true,
+              encoding: 'base64',
+              byteLength: imageBytes.byteLength,
+              sha256: digest(imageBytes),
+            },
+          },
+        ],
+      }],
+      temperature: 0.2,
+      image_url: {
+        omitted: true,
+        encoding: 'data-url',
+        mimeType: 'image/png',
+        byteLength: imageBytes.byteLength,
+        sha256: digest(imageBytes),
+      },
+      system: [{ text: 'Base', cache_control: { type: 'ephemeral' } }],
+    });
     expect(payload.providerCalls[0]?.requestFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.providerCalls[1]).toMatchObject({
       protectedFromMessageIndex: 1,
       estimatedInputTokens: 160,
       commonPrefixMessageCount: 1,
+      executionItemIds: [],
       transportResponse: null,
       response: null,
     });
+    const firstInputId = requestFragmentIds(payload, 0, 'input')[0];
+    const secondInputIds = requestFragmentIds(payload, 1, 'input');
+    expect(secondInputIds).toEqual([firstInputId, expect.any(String)]);
     expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
   });
 });
+
+function materializeRequest(payload: ReturnType<TurnDiagnosticsCollector['payload']>, callIndex: number) {
+  const request = payload.providerCalls[callIndex]?.request;
+  if (!request) throw new Error(`Missing Provider Call ${callIndex}`);
+  if (request.kind === 'value') return request.value;
+  const fragments = new Map(payload.requestFragments.map((fragment) => [fragment.id, fragment.value]));
+  return Object.fromEntries(request.fields.map((field) => {
+    if (field.representation === 'inline') return [field.name, field.value];
+    const values = field.fragmentIds.map((id) => fragments.get(id));
+    return [field.name, field.container === 'array' ? values : values[0]];
+  }));
+}
+
+function requestFragmentIds(
+  payload: ReturnType<TurnDiagnosticsCollector['payload']>,
+  callIndex: number,
+  name: string,
+): readonly string[] {
+  const request = payload.providerCalls[callIndex]?.request;
+  if (!request || request.kind !== 'object') throw new Error(`Missing Provider Call ${callIndex}`);
+  const field = request.fields.find((candidate) => candidate.name === name);
+  if (!field || field.representation !== 'fragments') throw new Error(`Missing request field ${name}`);
+  return field.fragmentIds;
+}
 
 function prepare(
   collector: TurnDiagnosticsCollector,
@@ -178,8 +228,7 @@ function prepare(
   protectedFromMessageIndex: number,
   estimatedInputTokens: number,
 ): void {
-  collector.prepareProviderContext({
-    messages,
+  collector.prepareProviderPlan({
     protectedFromMessageIndex,
     budget: {
       messages,
@@ -187,6 +236,11 @@ function prepare(
       inputTokenLimit: 100_000,
       reservedOutputTokens: 8_192,
     },
+  });
+  collector.captureProviderContext({
+    systemPrompt: 'Base\n\nCapabilities\n\nIdentity',
+    tools: [tool('alpha'), tool('zeta')],
+    messages: [...messages],
   });
 }
 

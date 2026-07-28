@@ -1450,6 +1450,18 @@ function decodeThreadTurnDetailsReadResponse(
     'thread/turn/details/read response.diagnostics.ref',
   );
   const payload = decodeTurnDiagnosticsPayload(diagnostics.payload);
+  const turnItemsById = new Map(turn.items.map((item) => [item.id, item]));
+  payload.providerCalls.forEach((call, callIndex) => {
+    call.executionItemIds.forEach((itemId, itemIndex) => {
+      const item = turnItemsById.get(itemId);
+      if (!item || executionStatusOf(item) === null) {
+        fail(
+          `thread/turn/details/read response.diagnostics.payload.providerCalls[${callIndex}].executionItemIds[${itemIndex}]`,
+          'must reference an executable Item in the returned Turn',
+        );
+      }
+    });
+  });
   const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(payload)).byteLength;
   if (byteLength !== ref.byteLength) {
     fail('thread/turn/details/read response.diagnostics.payload', 'byte length must match the diagnostics reference');
@@ -2420,7 +2432,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
   const record = recordValue(value, 'turnDiagnostics');
   exactKeys(record, [
     'schemaVersion', 'contextEpochId', 'cacheAffinity', 'configuration', 'stablePrompt',
-    'toolSchemas', 'runtime', 'messages', 'providerCalls',
+    'toolSchemas', 'runtime', 'canonicalMessages', 'requestFragments', 'providerCalls',
   ], 'turnDiagnostics');
   if (record.schemaVersion !== 1) fail('turnDiagnostics.schemaVersion', 'expected schema version 1');
   const configuration = recordValue(record.configuration, 'turnDiagnostics.configuration');
@@ -2433,23 +2445,40 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     : decodeTurnDiagnosticsStablePrompt(record.stablePrompt);
   const runtime = recordValue(record.runtime, 'turnDiagnostics.runtime');
   exactKeys(runtime, [
-    'provider', 'model', 'api', 'endpoint', 'transport', 'contextWindow', 'maxOutputTokens', 'thinkingLevel',
+    'provider', 'model', 'api', 'configuredBaseUrl', 'transportSelection', 'contextWindow', 'maxOutputTokens', 'thinkingLevel',
     'timeoutMs', 'maxRetries', 'maxRetryDelayMs', 'cacheRetention', 'toolExecution',
     'steeringMode',
   ], 'turnDiagnostics.runtime');
-  const messages = arrayValue(record.messages, 'turnDiagnostics.messages').map((entry, index) => {
-    const message = recordValue(entry, `turnDiagnostics.messages[${index}]`);
-    exactKeys(message, ['id', 'estimatedTokens', 'value'], `turnDiagnostics.messages[${index}]`);
+  const canonicalMessages = arrayValue(record.canonicalMessages, 'turnDiagnostics.canonicalMessages').map((entry, index) => {
+    const message = recordValue(entry, `turnDiagnostics.canonicalMessages[${index}]`);
+    exactKeys(message, ['id', 'estimatedTokens', 'value'], `turnDiagnostics.canonicalMessages[${index}]`);
     return {
-      id: sha256(message.id, `turnDiagnostics.messages[${index}].id`),
+      id: sha256(message.id, `turnDiagnostics.canonicalMessages[${index}].id`),
       estimatedTokens: nonNegativeInteger(
         message.estimatedTokens,
-        `turnDiagnostics.messages[${index}].estimatedTokens`,
+        `turnDiagnostics.canonicalMessages[${index}].estimatedTokens`,
       ),
-      value: jsonValue(message.value, `turnDiagnostics.messages[${index}].value`),
+      value: jsonValue(message.value, `turnDiagnostics.canonicalMessages[${index}].value`),
     };
   });
-  requireUnique(messages.map((message) => message.id), 'turnDiagnostics.messages', 'message ids');
+  requireUnique(
+    canonicalMessages.map((message) => message.id),
+    'turnDiagnostics.canonicalMessages',
+    'message ids',
+  );
+  const requestFragments = arrayValue(record.requestFragments, 'turnDiagnostics.requestFragments').map((entry, index) => {
+    const fragment = recordValue(entry, `turnDiagnostics.requestFragments[${index}]`);
+    exactKeys(fragment, ['id', 'value'], `turnDiagnostics.requestFragments[${index}]`);
+    return {
+      id: sha256(fragment.id, `turnDiagnostics.requestFragments[${index}].id`),
+      value: jsonValue(fragment.value, `turnDiagnostics.requestFragments[${index}].value`),
+    };
+  });
+  requireUnique(
+    requestFragments.map((fragment) => fragment.id),
+    'turnDiagnostics.requestFragments',
+    'fragment ids',
+  );
   const toolSchemas = arrayValue(record.toolSchemas, 'turnDiagnostics.toolSchemas').map((entry, index) => {
     const tool = recordValue(entry, `turnDiagnostics.toolSchemas[${index}]`);
     exactKeys(tool, ['name', 'description', 'parameters'], `turnDiagnostics.toolSchemas[${index}]`);
@@ -2466,19 +2495,82 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       fail(`turnDiagnostics.toolSchemas[${index}].name`, 'tool schemas must use canonical name order');
     }
   });
-  const messageIds = new Set(messages.map((message) => message.id));
+  const messageIds = new Set(canonicalMessages.map((message) => message.id));
+  const fragmentsById = new Map(requestFragments.map((fragment) => [fragment.id, fragment.value]));
+  const fragmentIds = new Set(requestFragments.map((fragment) => fragment.id));
+  const canonicalToolNames = toolSchemas.map((tool) => tool.name);
   const providerCalls = arrayValue(record.providerCalls, 'turnDiagnostics.providerCalls').map((entry, index) => {
     const call = recordValue(entry, `turnDiagnostics.providerCalls[${index}]`);
     exactKeys(call, [
-      'index', 'requestedAt', 'messageIds', 'protectedFromMessageIndex',
+      'index', 'requestedAt', 'preparedContext', 'protectedFromMessageIndex',
       'estimatedInputTokens', 'inputTokenLimit', 'reservedOutputTokens',
-      'commonPrefixMessageCount', 'requestParameters', 'requestFingerprint',
-      'cacheBreakpoints', 'transportResponse', 'response',
+      'commonPrefixMessageCount', 'request', 'requestFingerprint',
+      'cacheBreakpoints', 'executionItemIds', 'transportResponse', 'response',
     ], `turnDiagnostics.providerCalls[${index}]`);
-    const callMessageIds = stringArray(call.messageIds, `turnDiagnostics.providerCalls[${index}].messageIds`);
-    if (callMessageIds.some((id) => !messageIds.has(id))) {
-      fail(`turnDiagnostics.providerCalls[${index}].messageIds`, 'references an unknown message');
+    const preparedContext = recordValue(
+      call.preparedContext,
+      `turnDiagnostics.providerCalls[${index}].preparedContext`,
+    );
+    exactKeys(
+      preparedContext,
+      ['systemPromptFragmentId', 'toolNames', 'messageIds'],
+      `turnDiagnostics.providerCalls[${index}].preparedContext`,
+    );
+    const systemPromptFragmentId = sha256(
+      preparedContext.systemPromptFragmentId,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+    );
+    if (!fragmentIds.has(systemPromptFragmentId)) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+        'references an unknown request fragment',
+      );
     }
+    if (typeof fragmentsById.get(systemPromptFragmentId) !== 'string') {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+        'must reference a string system prompt fragment',
+      );
+    }
+    const callToolNames = stringArray(
+      preparedContext.toolNames,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+    );
+    requireUnique(
+      callToolNames,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+      'tool names',
+    );
+    if (
+      callToolNames.length !== canonicalToolNames.length
+      || callToolNames.some((name, toolIndex) => name !== canonicalToolNames[toolIndex])
+    ) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+        'must match canonical tool schema order',
+      );
+    }
+    const callMessageIds = stringArray(
+      preparedContext.messageIds,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.messageIds`,
+    );
+    if (callMessageIds.some((id) => !messageIds.has(id))) {
+      fail(`turnDiagnostics.providerCalls[${index}].preparedContext.messageIds`, 'references an unknown message');
+    }
+    const request = decodeTurnDiagnosticsProviderRequest(
+      call.request,
+      fragmentIds,
+      `turnDiagnostics.providerCalls[${index}].request`,
+    );
+    const executionItemIds = stringArray(
+      call.executionItemIds,
+      `turnDiagnostics.providerCalls[${index}].executionItemIds`,
+    );
+    requireUnique(
+      executionItemIds,
+      `turnDiagnostics.providerCalls[${index}].executionItemIds`,
+      'Item ids',
+    );
     const response = call.response === null
       ? null
       : decodeTurnDiagnosticsProviderResponse(
@@ -2508,7 +2600,11 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     return {
       index: nonNegativeInteger(call.index, `turnDiagnostics.providerCalls[${index}].index`),
       requestedAt: nonNegativeNumber(call.requestedAt, `turnDiagnostics.providerCalls[${index}].requestedAt`),
-      messageIds: callMessageIds,
+      preparedContext: {
+        systemPromptFragmentId,
+        toolNames: callToolNames,
+        messageIds: callMessageIds,
+      },
       protectedFromMessageIndex,
       estimatedInputTokens: nonNegativeInteger(
         call.estimatedInputTokens,
@@ -2520,10 +2616,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
         `turnDiagnostics.providerCalls[${index}].reservedOutputTokens`,
       ),
       commonPrefixMessageCount,
-      requestParameters: jsonValue(
-        call.requestParameters,
-        `turnDiagnostics.providerCalls[${index}].requestParameters`,
-      ),
+      request,
       requestFingerprint: sha256(
         call.requestFingerprint,
         `turnDiagnostics.providerCalls[${index}].requestFingerprint`,
@@ -2532,25 +2625,26 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
         call.cacheBreakpoints,
         `turnDiagnostics.providerCalls[${index}].cacheBreakpoints`,
       ),
+      executionItemIds,
       transportResponse,
       response,
     };
   });
   providerCalls.forEach((call, index) => {
     if (call.index !== index) fail(`turnDiagnostics.providerCalls[${index}].index`, 'must match array order');
-    const previousIds = providerCalls[index - 1]?.messageIds ?? [];
+    const previousIds = providerCalls[index - 1]?.preparedContext.messageIds ?? [];
     let expectedCommonPrefix = 0;
-    const limit = Math.min(previousIds.length, call.messageIds.length);
+    const limit = Math.min(previousIds.length, call.preparedContext.messageIds.length);
     while (
       expectedCommonPrefix < limit
-      && previousIds[expectedCommonPrefix] === call.messageIds[expectedCommonPrefix]
+      && previousIds[expectedCommonPrefix] === call.preparedContext.messageIds[expectedCommonPrefix]
     ) {
       expectedCommonPrefix += 1;
     }
     if (call.commonPrefixMessageCount !== expectedCommonPrefix) {
       fail(
         `turnDiagnostics.providerCalls[${index}].commonPrefixMessageCount`,
-        'must match the preceding normalized message window',
+        'must match the preceding prepared message window',
       );
     }
     if (call.response && call.response.receivedAt < call.requestedAt) {
@@ -2573,6 +2667,11 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       );
     }
   });
+  requireUnique(
+    providerCalls.flatMap((call) => call.executionItemIds),
+    'turnDiagnostics.providerCalls',
+    'execution Item ids across calls',
+  );
   return deepFreeze({
     schemaVersion: 1,
     contextEpochId: stringValue(record.contextEpochId, 'turnDiagnostics.contextEpochId'),
@@ -2600,11 +2699,15 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       provider: stringValue(runtime.provider, 'turnDiagnostics.runtime.provider'),
       model: stringValue(runtime.model, 'turnDiagnostics.runtime.model'),
       api: stringValue(runtime.api, 'turnDiagnostics.runtime.api'),
-      endpoint: stringValue(runtime.endpoint, 'turnDiagnostics.runtime.endpoint', true),
-      transport: enumValue(
-        runtime.transport,
+      configuredBaseUrl: stringValue(
+        runtime.configuredBaseUrl,
+        'turnDiagnostics.runtime.configuredBaseUrl',
+        true,
+      ),
+      transportSelection: enumValue(
+        runtime.transportSelection,
         ['sse', 'websocket', 'websocket-cached', 'auto'],
-        'turnDiagnostics.runtime.transport',
+        'turnDiagnostics.runtime.transportSelection',
       ),
       contextWindow: positiveInteger(runtime.contextWindow, 'turnDiagnostics.runtime.contextWindow'),
       maxOutputTokens: positiveInteger(runtime.maxOutputTokens, 'turnDiagnostics.runtime.maxOutputTokens'),
@@ -2623,9 +2726,51 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       toolExecution: enumValue(runtime.toolExecution, ['parallel'], 'turnDiagnostics.runtime.toolExecution'),
       steeringMode: enumValue(runtime.steeringMode, ['all'], 'turnDiagnostics.runtime.steeringMode'),
     },
-    messages,
+    canonicalMessages,
+    requestFragments,
     providerCalls,
   });
+}
+
+function decodeTurnDiagnosticsProviderRequest(
+  value: unknown,
+  knownFragmentIds: ReadonlySet<string>,
+  path: string,
+): TurnDiagnosticsPayload['providerCalls'][number]['request'] {
+  const record = recordValue(value, path);
+  const kind = enumValue(record.kind, ['object', 'value'], `${path}.kind`);
+  if (kind === 'value') {
+    exactKeys(record, ['kind', 'value'], path);
+    return { kind, value: jsonValue(record.value, `${path}.value`) };
+  }
+  exactKeys(record, ['kind', 'fields'], path);
+  const fields = arrayValue(record.fields, `${path}.fields`).map((entry, index) => {
+    const fieldPath = `${path}.fields[${index}]`;
+    const field = recordValue(entry, fieldPath);
+    const representation = enumValue(
+      field.representation,
+      ['inline', 'fragments'],
+      `${fieldPath}.representation`,
+    );
+    const name = stringValue(field.name, `${fieldPath}.name`);
+    if (representation === 'inline') {
+      exactKeys(field, ['name', 'representation', 'value'], fieldPath);
+      return { name, representation, value: jsonValue(field.value, `${fieldPath}.value`) };
+    }
+    exactKeys(field, ['name', 'representation', 'container', 'fragmentIds'], fieldPath);
+    const requestFragmentIds = stringArray(field.fragmentIds, `${fieldPath}.fragmentIds`);
+    if (requestFragmentIds.some((id) => !knownFragmentIds.has(id))) {
+      fail(`${fieldPath}.fragmentIds`, 'references an unknown request fragment');
+    }
+    return {
+      name,
+      representation,
+      container: enumValue(field.container, ['array', 'value'], `${fieldPath}.container`),
+      fragmentIds: requestFragmentIds,
+    };
+  });
+  requireUnique(fields.map((field) => field.name), `${path}.fields`, 'field names');
+  return { kind, fields };
 }
 
 export function encodeTurnDiagnosticsPayload(value: TurnDiagnosticsPayload): string {

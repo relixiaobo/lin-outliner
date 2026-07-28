@@ -52,8 +52,8 @@ function turnDiagnosticsPayload(contextEpochId = 'initial') {
       provider: 'openai',
       model: 'test-model',
       api: 'openai-responses',
-      endpoint: 'https://api.openai.com/v1',
-      transport: 'auto',
+      configuredBaseUrl: 'https://api.openai.com/v1',
+      transportSelection: 'auto',
       contextWindow: 128_000,
       maxOutputTokens: 8_192,
       thinkingLevel: 'medium',
@@ -64,7 +64,8 @@ function turnDiagnosticsPayload(contextEpochId = 'initial') {
       toolExecution: 'parallel',
       steeringMode: 'all',
     },
-    messages: [],
+    canonicalMessages: [],
+    requestFragments: [],
     providerCalls: [],
   } as const;
 }
@@ -246,6 +247,23 @@ describe('Agent tool payload store', () => {
     expect(await store.readTurnDiagnostics(targetThreadId, retained)).toEqual(retainedPayload);
     expect(await store.readTurnDiagnostics(targetThreadId, secondOrphan)).toBeNull();
     expect(await store.readTurnDiagnostics(targetThreadId, orphan)).toBeNull();
+  });
+
+  test('rejects diagnostics pools whose content addresses do not match their values', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const payload = turnDiagnosticsPayload();
+
+    await expect(store.writeTurnDiagnostics(threadId, {
+      ...payload,
+      canonicalMessages: [{ id: 'b'.repeat(64), estimatedTokens: 1, value: { role: 'user' } }],
+    })).rejects.toThrow('message digest does not match');
+    await expect(store.writeTurnDiagnostics(threadId, {
+      ...payload,
+      requestFragments: [{ id: 'c'.repeat(64), value: { role: 'user' } }],
+    })).rejects.toThrow('fragment digest does not match');
   });
 
   test('rejects invalid or corrupt context payloads and prunes orphans', async () => {
