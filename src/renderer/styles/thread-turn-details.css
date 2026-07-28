@@ -14,10 +14,9 @@
 .thread-turn-details-row-body,
 .thread-turn-details-phase,
 .thread-turn-details-request,
-.thread-turn-details-response,
-.thread-turn-details-request-groups,
-.thread-turn-details-request-group,
-.thread-turn-details-request-fields,
+.thread-turn-details-result,
+.thread-turn-details-flow-group,
+.thread-turn-details-flow-fields,
 .thread-turn-details-request-fragments,
 .thread-turn-details-request-message,
 .thread-turn-details-part-list,
@@ -77,6 +76,10 @@
 
 .thread-turn-details-fact-grid > div {
   min-width: 0;
+}
+
+.thread-turn-details-model-fact {
+  grid-column: span 2;
 }
 
 .thread-turn-details-fact-grid dt {
@@ -308,27 +311,27 @@
 }
 
 .thread-turn-details-request,
-.thread-turn-details-response,
-.thread-turn-details-request-groups,
-.thread-turn-details-request-group,
-.thread-turn-details-request-fields,
+.thread-turn-details-result,
+.thread-turn-details-flow-group,
+.thread-turn-details-flow-fields,
 .thread-turn-details-request-fragments,
 .thread-turn-details-request-message,
 .thread-turn-details-part-list {
   gap: var(--space-1);
 }
 
-.thread-turn-details-request-groups,
-.thread-turn-details-request-group {
+.thread-turn-details-flow-group {
   gap: var(--space-2);
 }
 
-.thread-turn-details-request-group + .thread-turn-details-request-group {
+.thread-turn-details-flow-group + .thread-turn-details-flow-group,
+.thread-turn-details-flow-group + .thread-turn-details-disclosure,
+.thread-turn-details-disclosure + .thread-turn-details-flow-group {
   border-top: 1px solid var(--separator);
   padding-top: var(--space-3);
 }
 
-.thread-turn-details-request-group > h5 {
+.thread-turn-details-flow-group > h5 {
   margin: 0;
   color: var(--text-soft);
   font-size: var(--font-ui-xs);

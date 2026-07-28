@@ -1477,7 +1477,7 @@ function ThreadProcessBlock({
           ) : null}
         </div>
       )}
-      {turn.status === 'inProgress' || collapsible ? <div aria-hidden className="thread-process-rule" /> : null}
+      {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
       {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
     </div>
   );

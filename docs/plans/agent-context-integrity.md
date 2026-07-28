@@ -806,8 +806,9 @@ reachable Turn references them. Publication is best-effort and never changes the
 Turn status, response, or usage when payload validation, quota, or storage fails. One
 `thread/turn/details/read` call is the read
 authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
-renders Overview, then an ordered Provider Call timeline in which each call owns its
-Request, Response, and Local Execution, followed by Audit. Request renders the recorded
+renders Overview, then ordered Requests & Results in which each numbered request owns its
+Prepared Context, Sent Provider Payload, Model Response, and Local Execution, followed by
+the Turn Record. Request renders the recorded
 pre-adapter context in semantic order (`system instructions -> tool definitions ->
 messages`) before the provider payload and request metadata. Provider payload object-key
 order is never numbered or used to imply model precedence. There is no separate context
@@ -1031,8 +1032,8 @@ choices together:
       Deleting or corrupting the client-id sidecar before restart still deduplicates from
       the canonical user Item and rebuilds the index.
 - [ ] **AC-19:** Turn Diagnostics tests prove one authoritative read exposes every ordered
-      Provider Call Request, Response, and Local Execution; user/file/context reminder
-      content remains in exact request order; and Audit exposes stable prompt, tool
+      Request and Result, including local execution; user/file/context reminder
+      content remains in exact request order; and Turn Record exposes stable prompt, tool
       schemas, cache facts, prepared messages, and canonical Items. Missing/corrupt or
       mismatched diagnostics fail closed; rollback, fork/source deletion, and startup
       pruning preserve the Thread-ownership contract without a legacy reader.

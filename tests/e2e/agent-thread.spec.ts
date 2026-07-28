@@ -42,6 +42,7 @@ test.describe('canonical agent Thread surface', () => {
     const response = turn.locator('.thread-agent-message');
     await expect(userMessage).toContainText('Summarize current outline.');
     await expect(response).toContainText('Current outline focuses on design-system work.');
+    await expect(turn.locator('.thread-process-rule')).toHaveCount(1);
     await page.evaluate(async () => {
       const target = window as unknown as {
         lin?: { agentCoreRequest: (method: string, input: unknown) => Promise<{ data: Array<{ id: string }> }> };
@@ -105,24 +106,24 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
     await expect(turnDetails).toContainText('Turn Diagnostics');
     await expect(turnDetails).toContainText('Overview');
-    await expect(turnDetails).toContainText('Execution Timeline (1)');
-    await expect(turnDetails).toContainText('Audit');
+    await expect(turnDetails).toContainText('Requests & Results (1)');
+    await expect(turnDetails).toContainText('Turn Record');
     await expect(turnDetails).toContainText('Canonical Items (2)');
     await expect(turnDetails).toContainText('Stable prompt source blocks');
     await expect(turnDetails).toContainText('Canonical tool schemas (1)');
     await expect(turnDetails).toContainText('Request');
-    await expect(turnDetails).toContainText('Response');
+    await expect(turnDetails).toContainText('Result');
     const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
-    await expect(request).toContainText('Prepared model context');
+    await expect(request).toContainText('Prepared context');
     await expect(request).toContainText('System instructions');
     await expect(request).toContainText('Tool definitions (1)');
     await expect(request).toContainText('Messages (1)');
-    await expect(request).toContainText('Provider payload');
-    await expect(request).toContainText('Provider payload JSON');
+    await expect(request).toContainText('Sent to provider');
+    await expect(request).toContainText('Sent request JSON');
     const requestText = await request.textContent() ?? '';
     expect(requestText.indexOf('System instructions')).toBeLessThan(requestText.indexOf('Tool definitions (1)'));
     expect(requestText.indexOf('Tool definitions (1)')).toBeLessThan(requestText.indexOf('Messages (1)'));
-    expect(requestText.indexOf('Messages (1)')).toBeLessThan(requestText.indexOf('Provider payload'));
+    expect(requestText.indexOf('Messages (1)')).toBeLessThan(requestText.indexOf('Sent to provider'));
     expect(requestText).not.toContain('0. model');
     await turnDetails.getByText('Canonical Items (2)', { exact: true }).click();
     const userItemDetails = turnDetails.locator('.thread-turn-details-item').filter({ hasText: 'userMessage' });

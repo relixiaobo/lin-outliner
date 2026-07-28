@@ -156,7 +156,7 @@ Details from the native message menu, opens Turn Diagnostics in the active works
 pane.
 
 Turn Diagnostics is the complete diagnostic view for one canonical Turn. Its sections
-are Overview, Execution Timeline, and Audit. There is no independent Context Construction
+are Overview, Requests & Results, and Turn Record. There is no independent Context Construction
 section: user input, attachments, stable instructions, system reminders, Skill/Role/view/
 compaction evidence, tool definitions, and provider options appear at their recorded
 boundary in each outbound Request.
@@ -173,8 +173,10 @@ facts. A Turn without a diagnostics reference explicitly reports that request
 diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
 not match the Turn fails closed instead of appearing absent.
 
-Execution Timeline lists every provider invocation observable at the provider stream and
-post-adapter send boundaries in order. Each call renders Request, Response, then Local Execution. Wrapper-level
+Requests & Results lists every provider invocation observable at the provider stream and
+post-adapter send boundaries in order. Each numbered request is one complete unit: Request
+contains Prepared Context, Sent to Provider, and Request Details; Result contains the
+Model Response, Result Details, and Local Execution caused by that response. Wrapper-level
 retries create another call; retries hidden inside a provider SDK remain part of that SDK
 invocation. Request first renders the recorded Prepared Model Context in its semantic
 order: System Instructions, Tool Definitions, then Messages. It then renders the
@@ -201,7 +203,7 @@ Repetition-heavy request fields use the diagnostics fragment pool without losing
 or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
 content is represented by an omission marker containing its byte length and SHA-256.
 
-Audit exposes accepted user records, canonical Thread/Turn/Session and provenance
+Turn Record exposes accepted user records, canonical Thread/Turn/Session and provenance
 identities, context epoch, cache affinity, effective configuration, L0/L1/L2 prompt
 blocks and fingerprints, canonical tool schemas, the resolved runtime, the prepared
 message pool, and exhaustive Canonical Items including context evidence, reset,

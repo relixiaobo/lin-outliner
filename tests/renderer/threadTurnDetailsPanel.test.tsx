@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('ThreadTurnDetailsPanel', () => {
-  test('renders each Provider Call in wire order with request, response, local execution, and audit evidence', async () => {
+  test('renders each request and result in wire order with Turn-wide record evidence', async () => {
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const detail = detailsResponse('thread-a', 'turn-a', 'fresh-a');
     const rendered = renderPanel(async (method, input) => {
@@ -57,8 +57,8 @@ describe('ThreadTurnDetailsPanel', () => {
     const text = rendered.document.body.textContent;
     expect(text).toContain('Turn Diagnostics');
     expect(text).toContain('Overview');
-    expect(text).toContain('Execution Timeline (2)');
-    expect(text).toContain('Audit');
+    expect(text).toContain('Requests & Results (2)');
+    expect(text).toContain('Turn Record');
     expect(text).toContain('Canonical Items (3)');
     expect(text).toContain('Input tokens');
     expect(text).toContain('Accepted user input');
@@ -66,16 +66,17 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).toContain('Stable prompt source blocks');
     expect(text).toContain('Canonical tool schemas (1)');
     expect(text).toContain('Resolved runtime configuration');
-    expect(text).toContain('Provider Call 1');
-    expect(text).toContain('Provider Call 2');
+    expect(text).toContain('Request 1');
+    expect(text).toContain('Request 2');
     expect(text).toContain('Request');
-    expect(text).toContain('Response');
+    expect(text).toContain('Result');
     expect(text).toContain('Local Execution (1)');
-    expect(text).toContain('Prepared model context');
+    expect(text).toContain('Prepared context');
     expect(text).toContain('System instructions');
     expect(text).toContain('Tool definitions (1)');
     expect(text).toContain('Messages (1)');
-    expect(text).toContain('Provider payload');
+    expect(text).toContain('Sent to provider');
+    expect(text).toContain('Model response');
     expect(text).toContain('[0] Text part');
     expect(text).toContain('[1] Context evidence · referencedResources');
     expect(text).toContain('[2] Attachment');
@@ -84,13 +85,18 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).toContain('/workspace/report.pdf');
     expect(text).toContain('Done');
 
-    const requestGroups = [...rendered.document.querySelectorAll('.thread-turn-details-request-group')];
-    expect(requestGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
-      'Prepared model context',
-      'Provider payload',
+    expect([...rendered.document.querySelectorAll('.thread-turn-details-phase > h4')]
+      .map((heading) => heading.textContent)).toEqual(['Request', 'Result']);
+
+    const flowGroups = [...rendered.document.querySelectorAll('.thread-turn-details-flow-group')];
+    expect(flowGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
+      'Prepared context',
+      'Sent to provider',
+      'Model response',
+      'Local Execution (1)',
     ]);
-    const providerFieldList = requestGroups[1]!.querySelector(
-      ':scope > .thread-turn-details-request-fields > .thread-turn-details-request-fields',
+    const providerFieldList = flowGroups[1]!.querySelector(
+      ':scope > .thread-turn-details-flow-fields > .thread-turn-details-flow-fields',
     );
     expect(providerFieldList).not.toBeNull();
     const providerFields = [...providerFieldList!.children].map((element) => element.textContent?.trim());
@@ -102,10 +108,10 @@ describe('ThreadTurnDetailsPanel', () => {
     ]);
     expect(text.indexOf('System instructions')).toBeLessThan(text.indexOf('Tool definitions (1)'));
     expect(text.indexOf('Tool definitions (1)')).toBeLessThan(text.indexOf('Messages (1)'));
-    expect(text.indexOf('Messages (1)')).toBeLessThan(text.indexOf('Provider payload'));
+    expect(text.indexOf('Messages (1)')).toBeLessThan(text.indexOf('Sent to provider'));
     expect(text).not.toContain('0. model');
 
-    await openDetailsContaining(rendered.document, 'Response diagnostics');
+    await openDetailsContaining(rendered.document, 'Result details');
     const responseText = rendered.document.body.textContent;
     expect(responseText).toContain('HTTP headers received at');
     expect(responseText).toContain('Time to HTTP headers');
@@ -119,9 +125,9 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(responseText).toContain('Reported cache write');
     expect(responseText).toContain('Reported reasoning tokens');
     expect(responseText).toContain('Calculated cost');
-    await openDetailsContaining(rendered.document, 'Provider Call 2');
+    await openDetailsContaining(rendered.document, 'Request 2');
     expect(rendered.document.body.textContent).toContain('Local Execution (0)');
-    expect(rendered.document.body.textContent).toContain('No local execution was recorded for this call.');
+    expect(rendered.document.body.textContent).toContain('No local execution was recorded for this request.');
 
     await openExecutionItem(rendered.document, 'commandExecution');
     await flush();
@@ -139,7 +145,7 @@ describe('ThreadTurnDetailsPanel', () => {
     await openDetailsContaining(rendered.document, 'L0 · framework');
     expect(rendered.document.body.textContent).toContain('Canonical stable prompt');
     expect(rendered.document.body.textContent).toContain('Stable prompt fingerprints');
-    await openDetailsContaining(rendered.document, 'Provider payload JSON');
+    await openDetailsContaining(rendered.document, 'Sent request JSON');
     expect(rendered.document.body.textContent).toContain('<system-reminder>');
     expect(rendered.document.body.textContent).toContain('/workspace/report.pdf');
 
@@ -201,7 +207,7 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(rendered.document.body.textContent).not.toContain('stale-context-a');
   });
 
-  test('shows canonical Turn errors and Provider Call terminal status', async () => {
+  test('shows canonical Turn errors and request result status', async () => {
     const detail = detailsResponse('thread-a', 'turn-a', 'failed-turn');
     const firstCall = detail.diagnostics?.payload.providerCalls[0];
     const secondCall = detail.diagnostics?.payload.providerCalls[1];
@@ -250,9 +256,9 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).toContain('Turn errorProvider rejected the request.');
     expect(text).toContain('Error codeprovider_error');
     expect(text).toContain('Error detailQuota exhausted.');
-    expect(text).toContain('Provider Call 1');
+    expect(text).toContain('Request 1');
     expect(text).toContain('Failed');
-    expect(text).toContain('Provider Call 2');
+    expect(text).toContain('Request 2');
     expect(text).toContain('Interrupted');
   });
 });
