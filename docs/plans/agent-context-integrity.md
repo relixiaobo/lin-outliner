@@ -812,7 +812,10 @@ the Turn Record. Request renders the recorded
 pre-adapter context in semantic order (`system instructions -> tool definitions ->
 messages`) before the provider payload and request metadata. Provider payload object-key
 order is never numbered or used to imply model precedence. There is no separate context
-construction account. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
+construction account. Each Request header keeps ordinal and status visible, exposes its
+model/provider/timing/usage/cost facts through a hover/focus control, and copies the
+complete ordered, image-sanitized post-adapter payload by materializing the fragment pool
+only when requested. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
 run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
 readers.
 

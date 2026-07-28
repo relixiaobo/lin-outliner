@@ -250,6 +250,77 @@
   white-space: nowrap;
 }
 
+.thread-turn-details-call-actions,
+.thread-turn-details-request-facts-anchor {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.thread-turn-details-call-actions {
+  gap: var(--space-1);
+}
+
+.thread-turn-details-call-action.icon-button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-faint);
+}
+
+.thread-turn-details-call-action.icon-button:hover:not(:disabled),
+.thread-turn-details-call-action.icon-button:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.thread-turn-details-request-facts-card {
+  gap: var(--space-3);
+}
+
+.thread-turn-details-request-facts-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.thread-turn-details-request-usage-extras {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-top: 1px solid var(--separator);
+  margin: 0;
+  padding-top: var(--space-3);
+}
+
+.thread-turn-details-request-usage-extras > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4);
+}
+
+.thread-turn-details-request-usage-extras dt,
+.thread-turn-details-request-usage-extras dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-turn-details-request-usage-extras dd {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+}
+
 .thread-turn-details-summary-chevron {
   flex: 0 0 auto;
   color: var(--text-faint);
@@ -490,7 +561,11 @@
     grid-template-columns: auto minmax(90px, max-content) minmax(0, 1fr);
   }
 
-  .thread-turn-details-call-head > span:last-child,
+  .thread-turn-details-call-head {
+    grid-template-columns: auto minmax(90px, 1fr) auto;
+  }
+
+  .thread-turn-details-call-head > span:not(.thread-turn-details-call-actions),
   .thread-turn-details-row-head > code:last-child {
     display: none;
   }

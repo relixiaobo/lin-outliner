@@ -199,6 +199,13 @@ stop reason, plus locally calculated cost and normalized error details, are type
 facts rather than renderer inferences. The
 call summary derives completed, failed, or
 interrupted from the response stop reason rather than treating every response as success.
+The Request header keeps only its ordinal and derived result status in the main reading
+flow. Its trailing information control exposes the recorded model, provider, request time,
+duration, estimated input, provider-reported token/cache/reasoning usage, and calculated
+cost on hover or keyboard focus. The adjacent copy control materializes the complete
+post-adapter provider payload only when invoked and writes its ordered, image-sanitized
+JSON representation to the clipboard; it neither copies a reconstructed pre-adapter view
+nor restores omitted image bytes.
 Repetition-heavy request fields use the diagnostics fragment pool without losing a value
 or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
 content is represented by an omission marker containing its byte length and SHA-256.

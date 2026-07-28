@@ -1,11 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
+  type RefObject,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   JsonValue,
   ThreadItem,
@@ -21,12 +24,20 @@ import type {
 import { api } from '../../api/client';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { formatDateTime, formatNumber } from '../../ui/formatting';
-import { ChevronDownIcon, ICON_SIZE, InfoIcon, LoaderIcon } from '../../ui/icons';
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  ICON_SIZE,
+  InfoIcon,
+  LoaderIcon,
+} from '../../ui/icons';
 import { PanelStickyBreadcrumb } from '../../ui/PanelShared';
 import { ReadOnlyCodeBlock } from '../../ui/editor/CodeBlockSurface';
 import { Button } from '../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
 import { IconButton } from '../../ui/primitives/IconButton';
+import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import {
   ThreadUsageBreakdown,
   formatCachedShare,
@@ -280,6 +291,7 @@ function RequestResultSequence({
           itemsById={itemsById}
           key={call.index}
           messagesById={messagesById}
+          runtime={payload.runtime}
           threadId={threadId}
           toolSchemasByName={toolSchemasByName}
           turnId={turn.id}
@@ -295,6 +307,7 @@ function RequestResultUnit({
   fragmentsById,
   itemsById,
   messagesById,
+  runtime,
   threadId,
   toolSchemasByName,
   turnId,
@@ -304,6 +317,7 @@ function RequestResultUnit({
   readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
   readonly itemsById: ReadonlyMap<string, ThreadItem>;
   readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
+  readonly runtime: TurnDiagnosticsPayload['runtime'];
   readonly threadId: string;
   readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
   readonly turnId: string;
@@ -324,8 +338,8 @@ function RequestResultUnit({
       <summary className="thread-turn-details-call-head">
         <ChevronDownIcon className="thread-turn-details-summary-chevron" size={ICON_SIZE.tiny} />
         <strong>{t.agent.turnDetails.modelRequest({ index: call.index + 1 })}</strong>
-        <span>{t.agent.turnDetails.inputTokenSummary({ count: formatNumber(call.estimatedInputTokens) })}</span>
         <span>{status ? t.agent.thread.item.status[status] : t.agent.turnDetails.noAssistantResponse}</span>
+        <RequestHeaderActions call={call} fragmentsById={fragmentsById} runtime={runtime} />
       </summary>
       {open ? (
         <div className="thread-turn-details-call-body">
@@ -359,6 +373,177 @@ function RequestResultUnit({
         </div>
       ) : null}
     </details>
+  );
+}
+
+function RequestHeaderActions({
+  call,
+  fragmentsById,
+  runtime,
+}: {
+  readonly call: TurnDiagnosticsProviderCall;
+  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
+  readonly runtime: TurnDiagnosticsPayload['runtime'];
+}) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const [factsOpen, setFactsOpen] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const factsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const tooltipId = useId();
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current);
+  }, []);
+
+  const copyRequest = async () => {
+    const value = materializeProviderRequest(call.request, fragmentsById);
+    try {
+      await navigator.clipboard.writeText(jsonText(value));
+    } catch {
+      return;
+    }
+    setCopied(true);
+    if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current);
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = null;
+      setCopied(false);
+    }, 1_200);
+  };
+
+  return (
+    <span
+      className="thread-turn-details-call-actions"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <span className="thread-turn-details-request-facts-anchor">
+        <IconButton
+          aria-describedby={factsOpen ? tooltipId : undefined}
+          className="thread-turn-details-call-action"
+          icon={InfoIcon}
+          iconSize={ICON_SIZE.menu}
+          label={t.agent.turnDetails.requestInformation}
+          onBlur={() => setFactsOpen(false)}
+          onFocus={() => setFactsOpen(true)}
+          onMouseEnter={() => setFactsOpen(true)}
+          onMouseLeave={() => setFactsOpen(false)}
+          ref={factsButtonRef}
+          title=""
+          variant="panel"
+        />
+        {factsOpen ? (
+          <RequestFactsCard
+            anchorRef={factsButtonRef}
+            call={call}
+            id={tooltipId}
+            runtime={runtime}
+          />
+        ) : null}
+      </span>
+      <IconButton
+        className="thread-turn-details-call-action"
+        icon={copied ? CheckIcon : CopyIcon}
+        iconSize={ICON_SIZE.menu}
+        label={copied ? t.agent.turnDetails.requestCopied : t.agent.turnDetails.copyCompleteRequest}
+        onClick={() => void copyRequest()}
+        variant="panel"
+      />
+    </span>
+  );
+}
+
+function RequestFactsCard({
+  anchorRef,
+  call,
+  id,
+  runtime,
+}: {
+  readonly anchorRef: RefObject<HTMLElement | null>;
+  readonly call: TurnDiagnosticsProviderCall;
+  readonly id: string;
+  readonly runtime: TurnDiagnosticsPayload['runtime'];
+}) {
+  const t = useT();
+  const { locale } = useI18n();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const status = call.response ? providerCallStatus(call.response.stopReason) : null;
+  const usage = call.response?.usage ?? null;
+  const usageBreakdown = usage ? {
+    ...usage,
+    cost: { ...usage.cost, currency: 'USD' as const },
+  } : null;
+  const style = useAnchoredOverlay(cardRef, {
+    anchorRef,
+    gap: 8,
+    layoutKey: [
+      call.index,
+      call.requestedAt,
+      call.response?.receivedAt ?? 'pending',
+      runtime.provider,
+      runtime.model,
+      usage?.totalTokens ?? 0,
+      usage?.cost.total ?? 0,
+    ].join(':'),
+    maxHeight: 480,
+    placement: 'bottom-end',
+    width: 320,
+  });
+  return createPortal(
+    <div
+      className="thread-response-usage-card thread-turn-details-request-facts-card"
+      id={id}
+      ref={cardRef}
+      role="tooltip"
+      style={style}
+    >
+      <div className="thread-turn-details-request-facts-title">
+        {t.agent.turnDetails.requestInformation}
+      </div>
+      <dl className="thread-response-usage-context">
+        <div><dt>{t.agent.message.model}</dt><dd>{runtime.model}</dd></div>
+        <div><dt>{t.agent.message.provider}</dt><dd>{runtime.provider}</dd></div>
+        <div>
+          <dt>{t.agent.thread.status}</dt>
+          <dd>{status ? t.agent.thread.item.status[status] : t.agent.turnDetails.noAssistantResponse}</dd>
+        </div>
+        <div><dt>{t.agent.turnDetails.requestedAt}</dt><dd>{formatTimestamp(call.requestedAt, locale)}</dd></div>
+        <div>
+          <dt>{t.agent.turnDetails.duration}</dt>
+          <dd>{call.response ? formatDuration(call.response.receivedAt - call.requestedAt) : '-'}</dd>
+        </div>
+        <div>
+          <dt>{t.agent.turnDetails.estimatedInputTokens}</dt>
+          <dd>{formatNumber(call.estimatedInputTokens)}</dd>
+        </div>
+        {usage ? (
+          <div><dt>{t.agent.message.cost}</dt><dd>{formatUsageCost(usage.cost.total)}</dd></div>
+        ) : null}
+      </dl>
+      {usage && usageBreakdown ? (
+        <>
+          <ThreadUsageBreakdown usage={usageBreakdown} />
+          <dl className="thread-turn-details-request-usage-extras">
+            <div>
+              <dt>{t.agent.turnDetails.reportedReasoningTokens}</dt>
+              <dd>{usage.reasoning === null ? '-' : formatNumber(usage.reasoning)}</dd>
+            </div>
+            {usage.cacheWrite1h === null ? null : (
+              <div>
+                <dt>{t.agent.turnDetails.reportedCacheWrite1h}</dt>
+                <dd>{formatNumber(usage.cacheWrite1h)}</dd>
+              </div>
+            )}
+          </dl>
+        </>
+      ) : (
+        <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
+      )}
+    </div>,
+    document.body,
   );
 }
 

@@ -84,6 +84,61 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).not.toContain('Context evidence · skillCatalog');
     expect(text).toContain('/workspace/report.pdf');
     expect(text).toContain('Done');
+    expect(rendered.document.querySelector('.thread-turn-details-request-facts-card')).toBeNull();
+
+    const firstRequest = rendered.document.querySelector<HTMLDetailsElement>('.thread-turn-details-call');
+    const requestInformation = firstRequest?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Request information"]',
+    );
+    if (!firstRequest || !requestInformation) throw new Error('Missing first Request header actions');
+    await act(async () => {
+      requestInformation.dispatchEvent(new Event('focusin', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    const requestFacts = rendered.document.querySelector('.thread-turn-details-request-facts-card');
+    expect(requestFacts?.textContent).toContain('Request information');
+    expect(requestFacts?.textContent).toContain('Modeltest-model');
+    expect(requestFacts?.textContent).toContain('Provideropenai');
+    expect(requestFacts?.textContent).toContain('Estimated input tokens120');
+    expect(requestFacts?.textContent).toContain('Input100');
+    expect(requestFacts?.textContent).toContain('Output20');
+    expect(requestFacts?.textContent).toContain('Cache read50');
+    expect(requestFacts?.textContent).toContain('Cache write5');
+    expect(requestFacts?.textContent).toContain('Reported reasoning tokens4');
+    expect(requestFacts?.textContent).toContain('Cost$0.00330');
+
+    const clipboardWrites: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (value: string) => { clipboardWrites.push(value); } },
+    });
+    const copyRequest = firstRequest.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy complete request"]',
+    );
+    if (!copyRequest) throw new Error('Missing complete Request copy action');
+    const wasOpen = firstRequest.open;
+    await act(async () => {
+      copyRequest.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(firstRequest.open).toBe(wasOpen);
+    expect(copyRequest.getAttribute('aria-label')).toBe('Request copied');
+    expect(clipboardWrites).toHaveLength(1);
+    const copiedRequest = JSON.parse(clipboardWrites[0] ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(copiedRequest)).toEqual(['model', 'instructions', 'input', 'tools']);
+    expect(copiedRequest).toEqual({
+      model: 'test-model',
+      instructions: 'Canonical stable prompt',
+      input: [detail.diagnostics?.payload.canonicalMessages[0]?.value],
+      tools: [{
+        type: 'function',
+        name: 'file_read',
+        description: 'Read a file',
+        parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      }],
+    });
 
     expect([...rendered.document.querySelectorAll('.thread-turn-details-phase > h4')]
       .map((heading) => heading.textContent)).toEqual(['Request', 'Result']);
