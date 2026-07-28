@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Unified Agent context composer (PR #441, codex-3)** — replaced parallel
+  provider-message builders with one stable L0/L1/L2 composer, canonical replay,
+  and atomic evidence admission for environment, bounded user view, resources,
+  attachments/images, additional context, and user input. Added Skill catalog
+  and invocation integrity across same-Turn refresh, restart, and publication
+  retry while preserving provider bytes for cache reuse. This is a clean
+  pre-release replacement with no migration, compatibility reader, fallback, or
+  dual write. PRs 1–2 of the active six-PR `agent-context-integrity` plan are now
+  shipped; global budgeting and compaction is next. **Gate (main):** iterative
+  review caught missing expanded reference-target children and child counts in
+  the user view, namespaced extension tools being misclassified as Core L1
+  capabilities, and expanded table records duplicating visible column field
+  entries. All were fixed before merge. Final head `35be64c8` had no reportable
+  findings; merged-main verification covered typecheck, full `test:core` (1438
+  pass, 6 environment-dependent skips), full `test:renderer` (775 pass), docs,
+  and diff checks.
 - **Browser Control 0.5 implementation plan (PR #443, codex)** — pinned the
   active design to Browser Pilot 0.5 and specified one complete feature PR built
   foundation-first: prepared tool execution, independent durable projections,

@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-context-composer` | Draft PR #441 — Agent context integrity PR 2 (unified context composer) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity PR 1 #440 and PR 2 #441) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,9 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-27).** Open PR queue: Draft #441
-(`codex-3/agent-context-composer`), implementing PR 2 of the active
-`agent-context-integrity` plan. Recently merged: #443
+**In flight (2026-07-28).** Open PR queue: empty. Recently merged: #441
+(`codex-3/agent-context-composer`) after iterative main review, landing the
+unified context composer and Skill execution integrity as PR 2 of the active
+`agent-context-integrity` plan; see *Agent capabilities* and *Recently
+completed*. #443
 (`codex/browser-control-v0-5-plan`, plan-only) after main review, pinning the
 Browser Pilot 0.5 contract and one complete implementation PR; #442 established
 the Browser Control / URL Preview boundary and Browser Pilot consumer direction.
@@ -289,14 +291,17 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-context-integrity** (P1, `in-progress`; PR 1 of 6 shipped as #440) —
+- **agent-context-integrity** (P1, `in-progress`; PRs 1–2 of 6 shipped as #440
+  and #441) —
   restores the complete canonical model-context contract without reviving the
   retired runtime or adding a second history authority. PR 1 established strict
   evidence Items and codecs, Thread-owned verified context payloads, typed
-  resource dependencies, and restart/rollback/fork ownership. Next is PR 2: the
-  unified composer plus input/resource integrity; Skill execution, global
-  budgeting and compaction, Subagent inheritance, and provider/cache controls
-  follow as independently complete units. See
+  resource dependencies, and restart/rollback/fork ownership. PR 2 added the
+  unified L0/L1/L2 composer, canonical replay and evidence admission,
+  input/resource integrity, bounded user view, and Skill catalog/invocation
+  integrity. Next is PR 3: global context budgeting, `/compact`, and `/clear`;
+  Subagent inheritance and provider/cache controls follow as independently
+  complete units. See
   `docs/plans/agent-context-integrity.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
@@ -600,6 +605,26 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-context-integrity PR2 — unified context composer**
+  (`codex-3/agent-context-composer`, PR #441, codex-3, merged 2026-07-28,
+  plan-track implementation unit) — replaced the parallel provider-message
+  builders with one stable L0/L1/L2 prompt composer and canonical replay path.
+  It admits environment, bounded user-view, resource, attachment/image,
+  additional-context, and Skill evidence atomically with user input; preserves
+  provider bytes for cache reuse; and maintains Skill catalog, invocation,
+  same-Turn refresh, restart, and publication-retry integrity. This is a clean
+  pre-release replacement with no migration, compatibility reader, fallback, or
+  dual-write path. The current design is folded into the Agent runtime, Skill,
+  and rendering specs; the plan remains `in-progress` at
+  `docs/plans/agent-context-integrity.md` for PRs 3–6.
+  **Gate (main):** iterative review caught expanded reference-target children
+  missing from the user-view and child count, namespaced extension tools being
+  classified as Core L1 capabilities, and expanded table records duplicating
+  visible column field entries. Codex-3 fixed every finding; final head
+  `35be64c8` had no reportable issues. Verification covered typecheck,
+  `git diff --check`, full `test:core` (1438 pass, 6 environment-dependent
+  skips), full `test:renderer` (775 pass), and `docs:check` on merged `main`.
 
 - **browser-control-v0-5-plan**
   (`codex/browser-control-v0-5-plan`, PR #443, codex, merged 2026-07-27,
