@@ -110,10 +110,15 @@ growing the transcript without bound.
 User-message rendering is a presentation projection over canonical
 `ThreadUserContent[]`; it does not claim to show provider part order. Every image
 attachment in one message is collected in canonical image order into one leading
-gallery. Image names remain available through the tile's accessible label and
-hover title instead of appearing again as duplicate inline file markers. Text,
-Node references, directories, and non-image attachments form one following
-message bubble in their original relative order. The gallery uses dedicated
+gallery. Every attachment, including each gallery image, also retains its inline
+file reference in the following narrative at its canonical position. The reference
+is not duplicate decoration: it exposes the same attachment identity and readable
+path represented by the provider-facing `[[file:...]]` marker, while the gallery is
+only a visual preview. Text, Node references, directories, and file references form
+one narrative bubble in their original relative order. Structured user messages use
+the same block inline flow, whitespace preservation, and overflow wrapping as the
+composer within the established user-bubble measure, so references and adjacent text
+wrap naturally instead of being laid out as separate transcript rows. The gallery uses dedicated
 layouts for one, two, three, and four images. More than four images initially
 show four thumbnails with a `+N` control; expanding shows every image and adds a
 collapse control. The overflow control is a compact bottom-right media-HUD badge:

@@ -370,6 +370,13 @@ function renderUserContent(
   content.forEach((part, contentIndex) => {
     if (part.type === 'attachment' && part.mimeType.startsWith('image/')) {
       images.push(part);
+      narrative.push(
+        <ThreadInlineAttachment
+          content={part}
+          key={`attachment-${contentIndex}`}
+          threadId={threadId}
+        />,
+      );
       return;
     }
     if (part.type === 'text') {

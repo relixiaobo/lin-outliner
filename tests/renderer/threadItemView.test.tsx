@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('ThreadItemView user message presentation', () => {
-  test('renders all images in one leading gallery and keeps non-image content in one ordered narrative', async () => {
+  test('renders one leading gallery and keeps every file reference in the ordered narrative', async () => {
     const item: UserMessageThreadItem = {
       id: 'message-1',
       provenance: {
@@ -55,12 +55,14 @@ describe('ThreadItemView user message presentation', () => {
       .map((button) => button.title)).toEqual(['first.png', 'second.png']);
 
     const narrative = sequence?.children[1];
-    expect(narrative?.querySelectorAll('.thread-message-file-ref')).toHaveLength(1);
-    expect(narrative?.textContent).toContain('Compare ');
-    expect(narrative?.textContent).toContain('notes.pdf');
-    expect(narrative?.textContent).toContain(' with the notes.');
-    expect(narrative?.textContent).not.toContain('first.png');
-    expect(narrative?.textContent).not.toContain('second.png');
+    const fileReferences = [...narrative?.querySelectorAll<HTMLElement>('.thread-message-file-ref') ?? []];
+    expect(fileReferences).toHaveLength(3);
+    expect(fileReferences.map((reference) => reference.dataset.inlineRefPath)).toEqual([
+      '/workspace/first.png',
+      '/workspace/notes.pdf',
+      '/workspace/second.png',
+    ]);
+    expect(narrative?.textContent).toBe('Compare first.pngnotes.pdfsecond.png with the notes.');
   });
 });
 

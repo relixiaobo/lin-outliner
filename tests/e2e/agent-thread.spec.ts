@@ -735,7 +735,7 @@ test.describe('canonical agent Thread surface', () => {
     })]);
   });
 
-  test('renders one leading image gallery and keeps non-image message content in order', async ({ page }) => {
+  test('renders one leading image gallery and keeps every file reference in message order', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
@@ -798,7 +798,9 @@ test.describe('canonical agent Thread surface', () => {
     const gallery = sequence.locator(':scope > .thread-image-gallery');
     await expect(sequence.locator(':scope > *')).toHaveCount(2);
     await expect(bubbles).toHaveCount(1);
-    await expect(bubbles.locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddleAfter');
+    await expect(bubbles.locator('.thread-user-inline-content')).toContainText(
+      'Beforeagenda.pdfmiddlereference-1.pngreference-2.pngreference-3.pngreference-4.pngreference-5.pngreference-6.pngAfter',
+    );
     await expect(gallery).toHaveAccessibleName('6 images');
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
     await expect(gallery.locator('.thread-image-gallery-preview').first()).toHaveAccessibleName('reference-1.png');
@@ -812,7 +814,41 @@ test.describe('canonical agent Thread surface', () => {
       'thread-user-content-shell',
     ]);
     const narrative = bubbles.locator('.thread-user-inline-content');
-    await expect(narrative.locator('.thread-message-file-ref')).toHaveText('agenda.pdf');
+    const inlineFlow = await narrative.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        overflowWrap: style.overflowWrap,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    expect(inlineFlow).toEqual({
+      overflowWrap: 'anywhere',
+      whiteSpace: 'pre-wrap',
+    });
+    await expect(narrative.locator('.thread-message-file-ref')).toHaveText([
+      'agenda.pdf',
+      'reference-1.png',
+      'reference-2.png',
+      'reference-3.png',
+      'reference-4.png',
+      'reference-5.png',
+      'reference-6.png',
+    ]);
+    expect(await narrative.locator('.thread-message-file-ref').evaluateAll((references) => (
+      references.map((reference) => reference.getAttribute('data-inline-ref-path'))
+    ))).toEqual([
+      '/mock/local-root/agenda.pdf',
+      '/mock/local-root/reference-1.png',
+      '/mock/local-root/reference-2.png',
+      '/mock/local-root/reference-3.png',
+      '/mock/local-root/reference-4.png',
+      '/mock/local-root/reference-5.png',
+      '/mock/local-root/reference-6.png',
+    ]);
+    const imageReferenceTops = await narrative.locator('.thread-message-file-ref').evaluateAll((references) => (
+      references.slice(1).map((reference) => Math.round(reference.getBoundingClientRect().top))
+    ));
+    expect(new Set(imageReferenceTops).size).toBeLessThan(imageReferenceTops.length);
     expect(await narrative.evaluate((element) => Array.from(element.children).map((child) => ({
       className: child.className,
       text: child.textContent,
@@ -820,6 +856,12 @@ test.describe('canonical agent Thread surface', () => {
       { className: '', text: 'Before' },
       { className: 'inline-ref thread-message-file-ref', text: 'agenda.pdf' },
       { className: '', text: 'middle' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-1.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-2.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-3.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-4.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-5.png' },
+      { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
       { className: '', text: 'After' },
     ]);
 
@@ -2414,7 +2456,7 @@ test.describe('terminal Thread history actions', () => {
     expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
     const userMessage = page.locator('.thread-user-message').last();
-    await expect(userMessage.locator('.thread-message-file-ref')).toHaveCount(0);
+    await expect(userMessage.locator('.thread-message-file-ref')).toHaveText('diagram.png');
     await expect(userMessage.locator('.thread-image-gallery-preview')).toHaveAccessibleName('diagram.png');
     await userMessage.hover();
     await userMessage.getByRole('button', { name: 'Edit message' }).click();
