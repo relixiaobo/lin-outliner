@@ -140,14 +140,20 @@ export class TurnDiagnosticsCollector {
         systemPromptFragmentId: this.rememberRequestFragment(jsonValue(this.providerContext.systemPrompt, true)),
         toolNames: (this.providerContext.tools ?? []).map((tool) => tool.name),
         messageIds,
-        messagePartProvenance: this.preparedPlan.messagePartProvenance.map((parts) => parts.map((part) => ({ ...part }))),
+        messagePartProvenance: this.preparedPlan.messagePartProvenance.map((parts) => (
+          parts.map(clonePartProvenance)
+        )),
       },
       protectedFromMessageIndex: this.preparedPlan.protectedFromMessageIndex,
       estimatedInputTokens: this.preparedPlan.budget.estimatedInputTokens,
       inputTokenLimit: this.preparedPlan.budget.inputTokenLimit,
       reservedOutputTokens: this.preparedPlan.budget.reservedOutputTokens,
       commonPrefixMessageCount: commonPrefixLength(previous, messageIds),
-      request: this.rememberProviderRequest(normalizedRequest),
+      request: this.rememberProviderRequest(
+        normalizedRequest,
+        this.providerContext.messages,
+        this.preparedPlan.messagePartProvenance,
+      ),
       requestFingerprint: fingerprint(stableJson(normalizedRequest)),
       cacheBreakpoints: cacheBreakpointPaths(payload),
       transportResponse: null,
@@ -372,7 +378,11 @@ export class TurnDiagnosticsCollector {
     return id;
   }
 
-  private rememberProviderRequest(value: JsonValue): TurnDiagnosticsProviderRequest {
+  private rememberProviderRequest(
+    value: JsonValue,
+    messages: readonly Message[],
+    provenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[],
+  ): TurnDiagnosticsProviderRequest {
     if (!isRecord(value)) return { kind: 'value', value };
     const fields: TurnDiagnosticsProviderRequestField[] = [];
     for (const [name, fieldValue] of Object.entries(value)) {
@@ -386,6 +396,9 @@ export class TurnDiagnosticsCollector {
         representation: 'fragments',
         container: Array.isArray(fieldValue) ? 'array' : 'value',
         fragmentIds: values.map((entry) => this.rememberRequestFragment(entry as JsonValue)),
+        fragmentPartProvenance: values.map((entry) => (
+          exactProviderFragmentProvenance(entry as JsonValue, messages, provenance)
+        )),
       });
     }
     return { kind: 'object', fields };
@@ -420,6 +433,96 @@ function assertMessageProvenance(
       throw new Error(`Provider request diagnostics content provenance is not aligned with message ${index}.`);
     }
   });
+}
+
+function exactProviderFragmentProvenance(
+  fragment: JsonValue,
+  messages: readonly Message[],
+  provenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[],
+): readonly TurnDiagnosticsMessagePartProvenance[] | null {
+  const fragmentParts = diagnosticContentParts(fragment);
+  if (fragmentParts.length === 0) return null;
+  const matches = messages.flatMap((message, messageIndex) => {
+    const messageParts = diagnosticContentParts(jsonValue(message, true));
+    const messageProvenance = provenance[messageIndex];
+    if (
+      !messageProvenance
+      || messageParts.length !== fragmentParts.length
+      || messageProvenance.length !== messageParts.length
+      || !messageParts.every((part, partIndex) => diagnosticPartsEqual(part, fragmentParts[partIndex]!))
+    ) return [];
+    return [messageProvenance];
+  });
+  if (matches.length === 0) return null;
+  const first = matches[0]!;
+  const firstJson = JSON.stringify(first);
+  if (matches.some((candidate) => JSON.stringify(candidate) !== firstJson)) return null;
+  return first.map(clonePartProvenance);
+}
+
+function diagnosticContentParts(value: JsonValue): readonly JsonValue[] {
+  if (!isRecord(value)) return [];
+  if (Array.isArray(value.content)) return value.content;
+  if (Array.isArray(value.parts)) return value.parts;
+  if (value.content !== undefined && value.content !== null) return [value.content];
+  return [];
+}
+
+function diagnosticPartsEqual(canonical: JsonValue, provider: JsonValue): boolean {
+  const canonicalText = diagnosticPartText(canonical);
+  const providerText = diagnosticPartText(provider);
+  if (canonicalText !== null || providerText !== null) return canonicalText === providerText;
+  const canonicalImage = diagnosticImageDigest(canonical);
+  const providerImage = diagnosticImageDigest(provider);
+  if (canonicalImage !== null || providerImage !== null) return canonicalImage === providerImage;
+  return stableJson(canonical) === stableJson(provider);
+}
+
+function diagnosticPartText(value: JsonValue): string | null {
+  if (typeof value === 'string') return value;
+  if (!isRecord(value)) return null;
+  for (const key of ['text', 'input_text', 'output_text']) {
+    if (typeof value[key] === 'string') return value[key];
+  }
+  return null;
+}
+
+function diagnosticImageDigest(value: JsonValue): string | null {
+  if (!isRecord(value)) return null;
+  const type = typeof value.type === 'string' ? value.type.toLowerCase() : null;
+  const isImagePart = type === 'image'
+    || type === 'input_image'
+    || type === 'output_image'
+    || type === 'image_url'
+    || isRecord(value.inlineData)
+    || isRecord(value.inline_data)
+    || isRecord(value.image);
+  return isImagePart ? nestedSha256(value) : null;
+}
+
+function nestedSha256(value: JsonValue): string | null {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const digest = nestedSha256(entry);
+      if (digest) return digest;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (typeof value.sha256 === 'string' && /^[a-f0-9]{64}$/.test(value.sha256)) return value.sha256;
+  for (const entry of Object.values(value)) {
+    const digest = nestedSha256(entry as JsonValue);
+    if (digest) return digest;
+  }
+  return null;
+}
+
+function clonePartProvenance(
+  provenance: TurnDiagnosticsMessagePartProvenance,
+): TurnDiagnosticsMessagePartProvenance {
+  return provenance.source === 'systemContext'
+    ? { source: provenance.source, entries: provenance.entries.map((entry) => ({ ...entry })) }
+    : { source: provenance.source };
 }
 
 const PROVIDER_REQUEST_ID_HEADERS = [
@@ -487,7 +590,7 @@ const PROVIDER_REQUEST_FRAGMENT_FIELDS = new Set([
   'tools',
 ]);
 
-function jsonValue(value: unknown, omitImageBytes: boolean): JsonValue {
+function jsonValue(value: unknown, omitImageBytes: boolean, nestedImageContainer = false): JsonValue {
   if (value === null || typeof value === 'boolean') return value;
   if (typeof value === 'string') {
     return omitImageBytes && value.startsWith('data:image/')
@@ -500,18 +603,34 @@ function jsonValue(value: unknown, omitImageBytes: boolean): JsonValue {
   if (value instanceof Uint8Array) return binaryMarker(value);
   if (!isRecord(value)) return String(value);
   const result: Record<string, JsonValue> = {};
-  const imageData = omitImageBytes && value.type === 'image' && typeof value.data === 'string'
-    ? value.data
-    : null;
+  const imageData = omitImageBytes ? directImageBase64(value, nestedImageContainer) : null;
   for (const [key, entry] of Object.entries(value)) {
     if (entry === undefined) continue;
     if (imageData !== null && key === 'data') {
       result.data = base64Marker(imageData);
     } else {
-      result[key] = jsonValue(entry, omitImageBytes);
+      result[key] = jsonValue(
+        entry,
+        omitImageBytes,
+        key === 'inlineData' || key === 'inline_data',
+      );
     }
   }
   return result;
+}
+
+function directImageBase64(
+  value: Readonly<Record<string, unknown>>,
+  nestedImageContainer: boolean,
+): string | null {
+  if (typeof value.data !== 'string') return null;
+  const mimeType = typeof value.mimeType === 'string'
+    ? value.mimeType
+    : typeof value.media_type === 'string' ? value.media_type : null;
+  if (!mimeType?.toLowerCase().startsWith('image/')) return null;
+  return nestedImageContainer || value.type === 'image' || value.type === 'base64'
+    ? value.data
+    : null;
 }
 
 function binaryMarker(value: Uint8Array): JsonValue {

@@ -12,6 +12,9 @@ import type {
 import type {
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
+  ContextAuthority,
+  ContextPayloadKind,
+  ContextPurpose,
   ContextTextEntry,
   ReferencedResourcesContextPayload,
   RoleCatalogContextPayload,
@@ -24,6 +27,7 @@ import type {
   ThreadUserContent,
   Turn,
   TurnDiagnosticsMessagePartProvenance,
+  TurnDiagnosticsSystemContextEntry,
   TurnEnvironmentContextPayload,
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
@@ -43,6 +47,20 @@ interface ProjectionResources {
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
 }
+
+interface ProjectedContextBlock extends TurnDiagnosticsSystemContextEntry {
+  readonly type: 'contextBlock';
+  readonly body: string;
+  readonly metadata: readonly string[];
+}
+
+interface ProjectedContextImage {
+  readonly type: 'contextImage';
+  readonly content: ImageContent;
+  readonly entry: TurnDiagnosticsSystemContextEntry;
+}
+
+type ProjectedContextPart = ProjectedContextBlock | ProjectedContextImage;
 
 export interface ProjectedTurnBoundary {
   readonly turnId: string;
@@ -119,15 +137,30 @@ export class CanonicalContextProjector {
     fallbackTimestamp: number,
   ): Promise<UserMessage> {
     const content: Array<TextContent | ImageContent> = [];
+    let contextBlocks: ProjectedContextBlock[] = [];
+    const flushContextBlocks = () => {
+      if (contextBlocks.length === 0) return;
+      content.push(contextBundle(contextBlocks));
+      contextBlocks = [];
+    };
     let timestamp = fallbackTimestamp;
     for (const item of items) {
       if (item.type === 'contextEvidence') {
-        content.push(...await this.projectEvidence(item));
+        for (const part of await this.projectEvidence(item)) {
+          if (part.type === 'contextBlock') {
+            contextBlocks.push(part);
+          } else {
+            flushContextBlocks();
+            content.push(part.content);
+          }
+        }
       } else if (item.type === 'userMessage') {
+        flushContextBlocks();
         timestamp = item.acceptedAt;
         content.push(...await serializeUserContent(item.content, this.resources));
       }
     }
+    flushContextBlocks();
     if (content.length === 0) content.push({ type: 'text', text: 'Continue.' });
     return { role: 'user', content, timestamp };
   }
@@ -142,8 +175,26 @@ export class CanonicalContextProjector {
     const userBoundaries: ProjectedUserBoundary[] = [];
     let pendingUserContent: Array<TextContent | ImageContent> = [];
     let pendingUserProvenance: TurnDiagnosticsMessagePartProvenance[] = [];
+    let pendingContextBlocks: ProjectedContextBlock[] = [];
     let assistantContent: Array<TextContent | ToolCall> = [];
     let toolResults: ToolResultMessage[] = [];
+    const flushContextBlocks = () => {
+      if (pendingContextBlocks.length === 0) return;
+      pendingUserContent.push(contextBundle(pendingContextBlocks));
+      pendingUserProvenance.push(systemContextProvenance(pendingContextBlocks));
+      pendingContextBlocks = [];
+    };
+    const appendContextParts = (parts: readonly ProjectedContextPart[]) => {
+      for (const part of parts) {
+        if (part.type === 'contextBlock') {
+          pendingContextBlocks.push(part);
+        } else {
+          flushContextBlocks();
+          pendingUserContent.push(part.content);
+          pendingUserProvenance.push({ source: 'systemContext', entries: [part.entry] });
+        }
+      }
+    };
     const flushAssistant = () => {
       if (assistantContent.length > 0) {
         messages.push(assistantHistoryMessage(
@@ -162,6 +213,7 @@ export class CanonicalContextProjector {
       toolResults = [];
     };
     const flushPendingUser = (timestamp: number) => {
+      flushContextBlocks();
       flushAssistant();
       if (pendingUserContent.length === 0) {
         pendingUserContent.push({ type: 'text', text: 'Continue.' });
@@ -178,7 +230,7 @@ export class CanonicalContextProjector {
     for (const item of turn.items) {
       if (item.type === 'contextEvidence') {
         if (item.kind === 'inheritedContext') {
-          if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
+          if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
           else flushAssistant();
           const payload = await this.readEvidencePayload(item);
           if (payload.kind !== 'inheritedContext') {
@@ -190,15 +242,11 @@ export class CanonicalContextProjector {
           messagePartProvenance.push(...inherited.messagePartProvenance.map((parts) => [...parts]));
           continue;
         }
-        const evidence = await this.projectEvidence(item);
-        pendingUserContent.push(...evidence);
-        pendingUserProvenance.push(...evidence.map(() => ({
-          source: 'contextEvidence' as const,
-          kind: item.kind,
-        })));
+        appendContextParts(await this.projectEvidence(item));
         continue;
       }
       if (item.type === 'userMessage') {
+        flushContextBlocks();
         const userContent = await serializeUserContent(item.content, this.resources);
         pendingUserContent.push(...userContent);
         pendingUserProvenance.push(...userContent.map(() => ({ source: 'userInput' as const })));
@@ -213,18 +261,17 @@ export class CanonicalContextProjector {
         if (toolResults.length > 0) flushAssistant();
         pendingUserContent = [];
         pendingUserProvenance = [];
+        pendingContextBlocks = [];
         this.previousEnvironment = null;
         this.previousUserView = null;
         this.previousAdditionalContext = null;
         continue;
       }
       if (item.type === 'contextCompaction') {
-        const compacted = await this.projectCompaction(item, sourceTurns);
-        pendingUserContent.push(...compacted);
-        pendingUserProvenance.push(...compacted.map(() => ({ source: 'contextCompaction' as const })));
+        appendContextParts(await this.projectCompaction(item, sourceTurns));
         continue;
       }
-      if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
+      if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
         const projection = item.outputRef ? this.toolOutputProjections.get(item.outputRef.id) ?? null : null;
         const tool = await historyTool(item, turn.startedAt, this.resources, projection);
@@ -256,7 +303,7 @@ export class CanonicalContextProjector {
           break;
       }
     }
-    if (pendingUserContent.length > 0) flushPendingUser(turn.startedAt);
+    if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
     flushAssistant();
     return { messages, messagePartProvenance, userBoundaries };
   }
@@ -264,22 +311,15 @@ export class CanonicalContextProjector {
   private async projectCompaction(
     item: ContextCompactionThreadItem,
     sourceTurns: readonly Turn[],
-  ): Promise<Array<TextContent | ImageContent>> {
+  ): Promise<ProjectedContextPart[]> {
     const summary = await this.readCompactionPayload(item, item.summaryRef, 'compactionSummary');
     const restored = await this.readCompactionPayload(item, item.restoredStateRef, 'compactionRestoredState');
-    const content: Array<TextContent | ImageContent> = [textEvidence(
+    const content: ProjectedContextPart[] = [contextBlock(
       'compactionSummary',
       `source=${summary.source}\nlossy_derived_context=true\n${summary.text}`,
       'untrusted',
       'observation',
     )];
-    content.push(textEvidence('compactionRestoredState', [
-      `skill_catalog_hash=${restored.skillCatalogHash ?? 'none'}`,
-      `role_catalog_hash=${restored.roleCatalogHash ?? 'none'}`,
-      `active_skill_count=${restored.activeSkills.length}`,
-      `additional_context_baseline=${restored.additionalContextBaselineRef?.id ?? 'none'}`,
-      `active_observation_count=${restored.activeObservations.length}`,
-    ].join('\n'), 'application', 'observation'));
 
     const skillCatalog = await restoreSkillCatalogCheckpoint(
       sourceTurns,
@@ -288,7 +328,7 @@ export class CanonicalContextProjector {
       this.resources.readContext,
     );
     if (skillCatalog.catalogHash) {
-      content.push(textEvidence('skillCatalog', renderSkillCatalog({
+      content.push(contextBlock('skillCatalog', renderSkillCatalog({
         schemaVersion: 1,
         kind: 'skillCatalog',
         mode: 'baseline',
@@ -305,7 +345,7 @@ export class CanonicalContextProjector {
       this.resources.readContext,
     );
     if (roleCatalog.catalogHash) {
-      content.push(textEvidence('roleCatalog', renderRoleCatalog({
+      content.push(contextBlock('roleCatalog', renderRoleCatalog({
         schemaVersion: 1,
         kind: 'roleCatalog',
         mode: 'baseline',
@@ -319,11 +359,11 @@ export class CanonicalContextProjector {
       const baseline = await this.readCompactionPayload(item, restored.userViewBaselineRef, 'userView');
       const rendered = renderUserView(null, baseline);
       if (!rendered.application) throw new Error('Restored user-view baseline did not produce a snapshot.');
-      content.push(textEvidence('userView', rendered.application, 'application', 'observation', [
+      content.push(contextBlock('userView', rendered.application, 'application', 'observation', [
         'restored_after_compaction=true',
       ]));
       if (rendered.untrusted) {
-        content.push(textEvidence('userView', rendered.untrusted, 'untrusted', 'observation', [
+        content.push(contextBlock('userView', rendered.untrusted, 'untrusted', 'observation', [
           'restored_after_compaction=true',
         ]));
       }
@@ -353,10 +393,8 @@ export class CanonicalContextProjector {
       ) {
         throw new Error(`Restored active Skill does not match its checkpoint: ${checkpoint.name}`);
       }
-      content.push(textEvidence('skillInvocation', skill.instructions, 'application', 'instruction', [
+      content.push(contextBlock('skillInvocation', skill.instructions, 'application', 'instruction', [
         `name=${skill.name}`,
-        `identity=${skill.identity}`,
-        `content_hash=${skill.contentHash}`,
         'restored_after_compaction=true',
       ]));
     }
@@ -366,7 +404,7 @@ export class CanonicalContextProjector {
         throw new Error(`Restored observation does not match its frozen projection: ${observation.key}`);
       }
       const text = await projectedToolOutputText(projection, this.resources);
-      content.push(textEvidence('toolOutputProjection', [
+      content.push(contextBlock('toolOutputProjection', [
         `tool=${observation.tool}`,
         `subject=${observation.subject}`,
         `output_ref=${observation.outputRef.id}`,
@@ -378,7 +416,7 @@ export class CanonicalContextProjector {
     if (item.instructionsRef) {
       const instructions = await this.readCompactionPayload(item, item.instructionsRef, 'compactionInstructions');
       for (const entry of instructions.entries) {
-        content.push(textEvidence(
+        content.push(contextBlock(
           instructions.kind,
           entry.text,
           entry.authority,
@@ -407,7 +445,7 @@ export class CanonicalContextProjector {
 
   private async projectEvidence(
     item: ContextEvidenceThreadItem,
-  ): Promise<Array<TextContent | ImageContent>> {
+  ): Promise<ProjectedContextPart[]> {
     const payload = await this.readEvidencePayload(item);
     switch (payload.kind) {
       case 'turnEnvironment':
@@ -416,10 +454,10 @@ export class CanonicalContextProjector {
         this.previousEnvironment = payload;
         return [
           ...(rendered.application
-            ? [textEvidence(payload.kind, rendered.application, 'application', 'observation')]
+            ? [contextBlock(payload.kind, rendered.application, 'application', 'observation')]
             : []),
           ...(rendered.untrusted
-            ? [textEvidence(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
+            ? [contextBlock(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
             : []),
         ];
       }
@@ -428,10 +466,10 @@ export class CanonicalContextProjector {
         this.previousUserView = payload;
         return [
           ...(rendered.application
-            ? [textEvidence(payload.kind, rendered.application, 'application', 'observation')]
+            ? [contextBlock(payload.kind, rendered.application, 'application', 'observation')]
             : []),
           ...(rendered.untrusted
-            ? [textEvidence(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
+            ? [contextBlock(payload.kind, rendered.untrusted, 'untrusted', 'observation')]
             : []),
         ];
       }
@@ -440,32 +478,26 @@ export class CanonicalContextProjector {
       case 'referencedResources':
         return this.projectReferencedResources(payload);
       case 'skillCatalog':
-        return [textEvidence(payload.kind, renderSkillCatalog(payload), 'application', 'instruction')];
+        return [contextBlock(payload.kind, renderSkillCatalog(payload), 'application', 'instruction')];
       case 'skillInvocation':
         return [
-          textEvidence(payload.kind, [
+          contextBlock(payload.kind, [
             `name=${payload.name}`,
-            `display_name=${payload.displayName}`,
-            `source=${payload.source}`,
-            `identity=${payload.identity}`,
-            `resource_root=${payload.resourceRoot ?? 'none'}`,
-            `content_hash=${payload.contentHash}`,
+            payload.displayName !== payload.name ? `display_name=${payload.displayName}` : null,
             `execution=${payload.execution}`,
-            `invocation_source=${payload.invocationSource}`,
-            `invoked_at=${payload.invokedAt}`,
             `allowed_tools=${payload.constraints.allowedTools.join(',') || 'none'}`,
             `model=${payload.constraints.model ?? 'inherit'}`,
             `effort=${payload.constraints.effort ?? 'inherit'}`,
-          ].join('\n'), 'application', 'observation'),
+          ].filter((line): line is string => line !== null).join('\n'), 'application', 'observation'),
           ...(payload.execution === 'inline'
-            ? [textEvidence(payload.kind, payload.instructions, 'application', 'instruction')]
+            ? [contextBlock(payload.kind, payload.instructions, 'application', 'instruction')]
             : []),
           ...(payload.arguments
-            ? [textEvidence(payload.kind, payload.arguments, 'untrusted', 'observation', ['field=arguments'])]
+            ? [contextBlock(payload.kind, payload.arguments, 'untrusted', 'observation', ['field=arguments'])]
             : []),
         ];
       case 'roleCatalog':
-        return [textEvidence(payload.kind, renderRoleCatalog(payload), 'application', 'instruction')];
+        return [contextBlock(payload.kind, renderRoleCatalog(payload), 'application', 'instruction')];
       case 'toolOutputProjection':
         return [];
       case 'inheritedContext':
@@ -475,8 +507,8 @@ export class CanonicalContextProjector {
 
   private projectAdditionalContext(
     payload: Extract<ThreadContextPayload, { readonly kind: 'additionalContext' }>,
-  ): TextContent[] {
-    const content = payload.turnEntries.map((entry) => textEvidence(
+  ): ProjectedContextBlock[] {
+    const content = payload.turnEntries.map((entry) => contextBlock(
       payload.kind,
       entry.text,
       entry.authority,
@@ -492,13 +524,13 @@ export class CanonicalContextProjector {
   private projectAdditionalThreadState(
     threadState: readonly ContextTextEntry[],
     metadata: readonly string[] = [],
-  ): TextContent[] {
-    const content: TextContent[] = [];
+  ): ProjectedContextBlock[] {
+    const content: ProjectedContextBlock[] = [];
     const next = new Map(threadState.map((entry) => [entry.key, entry]));
     for (const entry of threadState) {
       const previous = this.previousAdditionalContext?.get(entry.key);
       if (previous && contextEntriesEqual(previous, entry)) continue;
-      content.push(textEvidence(
+      content.push(contextBlock(
         'additionalContext',
         entry.text,
         entry.authority,
@@ -509,7 +541,7 @@ export class CanonicalContextProjector {
     if (this.previousAdditionalContext) {
       for (const entry of this.previousAdditionalContext.values()) {
         if (next.has(entry.key)) continue;
-        content.push(textEvidence(
+        content.push(contextBlock(
           'additionalContext',
           'state=cleared',
           'application',
@@ -537,22 +569,22 @@ export class CanonicalContextProjector {
 
   private async projectReferencedResources(
     payload: ReferencedResourcesContextPayload,
-  ): Promise<Array<TextContent | ImageContent>> {
-    const content: Array<TextContent | ImageContent> = [];
+  ): Promise<ProjectedContextPart[]> {
+    const content: ProjectedContextPart[] = [];
     for (const resource of payload.resources) {
       let path: string | null = null;
       if (resource.resourceRef) {
         path = await this.resources.resolveResourceObservationPath(resource.resourceRef);
         if (!path) throw new Error(`Referenced resource payload is unavailable: ${resource.nodeId}`);
       }
-      content.push(textEvidence('referencedResources', [
+      content.push(contextBlock('referencedResources', [
         `node_id=${resource.nodeId}`,
         `node_type=${resource.nodeType}`,
         `availability=${resource.unavailableReason ?? (resource.resourceRef ? 'available' : 'identity-only')}`,
         path ? `readable_path=${path}` : null,
         resource.contentTruncated ? 'snapshot_content_truncated=true' : null,
       ].filter((line): line is string => line !== null).join('\n'), 'application', 'observation'));
-      content.push(textEvidence('referencedResources', [
+      content.push(contextBlock('referencedResources', [
         `node_id=${resource.nodeId}`,
         `title=${resource.title}`,
         `breadcrumb=${resource.breadcrumb.map((node) => `${node.title} (${node.nodeId})`).join(' / ') || 'none'}`,
@@ -568,7 +600,11 @@ export class CanonicalContextProjector {
       if (resource.inlineImage && resource.resourceRef) {
         const bytes = await this.resources.readResource(resource.resourceRef);
         if (!bytes) throw new Error(`Referenced image payload is unavailable: ${resource.nodeId}`);
-        content.push({ type: 'image', data: bytes.toString('base64'), mimeType: resource.resourceRef.mimeType });
+        content.push({
+          type: 'contextImage',
+          content: { type: 'image', data: bytes.toString('base64'), mimeType: resource.resourceRef.mimeType },
+          entry: { kind: 'referencedResources', authority: 'untrusted', purpose: 'observation' },
+        });
       }
     }
     return content;
@@ -664,23 +700,45 @@ function impliedUserPrompt(content: readonly ThreadUserContent[]): string | null
   return `Please review the ${joined}.`;
 }
 
-function textEvidence(
-  kind: string,
+function contextBlock(
+  kind: ContextPayloadKind,
   body: string,
-  authority: 'application' | 'untrusted',
-  purpose: 'instruction' | 'observation',
+  authority: ContextAuthority,
+  purpose: ContextPurpose,
   metadata: readonly string[] = [],
-): TextContent {
+): ProjectedContextBlock {
+  return {
+    type: 'contextBlock',
+    kind,
+    authority,
+    purpose,
+    body,
+    metadata,
+  };
+}
+
+function contextBundle(blocks: readonly ProjectedContextBlock[]): TextContent {
   return {
     type: 'text',
     text: [
       '<system-reminder>',
-      `<context-evidence kind="${escapeXml(kind)}" authority="${authority}" purpose="${purpose}">`,
-      ...metadata.map((entry) => `  <meta>${escapeXml(entry)}</meta>`),
-      escapeXml(body),
-      '</context-evidence>',
+      ...blocks.flatMap((block) => [
+        `<context-evidence kind="${escapeXml(block.kind)}" authority="${block.authority}" purpose="${block.purpose}">`,
+        ...block.metadata.map((entry) => `  <meta>${escapeXml(entry)}</meta>`),
+        escapeXml(block.body),
+        '</context-evidence>',
+      ]),
       '</system-reminder>',
     ].join('\n'),
+  };
+}
+
+function systemContextProvenance(
+  blocks: readonly ProjectedContextBlock[],
+): TurnDiagnosticsMessagePartProvenance {
+  return {
+    source: 'systemContext',
+    entries: blocks.map(({ kind, authority, purpose }) => ({ kind, authority, purpose })),
   };
 }
 
@@ -829,17 +887,12 @@ function compareStableText(left: string, right: string): number {
 function renderSkillCatalog(payload: SkillCatalogContextPayload): string {
   return [
     `mode=${payload.mode}`,
-    `previous_catalog_hash=${payload.previousCatalogHash ?? 'none'}`,
-    `catalog_hash=${payload.catalogHash}`,
     ...payload.entries.map((entry) => [
-      `- ${entry.name}`,
-      `change=${entry.change}`,
-      `display_name=${entry.displayName}`,
-      `source=${entry.source}`,
-      `identity=${entry.identity}`,
-      `content_hash=${entry.contentHash}`,
+      `- name=${entry.name}`,
+      payload.mode === 'delta' ? `change=${entry.change}` : null,
+      entry.displayName !== entry.name ? `display_name=${entry.displayName}` : null,
       `description=${entry.description}`,
-    ].join(' ')),
+    ].filter((value): value is string => value !== null).join(' ')),
     'Use the skill tool to load a matching Skill before responding to a task it covers.',
   ].join('\n');
 }
@@ -847,17 +900,12 @@ function renderSkillCatalog(payload: SkillCatalogContextPayload): string {
 function renderRoleCatalog(payload: RoleCatalogContextPayload): string {
   return [
     `mode=${payload.mode}`,
-    `previous_catalog_hash=${payload.previousCatalogHash ?? 'none'}`,
-    `catalog_hash=${payload.catalogHash}`,
     ...payload.entries.map((entry) => [
-      `- ${entry.name}`,
-      `change=${entry.change}`,
-      `display_name=${entry.displayName}`,
-      `source=${entry.source}`,
-      `identity=${entry.identity}`,
-      `content_hash=${entry.contentHash}`,
+      `- name=${entry.name}`,
+      payload.mode === 'delta' ? `change=${entry.change}` : null,
+      entry.displayName !== entry.name ? `display_name=${entry.displayName}` : null,
       `description=${entry.description}`,
-    ].join(' ')),
+    ].filter((value): value is string => value !== null).join(' ')),
     'Pass a matching Role name as agent_type when calling collaboration.spawn_agent.',
   ].join('\n');
 }

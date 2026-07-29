@@ -201,8 +201,13 @@ fields preserve top-level insertion order only as a serialization fact; they rec
 synthetic numeric context order. `messages`,
 `input`, `contents`, and equivalent sequence fields preserve element order and every
 message's content-part order. The renderer may add presentation labels such as attachment
-or system reminder, but never derives authority, reorders, merges, or substitutes the
-recorded value. The complete image-sanitized provider request is available as JSON from
+or System Context, but never derives authority, reorders, merges, or substitutes the
+recorded value. Main records exact, unambiguous adapter-to-canonical content-part matches as
+typed provenance; unmatched fragments stay unlabeled. A System Context part expands to its
+ordered semantic entries (Environment, User View, Available Skills, Available Roles, and
+other typed kinds) with authority and purpose, plus the untouched raw provider part. The
+renderer never parses reminder XML, and literal user text that resembles a reminder remains
+ordinary text. The complete image-sanitized provider request is available as JSON from
 the same call. The recorded pre-adapter Model Context remains available through a secondary
 disclosure in semantic order: System Instructions, Tool Definitions, then Messages. It is
 explicitly labeled as Tenon's projection passed to the adapter, not as the transport payload.
@@ -226,7 +231,9 @@ diagnostics export only when invoked: runtime selection, complete recorded Model
 ordered image-sanitized Provider Payload, and Request Facts. It does not claim to be an HTTP
 request, expose secret headers, or restore omitted image bytes.
 Repetition-heavy request fields use the diagnostics fragment pool without losing a value
-or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
+or its position. Each fragmented request field carries an aligned optional provenance array;
+the codec requires exact fragment and content-part cardinality whenever provenance exists.
+Image bytes are never returned to the renderer: binary/base64/data-URL
 content is represented by an omission marker containing its byte length and SHA-256.
 
 Internal diagnostics exposes accepted-input admission records, accepted user records,

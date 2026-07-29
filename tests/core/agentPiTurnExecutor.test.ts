@@ -1604,6 +1604,7 @@ describe('PiTurnExecutor event normalization', () => {
                 representation: 'fragments',
                 container: 'array',
                 fragmentIds: [expect.any(String)],
+                fragmentPartProvenance: [[{ source: 'unknown' }]],
               },
               { name: 'response_format', representation: 'inline', value: { type: 'json_object' } },
               { name: 'text', representation: 'inline', value: { verbosity: 'low' } },

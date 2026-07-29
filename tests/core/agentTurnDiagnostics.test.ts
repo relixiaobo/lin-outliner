@@ -39,6 +39,24 @@ describe('Turn diagnostics', () => {
       content: [{ type: 'text', text: 'Continue.' }],
       timestamp: 20,
     };
+    const firstProviderMessage = {
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'Inspect this image.' },
+        { type: 'input_image', image_url: `data:image/png;base64,${imageBytes.toString('base64')}` },
+      ],
+    };
+    const firstProvenance = [
+      {
+        source: 'systemContext' as const,
+        entries: [{
+          kind: 'turnEnvironment' as const,
+          authority: 'application' as const,
+          purpose: 'observation' as const,
+        }],
+      },
+      { source: 'userInput' as const },
+    ];
     const collector = new TurnDiagnosticsCollector({
       contextEpochId: 'initial',
       cacheAffinity: 'a'.repeat(64),
@@ -81,10 +99,25 @@ describe('Turn diagnostics', () => {
       },
     });
 
-    prepare(collector, [firstMessage], 0, 120);
+    prepare(collector, [firstMessage], 0, 120, [firstProvenance]);
     collector.captureProviderRequest({
       model: model.id,
-      input: [firstMessage],
+      input: [firstProviderMessage],
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: 'Inspect this image.' },
+          { inlineData: { mimeType: 'image/png', data: imageBytes.toString('base64') } },
+        ],
+      }],
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Inspect this image.' },
+          { type: 'metadata', audit: { sha256: digest(imageBytes) } },
+        ],
+      }],
+      metadata: { mimeType: 'image/png', data: imageBytes.toString('base64') },
       temperature: 0.2,
       image_url: `data:image/png;base64,${imageBytes.toString('base64')}`,
       system: [{ text: 'Base', cache_control: { type: 'ephemeral' } }],
@@ -103,10 +136,13 @@ describe('Turn diagnostics', () => {
     collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
     collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 
-    prepare(collector, [firstMessage, secondMessage], 1, 160);
+    prepare(collector, [firstMessage, secondMessage], 1, 160, [
+      firstProvenance,
+      [{ source: 'userInput' }],
+    ]);
     collector.captureProviderRequest({
       model: model.id,
-      input: [firstMessage, secondMessage],
+      input: [firstProviderMessage, secondMessage],
       temperature: 0.2,
     });
 
@@ -137,7 +173,7 @@ describe('Turn diagnostics', () => {
         },
       ],
     });
-    expect(payload.requestFragments).toHaveLength(4);
+    expect(payload.requestFragments).toHaveLength(6);
     expect(payload.providerCalls).toHaveLength(2);
     expect(payload.providerCalls[0]).toMatchObject({
       protectedFromMessageIndex: 0,
@@ -160,24 +196,43 @@ describe('Turn diagnostics', () => {
     expect(payload.providerCalls[0]?.request.kind).toBe('object');
     expect(payload.providerCalls[0]?.request.kind === 'object'
       ? payload.providerCalls[0].request.fields.map((field) => field.name)
-      : []).toEqual(['model', 'input', 'temperature', 'image_url', 'system']);
+      : []).toEqual(['model', 'input', 'contents', 'messages', 'metadata', 'temperature', 'image_url', 'system']);
     expect(materializeRequest(payload, 0)).toMatchObject({
       model: 'test-model',
       input: [{
         role: 'user',
         content: [
-          { type: 'text', text: 'Inspect this image.' },
+          { type: 'input_text', text: 'Inspect this image.' },
           {
-            type: 'image',
-            data: {
+            type: 'input_image',
+            image_url: {
               omitted: true,
-              encoding: 'base64',
+              encoding: 'data-url',
+              mimeType: 'image/png',
               byteLength: imageBytes.byteLength,
               sha256: digest(imageBytes),
             },
           },
         ],
       }],
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: 'Inspect this image.' },
+          {
+            inlineData: {
+              mimeType: 'image/png',
+              data: {
+                omitted: true,
+                encoding: 'base64',
+                byteLength: imageBytes.byteLength,
+                sha256: digest(imageBytes),
+              },
+            },
+          },
+        ],
+      }],
+      metadata: { mimeType: 'image/png', data: imageBytes.toString('base64') },
       temperature: 0.2,
       image_url: {
         omitted: true,
@@ -189,6 +244,24 @@ describe('Turn diagnostics', () => {
       system: [{ text: 'Base', cache_control: { type: 'ephemeral' } }],
     });
     expect(payload.providerCalls[0]?.requestFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    const firstInput = payload.providerCalls[0]?.request.kind === 'object'
+      ? payload.providerCalls[0].request.fields.find((field) => field.name === 'input')
+      : null;
+    expect(firstInput?.representation === 'fragments' ? firstInput.fragmentPartProvenance : null).toEqual([
+      firstProvenance,
+    ]);
+    const firstContents = payload.providerCalls[0]?.request.kind === 'object'
+      ? payload.providerCalls[0].request.fields.find((field) => field.name === 'contents')
+      : null;
+    expect(firstContents?.representation === 'fragments' ? firstContents.fragmentPartProvenance : null).toEqual([
+      firstProvenance,
+    ]);
+    const firstMessages = payload.providerCalls[0]?.request.kind === 'object'
+      ? payload.providerCalls[0].request.fields.find((field) => field.name === 'messages')
+      : null;
+    expect(firstMessages?.representation === 'fragments' ? firstMessages.fragmentPartProvenance : null).toEqual([
+      null,
+    ]);
     expect(payload.providerCalls[1]).toMatchObject({
       protectedFromMessageIndex: 1,
       estimatedInputTokens: 160,
@@ -244,6 +317,19 @@ describe('Turn diagnostics', () => {
         },
       }, payload.providerCalls[1]!],
     })).toThrow('must align with the referenced message content');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...payload,
+      providerCalls: [{
+        ...payload.providerCalls[0]!,
+        preparedContext: {
+          ...payload.providerCalls[0]!.preparedContext,
+          messagePartProvenance: [[
+            { source: 'systemContext', entries: [] },
+            { source: 'unknown' },
+          ]],
+        },
+      }, payload.providerCalls[1]!],
+    })).toThrow('expected at least one context entry');
   });
 
   test('records retry, compaction, steering, and transient tools as ordered activities', () => {
@@ -380,10 +466,11 @@ function prepare(
   messages: readonly Message[],
   protectedFromMessageIndex: number,
   estimatedInputTokens: number,
+  provenance?: readonly (readonly import('../../src/core/agent/protocol').TurnDiagnosticsMessagePartProvenance[])[],
 ): void {
   collector.prepareProviderPlan({
     protectedFromMessageIndex,
-    messagePartProvenance: messages.map((message) => (
+    messagePartProvenance: provenance ?? messages.map((message) => (
       'content' in message
         ? (typeof message.content === 'string' ? [message.content] : message.content)
           .map(() => ({ source: 'unknown' as const }))

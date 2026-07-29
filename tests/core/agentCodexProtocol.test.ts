@@ -1478,6 +1478,7 @@ describe('Codex Agent Core protocol codec', () => {
                 representation: 'fragments',
                 container: 'array',
                 fragmentIds: ['9'.repeat(64)],
+                fragmentPartProvenance: [[{ source: 'unknown' }]],
               }],
             },
           }],

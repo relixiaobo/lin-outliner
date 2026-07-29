@@ -231,6 +231,10 @@ export type TurnDiagnosticsProviderRequestField =
       readonly representation: 'fragments';
       readonly container: 'array' | 'value';
       readonly fragmentIds: readonly string[];
+      /** Typed canonical origins for each fragment's ordered content parts, when mapping is exact. */
+      readonly fragmentPartProvenance: readonly (
+        readonly TurnDiagnosticsMessagePartProvenance[] | null
+      )[];
     };
 
 export type TurnDiagnosticsProviderRequest =
@@ -257,12 +261,18 @@ export interface TurnDiagnosticsPreparedContext {
 
 export type TurnDiagnosticsMessagePartProvenance =
   | {
-      readonly source: 'contextEvidence';
-      readonly kind: ContextEvidenceKind;
+      readonly source: 'systemContext';
+      readonly entries: readonly TurnDiagnosticsSystemContextEntry[];
     }
   | {
-      readonly source: 'contextCompaction' | 'userInput' | 'assistantHistory' | 'toolResult' | 'unknown';
+      readonly source: 'userInput' | 'assistantHistory' | 'toolResult' | 'unknown';
     };
+
+export interface TurnDiagnosticsSystemContextEntry {
+  readonly kind: ContextPayloadKind;
+  readonly authority: ContextAuthority;
+  readonly purpose: ContextPurpose;
+}
 
 export interface TurnDiagnosticsProviderUsage {
   readonly input: number;

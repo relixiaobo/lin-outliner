@@ -800,6 +800,15 @@ This preserves every request value and array/content-part position while keeping
 repeated stable prefixes bounded. Diagnostics remain observational and leave outbound
 bytes and cache topology untouched.
 
+Contiguous provider-facing context text is one ordered System Context part containing
+multiple evidence entries, not one reminder part per canonical evidence Item. Images flush
+the current text bundle to preserve exact multimodal order. Canonical Skill/Role payloads
+retain reducer and audit metadata, while their provider projection contains only semantic
+names, descriptions, delta state, and use instructions. Diagnostics records each System
+Context part with typed ordered `kind`/`authority`/`purpose` provenance. It maps that
+provenance onto post-adapter request fragments only through exact, unambiguous content-part
+identity; the renderer never parses XML or upgrades reminder-like user text.
+
 Terminal diagnostics are a versioned content-addressed Thread payload referenced from
 `Turn.execution`, copied on fork, and pruned on rollback/startup/failure when no
 reachable Turn references them. Publication is best-effort and never changes the real
@@ -816,6 +825,9 @@ Calls. Request renders the content-bearing fields from the final post-adapter Pr
 first. Inline provider parameters remain available in the Model Call information surface and
 Request metadata rather than interrupting the content flow; raw JSON and copied diagnostics
 retain every field. Object-key order is never numbered or used to imply model precedence. The
+Provider Request presents a typed System Context disclosure with its ordered semantic entries
+and untouched raw part whenever exact main-process provenance exists. Unmatched adapter
+fragments remain generic rather than receiving an inferred source. The
 pre-adapter context remains available through a secondary disclosure in semantic order
 (`system instructions -> tool definitions -> messages`) and is explicitly labeled as Tenon's
 adapter input. There is no separate context construction account. Timeline hierarchy uses

@@ -118,6 +118,15 @@ test.describe('canonical agent Thread surface', () => {
     await expect(request).toContainText('Provider request JSON');
     await expect(request).toContainText('Pre-adapter context');
     await expect(request).not.toContainText('System instructions');
+    await request.getByText('input', { exact: true }).click();
+    await expect(request).toContainText('System Context');
+    await request.locator('.thread-turn-details-part-list > .thread-turn-details-disclosure')
+      .filter({ hasText: 'System Context' })
+      .first()
+      .locator(':scope > summary')
+      .click();
+    await expect(request).toContainText('Environment · Application · Observation');
+    await expect(request).toContainText('Raw system context part');
     await turnDetails.getByText('Pre-adapter context', { exact: true }).click();
     await expect(request).toContainText('System instructions');
     await expect(request).toContainText('Tool definitions (1)');
@@ -145,7 +154,11 @@ test.describe('canonical agent Thread surface', () => {
     expect(copiedRequest.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
     expect(copiedRequest.modelContext).toMatchObject({
       systemInstructions: 'Canonical mock system prompt.',
-      messages: expect.any(Array),
+      messages: [expect.objectContaining({
+        partProvenance: expect.arrayContaining([
+          expect.objectContaining({ source: 'systemContext' }),
+        ]),
+      })],
       toolDefinitions: expect.any(Array),
     });
     expect(copiedRequest.providerPayload).toMatchObject({

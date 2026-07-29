@@ -88,10 +88,15 @@ describe('ThreadTurnDetailsPanel', () => {
     await openDetailsContaining(rendered.document, 'input');
     callText = firstCall.textContent ?? '';
     expect(callText).toContain('[0] Text part');
-    expect(callText).toContain('[1] Text part');
-    expect(callText).toContain('[2] Text part');
+    expect(callText).toContain('[1] System Context');
+    expect(callText).toContain('[2] Attachment');
     expect(callText).toContain('[3] Text part');
     expect(callText).toContain('/workspace/report.pdf');
+    await openDetailsContaining(rendered.document, 'System Context');
+    callText = firstCall.textContent ?? '';
+    expect(callText).toContain('Referenced Resources · Application · Observation');
+    expect(callText).toContain('Raw system context part');
+    expect(callText).not.toContain('Available Skills');
 
     await openDetailsContaining(rendered.document, 'Pre-adapter context');
     callText = firstCall.textContent ?? '';
@@ -99,10 +104,10 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(callText).toContain('Tool definitions (1)');
     expect(callText).toContain('Messages (1)');
     expect(callText).toContain('[0] Text part');
-    expect(callText).toContain('[1] Context evidence · referencedResources');
+    expect(callText).toContain('[1] System Context');
     expect(callText).toContain('[2] Attachment');
     expect(callText).toContain('[3] Text part');
-    expect(callText).not.toContain('Context evidence · skillCatalog');
+    expect(callText).not.toContain('Available Skills');
     expect(callText).toContain('/workspace/report.pdf');
     expect(callText).toContain('Done');
     expect(rendered.document.querySelector('.thread-turn-details-request-facts-card')).toBeNull();
@@ -573,6 +578,19 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
     ],
     timestamp: 1,
   } as const;
+  const messagePartProvenance = [
+    { source: 'userInput' as const },
+    {
+      source: 'systemContext' as const,
+      entries: [{
+        kind: 'referencedResources' as const,
+        authority: 'application' as const,
+        purpose: 'observation' as const,
+      }],
+    },
+    { source: 'userInput' as const },
+    { source: 'userInput' as const },
+  ];
   const messageId = 'e'.repeat(64);
   const inputFragmentId = '6'.repeat(64);
   const instructionFragmentId = '7'.repeat(64);
@@ -643,12 +661,7 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
           systemPromptFragmentId: instructionFragmentId,
           toolNames: ['file_read'],
           messageIds: [messageId],
-          messagePartProvenance: [[
-            { source: 'userInput' },
-            { source: 'contextEvidence', kind: 'referencedResources' },
-            { source: 'userInput' },
-            { source: 'userInput' },
-          ]],
+          messagePartProvenance: [messagePartProvenance],
         },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 120,
@@ -672,9 +685,22 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
               representation: 'fragments',
               container: 'value',
               fragmentIds: [instructionFragmentId],
+              fragmentPartProvenance: [null],
             },
-            { name: 'input', representation: 'fragments', container: 'array', fragmentIds: [inputFragmentId] },
-            { name: 'tools', representation: 'fragments', container: 'array', fragmentIds: [toolFragmentId] },
+            {
+              name: 'input',
+              representation: 'fragments',
+              container: 'array',
+              fragmentIds: [inputFragmentId],
+              fragmentPartProvenance: [messagePartProvenance],
+            },
+            {
+              name: 'tools',
+              representation: 'fragments',
+              container: 'array',
+              fragmentIds: [toolFragmentId],
+              fragmentPartProvenance: [null],
+            },
           ],
         },
         requestFingerprint: '5'.repeat(64),
@@ -695,12 +721,7 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
           systemPromptFragmentId: instructionFragmentId,
           toolNames: ['file_read'],
           messageIds: [messageId],
-          messagePartProvenance: [[
-            { source: 'userInput' },
-            { source: 'contextEvidence', kind: 'referencedResources' },
-            { source: 'userInput' },
-            { source: 'userInput' },
-          ]],
+          messagePartProvenance: [messagePartProvenance],
         },
         protectedFromMessageIndex: 0,
         estimatedInputTokens: 130,
@@ -724,9 +745,22 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
               representation: 'fragments',
               container: 'value',
               fragmentIds: [instructionFragmentId],
+              fragmentPartProvenance: [null],
             },
-            { name: 'input', representation: 'fragments', container: 'array', fragmentIds: [inputFragmentId] },
-            { name: 'tools', representation: 'fragments', container: 'array', fragmentIds: [toolFragmentId] },
+            {
+              name: 'input',
+              representation: 'fragments',
+              container: 'array',
+              fragmentIds: [inputFragmentId],
+              fragmentPartProvenance: [messagePartProvenance],
+            },
+            {
+              name: 'tools',
+              representation: 'fragments',
+              container: 'array',
+              fragmentIds: [toolFragmentId],
+              fragmentPartProvenance: [null],
+            },
           ],
         },
         requestFingerprint: '6'.repeat(64),

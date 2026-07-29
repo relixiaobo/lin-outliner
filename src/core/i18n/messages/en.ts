@@ -11,6 +11,23 @@
 // General pane). Subsequent migration PRs grow this tree surface by surface; see
 // docs/plans/i18n-multi-language.md.
 
+function contextKindLabel(kind: string): string {
+  return ({
+    turnEnvironment: 'Environment',
+    userView: 'User View',
+    additionalContext: 'Additional Context',
+    referencedResources: 'Referenced Resources',
+    skillCatalog: 'Available Skills',
+    skillInvocation: 'Skill Instructions',
+    roleCatalog: 'Available Roles',
+    toolOutputProjection: 'Tool Output',
+    inheritedContext: 'Inherited Context',
+    compactionSummary: 'Compacted History',
+    compactionRestoredState: 'Restored Context',
+    compactionInstructions: 'Restored Instructions',
+  } as Readonly<Record<string, string>>)[kind] ?? kind;
+}
+
 export const en = {
   // Native application + context menus (main process; rebuilt on language change).
   menu: {
@@ -1276,8 +1293,16 @@ commandPalette: {
       orderedValues: ({ count }: { count: number }) => `${count} ordered ${count === 1 ? 'value' : 'values'}`,
       rawMessage: 'Raw message',
       canonicalMessages: 'Prepared message pool',
-      contextEvidence: ({ kind }: { kind: string }) => `Context evidence · ${kind}`,
-      contextCompaction: 'Context compaction',
+      systemContext: 'System Context',
+      contextEntries: ({ count }: { count: number }) => `${count} context ${count === 1 ? 'entry' : 'entries'}`,
+      contextEntry: ({ kind, authority, purpose }: {
+        kind: string;
+        authority: string;
+        purpose: string;
+      }) => `${contextKindLabel(kind)} · ${authority === 'application' ? 'Application' : 'Untrusted'} · ${
+        purpose === 'instruction' ? 'Instruction' : 'Observation'
+      }`,
+      rawSystemContext: 'Raw system context part',
       attachment: 'Attachment',
       textPart: 'Text part',
       imagePart: 'Image part',

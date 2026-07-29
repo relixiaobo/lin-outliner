@@ -1966,6 +1966,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ],
             timestamp: userItem.acceptedAt,
           };
+          const messagePartProvenance = providerMessage.content.map((_part, index) => (
+            index === providerMessage.content.length - 1
+              ? {
+                  source: 'systemContext' as const,
+                  entries: [{
+                    kind: 'turnEnvironment' as const,
+                    authority: 'application' as const,
+                    purpose: 'observation' as const,
+                  }],
+                }
+              : { source: 'userInput' as const }
+          ));
           const providerTool = {
             type: 'function',
             name: 'node_read',
@@ -2038,11 +2050,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 systemPromptFragmentId: instructionFragmentId,
                 toolNames: ['node_read'],
                 messageIds: [messageId],
-                messagePartProvenance: [providerMessage.content.map((_part, index) => (
-                  index === providerMessage.content.length - 1
-                    ? { source: 'contextEvidence' as const, kind: 'turnEnvironment' as const }
-                    : { source: 'userInput' as const }
-                ))],
+                messagePartProvenance: [messagePartProvenance],
               },
               protectedFromMessageIndex: 0,
               estimatedInputTokens: turn.execution.usage.input,
@@ -2058,18 +2066,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                     representation: 'fragments',
                     container: 'value',
                     fragmentIds: [instructionFragmentId],
+                    fragmentPartProvenance: [null],
                   },
                   {
                     name: 'input',
                     representation: 'fragments',
                     container: 'array',
                     fragmentIds: [messageId],
+                    fragmentPartProvenance: [messagePartProvenance],
                   },
                   {
                     name: 'tools',
                     representation: 'fragments',
                     container: 'array',
                     fragmentIds: [toolFragmentId],
+                    fragmentPartProvenance: [null],
                   },
                 ],
               },

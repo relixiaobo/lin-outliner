@@ -45,6 +45,7 @@ import {
   type ThreadResourceReference,
   type Turn,
   type TurnDiagnosticsPayload,
+  type TurnDiagnosticsMessagePartProvenance,
   type TurnDiagnosticsPayloadReference,
   type TurnProvenance,
   type TurnTrigger,
@@ -2591,27 +2592,9 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance`,
     ).map((parts, messageIndex) => {
       const path = `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance[${messageIndex}]`;
-      return arrayValue(parts, path).map((entry, partIndex) => {
-        const partPath = `${path}[${partIndex}]`;
-        const provenance = recordValue(entry, partPath);
-        const source = enumValue(provenance.source, [
-          'contextEvidence',
-          'contextCompaction',
-          'userInput',
-          'assistantHistory',
-          'toolResult',
-          'unknown',
-        ], `${partPath}.source`);
-        if (source === 'contextEvidence') {
-          exactKeys(provenance, ['source', 'kind'], partPath);
-          return {
-            source,
-            kind: enumValue(provenance.kind, CONTEXT_EVIDENCE_KINDS, `${partPath}.kind`),
-          };
-        }
-        exactKeys(provenance, ['source'], partPath);
-        return { source };
-      });
+      return arrayValue(parts, path).map((entry, partIndex) => (
+        decodeTurnDiagnosticsPartProvenance(entry, `${path}[${partIndex}]`)
+      ));
     });
     if (messagePartProvenance.length !== callMessageIds.length) {
       fail(
@@ -2630,7 +2613,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     });
     const request = decodeTurnDiagnosticsProviderRequest(
       call.request,
-      fragmentIds,
+      fragmentsById,
       `turnDiagnostics.providerCalls[${index}].request`,
     );
     const response = call.response === null
@@ -3025,14 +3008,15 @@ function nullableDiagnosticsCallIndex(value: unknown, path: string, callCount: n
 
 function diagnosticContentPartCount(value: JsonValue): number {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
-  const content = (value as Readonly<Record<string, JsonValue>>).content;
+  const record = value as Readonly<Record<string, JsonValue>>;
+  const content = record.content ?? record.parts;
   if (Array.isArray(content)) return content.length;
   return content === undefined || content === null ? 0 : 1;
 }
 
 function decodeTurnDiagnosticsProviderRequest(
   value: unknown,
-  knownFragmentIds: ReadonlySet<string>,
+  fragmentsById: ReadonlyMap<string, JsonValue>,
   path: string,
 ): TurnDiagnosticsPayload['providerCalls'][number]['request'] {
   const record = recordValue(value, path);
@@ -3055,20 +3039,81 @@ function decodeTurnDiagnosticsProviderRequest(
       exactKeys(field, ['name', 'representation', 'value'], fieldPath);
       return { name, representation, value: jsonValue(field.value, `${fieldPath}.value`) };
     }
-    exactKeys(field, ['name', 'representation', 'container', 'fragmentIds'], fieldPath);
+    exactKeys(
+      field,
+      ['name', 'representation', 'container', 'fragmentIds', 'fragmentPartProvenance'],
+      fieldPath,
+    );
     const requestFragmentIds = stringArray(field.fragmentIds, `${fieldPath}.fragmentIds`);
-    if (requestFragmentIds.some((id) => !knownFragmentIds.has(id))) {
+    if (requestFragmentIds.some((id) => !fragmentsById.has(id))) {
       fail(`${fieldPath}.fragmentIds`, 'references an unknown request fragment');
     }
+    const fragmentPartProvenance = arrayValue(
+      field.fragmentPartProvenance,
+      `${fieldPath}.fragmentPartProvenance`,
+    ).map((entry, fragmentIndex) => {
+      if (entry === null) return null;
+      const provenancePath = `${fieldPath}.fragmentPartProvenance[${fragmentIndex}]`;
+      return arrayValue(entry, provenancePath).map((part, partIndex) => (
+        decodeTurnDiagnosticsPartProvenance(part, `${provenancePath}[${partIndex}]`)
+      ));
+    });
+    if (fragmentPartProvenance.length !== requestFragmentIds.length) {
+      fail(`${fieldPath}.fragmentPartProvenance`, 'must align with fragmentIds');
+    }
+    fragmentPartProvenance.forEach((parts, fragmentIndex) => {
+      const fragment = fragmentsById.get(requestFragmentIds[fragmentIndex]!);
+      if (parts && fragment && parts.length !== diagnosticContentPartCount(fragment)) {
+        fail(
+          `${fieldPath}.fragmentPartProvenance[${fragmentIndex}]`,
+          'must align with the referenced fragment content',
+        );
+      }
+    });
     return {
       name,
       representation,
       container: enumValue(field.container, ['array', 'value'], `${fieldPath}.container`),
       fragmentIds: requestFragmentIds,
+      fragmentPartProvenance,
     };
   });
   requireUnique(fields.map((field) => field.name), `${path}.fields`, 'field names');
   return { kind, fields };
+}
+
+function decodeTurnDiagnosticsPartProvenance(
+  value: unknown,
+  path: string,
+): TurnDiagnosticsMessagePartProvenance {
+  const provenance = recordValue(value, path);
+  const source = enumValue(provenance.source, [
+    'systemContext',
+    'userInput',
+    'assistantHistory',
+    'toolResult',
+    'unknown',
+  ], `${path}.source`);
+  if (source === 'systemContext') {
+    exactKeys(provenance, ['source', 'entries'], path);
+    const entries = arrayValue(provenance.entries, `${path}.entries`);
+    if (entries.length === 0) fail(`${path}.entries`, 'expected at least one context entry');
+    return {
+      source,
+      entries: entries.map((entry, entryIndex) => {
+        const entryPath = `${path}.entries[${entryIndex}]`;
+        const contextEntry = recordValue(entry, entryPath);
+        exactKeys(contextEntry, ['kind', 'authority', 'purpose'], entryPath);
+        return {
+          kind: enumValue(contextEntry.kind, CONTEXT_PAYLOAD_KINDS, `${entryPath}.kind`),
+          authority: enumValue(contextEntry.authority, ['application', 'untrusted'], `${entryPath}.authority`),
+          purpose: enumValue(contextEntry.purpose, ['instruction', 'observation'], `${entryPath}.purpose`),
+        };
+      }),
+    };
+  }
+  exactKeys(provenance, ['source'], path);
+  return { source };
 }
 
 export function encodeTurnDiagnosticsPayload(value: TurnDiagnosticsPayload): string {

@@ -930,6 +930,7 @@ function ProviderRequestFieldView({
               fieldName={field.name}
               index={fragmentIndex}
               key={`${fragmentIndex}:${fragment.id}`}
+              partProvenance={field.fragmentPartProvenance[fragmentIndex]!}
               value={fragment.value}
             />
           ))}
@@ -947,7 +948,7 @@ function ProviderRequestFragmentView({
 }: {
   readonly fieldName: string;
   readonly index: number;
-  readonly partProvenance?: readonly TurnDiagnosticsMessagePartProvenance[];
+  readonly partProvenance: readonly TurnDiagnosticsMessagePartProvenance[] | null;
   readonly value: JsonValue;
 }) {
   const t = useT();
@@ -972,15 +973,27 @@ function ProviderRequestFragmentView({
         {preview ? <span>{preview}</span> : null}
       </div>
       <div className="thread-turn-details-part-list">
-        {parts.map((part, partIndex) => (
-          <JsonDisclosure
-            metadata={semanticPreview(part, partProvenance?.[partIndex])}
-            resetKey={`${fieldName}:${index}:${partIndex}`}
-            title={`[${partIndex}] ${semanticLabel(part, t.agent.turnDetails, partProvenance?.[partIndex])}`}
-            value={part}
-            key={`${partIndex}:${jsonIdentity(part)}`}
-          />
-        ))}
+        {parts.map((part, partIndex) => {
+          const provenance = partProvenance?.[partIndex];
+          const resetKey = `${fieldName}:${index}:${partIndex}`;
+          return provenance?.source === 'systemContext' ? (
+            <SystemContextDisclosure
+              index={partIndex}
+              key={`${partIndex}:${jsonIdentity(part)}`}
+              provenance={provenance}
+              resetKey={resetKey}
+              value={part}
+            />
+          ) : (
+            <JsonDisclosure
+              metadata={semanticPreview(part, provenance)}
+              resetKey={resetKey}
+              title={`[${partIndex}] ${semanticLabel(part, t.agent.turnDetails, provenance)}`}
+              value={part}
+              key={`${partIndex}:${jsonIdentity(part)}`}
+            />
+          );
+        })}
       </div>
       <JsonDisclosure
         resetKey={`${fieldName}:${index}:raw`}
@@ -988,6 +1001,44 @@ function ProviderRequestFragmentView({
         value={value}
       />
     </div>
+  );
+}
+
+function SystemContextDisclosure({
+  index,
+  provenance,
+  resetKey,
+  value,
+}: {
+  readonly index: number;
+  readonly provenance: Extract<TurnDiagnosticsMessagePartProvenance, { readonly source: 'systemContext' }>;
+  readonly resetKey: string;
+  readonly value: JsonValue;
+}) {
+  const t = useT();
+  return (
+    <LazyDisclosure
+      metadata={t.agent.turnDetails.contextEntries({ count: provenance.entries.length })}
+      resetKey={resetKey}
+      title={`[${index}] ${t.agent.turnDetails.systemContext}`}
+      render={() => (
+        <div className="thread-turn-details-flow-fields">
+          <dl className="thread-turn-details-parameter-list is-compact">
+            {provenance.entries.map((entry, entryIndex) => (
+              <div key={`${entryIndex}:${entry.kind}:${entry.authority}:${entry.purpose}`}>
+                <dt><code>[{entryIndex}]</code></dt>
+                <dd>{t.agent.turnDetails.contextEntry(entry)}</dd>
+              </div>
+            ))}
+          </dl>
+          <JsonDisclosure
+            resetKey={`${resetKey}:raw`}
+            title={t.agent.turnDetails.rawSystemContext}
+            value={value}
+          />
+        </div>
+      )}
+    />
   );
 }
 
@@ -1499,6 +1550,18 @@ function providerParameterText(value: JsonValue): string {
   return isPrimitiveJson(value) ? primitiveText(value) : compactPreview(jsonText(value));
 }
 
+function provenanceJson(provenance: TurnDiagnosticsMessagePartProvenance): JsonValue {
+  if (provenance.source !== 'systemContext') return { source: provenance.source };
+  return {
+    source: provenance.source,
+    entries: provenance.entries.map((entry) => ({
+      kind: entry.kind,
+      authority: entry.authority,
+      purpose: entry.purpose,
+    })),
+  };
+}
+
 function materializeRequestDiagnostics(
   call: TurnDiagnosticsProviderCall,
   fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>,
@@ -1517,7 +1580,7 @@ function materializeRequestDiagnostics(
       id: message.id,
       estimatedTokens: message.estimatedTokens,
       value: message.value,
-      partProvenance: call.preparedContext.messagePartProvenance[index] ?? [],
+      partProvenance: call.preparedContext.messagePartProvenance[index]!.map(provenanceJson),
     }] : [];
   });
   return {
@@ -1589,12 +1652,7 @@ function semanticLabel(
   labels: TurnDetailsLabels,
   provenance?: TurnDiagnosticsMessagePartProvenance,
 ): string {
-  if (provenance?.source === 'contextEvidence') {
-    return labels.contextEvidence({ kind: provenance.kind });
-  }
-  if (provenance?.source === 'contextCompaction') {
-    return labels.contextCompaction;
-  }
+  if (provenance?.source === 'systemContext') return labels.systemContext;
   const text = semanticText(value);
   if (
     provenance?.source === 'userInput'
@@ -1620,10 +1678,7 @@ function semanticPreview(
 ): string {
   const text = semanticText(value);
   if (text) {
-    if (provenance?.source === 'contextEvidence' || provenance?.source === 'contextCompaction') {
-      const body = firstWrappedBodyLine(text);
-      if (body) return body;
-    }
+    if (provenance?.source === 'systemContext') return '';
     return compactPreview(text);
   }
   const record = jsonRecord(value);
@@ -1632,13 +1687,6 @@ function semanticPreview(
     if (name) return name;
   }
   return compactPreview(jsonText(value));
-}
-
-function firstWrappedBodyLine(text: string): string | null {
-  const first = text.split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('<') && !line.endsWith('>'));
-  return first ? compactPreview(first) : null;
 }
 
 function semanticText(value: JsonValue): string | null {

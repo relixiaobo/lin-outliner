@@ -132,17 +132,27 @@ boundary. Each image is preceded by a stable identity marker derived from its al
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
 reset Items select context state rather than becoming user prose; Subagent activity
-and viewed images become textual context. A compaction serializes its lossy summary,
-validated reducer checkpoint, restored inline Skill instructions and file/Node
-observations, optional durable instructions, then continues with its declared preserved
-tail. The covered raw range is not sent as a second copy.
-Context evidence is serialized at its canonical tail position as an escaped
-`<context-evidence>` envelope inside the provider-facing `<system-reminder>` convention
-described by L0. The wrapper is only a serialization boundary: typed canonical evidence
-and host-assigned `authority`/`purpose` metadata remain authoritative. Literal
-user-authored `<system-reminder>` or `<context-evidence>` text is never parsed or
-upgraded, and there is no legacy reader or compatibility fallback. The active provider supplies message
-metadata. No hidden provider transcript is stored or used as a history authority.
+and viewed images become textual context. A compaction serializes its lossy summary, uses
+its validated reducer checkpoint to restore complete Skill/Role catalogs, inline Skill
+instructions, user view, Thread state, file/Node observations, and optional durable
+instructions, then continues with its declared preserved tail. Checkpoint hashes and
+payload references remain canonical state and are not sent as model guidance. The covered
+raw range is not sent as a second copy.
+
+At each canonical tail position, all contiguous text evidence is serialized into ordered
+`<context-evidence>` children inside one provider-facing `<system-reminder>`. A referenced
+image flushes the accumulated text bundle before its bytes, so text/image/user-content order
+is never changed; later text starts another bundle only when that ordering requires it. The
+wrapper is only a serialization boundary: typed canonical evidence and host-assigned
+`kind`/`authority`/`purpose` metadata remain authoritative. Skill and Role catalog payloads
+retain their hashes, identities, sources, and change records for reduction and audit, while
+their provider projection contains only mode, meaningful delta state, names, distinct
+display names, descriptions, and usage guidance. Skill invocation similarly omits storage
+identity, content hash, resource root, and admission timestamps from model-visible prose.
+Literal user-authored `<system-reminder>` or `<context-evidence>` text is never parsed or
+upgraded, and there is no legacy reader or compatibility fallback. The active provider
+supplies message metadata. No hidden provider transcript is stored or used as a history
+authority.
 
 ## User Content And Attachments
 

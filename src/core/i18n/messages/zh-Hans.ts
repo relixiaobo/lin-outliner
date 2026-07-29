@@ -5,6 +5,23 @@ import type { PartialMessages } from '../types';
 // kept verbatim (not transliterated). Keep this file's shape a strict subset of
 // en.ts — the coverage test (test/core/i18n-coverage) reports any drift.
 
+function contextKindLabel(kind: string): string {
+  return ({
+    turnEnvironment: '环境',
+    userView: '用户视图',
+    additionalContext: '附加上下文',
+    referencedResources: '引用资源',
+    skillCatalog: '可用 Skills',
+    skillInvocation: 'Skill 指令',
+    roleCatalog: '可用 Roles',
+    toolOutputProjection: '工具输出',
+    inheritedContext: '继承上下文',
+    compactionSummary: '压缩历史',
+    compactionRestoredState: '已恢复上下文',
+    compactionInstructions: '已恢复指令',
+  } as Readonly<Record<string, string>>)[kind] ?? kind;
+}
+
 export const zhHans: PartialMessages = {
   menu: {
     settings: '设置…',
@@ -1210,8 +1227,12 @@ commandPalette: {
       orderedValues: ({ count }) => `${count} 个有序值`,
       rawMessage: '原始消息',
       canonicalMessages: '已准备消息池',
-      contextEvidence: ({ kind }) => `上下文证据 · ${kind}`,
-      contextCompaction: '上下文压缩',
+      systemContext: '系统上下文',
+      contextEntries: ({ count }) => `${count} 条上下文`,
+      contextEntry: ({ kind, authority, purpose }) => `${contextKindLabel(kind)} · ${
+        authority === 'application' ? '应用提供' : '不可信内容'
+      } · ${purpose === 'instruction' ? '指令' : '观察'}`,
+      rawSystemContext: '原始系统上下文部分',
       attachment: '附件',
       textPart: '文本部分',
       imagePart: '图片部分',

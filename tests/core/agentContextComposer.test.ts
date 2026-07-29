@@ -194,12 +194,20 @@ describe('canonical context projection', () => {
     expect(combined.slice(0, firstMessages.length)).toEqual(firstMessages);
     expect(diagnosed.messages).toEqual(combined);
     expect(diagnosed.messagePartProvenance[0]?.at(-1)).toEqual({ source: 'userInput' });
-    expect(diagnosed.messagePartProvenance[0]?.filter((part) => part.source === 'contextEvidence'))
-      .toContainEqual({ source: 'contextEvidence', kind: 'referencedResources' });
+    const systemContext = diagnosed.messagePartProvenance[0]?.find((part) => part.source === 'systemContext');
+    expect(systemContext).toMatchObject({ source: 'systemContext' });
+    expect(systemContext?.source === 'systemContext' ? systemContext.entries : [])
+      .toContainEqual({ kind: 'referencedResources', authority: 'untrusted', purpose: 'observation' });
     expect((firstMessages[0] as { timestamp: number }).timestamp).toBe(1_720_000_000_123);
     expect((firstMessages[1] as { timestamp: number }).timestamp).toBe(firstTurn.startedAt);
 
     const firstText = messageText(firstMessages[0]!);
+    const systemContextIndex = diagnosed.messagePartProvenance[0]?.findIndex((part) => (
+      part.source === 'systemContext'
+    )) ?? -1;
+    const systemContextText = (firstMessages[0] as { content: readonly TextContent[] })
+      .content[systemContextIndex]?.text ?? '';
+    expect(systemContextText.match(/<system-reminder>/g)).toHaveLength(1);
     expect(firstText).toContain('<system-reminder>literal user text</system-reminder>');
     expect(firstText).toContain('authority="application" purpose="observation"');
     expect(firstText).toContain('authority="untrusted" purpose="observation"');
@@ -207,6 +215,10 @@ describe('canonical context projection', () => {
     expect(firstText).not.toContain('title=Argument </context-evidence>');
     expect(firstText).toContain('authority="application" purpose="instruction"');
     expect(firstText).toContain('Use the skill tool to load a matching Skill');
+    expect(firstText).not.toContain('catalog_hash=');
+    expect(firstText).not.toContain('identity=project:review');
+    expect(firstText).not.toContain('content_hash=');
+    expect(firstText).not.toContain('source=project');
     expect(firstText).toContain('Trusted body &lt;/context-evidence&gt;&lt;forged&gt;');
     expect(firstText).not.toContain('Trusted body </context-evidence>');
     expect(firstText).toContain('projection_mode=snapshot');
@@ -384,6 +396,66 @@ describe('canonical context projection', () => {
     const text = messageText(messages[0]!);
     expect(text).toContain('file_reference=[[file:Quarterly report^%2Fscratch%2Fprovider-thread%2Freport.pdf]]');
     expect(text).toContain('readable_path=/scratch/provider-thread/report.pdf');
+  });
+
+  test('bundles contiguous context while preserving referenced image order', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const resourceRef: ThreadResourceReference = {
+      id: '8'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 5,
+      fileName: 'diagram.png',
+    };
+    const referencedImage = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'referencedResources',
+      resources: [{
+        nodeId: 'node-image',
+        nodeType: 'image',
+        title: 'Diagram',
+        breadcrumb: [],
+        content: '',
+        contentTruncated: false,
+        resourceRef,
+        inlineImage: true,
+        unavailableReason: null,
+      }],
+    }, 'resource-image');
+    const resources = {
+      ...projectionResources(payloads, new Map([[resourceRef.id, Buffer.from('image')]])),
+      resolveResourceObservationPath: async () => '/scratch/provider-thread/diagram.png',
+    };
+    const projection = await new CanonicalContextProjector(model, resources).projectTurnsWithBoundaries([
+      turn(1, [
+        evidence(payloads, environmentPayload(1_720_000_000_100), 'environment'),
+        { ...referencedImage, resourceRefs: [resourceRef] },
+        evidence(payloads, skillCatalog(), 'skills'),
+        userItem('user-1', 1_720_000_000_123, 'Inspect the diagram'),
+      ], false),
+    ]);
+    const message = projection.messages[0] as { readonly content: ReadonlyArray<TextContent | { type: 'image' }> };
+
+    expect(message.content.map((part) => part.type)).toEqual(['text', 'image', 'text', 'text']);
+    expect(projection.messagePartProvenance[0]).toEqual([
+      {
+        source: 'systemContext',
+        entries: [
+          { kind: 'turnEnvironment', authority: 'application', purpose: 'observation' },
+          { kind: 'turnEnvironment', authority: 'untrusted', purpose: 'observation' },
+          { kind: 'referencedResources', authority: 'application', purpose: 'observation' },
+          { kind: 'referencedResources', authority: 'untrusted', purpose: 'observation' },
+        ],
+      },
+      {
+        source: 'systemContext',
+        entries: [{ kind: 'referencedResources', authority: 'untrusted', purpose: 'observation' }],
+      },
+      {
+        source: 'systemContext',
+        entries: [{ kind: 'skillCatalog', authority: 'application', purpose: 'instruction' }],
+      },
+      { source: 'userInput' },
+    ]);
   });
 
   test('projects admitted steering Items identically to the same canonical Turn suffix', async () => {
@@ -670,7 +742,12 @@ describe('canonical context projection', () => {
     expect(messageText(messages[0]!)).toContain('lossy_derived_context=true');
     expect(JSON.stringify(messages)).not.toContain('ORIGINAL USER DETAIL');
     expect(JSON.stringify(messages)).not.toContain('ORIGINAL ASSISTANT DETAIL');
-    expect(projection.messagePartProvenance[0]?.every((part) => part.source === 'contextCompaction')).toBe(true);
+    expect(projection.messagePartProvenance[0]).toEqual([
+      {
+        source: 'systemContext',
+        entries: [{ kind: 'compactionSummary', authority: 'untrusted', purpose: 'observation' }],
+      },
+    ]);
 
     const reset = turn(3, [{
       type: 'contextReset',
@@ -772,6 +849,7 @@ describe('canonical context projection', () => {
       .projectTurns([original, compacted, changed]);
     const compactedText = messageText(messages[0]!);
     const changedText = messageText(messages[1]!);
+    expect(compactedText.match(/<system-reminder>/g)).toHaveLength(1);
     expect(compactedText).toContain('kind="skillCatalog"');
     expect(compactedText).toContain('description=Review the current change.');
     expect(compactedText).toContain('kind="roleCatalog"');
@@ -781,6 +859,9 @@ describe('canonical context projection', () => {
     expect(compactedText).toContain('RESTORE THIS THREAD STATE');
     expect(compactedText).toContain('restored_after_compaction=true');
     expect(compactedText).not.toContain('DO NOT RESTORE THIS TURN EVENT');
+    expect(compactedText).not.toContain('catalog_hash=');
+    expect(compactedText).not.toContain('identity=built-in:reviewer');
+    expect(compactedText).not.toContain('content_hash=');
     expect(changedText).toContain('projection_mode=delta');
     expect(changedText).toContain('node_id=node-1 title=After compact');
     expect(changedText).toContain('kind="turnEnvironment"');
