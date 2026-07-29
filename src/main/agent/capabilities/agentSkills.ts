@@ -1,4 +1,4 @@
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool } from '../runtime/kernel/types';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';

@@ -7,19 +7,13 @@ import {
   type Message,
   type Model,
 } from '@earendil-works/pi-ai';
-import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { isCustomOpenAIResponsesEndpoint } from '../../openAIResponsesCompat';
+import { isCustomOpenAIResponsesEndpoint } from '../../../openAIResponsesCompat';
+import { classifyModelFailure } from './ModelGateway';
+import type { ProviderRetryLifecycleEvent } from './types';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
 type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overflow';
 type RequestRetryDelayMs = (retryCount: number) => number;
-
-export interface ProviderRetryLifecycleEvent {
-  phase: 'retrying' | 'cleared';
-  kind: 'request' | 'stream';
-  attempt: number;
-  maxRetries: number;
-}
 
 type ProviderRetryLifecycleHandler = (event: ProviderRetryLifecycleEvent) => void;
 
@@ -42,53 +36,46 @@ const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
 const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
 const RESPONSES_REQUEST_RETRY_JITTER = 0.1;
-const RESPONSES_API_STATUS_RE = /\b(?:Azure )?OpenAI API error \((\d{3})\):/i;
-const RETRYABLE_RESPONSES_TRANSPORT_RE = /\b(?:connection error|request timed out|failed to fetch|fetch failed|network error|socket hang up|socket connection (?:was )?closed|connection reset|econnreset|etimedout|econnaborted|epipe|und_err_socket|err_connection_reset|err_network_changed)\b/i;
-
-export function createAbortSettledStreamFn(
-  sourceFn: StreamFn,
-  retryOptions: {
-    requestRetryDelayMs?: RequestRetryDelayMs;
-    onProviderRetry?: ProviderRetryLifecycleHandler;
-    maxRequestRetries?: number;
-    maxStreamRetries?: number;
-    maxRetryDelayMs?: number;
-    onContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
-  } = {},
-): StreamFn {
-  return ((model, context, options = {}) => {
-    const abortCtrl = new AbortController();
-    const signal = chainAbortSignals(options.signal, abortCtrl);
-    let providerContext = context;
-    const startSource = () => {
-      try {
-        return Promise.resolve(sourceFn(model, providerContext, {
-          ...options,
-          signal,
-        }));
-      } catch (error) {
-        return Promise.reject(error);
-      }
-    };
-    return wrapStreamWithAbortSettling(startSource(), {
-      abortCtrl,
-      model,
-      retrySource: startSource,
-      requestRetryDelayMs: retryOptions.requestRetryDelayMs,
-      onProviderRetry: retryOptions.onProviderRetry,
-      maxRequestRetries: retryOptions.maxRequestRetries,
-      maxStreamRetries: retryOptions.maxStreamRetries,
-      maxRetryDelayMs: retryOptions.maxRetryDelayMs,
-      retryContextOnOverflow: retryOptions.onContextOverflow
-        ? async (errorMessage) => {
-            const messages = await retryOptions.onContextOverflow!(errorMessage);
-            if (!messages) return false;
-            providerContext = { ...providerContext, messages: [...messages] };
-            return true;
-          }
-        : undefined,
-    });
-  }) as StreamFn;
+export function streamWithPolicy(input: {
+  model: Model<Api>;
+  attempt: (messages: Message[] | null, signal: AbortSignal) => AssistantMessageEventStream
+    | Promise<AssistantMessageEventStream>;
+  recoverContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
+  requestRetryDelayMs?: RequestRetryDelayMs;
+  onProviderRetry?: ProviderRetryLifecycleHandler;
+  maxRequestRetries?: number;
+  maxStreamRetries?: number;
+  maxRetryDelayMs?: number;
+  signal?: AbortSignal;
+}): AssistantMessageEventStream {
+  const abortCtrl = new AbortController();
+  const signal = chainAbortSignals(input.signal, abortCtrl);
+  let refreshedMessages: Message[] | null = null;
+  const startSource = () => {
+    try {
+      return Promise.resolve(input.attempt(refreshedMessages, signal));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  };
+  return wrapStreamWithAbortSettling(startSource(), {
+    abortCtrl,
+    model: input.model,
+    retrySource: startSource,
+    requestRetryDelayMs: input.requestRetryDelayMs,
+    onProviderRetry: input.onProviderRetry,
+    maxRequestRetries: input.maxRequestRetries,
+    maxStreamRetries: input.maxStreamRetries,
+    maxRetryDelayMs: input.maxRetryDelayMs,
+    retryContextOnOverflow: input.recoverContextOverflow
+      ? async (errorMessage) => {
+          const messages = await input.recoverContextOverflow!(errorMessage);
+          if (!messages) return false;
+          refreshedMessages = [...messages];
+          return true;
+        }
+      : undefined,
+  });
 }
 
 type AbortSettlingOptions = {
@@ -269,7 +256,7 @@ export function wrapStreamWithAbortSettling(
         reason !== 'error'
         || sawMaterialOutput
         || completedToolCallIds.size > 0
-        || !isProviderContextOverflowError(message.errorMessage)
+        || classifyModelFailure(message)?.kind !== 'contextOverflow'
       ) return null;
       if (canRetryOverflow && overflowRetryCount === 0) {
         pendingOverflowMessage = message;
@@ -442,30 +429,16 @@ function retryOutcomeForResponsesError(
   completedToolCallIds: ReadonlySet<string>,
 ): Exclude<RetryOutcome, 'settled' | 'retry-overflow'> | null {
   if (reason !== 'error' || sawMaterialOutput || completedToolCallIds.size > 0) return null;
+  const failure = classifyModelFailure(message);
   if (!sawStreamEvent
     && requestRetryCount < maxRequestRetries
-    && isRetryableResponsesRequestError(message.errorMessage)) {
+    && (failure?.kind === 'rateLimit' || failure?.kind === 'serverError' || failure?.kind === 'transport')) {
     return 'retry-request';
   }
   if (streamRetryCount < maxStreamRetries && isTerminatedResponsesStreamError(message.errorMessage)) {
     return 'retry-stream';
   }
   return null;
-}
-
-export function isRetryableResponsesRequestError(errorMessage: string | undefined): boolean {
-  if (!errorMessage) return false;
-  const statusMatch = RESPONSES_API_STATUS_RE.exec(errorMessage);
-  if (statusMatch) {
-    const status = Number(statusMatch[1]);
-    return status === 429 || (status >= 500 && status <= 599);
-  }
-  return RETRYABLE_RESPONSES_TRANSPORT_RE.test(errorMessage);
-}
-
-export function isProviderContextOverflowError(errorMessage: string | undefined): boolean {
-  if (!errorMessage) return false;
-  return /\bcontext[_ -]?length[_ -]?exceeded\b|\bmaximum context length\b|\bcontext window(?: limit)? (?:is )?(?:exceeded|too (?:large|small))\b|\bprompt is too long\b|\binput (?:token count )?(?:is )?too long\b|\btoo many (?:input )?tokens\b|\btoken count exceeds (?:the )?(?:model['’]?s )?maximum\b/i.test(errorMessage);
 }
 
 export function responsesRequestRetryDelayMs(

@@ -1,10 +1,15 @@
+import { NativeAgentRuntime } from './kernel/NativeAgentRuntime';
 import {
-  Agent,
-  type AgentEvent,
-  type AgentOptions,
-  type AgentState,
-  type AgentTool,
-} from '@earendil-works/pi-agent-core';
+  PiModelGateway,
+  type ModelGateway,
+  type PiModelGatewayOptions,
+} from './kernel/ModelGateway';
+import type {
+  AgentEvent,
+  AgentState,
+  AgentTool,
+  KernelAgentOptions,
+} from './kernel/types';
 import type { AgentRuntimeSettings } from '../../../core/types';
 import type {
   Api,
@@ -12,7 +17,6 @@ import type {
   Context,
   Message,
   Model,
-  SimpleStreamOptions,
   TextContent,
   Usage,
   UserMessage,
@@ -49,7 +53,6 @@ import {
 } from '../context/ProviderCache';
 import { contextPayloadReferenceKey } from '../context/contextDependencies';
 import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
-import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import {
   lowestThinkingLevel,
   resolveAgentModelEffort,
@@ -70,7 +73,6 @@ import {
   piExternalProviderId,
   piCompleteSimple,
   piResolveAuthApiKey,
-  piStreamSimple,
 } from '../../piModels';
 import {
   applyCustomOpenAIResponsesPayloadProfile,
@@ -106,13 +108,13 @@ export interface PiTurnExecutorOptions {
   readonly createTools?: ModelRuntimeToolFactory;
   readonly beforeProviderContext?: (context: TurnExecutionContext) => void | Promise<void>;
   readonly resolveRuntime?: (context: PiRuntimeContext) => Promise<PiRuntimeSelection>;
-  readonly createAgent?: (options: AgentOptions) => PiAgentRuntime;
+  readonly createAgent?: (options: KernelAgentOptions) => PiAgentRuntime;
+  readonly createGateway?: (options: PiModelGatewayOptions) => ModelGateway;
   readonly completeName?: (
     context: ThreadNameGenerationContext,
     runtime: PiRuntimeSelection,
   ) => Promise<string | null>;
   readonly resolveRuntimeSettings?: () => Promise<AgentRuntimeSettings>;
-  readonly streamSimple?: typeof piStreamSimple;
 }
 
 export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
@@ -242,20 +244,16 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               },
             );
           };
-      const streamSimple = this.options.streamSimple ?? piStreamSimple;
-      const configuredStream = (
-        model: Model<Api>,
-        providerContext: Context,
-        options: SimpleStreamOptions = {},
-      ) => {
-        diagnostics.captureProviderContext(providerContext);
-        return streamSimple(
-          model,
-          providerContext,
-          { ...options, ...providerOptions, maxRetries: 0 },
-        );
+      const gatewayOptions: PiModelGatewayOptions = {
+        onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
+        onPayload: (payload, model) => {
+          const transformed = agentProviderPayload(payload, model, stablePrompt);
+          diagnostics.captureProviderRequest(transformed ?? payload);
+          return transformed;
+        },
+        onResponse: (response) => diagnostics.captureTransportResponse(response),
       };
-      agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
+      agent = (this.options.createAgent ?? ((options) => new NativeAgentRuntime(options)))({
         initialState: {
           systemPrompt,
           model: runtime.model,
@@ -263,7 +261,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           tools,
           messages: priorMessages,
         },
-        streamFn: createAbortSettledStreamFn(configuredStream, {
+        gateway: this.options.createGateway?.(gatewayOptions) ?? new PiModelGateway(gatewayOptions),
+        retryOptions: {
           onProviderRetry: (event) => {
             if (event.phase === 'retrying') diagnostics.captureProviderRetry(event);
             context.onProviderRetry(event.phase === 'retrying'
@@ -273,32 +272,22 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           maxRequestRetries: providerOptions.maxRetries,
           maxStreamRetries: providerOptions.maxRetries,
           maxRetryDelayMs: providerOptions.maxRetryDelayMs,
-          ...(transformContext
-            ? {
-                onContextOverflow: async () => {
-                  const compacted = await context.compactContext(
-                    'providerOverflow',
-                    activeAdmissionCursor(context.turn),
-                  );
-                  if (compacted) diagnostics.captureContextCompaction(compacted);
-                  return compacted ? await transformContext() : null;
-                },
-              }
-            : {}),
-        }),
+        },
+        recoverContextOverflow: transformContext
+          ? async () => {
+              const compacted = await context.compactContext(
+                'providerOverflow',
+                activeAdmissionCursor(context.turn),
+              );
+              if (compacted) diagnostics.captureContextCompaction(compacted);
+              return compacted ? await transformContext() : null;
+            }
+          : undefined,
         getApiKey: runtime.getApiKey,
-        onPayload: (payload, model) => {
-          const transformed = agentProviderPayload(payload, model, stablePrompt);
-          diagnostics.captureProviderRequest(transformed ?? payload);
-          return transformed;
-        },
-        onResponse: (response) => {
-          diagnostics.captureTransportResponse(response);
-        },
         transformContext,
         steeringMode: 'all',
         sessionId: cacheAffinity,
-        maxRetryDelayMs: runtimeSettings.providerMaxRetryDelayMs ?? undefined,
+        providerOptions,
         toolExecution: 'parallel',
       });
       if (context.signal.aborted) {

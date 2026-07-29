@@ -185,7 +185,7 @@ describe('agent web tools', () => {
     expect(envelope.metrics?.truncated).toBe(true);
   });
 
-  test('builds metadata-mode envelopes and remains pi-agent-core result compatible', async () => {
+  test('builds metadata-mode envelopes and remains kernel-result compatible', async () => {
     const html = [
       '<!doctype html><html lang="en"><head>',
       '<title>Lin Docs</title>',

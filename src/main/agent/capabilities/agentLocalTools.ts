@@ -1,4 +1,4 @@
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';

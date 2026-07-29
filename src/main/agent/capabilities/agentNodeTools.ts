@@ -1,4 +1,4 @@
-import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '../runtime/kernel/types';
 import path from 'node:path';
 import type { DocumentCommand } from '../../../core/commands';
 import { normalizeDateFieldValue } from '../../../core/dateFieldValue';

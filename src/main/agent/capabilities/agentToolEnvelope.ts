@@ -1,4 +1,4 @@
-import type { AgentToolResult, AfterToolCallResult } from '@earendil-works/pi-agent-core';
+import type { AgentToolResult, AfterToolCallResult } from '../runtime/kernel/types';
 
 export type ToolStatus = 'success' | 'partial' | 'unchanged' | 'denied' | 'error';
 

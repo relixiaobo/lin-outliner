@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AgentEvent, AgentState } from '@earendil-works/pi-agent-core';
+import type { AgentEvent, AgentState } from '../runtime/kernel/types';
 import type {
   Api,
   Context,

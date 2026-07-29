@@ -10,14 +10,16 @@ import {
   type Model,
   type Usage,
 } from '@earendil-works/pi-ai';
-import type { StreamFn } from '@earendil-works/pi-agent-core';
+import type { StreamFn } from '../../src/main/agent/runtime/kernel/types';
 import {
-  createAbortSettledStreamFn,
+  responsesRequestRetryDelayMs,
+  streamWithPolicy,
+  wrapStreamWithAbortSettling,
+} from '../../src/main/agent/runtime/kernel/retryPolicy';
+import {
   isProviderContextOverflowError,
   isRetryableResponsesRequestError,
-  responsesRequestRetryDelayMs,
-  wrapStreamWithAbortSettling,
-} from '../../src/main/agent/capabilities/agentStreamAbort';
+} from '../../src/main/agent/runtime/kernel/ModelGateway';
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -65,7 +67,42 @@ const OPENAI_RESPONSES_MODEL: Model<Api> = {
   reasoning: true,
 };
 
-describe('agent stream abort settling', () => {
+function createPolicyStreamFn(
+  sourceFn: StreamFn,
+  retryOptions: {
+    requestRetryDelayMs?: (retryCount: number) => number;
+    onProviderRetry?: (event: {
+      phase: 'retrying' | 'cleared';
+      kind: 'request' | 'stream';
+      attempt: number;
+      maxRetries: number;
+    }) => void;
+    maxRequestRetries?: number;
+    maxStreamRetries?: number;
+    maxRetryDelayMs?: number;
+    onContextOverflow?: (errorMessage: string) => Promise<readonly Context['messages'][number][] | null>;
+  } = {},
+): StreamFn {
+  return (model, context, options = {}) => streamWithPolicy({
+    model,
+    signal: options.signal,
+    attempt: (messages, signal) => sourceFn(model, {
+      ...context,
+      messages: messages ?? context.messages,
+    }, {
+      ...options,
+      signal,
+    }),
+    recoverContextOverflow: retryOptions.onContextOverflow,
+    requestRetryDelayMs: retryOptions.requestRetryDelayMs,
+    onProviderRetry: retryOptions.onProviderRetry,
+    maxRequestRetries: retryOptions.maxRequestRetries,
+    maxStreamRetries: retryOptions.maxStreamRetries,
+    maxRetryDelayMs: retryOptions.maxRetryDelayMs,
+  });
+}
+
+describe('kernel retry policy', () => {
   test('settles a silent stream immediately when aborted', async () => {
     const source = createAssistantMessageEventStream();
     const abortCtrl = new AbortController();
@@ -110,7 +147,7 @@ describe('agent stream abort settling', () => {
       receivedSignal = options?.signal;
       return new Promise(() => undefined);
     }) as StreamFn;
-    const streamFn = createAbortSettledStreamFn(sourceFn);
+    const streamFn = createPolicyStreamFn(sourceFn);
     const upstreamAbort = new AbortController();
     const stream = streamFn(MODEL, { messages: [], tools: [] }, { signal: upstreamAbort.signal });
     const iterator = stream[Symbol.asyncIterator]();
@@ -126,7 +163,7 @@ describe('agent stream abort settling', () => {
   });
 
   test('converts synchronous source stream failures into terminal error events', async () => {
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       throw new Error('stream setup failed');
     }) as StreamFn);
     const stream = streamFn(MODEL, { messages: [], tools: [] });
@@ -148,7 +185,7 @@ describe('agent stream abort settling', () => {
       attempt: number;
       maxRetries: number;
     }> = [];
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return attempts <= 4
         ? errorStream('OpenAI API error (524): 524 status code (no body)', CUSTOM_RESPONSES_MODEL)
@@ -182,7 +219,7 @@ describe('agent stream abort settling', () => {
   test('surfaces only the final 524 after the request retry budget is exhausted', async () => {
     let attempts = 0;
     const retryPhases: string[] = [];
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return errorStream('OpenAI API error (524): 524 status code (no body)');
     }) as StreamFn, {
@@ -208,7 +245,7 @@ describe('agent stream abort settling', () => {
   test('uses configured request retry budgets instead of the Responses fallback', async () => {
     let attempts = 0;
     const retryEvents: string[] = [];
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return errorStream('OpenAI API error (524): upstream timeout');
     }) as StreamFn, {
@@ -229,7 +266,7 @@ describe('agent stream abort settling', () => {
     const providerContexts: Context[] = [];
     const overflowErrors: string[] = [];
     const retryEvents: string[] = [];
-    const streamFn = createAbortSettledStreamFn(((model, context) => {
+    const streamFn = createPolicyStreamFn(((model, context) => {
       attempts += 1;
       providerContexts.push(context);
       return attempts === 1
@@ -264,7 +301,7 @@ describe('agent stream abort settling', () => {
     let attempts = 0;
     let compactions = 0;
     const retryEvents: string[] = [];
-    const streamFn = createAbortSettledStreamFn(((model) => {
+    const streamFn = createPolicyStreamFn(((model) => {
       attempts += 1;
       if (attempts === 1 || attempts === 3) {
         return errorStream('OpenAI API error (524): upstream timeout', model);
@@ -305,7 +342,7 @@ describe('agent stream abort settling', () => {
   test('fails explicitly when provider overflow persists after one compaction retry', async () => {
     let attempts = 0;
     let compactions = 0;
-    const streamFn = createAbortSettledStreamFn(((model) => {
+    const streamFn = createPolicyStreamFn(((model) => {
       attempts += 1;
       return errorStream('context_length_exceeded: request has too many input tokens', model);
     }) as StreamFn, {
@@ -366,7 +403,7 @@ describe('agent stream abort settling', () => {
 
   test('retries 429 Responses request failures with the default Responses fallback', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return attempts <= 2
         ? errorStream('OpenAI API error (429): rate limited')
@@ -383,7 +420,7 @@ describe('agent stream abort settling', () => {
 
   test('does not apply Responses request retries to other provider APIs', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return errorStream('OpenAI API error (524): 524 status code (no body)', MODEL);
     }) as StreamFn, { requestRetryDelayMs: () => 0 });
@@ -398,7 +435,7 @@ describe('agent stream abort settling', () => {
 
   test('does not treat a 524 as a request failure after the Responses stream starts', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
       const message = normalizeAssistant(fauxAssistantMessage([], {
@@ -423,7 +460,7 @@ describe('agent stream abort settling', () => {
 
   test('does not retry a 524 after material assistant output starts', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
       const message = normalizeAssistant(fauxAssistantMessage(fauxText('partial answer'), {
@@ -450,7 +487,7 @@ describe('agent stream abort settling', () => {
 
   test('does not retry a 524 after a complete tool call arrives', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
       const toolCall = fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' });
@@ -481,7 +518,7 @@ describe('agent stream abort settling', () => {
     const retryDelayStarted = new Promise<void>((resolve) => {
       retryDelayStartedResolve = resolve;
     });
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       return errorStream('OpenAI API error (524): 524 status code (no body)');
     }) as StreamFn, {
@@ -511,7 +548,7 @@ describe('agent stream abort settling', () => {
 
   test('keeps request and premature-stream retry budgets independent', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       if (attempts === 1) {
         return errorStream('OpenAI API error (524): 524 status code (no body)');
@@ -548,7 +585,7 @@ describe('agent stream abort settling', () => {
   test('retries thinking-only OpenAI Responses stream termination once', async () => {
     let attempts = 0;
     const retryEvents: string[] = [];
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
       const message = attempts === 1
@@ -595,7 +632,7 @@ describe('agent stream abort settling', () => {
 
   test('does not retry OpenAI Responses termination after material output starts', async () => {
     let attempts = 0;
-    const streamFn = createAbortSettledStreamFn((() => {
+    const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
       const message = normalizeAssistant(fauxAssistantMessage(fauxText('partial answer'), {

@@ -1,0 +1,69 @@
+{
+  "textThinking": [
+    "agent_start",
+    "turn_start",
+    "message_start:user",
+    "message_end:user",
+    "message_start:assistant",
+    "message_update:thinking_start",
+    "message_update:thinking_delta",
+    "message_update:thinking_end",
+    "message_update:text_start",
+    "message_update:text_delta",
+    "message_update:text_end",
+    "message_end:assistant",
+    "turn_end",
+    "agent_end"
+  ],
+  "parallelBatch": [
+    "agent_start",
+    "turn_start",
+    "message_start:user",
+    "message_end:user",
+    "message_start:assistant",
+    "message_end:assistant",
+    "tool_execution_start:a",
+    "tool_execution_start:b",
+    "tool_execution_end:b",
+    "tool_execution_end:a",
+    "message_start:toolResult:a",
+    "message_end:toolResult:a",
+    "message_start:toolResult:b",
+    "message_end:toolResult:b",
+    "turn_end",
+    "turn_start",
+    "message_start:assistant",
+    "message_end:assistant",
+    "turn_end",
+    "agent_end"
+  ],
+  "loopFailure": [
+    "agent_start",
+    "turn_start",
+    "message_start:user",
+    "message_end:user",
+    "message_start:assistant",
+    "message_end:assistant",
+    "turn_end",
+    "agent_end"
+  ],
+  "itemDiagnostics": {
+    "items": [
+      { "type": "agentMessage", "text": "", "phase": "commentary" },
+      { "type": "dynamicToolCall", "tool": "golden_tool", "status": "completed", "success": true },
+      { "type": "contextEvidence", "kind": "toolOutputProjection" },
+      { "type": "agentMessage", "text": "Done", "phase": "final_answer" }
+    ],
+    "activities": [
+      { "type": "acceptedInput", "source": "initial" },
+      { "type": "modelCall", "callIndex": 0 },
+      {
+        "type": "toolExecutionBatch",
+        "sourceCallIndex": 0,
+        "executions": [{ "toolName": "golden_tool", "status": "completed" }]
+      },
+      { "type": "modelCall", "callIndex": 1 }
+    ],
+    "providerStops": ["toolUse", "stop"]
+  }
+}

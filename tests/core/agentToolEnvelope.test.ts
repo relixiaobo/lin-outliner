@@ -8,7 +8,7 @@ import {
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 
 describe('agent tool envelope', () => {
-  test('builds pi-agent-core compatible tool results with model-visible content', () => {
+  test('builds kernel-compatible tool results with model-visible content', () => {
     const envelope = successEnvelope('example_tool', { secret: 'full', visible: 'yes' });
     const result = agentToolResult(envelope, { visible: 'yes' });
 
@@ -45,7 +45,7 @@ describe('agent tool envelope', () => {
     });
   });
 
-  test('maps Lin error envelopes to pi-agent-core tool errors after execution', () => {
+  test('maps Lin error envelopes to kernel tool errors after execution', () => {
     const envelope = errorEnvelope('example_tool', 'bad_input', 'Bad input');
 
     expect(isToolEnvelope(envelope)).toBe(true);

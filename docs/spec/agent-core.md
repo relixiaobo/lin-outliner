@@ -99,7 +99,9 @@ notifications but do not create another execution entity.
 Canonical execution and persistence live under `src/main/agent/`. Retained
 provider, filesystem, Node, Skill, import, and web capabilities live under
 `src/main/agent/capabilities/`; they may contribute tools and configuration but
-may not own Thread history or lifecycle state. There are no flat
+may not own Thread history or lifecycle state. The Tenon-owned turn loop,
+runtime state, tool batching, retry policy, and transport gateway live under
+`src/main/agent/runtime/kernel/`. There are no flat
 `src/main/agent*.ts` implementations, forwarding wrappers, alternate runtimes,
 or compatibility readers.
 

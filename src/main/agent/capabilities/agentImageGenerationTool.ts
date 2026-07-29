@@ -1,4 +1,4 @@
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool } from '../runtime/kernel/types';
 import type { AssistantImages, ImagesContext, ImageContent as PiImageContent, TextContent as PiTextContent } from '@earendil-works/pi-ai';
 import {
   agentToolResult,
