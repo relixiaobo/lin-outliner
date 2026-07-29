@@ -53,7 +53,6 @@ import {
 } from '../../piImageModels';
 import {
   customOpenAIResponsesPayloadProfileOption,
-  isCustomOpenAIResponsesEndpoint,
 } from '../../openAIResponsesCompat';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
@@ -247,7 +246,7 @@ export function providerStreamOptionsFromRuntimeSettings(
     AgentRuntimeSettings,
     'providerTimeoutMs' | 'providerMaxRetries' | 'providerMaxRetryDelayMs' | 'providerCacheRetention'
   > | null,
-  model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
+  _model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
 ): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> {
   const options: Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> = {};
   if (settings?.providerTimeoutMs !== null && settings?.providerTimeoutMs !== undefined) {
@@ -260,11 +259,7 @@ export function providerStreamOptionsFromRuntimeSettings(
     options.maxRetryDelayMs = settings.providerMaxRetryDelayMs;
   }
   if (settings?.providerCacheRetention) {
-    options.cacheRetention = isCustomOpenAIResponsesEndpoint(model)
-      ? 'none'
-      : settings.providerCacheRetention;
-  } else if (isCustomOpenAIResponsesEndpoint(model)) {
-    options.cacheRetention = 'none';
+    options.cacheRetention = settings.providerCacheRetention;
   }
   return options;
 }

@@ -40,9 +40,10 @@ export function applyAnthropicStablePromptCacheBreakpoints(
   const system = payload.system.flatMap((value): unknown[] => {
     if (!isRecord(value)) return [value];
     const block = { ...value };
+    const blockText = typeof block.text === 'string' ? sanitizeProviderText(block.text) : null;
     if (
       block.type !== 'text'
-      || block.text !== segments.complete
+      || blockText !== segments.complete
       || !('cache_control' in block)
     ) {
       if ('cache_control' in block) preferredRemovalBlocks.add(block);

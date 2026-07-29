@@ -206,6 +206,30 @@ describe('context compaction reducer', () => {
     }]);
   });
 
+  test('summarizes complete inherited parent Turns instead of only the evidence label', async () => {
+    const store = createPayloadStore();
+    const inherited = inheritedEvidence(store, [turn(1, [
+      userMessage('PARENT REQUIREMENT MUST SURVIVE CHILD COMPACTION', 'parent-user'),
+      {
+        type: 'agentMessage',
+        id: 'parent-assistant',
+        provenance: provenance('parent-assistant'),
+        text: 'Parent analysis with the decisive constraint.',
+        phase: 'final_answer',
+        memoryCitation: null,
+      },
+    ])], 'inherited-parent');
+
+    const plan = await planContextCompaction({
+      turns: [turn(2, [inherited, userMessage('Child task', 'child-user')])],
+      readContext: store.read,
+    });
+
+    expect(plan?.summary.text).toContain('Context: Inherited context');
+    expect(plan?.summary.text).toContain('PARENT REQUIREMENT MUST SURVIVE CHILD COMPACTION');
+    expect(plan?.summary.text).toContain('Parent analysis with the decisive constraint.');
+  });
+
   test('bounds deterministic summaries by retaining the newest complete Turn suffix', async () => {
     const store = createPayloadStore();
     const turns = Array.from({ length: 30 }, (_, index) => turn(index, [

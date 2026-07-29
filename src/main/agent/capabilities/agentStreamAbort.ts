@@ -458,7 +458,7 @@ export function isRetryableResponsesRequestError(errorMessage: string | undefine
   const statusMatch = RESPONSES_API_STATUS_RE.exec(errorMessage);
   if (statusMatch) {
     const status = Number(statusMatch[1]);
-    return status >= 500 && status <= 599;
+    return status === 429 || (status >= 500 && status <= 599);
   }
   return RETRYABLE_RESPONSES_TRANSPORT_RE.test(errorMessage);
 }

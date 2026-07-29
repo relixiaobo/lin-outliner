@@ -330,7 +330,7 @@ describe('agent stream abort settling', () => {
     });
   });
 
-  test('classifies only Responses 5xx and bounded transport failures as request-retryable', () => {
+  test('classifies Responses 429, 5xx, and bounded transport failures as request-retryable', () => {
     expect(isRetryableResponsesRequestError('OpenAI API error (500): internal error')).toBe(true);
     expect(isRetryableResponsesRequestError('OpenAI API error (524): 524 status code (no body)')).toBe(true);
     expect(isRetryableResponsesRequestError('Azure OpenAI API error (599): upstream error')).toBe(true);
@@ -339,7 +339,7 @@ describe('agent stream abort settling', () => {
     expect(isRetryableResponsesRequestError('TypeError: fetch failed')).toBe(true);
     expect(isRetryableResponsesRequestError('read ECONNRESET')).toBe(true);
 
-    expect(isRetryableResponsesRequestError('OpenAI API error (429): rate limited')).toBe(false);
+    expect(isRetryableResponsesRequestError('OpenAI API error (429): rate limited')).toBe(true);
     expect(isRetryableResponsesRequestError('OpenAI API error (401): unauthorized')).toBe(false);
     expect(isRetryableResponsesRequestError('getaddrinfo ENOTFOUND proxy.example.com')).toBe(false);
     expect(isRetryableResponsesRequestError('connect ECONNREFUSED 127.0.0.1')).toBe(false);
@@ -364,19 +364,21 @@ describe('agent stream abort settling', () => {
     expect(responsesRequestRetryDelayMs(4, () => 0.5)).toBe(1600);
   });
 
-  test('does not retry 429 Responses request failures', async () => {
+  test('retries 429 Responses request failures with the default Responses fallback', async () => {
     let attempts = 0;
     const streamFn = createAbortSettledStreamFn((() => {
       attempts += 1;
-      return errorStream('OpenAI API error (429): rate limited');
+      return attempts <= 2
+        ? errorStream('OpenAI API error (429): rate limited')
+        : textStream('recovered after rate limit');
     }) as StreamFn, { requestRetryDelayMs: () => 0 });
 
     const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
     const events = [];
     for await (const event of stream) events.push(event);
 
-    expect(attempts).toBe(1);
-    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(attempts).toBe(3);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
   });
 
   test('does not apply Responses request retries to other provider APIs', async () => {

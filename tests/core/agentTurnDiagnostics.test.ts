@@ -396,6 +396,8 @@ describe('Turn diagnostics', () => {
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
     collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 31);
+    collector.finalizeOpenToolExecutions('completed', 32);
 
     const payload = collector.payload();
     expect(payload.activities.map((activity) => activity.type)).toEqual([
@@ -408,6 +410,7 @@ describe('Turn diagnostics', () => {
       'modelCall',
       'toolExecutionBatch',
       'modelCall',
+      'toolExecutionBatch',
     ]);
     expect(payload.activities).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -433,6 +436,20 @@ describe('Turn diagnostics', () => {
         executions: [expect.objectContaining({ toolName: 'update_plan', itemId: null })],
       }),
     ]));
+    expect(payload.activities.filter((activity) => activity.type === 'toolExecutionBatch')).toEqual([
+      expect.objectContaining({
+        sourceCallIndex: 2,
+        executions: [expect.objectContaining({ callId: 'plan-call', status: 'completed' })],
+      }),
+      expect.objectContaining({
+        sourceCallIndex: 3,
+        executions: [expect.objectContaining({
+          callId: 'plan-call',
+          status: 'completed',
+          completedAt: 32,
+        })],
+      }),
+    ]);
     expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
   });
 });

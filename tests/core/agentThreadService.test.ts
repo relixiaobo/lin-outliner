@@ -62,6 +62,8 @@ class ControlledExecutor implements TurnExecutor {
   private steeringCalls = 0;
   private steeringBlock: Promise<void> | null = null;
   private releaseSteeringBlock: (() => void) | null = null;
+  private steeringRegistrationBlock: Promise<void> | null = null;
+  private releaseSteeringRegistrationBlock: (() => void) | null = null;
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     this.contexts.push(context);
@@ -75,6 +77,7 @@ class ControlledExecutor implements TurnExecutor {
       memoryCitation: null,
     };
     await context.recorder.started(started);
+    if (this.steeringRegistrationBlock) await this.steeringRegistrationBlock;
     context.onSteer(async (input) => {
       this.steeringCalls += 1;
       if (this.steeringBlock) await this.steeringBlock;
@@ -113,6 +116,18 @@ class ControlledExecutor implements TurnExecutor {
     this.steeringBlock = new Promise<void>((resolve) => {
       this.releaseSteeringBlock = resolve;
     });
+  }
+
+  blockSteeringRegistration(): void {
+    this.steeringRegistrationBlock = new Promise<void>((resolve) => {
+      this.releaseSteeringRegistrationBlock = resolve;
+    });
+  }
+
+  releaseSteeringRegistration(): void {
+    this.releaseSteeringRegistrationBlock?.();
+    this.releaseSteeringRegistrationBlock = null;
+    this.steeringRegistrationBlock = null;
   }
 
   releaseSteering(): void {
@@ -1222,6 +1237,65 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('serializes staged compaction cleanup with active Turn context writes', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'History eligible for compaction' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this active while cleanup is staged' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const staged = await fixture.executor.contexts[1]!.stageContextCompaction('automaticPreflight');
+    if (!staged) throw new Error('Expected a staged compaction.');
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let pruneCalls = 0;
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      pruneCalls += 1;
+      return prune(...args);
+    };
+    const threadMutex = Reflect.get(fixture.service, 'threadMutex') as {
+      run<T>(key: string, operation: () => Promise<T>): Promise<T>;
+    };
+    let releaseLock!: () => void;
+    let markLocked!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      markLocked = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const holder = threadMutex.run(thread.id, async () => {
+      markLocked();
+      await release;
+    });
+    await locked;
+
+    const discarded = staged.discard();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pruneCalls).toBe(0);
+    releaseLock();
+    await Promise.all([holder, discarded]);
+    expect(pruneCalls).toBe(1);
+    fixture.stores.payloads.pruneUnreferencedContexts = prune;
+
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('rejects reserved context commands while a Turn is active', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -1699,6 +1773,58 @@ describe('ThreadService', () => {
       item.type === 'userMessage'
       && item.content.some((part) => part.type === 'text' && part.text === 'Do not admit this after execution ends')
     ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('refreshes diagnostics only after queued steering delivery drains', async () => {
+    const fixture = await createFixture();
+    fixture.executor.blockSteeringRegistration();
+    fixture.executor.blockSteering();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Queue steering before provider registration' }],
+    });
+    await waitUntil(() => fixture.executor.contexts.length === 1);
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'queued-diagnostics-steering',
+      input: [{ type: 'text', text: 'Persist this before final diagnostics' }],
+    });
+
+    fixture.executor.releaseSteeringRegistration();
+    await fixture.executor.waitUntilWaiting();
+    await fixture.executor.waitUntilSteering();
+    const finalRef = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json' as const,
+      byteLength: 256,
+      schemaVersion: 1 as const,
+    };
+    let refreshes = 0;
+    fixture.executor.finish(0, {
+      ...completedExecutionResult(),
+      refreshDiagnostics: async () => {
+        refreshes += 1;
+        return finalRef;
+      },
+    });
+    const activeTurns = Reflect.get(fixture.service, 'activeTurns') as Map<string, { finishing: boolean }>;
+    await waitUntil(() => activeTurns.get(thread.id)?.finishing === true);
+    expect(refreshes).toBe(0);
+
+    fixture.executor.releaseSteering();
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(refreshes).toBe(1);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toEqual(finalRef);
     await fixture.service.close();
   });
 
@@ -2377,6 +2503,50 @@ describe('ThreadService', () => {
       fork.id,
       copiedTurn.execution.diagnosticsRef,
     )).toBeNull();
+    await fixture.service.close();
+  });
+
+  test('keeps Details and fork available when inspection-only diagnostics are missing', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Keep canonical history independent from diagnostics' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const missingRef = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json' as const,
+      byteLength: 512,
+      schemaVersion: 1 as const,
+    };
+    const result = completedExecutionResult();
+    fixture.executor.finish(0, {
+      ...result,
+      execution: { ...result.execution!, diagnosticsRef: missingRef },
+    });
+    await fixture.service.waitForIdle(source.id);
+
+    const details = await fixture.service.request('thread/turn/details/read', {
+      threadId: source.id,
+      turnId: accepted.turn.id,
+    });
+    expect(details.diagnostics).toBeNull();
+    expect(details.turn.execution.diagnosticsRef).toBeNull();
+    expect(fixture.service.readThread({ threadId: source.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toEqual(missingRef);
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    expect(fixture.service.readThread({ threadId: fork.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toBeNull();
     await fixture.service.close();
   });
 
@@ -4327,6 +4497,58 @@ describe('ThreadService', () => {
       { kind: 'started', agentThreadId: childId, agentPath: '/root/helper' },
       { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper' },
     ]);
+    await fixture.service.close();
+  });
+
+  test('admits idle-time Subagent activity before the next trailing user message', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const first = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate and finish without waiting' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-idle-child');
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: first.turn.id,
+      parentItemId: 'spawn-idle-child',
+      prompt: 'Finish after the parent becomes idle',
+      taskPath: '/root/idle-child',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Continue with the child result' }],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const items = fixture.executor.contexts[2]!.turn.items;
+    const completedActivityIndex = items.findIndex((item) => (
+      item.type === 'subAgentActivity'
+      && item.kind === 'completed'
+      && item.agentThreadId === child.thread.id
+    ));
+    const currentUserIndex = items.findIndex((item) => (
+      item.type === 'userMessage'
+      && item.content.some((part) => part.type === 'text' && part.text === 'Continue with the child result')
+    ));
+    expect(completedActivityIndex).toBeGreaterThanOrEqual(0);
+    expect(completedActivityIndex).toBeLessThan(currentUserIndex);
+    expect(items.at(-1)?.type).toBe('userMessage');
+
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 

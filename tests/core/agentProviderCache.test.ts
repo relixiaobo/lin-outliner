@@ -160,6 +160,24 @@ describe('provider cache topology', () => {
     ]);
   });
 
+  test('matches raw lone surrogates before the provider adapter sanitizes them', () => {
+    const prompt = stablePrompt('FRAMEWORK', 'TOOLS', 'ROLE\uD800');
+    const payload = {
+      system: [{ type: 'text', text: prompt.text, cache_control: cacheControl() }],
+    };
+
+    const result = applyAnthropicStablePromptCacheBreakpoints(
+      payload,
+      ANTHROPIC_MODEL,
+      prompt,
+    ) as typeof payload;
+
+    expect(result.system).toEqual([
+      { type: 'text', text: 'FRAMEWORK', cache_control: cacheControl() },
+      { type: 'text', text: 'TOOLS\n\nROLE\uFFFD', cache_control: cacheControl() },
+    ]);
+  });
+
   test('leaves non-Anthropic and uncached payloads untouched', () => {
     const prompt = stablePrompt('FRAMEWORK', 'TOOLS', 'IDENTITY');
     const cached = {

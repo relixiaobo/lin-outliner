@@ -243,8 +243,10 @@ Item; the renderer never substitutes the first line for the expanded body.
 
 An execution or streamed Item is recorded with `item/started`, optional typed deltas,
 and one terminal `item/completed`. Initial evidence and user facts are complete inside
-the atomic `turn/started` event; later steering evidence and input use
-`items/completed`. Neither path synthesizes a streaming lifecycle.
+the atomic `turn/started` event. Subagent activity already queued while the Thread was
+idle is admitted before that evidence and the trailing user message, so it remains prior
+assistant history without breaking the active user boundary. Later steering evidence and
+input use `items/completed`. Neither path synthesizes a streaming lifecycle.
 The recorder validates local provenance and rejects completion before start. Tool arguments and visible results use bounded
 projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
@@ -340,6 +342,8 @@ retained provider-message suffix to the next canonical Turn boundary. It stages 
 compaction, reprojects the exact summary/restored state and protected tail, and commits it
 only if the resulting request fits. Otherwise it discards the staged payloads and advances
 monotonically through later complete Turn boundaries, ending at the active admission.
+Staged payload cleanup re-enters the Thread mutation mutex before it computes live
+references and prunes, so it cannot race a steering or execution-time evidence write.
 Only the first fitting candidate becomes one canonical `automaticPreflight` Item; failed
 candidates are neither history nor diagnostics. The active Turn is never a compaction
 candidate. Provider-overflow recovery may compact all prior Turns and preserve only the
@@ -354,7 +358,9 @@ the summary; they are not parsed from reminder text. A compaction with no eligib
 content is an idempotent no-op. If the deterministic summary itself exceeds its character
 budget, it retains the newest complete summarized Turn suffix. Only a single Turn that
 cannot fit alone is truncated internally, with explicit omission markers and both its
-leading and trailing context retained.
+leading and trailing context retained. An `inheritedContext` evidence Item is summarized
+from its validated typed payload recursively; its display summary is a heading, never a
+replacement for the inherited parent Turns.
 
 Reducers recursively evaluate typed inherited context and treat an earlier compaction
 checkpoint as authoritative state at that point in the effective history. Consequently,
@@ -392,14 +398,17 @@ Provider-specific names, message shapes, cache behavior, and stop reasons are
 normalized at this boundary. Core codecs, persistence, and renderer components
 never depend on a provider SDK DTO.
 
-Retryable provider request/stream failures use bounded Codex-style backoff. The
+Retryable provider request/stream failures use bounded Codex-style backoff. Responses
+request retries include rate limits, server failures, and classified transport failures.
+The abort-settled stream wrapper is the sole retry owner; the underlying provider SDK is
+called with its request retry count disabled, so configured attempts cannot multiply. The
 executor emits `turn/providerRetry/changed` only as transient notification state
 and clears it on recovery or terminalization; reconnect attempts do not create
 Items or persist as transcript history.
 
 Timeout, maximum transient retries, maximum retry delay, and cache retention are read
 once at Turn execution start and applied consistently to each provider request. Custom
-OpenAI Responses endpoints always force cache retention to `none`; auxiliary naming also
+OpenAI Responses endpoints retain the configured cache policy; auxiliary naming alone
 uses no cache retention and keeps its separate bounded request contract.
 
 Provider cache affinity is the lowercase SHA-256 of
@@ -415,8 +424,9 @@ prompt's structured blocks split it into protected L0 firmware and the remaining
 execution prompt; the provider adapter preserves the final tool and final user
 breakpoints already present in the request. If an upstream OAuth identity block would
 exceed the limit, that identity breakpoint is removed before either protected stable
-breakpoint. The adapter matches the sanitized provider text reconstructed from
-`StablePrompt.blocks`, never parses textual markers, and adds no Anthropic metadata to
+breakpoint. The adapter sanitizes both the payload block and the text reconstructed from
+`StablePrompt.blocks` before matching, so raw or already-sanitized lone surrogates retain
+the same breakpoints. It never parses textual markers and adds no Anthropic metadata to
 other providers.
 
 ## Turn Diagnostics
@@ -470,6 +480,9 @@ Because a history fork creates new Turn and Item IDs, it also rewrites every dia
 accepted-input, tool-execution, and compaction Item reference through the source-to-fork
 map, republishes the payload under the fork, and installs the resulting new digest/ref on
 the copied Turn. A fork never retains a diagnostics payload that names source-owned Items.
+Diagnostics are inspection-only: a missing, corrupt, or unpublishable diagnostics payload
+is omitted from Details and the fork while canonical history and its required payloads
+continue to copy normally.
 
 The transport `onResponse` boundary records when HTTP headers arrive, the status code,
 and the first non-empty provider request ID from a fixed allowlist. Arbitrary response
@@ -486,18 +499,29 @@ typed ordered activity stream. Initial and steering admission, every Model Call,
 tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow
 compaction are recorded at their runtime boundaries. Tool executions retain call identity,
 name, timing, status, and an optional canonical Item ID, so transient tools remain visible
-without inventing an Item; non-transient Item ownership is unique across the activity stream.
+without inventing an Item. Call identity is unique within its provider-call execution batch
+because compatible providers may reuse values such as `call_0` on later requests;
+non-transient Item ownership remains unique across the activity stream. Open executions
+inherit the terminal Turn outcome, including `completed` for a successful Turn.
 Each batch names the immediately preceding source Call and, once observed, the immediately
 following Call that consumes its results. Retry and compaction activities use the same
 adjacent-Call links; preflight compaction before the first Call has a null source. Renderer code
 projects this activity stream and never infers causes from missing tool Items or adjacent
 requests. The response itself remains the provider fact rather than a duplicate Item projection.
-Terminalization canonicalizes the complete
-versioned diagnostics payload, writes it content-addressed under the Thread, and stores
-the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,
+After provider execution returns, Thread terminalization first closes steering admission,
+drains every accepted steering delivery, then republishes the collector's final state. It
+canonicalizes the complete versioned diagnostics payload, writes it content-addressed
+under the Thread, and stores the typed reference in `Turn.execution`. Diagnostics are an immutable audit sidecar,
 not provider history and not input to future execution. Active Turns and feature Turns
 that never contact a provider have no reference; the renderer never fills that absence
 from current settings. Diagnostics publication is best-effort after provider execution:
 payload construction, validation, quota, or storage failure leaves `diagnosticsRef: null`
 and reports an internal warning, but never changes the real Turn status, response, or
 usage.
+
+Fresh projection reducers are constructed at every provider boundary so environment,
+view, and additional-context deltas are replayed from canonical state. They share one
+Turn-scoped immutable context-payload read cache keyed by the complete typed reference;
+successful content-addressed reads therefore hit storage once per Turn, while missing or
+failed reads are not negatively cached and can become available after a new canonical
+write.

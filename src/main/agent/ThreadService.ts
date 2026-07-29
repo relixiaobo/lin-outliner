@@ -873,8 +873,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!turn) throw new Error(`Unknown Turn: ${request.turnId}`);
     const ref = turn.execution.diagnosticsRef;
     if (!ref) return { thread, turn, diagnostics: null };
-    const payload = await this.payloads.readTurnDiagnostics(request.threadId, ref);
-    if (!payload) throw new Error(`Missing or corrupt Turn diagnostics payload: ${ref.id}`);
+    const payload = await this.payloads.readTurnDiagnostics(request.threadId, ref).catch(() => null);
+    if (!payload) {
+      return {
+        thread,
+        turn: decodeTurn({ ...turn, execution: { ...turn.execution, diagnosticsRef: null } }),
+        diagnostics: null,
+      };
+    }
     return { thread, turn, diagnostics: { ref, payload } };
   }
 
@@ -1385,13 +1391,20 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<Turn> {
     let diagnosticsRef = copiedTurn.execution.diagnosticsRef;
     if (diagnosticsRef) {
-      const payload = await this.payloads.readTurnDiagnostics(sourceThreadId, diagnosticsRef);
-      if (!payload) throw new Error(`Missing Turn diagnostics payload: ${diagnosticsRef.id}`);
-      const itemIds = new Map(sourceTurn.items.map((item, index) => [item.id, copiedTurn.items[index]!.id]));
-      diagnosticsRef = await this.payloads.writeTurnDiagnostics(
-        targetThreadId,
-        rewriteForkedTurnDiagnostics(payload, itemIds),
-      );
+      try {
+        const payload = await this.payloads.readTurnDiagnostics(sourceThreadId, diagnosticsRef);
+        if (!payload) {
+          diagnosticsRef = null;
+        } else {
+          const itemIds = new Map(sourceTurn.items.map((item, index) => [item.id, copiedTurn.items[index]!.id]));
+          diagnosticsRef = await this.payloads.writeTurnDiagnostics(
+            targetThreadId,
+            rewriteForkedTurnDiagnostics(payload, itemIds),
+          );
+        }
+      } catch {
+        diagnosticsRef = null;
+      }
     }
     for (const item of copiedTurn.items) {
       for (const ref of itemResourceReferences(item)) {
@@ -2571,7 +2584,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ),
       onResourceCreated: recordCreatedEvidenceResource,
     });
-    const initialItems = [...stagedItems, ...evidence.items, item];
+    const pendingSubagentActivities = [
+      ...(this.pendingSubagentActivities.get(request.threadId) ?? []),
+    ];
+    const pendingSubagentItems = pendingSubagentActivities.map((activity) => (
+      subagentActivityItem(request.threadId, turnId, activity)
+    ));
+    const initialItems = [...pendingSubagentItems, ...stagedItems, ...evidence.items, item];
     const turn = decodeTurn({ ...provisionalTurn, items: initialItems });
     const recorder = new ItemRecorder(
       request.threadId,
@@ -2600,6 +2619,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
 
     await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
+    this.consumePendingSubagentActivities(request.threadId, pendingSubagentActivities);
+    if (!this.pendingSubagentActivities.has(request.threadId)) {
+      this.takePendingCollaborationActivity(request.threadId);
+    }
     this.activeTurns.set(request.threadId, active);
     if (!record.thread.preview.trim() && preview) {
       try {
@@ -2628,8 +2651,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async executeActiveTurn(active: ActiveTurn): Promise<void> {
-    this.takePendingCollaborationActivity(active.threadId);
-    await this.flushPendingSubagentActivities(active.threadId, active.turnId);
     let result: TurnExecutionResult = {};
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
@@ -2719,6 +2740,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await active.steeringDelivery;
     this.takePendingCollaborationActivity(active.threadId);
     await this.flushPendingSubagentActivities(active.threadId, active.turnId);
+    if (result.refreshDiagnostics && result.execution) {
+      const diagnosticsRef = await result.refreshDiagnostics();
+      result = {
+        ...result,
+        execution: { ...result.execution, diagnosticsRef },
+      };
+    }
     const aborted = active.controller.signal.aborted;
     const executionError = active.fatalError ?? thrown;
     const status = executionError ? 'failed' : aborted ? 'interrupted' : result.status ?? 'completed';
@@ -2813,10 +2841,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         readContext: (ref) => this.payloads.readContext(active.threadId, ref),
       });
       if (!plan) return null;
-      const cleanup = () => this.payloads.pruneUnreferencedContexts(
+      const cleanupLocked = () => this.payloads.pruneUnreferencedContexts(
         active.threadId,
         this.threadContextPayloadReferences(active.threadId),
       ).catch(() => undefined);
+      const cleanup = () => this.threadMutex.run(active.threadId, cleanupLocked);
       try {
         const summaryRef = await this.payloads.writeContext(active.threadId, plan.summary);
         const restoredStateRef = await this.payloads.writeContext(active.threadId, plan.restoredState);
@@ -2869,7 +2898,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           },
         };
       } catch (error) {
-        await cleanup();
+        await cleanupLocked();
         throw error;
       }
     });
@@ -3565,6 +3594,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
+  private consumePendingSubagentActivities(
+    threadId: ThreadId,
+    consumed: readonly PendingSubagentActivity[],
+  ): void {
+    if (consumed.length === 0) return;
+    const queued = this.pendingSubagentActivities.get(threadId);
+    if (!queued) return;
+    const consumedSet = new Set(consumed);
+    const remaining = queued.filter((activity) => !consumedSet.has(activity));
+    if (remaining.length > 0) this.pendingSubagentActivities.set(threadId, remaining);
+    else this.pendingSubagentActivities.delete(threadId);
+  }
+
   private collaborationActivityState(threadId: ThreadId): CollaborationActivityState {
     let state = this.collaborationActivity.get(threadId);
     if (!state) {
@@ -4072,6 +4114,22 @@ function userMessage(
     content,
     acceptedAt,
   });
+}
+
+function subagentActivityItem(
+  threadId: ThreadId,
+  turnId: TurnId,
+  activity: PendingSubagentActivity,
+): ThreadItem {
+  const id = uuidV7();
+  return {
+    type: 'subAgentActivity',
+    id,
+    provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
+    kind: activity.kind,
+    agentThreadId: activity.agentThreadId,
+    agentPath: activity.agentPath,
+  };
 }
 
 function initialTurnExecution(

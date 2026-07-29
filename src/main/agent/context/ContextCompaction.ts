@@ -431,12 +431,13 @@ function observationInvalidation(item: ThreadItem): ObservationInvalidation {
 async function deterministicSummary(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  inheritedPath: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   const turnSummaries: string[] = [];
   for (const turn of turns) {
     const lines: string[] = [];
     for (const item of turn.items) {
-      const line = await summaryLine(item, readContext);
+      const line = await summaryLine(item, readContext, inheritedPath);
       if (!line) continue;
       lines.push(line);
     }
@@ -475,6 +476,7 @@ function truncateSummaryEntry(value: string, available: number): string {
 async function summaryLine(
   item: ThreadItem,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  inheritedPath: ReadonlySet<string>,
 ): Promise<string | null> {
   switch (item.type) {
     case 'userMessage':
@@ -490,7 +492,15 @@ async function summaryLine(
     case 'collabAgentToolCall':
     case 'webSearch':
       return `Tool ${toolLabel(item)}: ${item.outputRef?.summary ?? toolItemVisibleOutputText(item)}`;
-    case 'contextEvidence': return `Context: ${item.summary}`;
+    case 'contextEvidence': {
+      if (item.kind !== 'inheritedContext') return `Context: ${item.summary}`;
+      const key = contextPayloadReferenceKey(item.payloadRef);
+      if (inheritedPath.has(key)) return `Context: ${item.summary}\n[Recursive inherited context omitted.]`;
+      const inherited = await readInheritedContextPayload(item, readContext);
+      const nestedPath = new Set(inheritedPath);
+      nestedPath.add(key);
+      return `Context: ${item.summary}\n${await deterministicSummary(inherited.turns, readContext, nestedPath)}`;
+    }
     case 'contextCompaction': {
       const prior = await readContext(item.summaryRef);
       return prior?.kind === 'compactionSummary' ? `Earlier compacted context: ${prior.text}` : 'Earlier compacted context.';

@@ -549,6 +549,140 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.diagnosticsErrors).toEqual([failure]);
   });
 
+  test('can republish diagnostics after late steering delivery drains', async () => {
+    const fixture = createContext();
+    let steeringHandler: Parameters<TurnExecutionContext['onSteer']>[0] | null = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createAgent: () => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => undefined,
+      }),
+    });
+    const result = await executor.execute({
+      ...fixture.context,
+      onSteer: (handler) => {
+        steeringHandler = handler;
+      },
+    });
+    if (!steeringHandler || !result.refreshDiagnostics) {
+      throw new Error('Expected steering and diagnostics finalization hooks.');
+    }
+    expect(fixture.diagnosticsPayloads).toHaveLength(1);
+    const steeringItemId = uuidV7(1_720_000_000_150);
+    await steeringHandler({
+      acceptedAt: 1_720_000_000_150,
+      items: [{
+        type: 'userMessage',
+        id: steeringItemId,
+        provenance: fixture.recorder.localProvenance(steeringItemId),
+        clientId: 'late-steering',
+        acceptedAt: 1_720_000_000_150,
+        content: [{ type: 'text', text: 'Include this in final diagnostics' }],
+      }],
+    });
+    expect(fixture.diagnosticsPayloads).toHaveLength(1);
+
+    await result.refreshDiagnostics();
+
+    expect(fixture.diagnosticsPayloads).toHaveLength(2);
+    expect(fixture.diagnosticsPayloads[1]?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'acceptedInput',
+        source: 'steering',
+        itemIds: [steeringItemId],
+      }),
+    ]));
+  });
+
+  test('memoizes immutable context payload reads across provider boundaries in one Turn', async () => {
+    const fixture = createContext();
+    const payload = {
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: 'a'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'cached-skill',
+        displayName: 'Cached Skill',
+        source: 'project' as const,
+        identity: 'project:cached-skill',
+        contentHash: 'b'.repeat(64),
+        description: 'Read this immutable payload once.',
+      }],
+    };
+    const serialized = JSON.stringify(payload);
+    const payloadRef = {
+      id: createHash('sha256').update(serialized).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: Buffer.byteLength(serialized),
+      schemaVersion: 1 as const,
+      kind: payload.kind,
+    };
+    const historyTurnId = uuidV7(1_719_999_999_000);
+    const evidenceId = uuidV7(1_719_999_999_010);
+    const historyUserId = uuidV7(1_719_999_999_020);
+    const history = completedTurn(fixture.context.turn, historyTurnId, [{
+      type: 'contextEvidence',
+      id: evidenceId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: evidenceId,
+      },
+      kind: 'skillCatalog',
+      payloadRef,
+      summary: 'Available Skills (1)',
+      contextRefs: [],
+      resourceRefs: [],
+      outputRefs: [],
+    }, {
+      type: 'userMessage',
+      id: historyUserId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: historyUserId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_999_020,
+      content: [{ type: 'text', text: 'Earlier request' }],
+    }], 1_719_999_999_000);
+    let payloadReads = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          await options.transformContext!([]);
+          await options.transformContext!([]);
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => {
+        payloadReads += 1;
+        return ref.id === payloadRef.id ? payload : null;
+      },
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(payloadReads).toBe(1);
+  });
+
   test('runs the pre-provider hook without changing canonical user input', async () => {
     const fixture = createContext();
     const userItemId = uuidV7(1_720_000_000_110);
@@ -591,6 +725,7 @@ describe('PiTurnExecutor event normalization', () => {
 
     await expect(executor.execute(context)).resolves.toEqual({
       status: 'completed',
+      refreshDiagnostics: expect.any(Function),
       execution: {
         modelProvider: 'openai',
         model: 'test-model',
@@ -2089,8 +2224,8 @@ describe('PiTurnExecutor provider payload', () => {
       maxRetryDelayMs: options.maxRetryDelayMs,
       cacheRetention: options.cacheRetention,
     }))).toEqual([
-      { timeoutMs: 4_321, maxRetries: 2, maxRetryDelayMs: 75, cacheRetention: 'none' },
-      { timeoutMs: 4_321, maxRetries: 2, maxRetryDelayMs: 75, cacheRetention: 'none' },
+      { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
+      { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
     ]);
   });
 });

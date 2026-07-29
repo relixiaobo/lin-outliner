@@ -47,6 +47,7 @@ import {
   applyAnthropicStablePromptCacheBreakpoints,
   providerCacheAffinity,
 } from '../context/ProviderCache';
+import { contextPayloadReferenceKey } from '../context/contextDependencies';
 import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
 import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import {
@@ -154,7 +155,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         : composeStablePrompt({ thread: context.thread, configuration: context.configuration });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
-      const projector = new CanonicalContextProjector(runtime.model, context);
+      const projectionContext = withTurnScopedContextReads(context);
+      const projector = new CanonicalContextProjector(runtime.model, projectionContext);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
       const initialPrompt = currentMessages.at(-1);
@@ -225,11 +227,11 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                 items: currentTurnItems(context),
               }],
               model: runtime.model,
-              readContext: context.readContext,
+              readContext: projectionContext.readContext,
               persist: (payload, summary) => context.persistContextEvidence(payload, summary),
             });
             return projectCanonicalProviderContext(
-              context,
+              projectionContext,
               runtime.model,
               systemPrompt,
               tools,
@@ -250,7 +252,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return streamSimple(
           model,
           providerContext,
-          { ...options, ...providerOptions },
+          { ...options, ...providerOptions, maxRetries: 0 },
         );
       };
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
@@ -325,23 +327,29 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
         diagnostics.finalizeOpenToolExecutions('interrupted');
+        const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
         return {
           status: 'interrupted',
-          execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
+          execution: persisted.details,
+          refreshDiagnostics: persisted.refresh,
         };
       }
       if (agent.state.errorMessage || normalizer.stopReason === 'error') {
         diagnostics.finalizeOpenToolExecutions('failed');
+        const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
         return {
           status: 'failed',
           error: { message: agent.state.errorMessage ?? normalizer.errorMessage ?? 'Model execution failed' },
-          execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
+          execution: persisted.details,
+          refreshDiagnostics: persisted.refresh,
         };
       }
-      diagnostics.finalizeOpenToolExecutions('failed');
+      diagnostics.finalizeOpenToolExecutions('completed');
+      const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
       return {
         status: 'completed',
-        execution: await executionDetails(context, runtime, normalizer.usage, diagnostics),
+        execution: persisted.details,
+        refreshDiagnostics: persisted.refresh,
       };
     } finally {
       context.signal.removeEventListener('abort', abort);
@@ -1019,21 +1027,56 @@ async function executionDetails(
   runtime: PiRuntimeSelection,
   usage: TurnExecutionDetails['usage'],
   diagnostics: TurnDiagnosticsCollector,
-): Promise<TurnExecutionDetails> {
+): Promise<{
+  readonly details: TurnExecutionDetails;
+  readonly refresh: () => Promise<TurnExecutionDetails['diagnosticsRef']>;
+}> {
   let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
-  try {
-    diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
-  } catch (error) {
-    context.onTurnDiagnosticsError(error);
-  }
+  const refresh = async () => {
+    try {
+      diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
+    } catch (error) {
+      diagnosticsRef = null;
+      context.onTurnDiagnosticsError(error);
+    }
+    return diagnosticsRef;
+  };
+  await refresh();
   return {
-    modelProvider: context.thread.modelProvider,
-    model: runtime.model.id,
-    reasoningEffort: context.configuration.reasoningEffort,
-    diagnosticsRef,
-    usage: {
-      ...usage,
-      cost: usage.cost ? { ...usage.cost } : null,
+    details: {
+      modelProvider: context.thread.modelProvider,
+      model: runtime.model.id,
+      reasoningEffort: context.configuration.reasoningEffort,
+      diagnosticsRef,
+      usage: {
+        ...usage,
+        cost: usage.cost ? { ...usage.cost } : null,
+      },
+    },
+    refresh,
+  };
+}
+
+function withTurnScopedContextReads(context: TurnExecutionContext): TurnExecutionContext {
+  const reads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
+  return {
+    ...context,
+    readContext: (ref) => {
+      const key = contextPayloadReferenceKey(ref);
+      const cached = reads.get(key);
+      if (cached) return cached;
+      const pending = context.readContext(ref).then(
+        (payload) => {
+          if (!payload) reads.delete(key);
+          return payload;
+        },
+        (error) => {
+          reads.delete(key);
+          throw error;
+        },
+      );
+      reads.set(key, pending);
+      return pending;
     },
   };
 }

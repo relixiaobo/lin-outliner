@@ -254,7 +254,7 @@ export class TurnDiagnosticsCollector {
     activity.delivered = delivered;
   }
 
-  finalizeOpenToolExecutions(status: 'failed' | 'interrupted', completedAt = Date.now()): void {
+  finalizeOpenToolExecutions(status: 'completed' | 'failed' | 'interrupted', completedAt = Date.now()): void {
     for (const activity of this.activities) {
       if (activity.type !== 'toolExecutionBatch') continue;
       for (const execution of activity.executions) {

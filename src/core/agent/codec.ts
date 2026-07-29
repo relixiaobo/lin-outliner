@@ -2928,15 +2928,6 @@ function decodeTurnDiagnosticsActivities(
   requireUnique(
     activities.flatMap((activity) => (
       activity.type === 'toolExecutionBatch'
-        ? activity.executions.map((execution) => execution.callId)
-        : []
-    )),
-    'turnDiagnostics.activities',
-    'tool call ids across execution batches',
-  );
-  requireUnique(
-    activities.flatMap((activity) => (
-      activity.type === 'toolExecutionBatch'
         ? activity.executions.flatMap((execution) => execution.itemId === null ? [] : [execution.itemId])
         : []
     )),

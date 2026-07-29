@@ -80,6 +80,7 @@ export interface TurnExecutionResult {
   readonly status?: Exclude<TurnStatus, 'inProgress'>;
   readonly error?: TurnError | null;
   readonly execution?: TurnExecutionDetails;
+  readonly refreshDiagnostics?: () => Promise<TurnDiagnosticsPayloadReference | null>;
 }
 
 export interface TurnExecutor {
