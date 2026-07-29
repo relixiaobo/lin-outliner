@@ -30,6 +30,15 @@ one owner per concern, ports over wrappers, typed values over string matching.
 This plan is the first structural step; it removes the largest own-vs-wrap
 tension in the codebase.
 
+Provenance (background, non-normative): the ports-around-a-pure-loop
+decomposition was validated by koma (`~/Coding/koma`), an in-house agent-
+framework experiment whose 137-line kernel showed the shape stays readable at
+scale. This plan is self-contained: every normative requirement lives in this
+file and the pinned `pi-agent-core` dist. koma is background reading, **not a
+reference implementation** — several of its choices (kernel-owned transcript,
+`Controller` port, per-call tool approval, its event vocabulary) are
+deliberately not adopted here, and no code may be copied from it.
+
 Why now (evidence from the 2026-07-29 incident + PR #444 review):
 
 - Two stacked retry owners produced F3; the fix suppresses pi's inner loop with
