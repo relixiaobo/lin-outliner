@@ -107,12 +107,13 @@ final agent messages retain Copy, Continue in new chat, and Details. User messag
 retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
-User-message rendering consumes canonical `ThreadUserContent[]` in submitted
-order. Text, Node references, directories, and every attachment retain an inline
-marker inside a message bubble. Consecutive image attachments additionally form
-one external gallery immediately after their marker-bearing inline run and before
-the next canonical content run; the preview never replaces the image's message
-marker. The gallery uses dedicated
+User-message rendering is a presentation projection over canonical
+`ThreadUserContent[]`; it does not claim to show provider part order. Every image
+attachment in one message is collected in canonical image order into one leading
+gallery. Image names remain available through the tile's accessible label and
+hover title instead of appearing again as duplicate inline file markers. Text,
+Node references, directories, and non-image attachments form one following
+message bubble in their original relative order. The gallery uses dedicated
 layouts for one, two, three, and four images. More than four images initially
 show four thumbnails with a `+N` control; expanding shows every image and adds a
 collapse control. The overflow control is a compact bottom-right media-HUD badge:
@@ -121,13 +122,14 @@ image pixels, exposes rest/hover/active/focus feedback, and does not add a
 backdrop filter or the file-preview action shadow. The ordinary file reference
 retains its Thread-scoped preview identity without a second attachment-card
 wrapper; every gallery tile retains the same scoped identity and opens the shared
-reader. Replay and fork consume the same canonical ordering rather than
-reconstructing attachment placement. Free-text editing is exposed only when
+reader. Replay, fork, context projection, and Model Interactions consume the
+unchanged canonical ordering rather than reconstructing attachment placement from
+this presentation projection. Free-text editing is exposed only when
 canonical content contains at most one text part, and replacement preserves every
 non-text part in place. A split-text mixed message omits Edit until a structured
 content editor can represent each text boundary without flattening the sequence.
-Each inline bubble keeps the five-line measured disclosure independently, so
-the collapse mask never crops gallery content.
+The single narrative bubble keeps the five-line measured disclosure, so the
+collapse mask never crops gallery content.
 
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Details as
@@ -195,9 +197,8 @@ separators only; it does not draw a vertical guide-line axis through nested cont
 Request first renders the content-bearing fields from the final post-adapter **Provider
 Request** observed immediately before transport. Stable provider parameters such as model,
 streaming, output limits, reasoning options, and tool-selection controls stay out of the main
-content flow and appear in the Model Call information surface and Request metadata. The raw
-Provider Request JSON and copied request diagnostics remain complete and lossless. Provider
-fields preserve top-level insertion order only as a serialization fact; they receive no
+content flow and appear in the Model Call information surface and copied Model Call export.
+Provider fields preserve top-level insertion order only as a serialization fact; they receive no
 synthetic numeric context order. `messages`,
 `input`, `contents`, and equivalent sequence fields preserve element order and every
 message's content-part order. The renderer may add presentation labels such as attachment
@@ -208,9 +209,11 @@ ordered semantic entries (Environment, User View, Available Skills, Available Ro
 other typed kinds) with authority and purpose, plus the untouched raw provider part. The
 renderer never parses reminder XML, and literal user text that resembles a reminder remains
 ordinary text. The complete image-sanitized provider request is available as JSON from
-the same call. The recorded pre-adapter Model Context remains available through a secondary
-disclosure in semantic order: System Instructions, Tool Definitions, then Messages. It is
-explicitly labeled as Tenon's projection passed to the adapter, not as the transport payload.
+the same call's copy action. The recorded pre-adapter Model Context remains available in that
+export in semantic order: System Instructions, Tool Definitions, then Messages. It is nested
+under Request as Tenon's adapter input, not presented as a second transport payload. The main
+Request/Response reading flow contains no parallel raw-JSON, pre-adapter, or metadata
+disclosures; the semantic Provider Request Content and Model Response are the only peers.
 
 Each call distinguishes request time,
 HTTP-headers time and latency,
@@ -225,11 +228,15 @@ Call summary derives completed, failed, or
 interrupted from the response stop reason rather than treating every response as success.
 The Model Call header keeps only its ordinal and derived result status in the main reading
 flow. Its trailing information control exposes the recorded model, provider, request time,
-duration, estimated input, provider-reported token/cache/reasoning usage, and calculated
-cost on hover or keyboard focus. The adjacent copy control materializes one typed request
-diagnostics export only when invoked: runtime selection, complete recorded Model Context,
-ordered image-sanitized Provider Payload, and Request Facts. It does not claim to be an HTTP
-request, expose secret headers, or restore omitted image bytes.
+HTTP timing/status/request ID, token budget, common-prefix count, provider parameters,
+stop reason, provider-reported token/cache/reasoning usage, calculated cost, and normalized
+error on hover or keyboard focus. The adjacent copy control materializes one typed Model Call
+diagnostics export only when invoked. It contains runtime selection; Request with the complete
+recorded Model Context, ordered image-sanitized Provider Payload, and Request Facts; and
+Response with allowlisted transport facts plus the provider-neutral normalized model response,
+usage, stop reason, and error. A limitations object states that image bytes are omitted with
+length/digest markers and that secret headers and the raw provider response body were not
+recorded. The export does not claim to be a byte-for-byte HTTP exchange.
 Repetition-heavy request fields use the diagnostics fragment pool without losing a value
 or its position. Each fragmented request field carries an aligned optional provenance array;
 the codec requires exact fragment and content-part cardinality whenever provenance exists.

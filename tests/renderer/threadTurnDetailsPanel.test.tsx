@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('ThreadTurnDetailsPanel', () => {
-  test('renders the typed activity timeline and complete request diagnostics in recorded order', async () => {
+  test('renders the typed activity timeline and copies the complete model interaction', async () => {
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const detail = detailsResponse('thread-a', 'turn-a', 'fresh-a');
     const rendered = renderPanel(async (method, input) => {
@@ -82,9 +82,13 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(callText).toContain('Request');
     expect(callText).toContain('Response');
     expect(callText).toContain('Provider Request Content');
-    expect(callText).toContain('Pre-adapter context');
     expect(callText).not.toContain('System instructions');
     expect(callText).toContain('Model Response');
+    expect(callText).not.toContain('Provider request JSON');
+    expect(callText).not.toContain('Pre-adapter context');
+    expect(callText).not.toContain('Request metadata');
+    expect(callText).not.toContain('Normalized model response JSON');
+    expect(callText).not.toContain('Response metadata');
     await openDetailsContaining(rendered.document, 'input');
     callText = firstCall.textContent ?? '';
     expect(callText).toContain('[0] Text part');
@@ -98,18 +102,6 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(callText).toContain('Raw system context part');
     expect(callText).not.toContain('Available Skills');
 
-    await openDetailsContaining(rendered.document, 'Pre-adapter context');
-    callText = firstCall.textContent ?? '';
-    expect(callText).toContain('System instructions');
-    expect(callText).toContain('Tool definitions (1)');
-    expect(callText).toContain('Messages (1)');
-    expect(callText).toContain('[0] Text part');
-    expect(callText).toContain('[1] System Context');
-    expect(callText).toContain('[2] Attachment');
-    expect(callText).toContain('[3] Text part');
-    expect(callText).not.toContain('Available Skills');
-    expect(callText).toContain('/workspace/report.pdf');
-    expect(callText).toContain('Done');
     expect(rendered.document.querySelector('.thread-turn-details-request-facts-card')).toBeNull();
 
     const callInformation = firstCall.querySelector<HTMLButtonElement>(
@@ -132,6 +124,12 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(requestFacts?.textContent).toContain('tool_choiceauto');
     expect(requestFacts?.textContent).toContain('parallel_tool_callstrue');
     expect(requestFacts?.textContent).toContain('Estimated input tokens120');
+    expect(requestFacts?.textContent).toContain('Time to HTTP headers<1s');
+    expect(requestFacts?.textContent).toContain('HTTP status200');
+    expect(requestFacts?.textContent).toContain('Provider request IDrequest-1');
+    expect(requestFacts?.textContent).toContain('Input token limit100,000');
+    expect(requestFacts?.textContent).toContain('Reserved output tokens8,192');
+    expect(requestFacts?.textContent).toContain('Stop reasonstop');
     expect(requestFacts?.textContent).toContain('Input100');
     expect(requestFacts?.textContent).toContain('Output20');
     expect(requestFacts?.textContent).toContain('Cache read50');
@@ -144,37 +142,52 @@ describe('ThreadTurnDetailsPanel', () => {
       configurable: true,
       value: { writeText: async (value: string) => { clipboardWrites.push(value); } },
     });
-    const copyRequest = firstCall.querySelector<HTMLButtonElement>(
-      'button[aria-label="Copy request diagnostics"]',
+    const copyModelCall = firstCall.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy model call"]',
     );
-    if (!copyRequest) throw new Error('Missing Request diagnostics copy action');
+    if (!copyModelCall) throw new Error('Missing Model Call copy action');
     const wasOpen = firstCall.open;
     await act(async () => {
-      copyRequest.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
+      copyModelCall.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
     await flush();
     expect(firstCall.open).toBe(wasOpen);
-    expect(copyRequest.getAttribute('aria-label')).toBe('Request diagnostics copied');
+    expect(copyModelCall.getAttribute('aria-label')).toBe('Model call copied');
     expect(clipboardWrites).toHaveLength(1);
-    const copiedRequest = JSON.parse(clipboardWrites[0] ?? '{}') as Record<string, unknown>;
-    expect(Object.keys(copiedRequest)).toEqual([
-      'format', 'runtime', 'modelContext', 'providerPayload', 'requestFacts',
+    const copiedCall = JSON.parse(clipboardWrites[0] ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(copiedCall)).toEqual([
+      'format', 'runtime', 'request', 'response', 'limitations',
     ]);
-    expect(copiedRequest).toMatchObject({
-      format: 'tenon.provider-request-diagnostics/v1',
+    expect(copiedCall).toMatchObject({
+      format: 'tenon.model-call-diagnostics/v1',
       runtime: { provider: 'openai', model: 'test-model', api: 'openai-responses' },
-      modelContext: {
-        systemInstructions: 'Canonical stable prompt',
-        toolDefinitions: [{ name: 'file_read' }],
-        messages: [{ value: detail.diagnostics?.payload.canonicalMessages[0]?.value }],
+      request: {
+        modelContext: {
+          systemInstructions: 'Canonical stable prompt',
+          toolDefinitions: [{ name: 'file_read' }],
+          messages: [{ value: detail.diagnostics?.payload.canonicalMessages[0]?.value }],
+        },
+        providerPayload: {
+          model: 'test-model',
+          instructions: 'Canonical stable prompt',
+          input: [detail.diagnostics?.payload.canonicalMessages[0]?.value],
+        },
+        facts: { callIndex: 0, estimatedInputTokens: 120 },
       },
-      providerPayload: {
-        model: 'test-model',
-        instructions: 'Canonical stable prompt',
-        input: [detail.diagnostics?.payload.canonicalMessages[0]?.value],
+      response: {
+        transport: { httpStatus: 200, requestId: 'request-1' },
+        model: {
+          stopReason: 'stop',
+          usage: { input: 100, output: 20, cacheRead: 50, cacheWrite: 5 },
+          value: detail.diagnostics?.payload.providerCalls[0]?.response?.value,
+        },
       },
-      requestFacts: { callIndex: 0, estimatedInputTokens: 120 },
+      limitations: {
+        imageBytes: 'omitted-with-byte-length-and-sha256',
+        secretHeaders: 'not-recorded',
+        rawProviderResponseBody: 'not-recorded',
+      },
     });
 
     expect([...firstCall.querySelectorAll('.thread-turn-details-phase > h4')]
@@ -197,35 +210,7 @@ describe('ThreadTurnDetailsPanel', () => {
     ]);
     expect(providerFieldList?.textContent).not.toContain('model');
     expect(providerFieldList?.textContent).not.toContain('stream');
-    expect(callText.indexOf('Provider Request Content')).toBeLessThan(callText.indexOf('Pre-adapter context'));
-    expect(callText.indexOf('System instructions')).toBeLessThan(callText.indexOf('Tool definitions (1)'));
-    expect(callText.indexOf('Tool definitions (1)')).toBeLessThan(callText.indexOf('Messages (1)'));
     expect(callText).not.toContain('0. model');
-
-    await openDetailsContaining(rendered.document, 'Request metadata');
-    const requestMetadata = [...firstCall.querySelectorAll<HTMLDetailsElement>('.thread-turn-details-disclosure')]
-      .find((details) => details.querySelector(':scope > summary')?.textContent?.includes('Request metadata'));
-    expect(requestMetadata?.textContent).toContain('Provider parameters');
-    expect(requestMetadata?.textContent).toContain('modeltest-model');
-    expect(requestMetadata?.textContent).toContain('streamtrue');
-    expect(requestMetadata?.textContent).toContain('max_output_tokens8192');
-    expect(requestMetadata?.textContent).toContain('include[ "reasoning.encrypted_content" ]');
-    expect(requestMetadata?.textContent).toContain('text{ "verbosity": "low" }');
-
-    await openDetailsContaining(rendered.document, 'Response metadata');
-    const responseText = rendered.document.body.textContent;
-    expect(responseText).toContain('HTTP headers received at');
-    expect(responseText).toContain('Time to HTTP headers');
-    expect(responseText).toContain('Assistant response completed at');
-    expect(responseText).toContain('Total call duration');
-    expect(responseText).toContain('HTTP status');
-    expect(responseText).toContain('Provider request ID');
-    expect(responseText).toContain('request-1');
-    expect(responseText).toContain('Stop reason');
-    expect(responseText).toContain('Reported cache read');
-    expect(responseText).toContain('Reported cache write');
-    expect(responseText).toContain('Reported reasoning tokens');
-    expect(responseText).toContain('Calculated cost');
     await openDetailsContaining(rendered.document, 'Tool Execution (1)');
     await openExecutionItem(rendered.document, 'commandExecution');
     await flush();
@@ -250,10 +235,6 @@ describe('ThreadTurnDetailsPanel', () => {
     await openDetailsContaining(rendered.document, 'L0 · framework');
     expect(rendered.document.body.textContent).toContain('Canonical stable prompt');
     expect(rendered.document.body.textContent).toContain('Stable prompt fingerprints');
-    await openDetailsContaining(rendered.document, 'Provider request JSON');
-    expect(rendered.document.body.textContent).toContain('<system-reminder>');
-    expect(rendered.document.body.textContent).toContain('/workspace/report.pdf');
-
     await openCanonicalContextItem(rendered.document);
     await flush();
     expect(requests.at(-1)).toMatchObject({

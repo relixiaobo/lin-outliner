@@ -365,58 +365,19 @@ function renderUserContent(
   itemId: string,
   onDisclosureToggle: () => void,
 ): ReactNode[] {
-  const rendered: ReactNode[] = [];
-  let inline: ReactNode[] = [];
-  let images: ThreadAttachmentContent[] = [];
-  let groupIndex = 0;
-  const flushInline = () => {
-    if (inline.length === 0) return;
-    rendered.push(
-      <UserMessageCollapsibleContent
-        key={`inline-${groupIndex}`}
-        measureKey={`${itemId}:inline:${groupIndex}`}
-        onDisclosureToggle={onDisclosureToggle}
-      >
-        <div className="thread-user-inline-content">{inline}</div>
-      </UserMessageCollapsibleContent>,
-    );
-    inline = [];
-    groupIndex += 1;
-  };
-  const flushImages = () => {
-    if (images.length === 0) return;
-    rendered.push(
-      <ThreadImageGallery
-        contents={images}
-        key={`images-${groupIndex}`}
-        threadId={threadId}
-      />,
-    );
-    images = [];
-    groupIndex += 1;
-  };
+  const images: ThreadAttachmentContent[] = [];
+  const narrative: ReactNode[] = [];
   content.forEach((part, contentIndex) => {
     if (part.type === 'attachment' && part.mimeType.startsWith('image/')) {
-      inline.push(
-        <ThreadInlineAttachment
-          content={part}
-          key={`attachment-${contentIndex}`}
-          threadId={threadId}
-        />,
-      );
       images.push(part);
       return;
     }
-    if (images.length > 0) {
-      flushInline();
-      flushImages();
-    }
     if (part.type === 'text') {
-      inline.push(<span key={`text-${contentIndex}`}>{part.text}</span>);
+      narrative.push(<span key={`text-${contentIndex}`}>{part.text}</span>);
       return;
     }
     if (part.type === 'nodeReference') {
-      inline.push(
+      narrative.push(
         <a
           className="inline-ref thread-message-inline-ref"
           href={threadNodeReferenceHref(part.nodeId)}
@@ -432,7 +393,7 @@ function renderUserContent(
       );
       return;
     }
-    inline.push(
+    narrative.push(
       <ThreadInlineAttachment
         content={part}
         key={`attachment-${contentIndex}`}
@@ -440,8 +401,21 @@ function renderUserContent(
       />,
     );
   });
-  flushInline();
-  flushImages();
+  const rendered: ReactNode[] = [];
+  if (images.length > 0) {
+    rendered.push(<ThreadImageGallery contents={images} key="images" threadId={threadId} />);
+  }
+  if (narrative.length > 0) {
+    rendered.push(
+      <UserMessageCollapsibleContent
+        key="narrative"
+        measureKey={`${itemId}:narrative`}
+        onDisclosureToggle={onDisclosureToggle}
+      >
+        <div className="thread-user-inline-content">{narrative}</div>
+      </UserMessageCollapsibleContent>,
+    );
+  }
   return rendered;
 }
 
@@ -1293,6 +1267,7 @@ function ThreadImageAttachment({
       aria-label={content.name}
       className="thread-attachment thread-image-gallery-preview"
       onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })}
+      title={content.name}
       type="button"
     >
       {preview.src

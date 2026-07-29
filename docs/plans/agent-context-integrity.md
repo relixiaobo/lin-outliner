@@ -823,24 +823,34 @@ diagnostics rather than presented as provider interaction. A Model Call alone ow
 and Response; tool batches remain sibling activities linked to their source and consuming
 Calls. Request renders the content-bearing fields from the final post-adapter Provider Request
 first. Inline provider parameters remain available in the Model Call information surface and
-Request metadata rather than interrupting the content flow; raw JSON and copied diagnostics
-retain every field. Object-key order is never numbered or used to imply model precedence. The
+copied Model Call diagnostics rather than interrupting the content flow. The export retains
+every request field and also contains the normalized response, transport/usage/stop/error
+facts, and explicit image/header/raw-response limitations. Object-key order is never numbered
+or used to imply model precedence. The
 Provider Request presents a typed System Context disclosure with its ordered semantic entries
 and untouched raw part whenever exact main-process provenance exists. Unmatched adapter
-fragments remain generic rather than receiving an inferred source. The
-pre-adapter context remains available through a secondary disclosure in semantic order
-(`system instructions -> tool definitions -> messages`) and is explicitly labeled as Tenon's
-adapter input. There is no separate context construction account. Timeline hierarchy uses
+fragments remain generic rather than receiving an inferred source. The pre-adapter context
+remains available inside the copied Request in semantic order (`system instructions -> tool
+definitions -> messages`) and is explicitly nested as Tenon's adapter input. The visible Model
+Call contains only semantic Provider Request Content and Model Response; it has no duplicate
+raw JSON, pre-adapter, request-metadata, normalized-response JSON, or response-metadata peers.
+There is no separate context construction account. Timeline hierarchy uses
 indentation and horizontal separators without a vertical guide-line axis. Each Model Call
-header keeps ordinal and status visible, exposes its model/provider/timing/usage/cost facts
-through a hover/focus control, and copies the
-typed request-diagnostics export, including Model Context, ordered image-sanitized Provider
-Payload, runtime selection, and Request Facts, by materializing the fragment pool only when
-requested. Canonical Items, prompt source blocks, configuration, and provenance mount only
+header keeps ordinal and status visible, exposes its runtime/parameter/timing/budget/usage/
+cost/stop/error facts through a hover/focus control, and copies the typed Model Call diagnostics
+export by materializing the request fragment pool only when requested. Canonical Items, prompt
+source blocks, configuration, and provenance mount only
 after opening Internal diagnostics. Context payloads remain exact-tuple lazy reads. It does
 not restore the retired event ledger,
 run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
 readers.
+
+The ordinary transcript has a separate presentation-only projection. It collects every image
+attachment in one user message into one leading gallery in canonical image order, then renders
+text, Node references, directories, and non-image attachments as one narrative bubble in their
+original relative order. Image tiles own their filename metadata instead of duplicating inline
+file chips. This does not mutate `ThreadUserContent`, replay/fork input, or the provider order
+shown by Model Interactions.
 
 ### Failure semantics
 

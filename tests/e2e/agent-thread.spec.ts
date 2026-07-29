@@ -115,9 +115,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turnDetails).toContainText('Response');
     const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
     await expect(request).toContainText('Provider Request Content');
-    await expect(request).toContainText('Provider request JSON');
-    await expect(request).toContainText('Pre-adapter context');
-    await expect(request).not.toContainText('System instructions');
+    await expect(request).not.toContainText('Provider request JSON');
+    await expect(request).not.toContainText('Pre-adapter context');
+    await expect(request).not.toContainText('Request metadata');
     await request.getByText('input', { exact: true }).click();
     await expect(request).toContainText('System Context');
     await request.locator('.thread-turn-details-part-list > .thread-turn-details-disclosure')
@@ -127,10 +127,6 @@ test.describe('canonical agent Thread surface', () => {
       .click();
     await expect(request).toContainText('Environment · Application · Observation');
     await expect(request).toContainText('Raw system context part');
-    await turnDetails.getByText('Pre-adapter context', { exact: true }).click();
-    await expect(request).toContainText('System instructions');
-    await expect(request).toContainText('Tool definitions (1)');
-    await expect(request).toContainText('Messages (1)');
     const firstCall = turnDetails.locator('.thread-turn-details-timeline-activity').filter({ hasText: 'Model Call 1' });
     const callInformation = firstCall.getByRole('button', { name: 'Model call information' });
     await callInformation.hover();
@@ -141,41 +137,49 @@ test.describe('canonical agent Thread surface', () => {
     await expect(requestFacts).toContainText('Provider parameters');
     await expect(requestFacts).toContainText('modelopenai/gpt-5.4');
     await expect(requestFacts).toContainText('Estimated input tokens');
+    await expect(requestFacts).toContainText('HTTP status200');
+    await expect(requestFacts).toContainText('Stop reasonstop');
     await expect(requestFacts).toContainText('Usage details');
-    const copyRequest = firstCall.locator('button.thread-turn-details-call-action').last();
-    await expect(copyRequest).toHaveAttribute('aria-label', 'Copy request diagnostics');
-    await copyRequest.click();
-    await expect(copyRequest).toHaveAttribute('aria-label', 'Request diagnostics copied');
+    const copyModelCall = firstCall.locator('button.thread-turn-details-call-action').last();
+    await expect(copyModelCall).toHaveAttribute('aria-label', 'Copy model call');
+    await copyModelCall.click();
+    await expect(copyModelCall).toHaveAttribute('aria-label', 'Model call copied');
     await expect(firstCall).toHaveAttribute('open', '');
-    const copiedRequest = JSON.parse(await clipboardText(page)) as Record<string, unknown>;
-    expect(Object.keys(copiedRequest)).toEqual([
-      'format', 'runtime', 'modelContext', 'providerPayload', 'requestFacts',
+    const copiedCall = JSON.parse(await clipboardText(page)) as Record<string, unknown>;
+    expect(Object.keys(copiedCall)).toEqual([
+      'format', 'runtime', 'request', 'response', 'limitations',
     ]);
-    expect(copiedRequest.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
-    expect(copiedRequest.modelContext).toMatchObject({
-      systemInstructions: 'Canonical mock system prompt.',
-      messages: [expect.objectContaining({
-        partProvenance: expect.arrayContaining([
-          expect.objectContaining({ source: 'systemContext' }),
-        ]),
-      })],
-      toolDefinitions: expect.any(Array),
+    expect(copiedCall.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
+    expect(copiedCall.request).toMatchObject({
+      modelContext: {
+        systemInstructions: 'Canonical mock system prompt.',
+        messages: [expect.objectContaining({
+          partProvenance: expect.arrayContaining([
+            expect.objectContaining({ source: 'systemContext' }),
+          ]),
+        })],
+        toolDefinitions: expect.any(Array),
+      },
+      providerPayload: {
+        model: 'openai/gpt-5.4',
+        instructions: 'Canonical mock system prompt.',
+        input: expect.any(Array),
+        tools: expect.any(Array),
+      },
+      facts: expect.objectContaining({ callIndex: 0 }),
     });
-    expect(copiedRequest.providerPayload).toMatchObject({
-      model: 'openai/gpt-5.4',
-      instructions: 'Canonical mock system prompt.',
-      input: expect.any(Array),
-      tools: expect.any(Array),
+    expect(copiedCall.response).toMatchObject({
+      transport: expect.any(Object),
+      model: expect.objectContaining({ stopReason: 'stop', value: expect.any(Object) }),
+    });
+    expect(copiedCall.limitations).toEqual({
+      imageBytes: 'omitted-with-byte-length-and-sha256',
+      secretHeaders: 'not-recorded',
+      rawProviderResponseBody: 'not-recorded',
     });
     const providerRequestContent = request.locator('.thread-turn-details-flow-group').first();
     await expect(providerRequestContent).not.toContainText('modelopenai/gpt-5.4');
-    await request.getByText('Request metadata', { exact: true }).click();
-    await expect(request).toContainText('Provider parameters');
-    await expect(request).toContainText('modelopenai/gpt-5.4');
     const requestText = await request.textContent() ?? '';
-    expect(requestText.indexOf('Provider Request Content')).toBeLessThan(requestText.indexOf('Pre-adapter context'));
-    expect(requestText.indexOf('System instructions')).toBeLessThan(requestText.indexOf('Tool definitions (1)'));
-    expect(requestText.indexOf('Tool definitions (1)')).toBeLessThan(requestText.indexOf('Messages (1)'));
     expect(requestText).not.toContain('0. model');
     await turnDetails.getByText('Internal diagnostics', { exact: true }).click();
     await expect(turnDetails).toContainText('Canonical Items (2)');
@@ -731,7 +735,7 @@ test.describe('canonical agent Thread surface', () => {
     })]);
   });
 
-  test('renders inline files and an expandable image gallery in canonical order', async ({ page }) => {
+  test('renders one leading image gallery and keeps non-image message content in order', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
@@ -792,10 +796,9 @@ test.describe('canonical agent Thread surface', () => {
     const sequence = message.locator('.thread-user-content-sequence');
     const bubbles = sequence.locator(':scope > .thread-user-content-shell');
     const gallery = sequence.locator(':scope > .thread-image-gallery');
-    await expect(sequence.locator(':scope > *')).toHaveCount(3);
-    await expect(bubbles).toHaveCount(2);
-    await expect(bubbles.first().locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddle');
-    await expect(bubbles.last().locator('.thread-user-inline-content')).toHaveText('After');
+    await expect(sequence.locator(':scope > *')).toHaveCount(2);
+    await expect(bubbles).toHaveCount(1);
+    await expect(bubbles.locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddleAfter');
     await expect(gallery).toHaveAccessibleName('6 images');
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
     await expect(gallery.locator('.thread-image-gallery-preview').first()).toHaveAccessibleName('reference-1.png');
@@ -805,33 +808,19 @@ test.describe('canonical agent Thread surface', () => {
     await expect(showAll).toHaveText('+2');
     await expect(showAll).toHaveAttribute('aria-expanded', 'false');
     expect(await sequence.evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
-      'thread-user-content-shell',
       'thread-image-gallery',
       'thread-user-content-shell',
     ]);
-    const firstRun = bubbles.first().locator('.thread-user-inline-content');
-    await expect(firstRun.locator('.thread-message-file-ref')).toHaveText([
-      'agenda.pdf',
-      'reference-1.png',
-      'reference-2.png',
-      'reference-3.png',
-      'reference-4.png',
-      'reference-5.png',
-      'reference-6.png',
-    ]);
-    expect(await firstRun.evaluate((element) => Array.from(element.children).map((child) => ({
+    const narrative = bubbles.locator('.thread-user-inline-content');
+    await expect(narrative.locator('.thread-message-file-ref')).toHaveText('agenda.pdf');
+    expect(await narrative.evaluate((element) => Array.from(element.children).map((child) => ({
       className: child.className,
       text: child.textContent,
     })))).toEqual([
       { className: '', text: 'Before' },
       { className: 'inline-ref thread-message-file-ref', text: 'agenda.pdf' },
       { className: '', text: 'middle' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-1.png' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-2.png' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-3.png' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-4.png' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-5.png' },
-      { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
+      { className: '', text: 'After' },
     ]);
 
     await showAll.click();
@@ -2425,7 +2414,7 @@ test.describe('terminal Thread history actions', () => {
     expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
     const userMessage = page.locator('.thread-user-message').last();
-    await expect(userMessage.locator('.thread-message-file-ref')).toHaveText('diagram.png');
+    await expect(userMessage.locator('.thread-message-file-ref')).toHaveCount(0);
     await expect(userMessage.locator('.thread-image-gallery-preview')).toHaveAccessibleName('diagram.png');
     await userMessage.hover();
     await userMessage.getByRole('button', { name: 'Edit message' }).click();

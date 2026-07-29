@@ -305,6 +305,10 @@
   gap: var(--space-3);
 }
 
+.thread-turn-details-request-facts-card .thread-response-usage-context > div {
+  grid-template-columns: minmax(96px, 0.42fr) minmax(0, 1fr);
+}
+
 .thread-turn-details-request-facts-title {
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
@@ -421,6 +425,27 @@
   font-variant-numeric: tabular-nums;
   font-weight: 500;
   text-align: right;
+}
+
+.thread-turn-details-call-error {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-top: 1px solid var(--separator);
+  margin: 0;
+  padding-top: var(--space-3);
+  color: var(--status-danger);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-turn-details-call-error strong {
+  font-weight: 650;
+}
+
+.thread-turn-details-call-error span {
+  overflow-wrap: anywhere;
 }
 
 .thread-turn-details-summary-chevron {

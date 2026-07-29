@@ -503,8 +503,6 @@ function ModelCallUnit({
             <ProviderRequestView
               call={call}
               fragmentsById={fragmentsById}
-              messagesById={messagesById}
-              toolSchemasByName={toolSchemasByName}
             />
           </TimelinePhase>
           <TimelinePhase title={t.agent.turnDetails.response}>
@@ -540,8 +538,8 @@ function CallHeaderActions({
     if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current);
   }, []);
 
-  const copyRequest = async () => {
-    const value = materializeRequestDiagnostics(
+  const copyModelCall = async () => {
+    const value = materializeModelCallDiagnostics(
       call,
       fragmentsById,
       messagesById,
@@ -598,8 +596,8 @@ function CallHeaderActions({
         className="thread-turn-details-call-action"
         icon={copied ? CheckIcon : CopyIcon}
         iconSize={ICON_SIZE.menu}
-        label={copied ? t.agent.turnDetails.requestDiagnosticsCopied : t.agent.turnDetails.copyRequestDiagnostics}
-        onClick={() => void copyRequest()}
+        label={copied ? t.agent.turnDetails.modelCallCopied : t.agent.turnDetails.copyModelCall}
+        onClick={() => void copyModelCall()}
         variant="panel"
       />
     </span>
@@ -642,7 +640,7 @@ function RequestFactsCard({
     ].join(':'),
     maxHeight: 640,
     placement: 'bottom-end',
-    width: 320,
+    width: 360,
   });
   return createPortal(
     <div
@@ -668,9 +666,41 @@ function RequestFactsCard({
           <dd>{call.response ? formatDuration(call.response.receivedAt - call.requestedAt) : '-'}</dd>
         </div>
         <div>
+          <dt>{t.agent.turnDetails.timeToHeaders}</dt>
+          <dd>{call.transportResponse
+            ? formatDuration(call.transportResponse.headersReceivedAt - call.requestedAt)
+            : '-'}</dd>
+        </div>
+        <div>
+          <dt>{t.agent.turnDetails.httpStatus}</dt>
+          <dd>{call.transportResponse ? String(call.transportResponse.httpStatus) : '-'}</dd>
+        </div>
+        <div>
+          <dt>{t.agent.turnDetails.requestId}</dt>
+          <dd>{call.transportResponse?.requestId ?? '-'}</dd>
+        </div>
+        <div>
           <dt>{t.agent.turnDetails.estimatedInputTokens}</dt>
           <dd>{formatNumber(call.estimatedInputTokens)}</dd>
         </div>
+        <div>
+          <dt>{t.agent.turnDetails.inputTokenLimit}</dt>
+          <dd>{formatNumber(call.inputTokenLimit)}</dd>
+        </div>
+        <div>
+          <dt>{t.agent.turnDetails.reservedOutputTokens}</dt>
+          <dd>{formatNumber(call.reservedOutputTokens)}</dd>
+        </div>
+        <div>
+          <dt>{t.agent.turnDetails.commonPrefixMessages}</dt>
+          <dd>{formatNumber(call.commonPrefixMessageCount)}</dd>
+        </div>
+        {call.response ? (
+          <div>
+            <dt>{t.agent.turnDetails.stopReason}</dt>
+            <dd>{call.response.stopReason}</dd>
+          </div>
+        ) : null}
         {usage ? (
           <div><dt>{t.agent.message.cost}</dt><dd>{formatUsageCost(usage.cost.total)}</dd></div>
         ) : null}
@@ -702,6 +732,12 @@ function RequestFactsCard({
       ) : (
         <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
       )}
+      {call.response?.errorMessage ? (
+        <p className="thread-turn-details-call-error">
+          <strong>{t.agent.turnDetails.providerError}</strong>
+          <span>{call.response.errorMessage}</span>
+        </p>
+      ) : null}
     </div>,
     document.body,
   );
@@ -710,142 +746,16 @@ function RequestFactsCard({
 function ProviderRequestView({
   call,
   fragmentsById,
-  messagesById,
-  toolSchemasByName,
 }: {
   readonly call: TurnDiagnosticsProviderCall;
   readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
-  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
-  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
 }) {
   const t = useT();
-  const parameterFields = providerParameterFields(call.request);
   return (
     <div className="thread-turn-details-request">
       <FlowGroup title={t.agent.turnDetails.providerRequest}>
         <ProviderPayloadView fragmentsById={fragmentsById} request={call.request} />
-        <LazyDisclosure
-          resetKey={String(call.index)}
-          title={t.agent.turnDetails.providerRequestJson}
-          render={() => <JsonCode value={materializeProviderRequest(call.request, fragmentsById)} />}
-        />
       </FlowGroup>
-      <LazyDisclosure
-        metadata={t.agent.turnDetails.preAdapterContextHint}
-        resetKey={`${call.index}:prepared-context`}
-        title={t.agent.turnDetails.preAdapterContext}
-        render={() => (
-          <PreparedContextView
-            call={call}
-            fragmentsById={fragmentsById}
-            messagesById={messagesById}
-            toolSchemasByName={toolSchemasByName}
-          />
-        )}
-      />
-      <LazyDisclosure
-        resetKey={String(call.index)}
-        title={t.agent.turnDetails.requestMetadata}
-        render={() => (
-          <>
-            {parameterFields.length > 0 ? (
-              <FlowGroup title={t.agent.turnDetails.providerParameters}>
-                <ProviderParameterList fields={parameterFields} />
-              </FlowGroup>
-            ) : null}
-            <dl className="thread-turn-details-fact-grid is-compact">
-              <Fact label={t.agent.turnDetails.estimatedInputTokens} value={formatNumber(call.estimatedInputTokens)} />
-              <Fact label={t.agent.turnDetails.inputTokenLimit} value={formatNumber(call.inputTokenLimit)} />
-              <Fact label={t.agent.turnDetails.reservedOutputTokens} value={formatNumber(call.reservedOutputTokens)} />
-              <Fact label={t.agent.turnDetails.protectedBoundary} value={formatNumber(call.protectedFromMessageIndex)} />
-              <Fact label={t.agent.turnDetails.commonPrefixMessages} value={formatNumber(call.commonPrefixMessageCount)} />
-            </dl>
-            <dl className="thread-turn-details-identity-list">
-              <Identity label={t.agent.turnDetails.requestFingerprint} value={call.requestFingerprint} />
-              <Identity
-                label={t.agent.turnDetails.cacheBreakpoints}
-                value={call.cacheBreakpoints.length > 0 ? jsonText(call.cacheBreakpoints) : '-'}
-              />
-            </dl>
-          </>
-        )}
-      />
-    </div>
-  );
-}
-
-function PreparedContextView({
-  call,
-  fragmentsById,
-  messagesById,
-  toolSchemasByName,
-}: {
-  readonly call: TurnDiagnosticsProviderCall;
-  readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
-  readonly messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>;
-  readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
-}) {
-  const t = useT();
-  const systemPrompt = fragmentsById.get(call.preparedContext.systemPromptFragmentId);
-  const tools = call.preparedContext.toolNames.flatMap((name) => {
-    const tool = toolSchemasByName.get(name);
-    return tool ? [tool] : [];
-  });
-  const messages = call.preparedContext.messageIds.flatMap((id, index) => {
-    const message = messagesById.get(id);
-    return message ? [{
-      message,
-      partProvenance: call.preparedContext.messagePartProvenance[index] ?? [],
-    }] : [];
-  });
-  return (
-    <div className="thread-turn-details-flow-fields">
-      {systemPrompt && typeof systemPrompt.value === 'string' ? (
-        <TextDisclosure
-          metadata={systemPrompt.id}
-          resetKey={`${call.index}:prepared-system-prompt`}
-          text={systemPrompt.value}
-          title={t.agent.turnDetails.systemInstructions}
-        />
-      ) : systemPrompt ? (
-        <JsonDisclosure
-          metadata={systemPrompt.id}
-          resetKey={`${call.index}:prepared-system-prompt`}
-          title={t.agent.turnDetails.systemInstructions}
-          value={systemPrompt.value}
-        />
-      ) : null}
-      <LazyDisclosure
-        metadata={t.agent.turnDetails.orderedValues({ count: tools.length })}
-        resetKey={`${call.index}:prepared-tools`}
-        title={t.agent.turnDetails.preparedTools({ count: tools.length })}
-        render={() => (
-          <div className="thread-turn-details-nested-list">
-            {tools.map((tool) => (
-              <JsonDisclosure key={tool.name} resetKey={String(call.index)} title={tool.name} value={tool} />
-            ))}
-          </div>
-        )}
-      />
-      <LazyDisclosure
-        defaultOpen
-        metadata={t.agent.turnDetails.orderedValues({ count: messages.length })}
-        resetKey={`${call.index}:prepared-messages`}
-        title={t.agent.turnDetails.preparedMessages({ count: messages.length })}
-        render={() => (
-          <div className="thread-turn-details-request-fragments">
-            {messages.map(({ message, partProvenance }, index) => (
-              <ProviderRequestFragmentView
-                fieldName="preparedContext.messages"
-                index={index}
-                key={`${index}:${message.id}`}
-                partProvenance={partProvenance}
-                value={message.value}
-              />
-            ))}
-          </div>
-        )}
-      />
     </div>
   );
 }
@@ -1044,14 +954,12 @@ function SystemContextDisclosure({
 
 function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProviderCall }) {
   const t = useT();
-  const { locale } = useI18n();
   if (!call.response) {
     return (
       <div className="thread-turn-details-result">
         <FlowGroup title={t.agent.turnDetails.modelResponse}>
           <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
         </FlowGroup>
-        <ResponseDiagnostics call={call} locale={locale} />
       </div>
     );
   }
@@ -1059,84 +967,8 @@ function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProvider
     <div className="thread-turn-details-result">
       <FlowGroup title={t.agent.turnDetails.modelResponse}>
         <SemanticValue value={call.response.value} />
-        <JsonDisclosure
-          resetKey={`${call.index}:response`}
-          title={t.agent.turnDetails.normalizedModelResponseJson}
-          value={call.response.value}
-        />
       </FlowGroup>
-      <ResponseDiagnostics call={call} locale={locale} />
     </div>
-  );
-}
-
-function ResponseDiagnostics({ call, locale }: { readonly call: TurnDiagnosticsProviderCall; readonly locale: string }) {
-  const t = useT();
-  return (
-    <LazyDisclosure
-      resetKey={`${call.index}:response-diagnostics`}
-      title={t.agent.turnDetails.responseMetadata}
-      render={() => (
-        <>
-          <dl className="thread-turn-details-fact-grid is-compact">
-            <Fact label={t.agent.turnDetails.requestedAt} value={formatTimestamp(call.requestedAt, locale)} />
-            <Fact
-              label={t.agent.turnDetails.headersReceivedAt}
-              value={call.transportResponse
-                ? formatTimestamp(call.transportResponse.headersReceivedAt, locale)
-                : '-'}
-            />
-            <Fact
-              label={t.agent.turnDetails.timeToHeaders}
-              value={call.transportResponse
-                ? formatDuration(call.transportResponse.headersReceivedAt - call.requestedAt)
-                : '-'}
-            />
-            <Fact
-              label={t.agent.turnDetails.assistantResponseCompletedAt}
-              value={call.response ? formatTimestamp(call.response.receivedAt, locale) : '-'}
-            />
-            <Fact
-              label={t.agent.turnDetails.totalCallDuration}
-              value={call.response ? formatDuration(call.response.receivedAt - call.requestedAt) : '-'}
-            />
-            <Fact
-              label={t.agent.turnDetails.httpStatus}
-              value={call.transportResponse ? String(call.transportResponse.httpStatus) : '-'}
-            />
-            {call.response ? (
-              <>
-                <Fact label={t.agent.turnDetails.stopReason} value={call.response.stopReason} />
-                <Fact label={t.agent.turnDetails.reportedInputTokens} value={formatNumber(call.response.usage.input)} />
-                <Fact label={t.agent.turnDetails.reportedOutputTokens} value={formatNumber(call.response.usage.output)} />
-                <Fact label={t.agent.turnDetails.reportedCacheRead} value={formatNumber(call.response.usage.cacheRead)} />
-                <Fact label={t.agent.turnDetails.reportedCacheWrite} value={formatNumber(call.response.usage.cacheWrite)} />
-                {call.response.usage.cacheWrite1h === null ? null : (
-                  <Fact
-                    label={t.agent.turnDetails.reportedCacheWrite1h}
-                    value={formatNumber(call.response.usage.cacheWrite1h)}
-                  />
-                )}
-                {call.response.usage.reasoning === null ? null : (
-                  <Fact
-                    label={t.agent.turnDetails.reportedReasoningTokens}
-                    value={formatNumber(call.response.usage.reasoning)}
-                  />
-                )}
-                <Fact label={t.agent.turnDetails.reportedTotalTokens} value={formatNumber(call.response.usage.totalTokens)} />
-                <Fact label={t.agent.turnDetails.calculatedCost} value={formatUsageCost(call.response.usage.cost.total)} />
-                {call.response.errorMessage ? (
-                  <Fact label={t.agent.turnDetails.providerError} value={call.response.errorMessage} />
-                ) : null}
-              </>
-            ) : null}
-          </dl>
-          <dl className="thread-turn-details-identity-list">
-            <Identity label={t.agent.turnDetails.requestId} value={call.transportResponse?.requestId ?? '-'} />
-          </dl>
-        </>
-      )}
-    />
   );
 }
 
@@ -1562,7 +1394,7 @@ function provenanceJson(provenance: TurnDiagnosticsMessagePartProvenance): JsonV
   };
 }
 
-function materializeRequestDiagnostics(
+function materializeModelCallDiagnostics(
   call: TurnDiagnosticsProviderCall,
   fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>,
   messagesById: ReadonlyMap<string, TurnDiagnosticsPayload['canonicalMessages'][number]>,
@@ -1584,7 +1416,7 @@ function materializeRequestDiagnostics(
     }] : [];
   });
   return {
-    format: 'tenon.provider-request-diagnostics/v1',
+    format: 'tenon.model-call-diagnostics/v1',
     runtime: {
       provider: runtime.provider,
       model: runtime.model,
@@ -1596,22 +1428,58 @@ function materializeRequestDiagnostics(
       maxRetryDelayMs: runtime.maxRetryDelayMs,
       cacheRetention: runtime.cacheRetention,
     },
-    modelContext: {
-      systemInstructions,
-      toolDefinitions,
-      messages,
+    request: {
+      modelContext: {
+        systemInstructions,
+        toolDefinitions,
+        messages,
+      },
+      providerPayload: materializeProviderRequest(call.request, fragmentsById),
+      facts: {
+        callIndex: call.index,
+        requestedAt: call.requestedAt,
+        protectedFromMessageIndex: call.protectedFromMessageIndex,
+        estimatedInputTokens: call.estimatedInputTokens,
+        inputTokenLimit: call.inputTokenLimit,
+        reservedOutputTokens: call.reservedOutputTokens,
+        commonPrefixMessageCount: call.commonPrefixMessageCount,
+        requestFingerprint: call.requestFingerprint,
+        cacheBreakpoints: call.cacheBreakpoints,
+      },
     },
-    providerPayload: materializeProviderRequest(call.request, fragmentsById),
-    requestFacts: {
-      callIndex: call.index,
-      requestedAt: call.requestedAt,
-      protectedFromMessageIndex: call.protectedFromMessageIndex,
-      estimatedInputTokens: call.estimatedInputTokens,
-      inputTokenLimit: call.inputTokenLimit,
-      reservedOutputTokens: call.reservedOutputTokens,
-      commonPrefixMessageCount: call.commonPrefixMessageCount,
-      requestFingerprint: call.requestFingerprint,
-      cacheBreakpoints: call.cacheBreakpoints,
+    response: {
+      transport: call.transportResponse ? {
+        headersReceivedAt: call.transportResponse.headersReceivedAt,
+        httpStatus: call.transportResponse.httpStatus,
+        requestId: call.transportResponse.requestId,
+      } : null,
+      model: call.response ? {
+        receivedAt: call.response.receivedAt,
+        stopReason: call.response.stopReason,
+        errorMessage: call.response.errorMessage,
+        usage: {
+          input: call.response.usage.input,
+          output: call.response.usage.output,
+          cacheRead: call.response.usage.cacheRead,
+          cacheWrite: call.response.usage.cacheWrite,
+          cacheWrite1h: call.response.usage.cacheWrite1h,
+          reasoning: call.response.usage.reasoning,
+          totalTokens: call.response.usage.totalTokens,
+          cost: {
+            input: call.response.usage.cost.input,
+            output: call.response.usage.cost.output,
+            cacheRead: call.response.usage.cost.cacheRead,
+            cacheWrite: call.response.usage.cost.cacheWrite,
+            total: call.response.usage.cost.total,
+          },
+        },
+        value: call.response.value,
+      } : null,
+    },
+    limitations: {
+      imageBytes: 'omitted-with-byte-length-and-sha256',
+      secretHeaders: 'not-recorded',
+      rawProviderResponseBody: 'not-recorded',
     },
   };
 }
