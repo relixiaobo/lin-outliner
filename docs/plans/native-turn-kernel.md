@@ -4,16 +4,19 @@ Shape: **(a) ONE complete feature in one PR.** The internal stages below are
 build order inside that single PR, not separate releases.
 
 Prerequisite: PR #444 (`codex-3/agent-context-runtime-completion`) is merged.
-Every file/line reference below is against that branch's tip (`79c87380`);
-rebase references if main has moved.
+Tenon file/line references are against that branch's tip (`79c87380`); rebase
+references if main has moved. All `agent-loop.js:N` / `agent.js:N` references
+are against `@earendil-works/pi-agent-core@0.80.6` `dist/` (exact-pinned in
+`package.json`, stable across machines) — **the old code is the spec**; the
+Behavioral Contract below is extracted from it and is normative.
 
 ## Goal
 
-Replace the `@earendil-works/pi-agent-core` dependency (954 lines of dist:
+Replace the `@earendil-works/pi-agent-core` dependency (954 dist lines:
 `agent.js` 410 + `agent-loop.js` 544) with a Tenon-owned turn kernel, structured
 as small ports in the style of koma's kernel (`~/Coding/koma/packages/core`):
 a pure loop that projects context, streams one model call, runs one tool batch,
-and consults policy — with **one** retry owner and typed error classification.
+and repeats — with **one** retry owner and typed error classification.
 
 `@earendil-works/pi-ai` stays, demoted to pure transport behind a
 `ModelGateway` port. The canonical protocol (`src/core/`), Items, rollouts,
@@ -44,286 +47,376 @@ Why now (evidence from the 2026-07-29 incident + PR #444 review):
 
 - No provider-layer replacement. `pi-ai` remains the only transport
   (`piStreamSimple` / `piCompleteSimple`, provider registry, OAuth, model
-  catalog, usage/cost). The thread-name path (`completeThreadName` →
-  `piCompleteSimple`) is transport-only and stays as-is.
+  catalog, usage/cost, `validateToolArguments` via `@earendil-works/pi-ai/compat`).
+  The thread-name path (`completeThreadName` → `piCompleteSimple`) is
+  transport-only and stays as-is.
 - No koma code dependency. We take the port shapes, not the packages.
 - No change to steering semantics, event ordering, canonical Item shapes,
   diagnostics payload schema (`codec.ts` untouched), renderer protocol, or the
   tool authoring surface beyond an import-specifier swap.
-- No permission-model change. Tenon's Full-Access + capability-boundary model
-  (`docs/spec/agent-tool-permissions.md`) is deliberate; koma's per-call
-  allow/ask/deny approval middleware is NOT adopted.
+- No behavior improvements smuggled in. Where pi's behavior is odd but Tenon
+  depends on it (see BC rules), the kernel reproduces it bug-for-bug. File
+  follow-ups instead.
+- No permission-model change; koma's per-call approval middleware is NOT
+  adopted (Tenon's model: `docs/spec/agent-tool-permissions.md`).
 - No renames of `PiTurnExecutor` / `PiEventNormalizer` / `PiAgentRuntime` in
-  this PR (churn control; a later mechanical rename PR may drop the `Pi`
-  prefix).
+  this PR (churn control; later mechanical rename PR).
 
 ## Current state (verified facts)
 
 **Dependency surface.** 11 files import `@earendil-works/pi-agent-core`:
 
 - Runtime-critical (2): `src/main/agent/runtime/PiTurnExecutor.ts`
-  (`Agent`, `AgentOptions`, `AgentState`, `AgentEvent`, message types),
+  (`Agent`, `AgentEvent`, `AgentState`, message types),
   `src/main/agent/capabilities/agentStreamAbort.ts` (`StreamFn`).
 - Type-only tool vocabulary (9): `agentSkills.ts`, `agentImageGenerationTool.ts`,
   `agentToolEnvelope.ts` (`AgentToolResult`, `AfterToolCallResult`),
   `agentNodeToolVisibility.ts`, `agentLocalTools.ts`, `agentNodeTools.ts`,
   `agentTools.ts`, `runtime/ToolRuntime.ts`, `automations/AutomationTool.ts` —
-  all import only `AgentTool` / `AgentToolResult` / `AfterToolCallResult`.
+  only `AgentTool` / `AgentToolResult` / `AfterToolCallResult`.
 
 **The executor is already programmed against an interface.**
 `PiTurnExecutor.ts:125-131` defines `PiAgentRuntime`
-(`state.errorMessage` / `subscribe` / `abort` / `steer` / `prompt`), and
-`PiTurnExecutorOptions.createAgent` (`:108`) injects the factory. The default is
-`new Agent(options)`. Tests already exploit this seam
-(`tests/core/agentPiTurnExecutor.test.ts`). **This is the surgical cut: the
-kernel implements `PiAgentRuntime`; the executor swaps the default factory.**
+(`state.errorMessage` / `subscribe` / `abort` / `steer` / `prompt`), injected
+via `PiTurnExecutorOptions.createAgent` (`:108`); default `new Agent(options)`.
+Tests already exploit this seam (`tests/core/agentPiTurnExecutor.test.ts`).
+**The kernel implements `PiAgentRuntime`; the executor swaps the default
+factory. That is the whole integration.**
 
 **The Agent contract actually used** (single construction site,
-`PiTurnExecutor.ts` ~`:258`):
+`PiTurnExecutor.ts:258`): `initialState { systemPrompt, model, thinkingLevel,
+tools, messages }`, `streamFn` (currently the `createAbortSettledStreamFn`
+wrapper), `getApiKey`, `onPayload`, `onResponse`, `transformContext`,
+`steeringMode: 'all'`, `sessionId` (cache affinity → `prompt_cache_key`),
+`maxRetryDelayMs`, `toolExecution: 'parallel'`. NOT passed (verify with grep,
+see Dropped-behavior ledger): `convertToLlm`, `beforeToolCall`,
+`afterToolCall`, `prepareNextTurn`, `prepareNextTurnWithContext`,
+`followUp`/`followUpMode`, `thinkingBudgets`, `transport`, `continue()`,
+`reset()`, `images` on `prompt()`.
 
-- `initialState: { systemPrompt, model, thinkingLevel, tools, messages }`
-- `streamFn` — currently `createAbortSettledStreamFn(configuredStream, {...})`
-- `getApiKey`
-- `onPayload(payload, model)` — payload-profile transform
-  (`agentProviderPayload`) + `diagnostics.captureProviderRequest`
-- `onResponse(response)` — `diagnostics.captureTransportResponse`
-- `transformContext` — per-model-call re-projection (evidence refresh, frozen
-  tool projections, budget/compaction via
-  `projectCanonicalProviderContext`)
-- `steeringMode: 'all'`, `sessionId: cacheAffinity` (→ `prompt_cache_key`),
-  `maxRetryDelayMs`, `toolExecution: 'parallel'`
+**Tenon tools DO declare `executionMode: 'sequential'`** — the skill tool
+(`agentSkills.ts:646`) and image generation (`agentImageGenerationTool.ts:173`);
+all other declarations are `'parallel'`. Therefore the kernel MUST implement
+both batch paths and the batch-downgrade rule (BC12). This was the single
+biggest deviation trap in the earlier draft of this plan.
 
-**Event vocabulary the normalizer consumes** (`PiEventNormalizer`,
-`PiTurnExecutor.ts:655+`): `message_start`, `message_update` (with
-`assistantMessageEvent`: `text_delta`, `thinking_delta`, tool-call deltas),
-`message_end`, `tool_execution_start`, `tool_execution_end`, `agent_end`
-(terminal `stopReason`/`errorMessage` from last assistant message). The
-diagnostics collector additionally receives every raw event via
-`diagnostics.captureEvent(event)`.
+**Not used anywhere in Tenon** (verified `rg`, keep verifying at build time):
+`prepareArguments` on tools (implement anyway — 8 lines, part of the tool
+contract, BC14), `tool_execution_update` consumers (normalizer and
+`TurnDiagnosticsCollector.captureEvent` ignore it; kernel still emits it,
+BC15 — parity over minimalism).
 
-**pi-agent-core loop semantics to preserve** (from `dist/agent-loop.js`):
-steering queue drained at loop start and between iterations ("inject before
-next assistant response"); parallel tool execution with **ordered
-finalization** (`Promise.all` over calls, results appended in call order);
-every `tool_call` must resolve to a `tool_result` before the next model call.
+**`transformContext` in Tenon** ignores pi's input messages and rebuilds the
+provider messages from canonical state via `projectCanonicalProviderContext`
+(`PiTurnExecutor.ts:369`), returning the projected `Message[]`.
 
-**agentStreamAbort semantics to absorb** (`agentStreamAbort.ts`):
+**agentStreamAbort semantics to absorb** (`agentStreamAbort.ts`): request vs
+stream retry budgets (`canRetryResponses = retrySource &&
+isOpenAIResponsesModel(model)`; defaults 4 request / 1 stream, `:41-42`;
+`providerMaxRetries` overrides both), 429/5xx + transport-regex classification
+(`:458`), exponential delay + jitter capped by `maxRetryDelayMs`,
+buffer-before-retry (`shouldBufferBeforeRetryDecision`), abort settling
+(partial `AssistantMessage` synthesis, `completedToolCallIds`),
+context-overflow recovery (`onContextOverflow` →
+`compactContext('providerOverflow', activeAdmissionCursor)` → re-run
+`transformContext()` → retry), retry observation (`onProviderRetry` →
+`diagnostics.captureProviderRetry` + renderer status).
 
-- Request vs stream retry budgets: `canRetryResponses = retrySource &&
-  isOpenAIResponsesModel(model)`; defaults
-  `MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4`,
-  `MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1` (`:41-42`); user override via
-  `providerMaxRetries` (both budgets), exponential delay with jitter capped by
-  `maxRetryDelayMs`.
-- Retryable classification: HTTP 429/5xx + transport-error regexes (`:458`).
-- Buffer-before-retry: `shouldBufferBeforeRetryDecision` — suppress partial
-  events until the retry decision; once material output was flushed, the stream
-  settles instead of retrying.
-- Abort settling: on abort mid-stream, synthesize a settled partial
-  `AssistantMessage`, close open tool calls (`completedToolCallIds`).
-- Context-overflow recovery: `onContextOverflow` → `context.compactContext
-  ('providerOverflow', activeAdmissionCursor(...))` → on success, re-run
-  `transformContext()` and retry the call (post-#444 staged-compaction
-  contract).
-- Retry observation: `onProviderRetry({phase, kind, attempt, maxRetries})` →
-  `diagnostics.captureProviderRetry` + `context.onProviderRetry` (renderer
-  status).
+## Behavioral Contract (normative — the kernel MUST reproduce these)
+
+Each rule cites its source in `pi-agent-core@0.80.6` dist. The golden fixture
+(Verification §2) encodes every rule marked ★. A dev agent may not "improve" a
+BC rule; deviations are plan changes and go back to the PM.
+
+**Run lifecycle**
+
+- BC1 ★ `prompt()` while a run is active throws
+  (`agent.js:220-222`); `abort()` aborts the active run's controller
+  (`agent.js:198-200`).
+- BC2 ★ Event cascade on a fresh prompt: `agent_start`, `turn_start`, then
+  `message_start` + `message_end` for each prompt message
+  (`agent-loop.js:48-53`). The normalizer ignores non-assistant messages, but
+  diagnostics `captureEvent` receives everything — cadence is observable.
+- BC3 ★ If the loop body throws (e.g. `transformContext` throws, non-retryable
+  gateway error escapes), the run does NOT reject: a failure assistant message
+  is synthesized — `stopReason: aborted-if-signal-aborted-else-error`,
+  `errorMessage`, empty usage, empty text content — and emitted as the full
+  cascade `message_start`, `message_end`, `turn_end(message, [])`,
+  `agent_end([failureMessage])` (`agent.js:338-354`). `state.errorMessage` is
+  set from the assistant `errorMessage` on `turn_end` (`agent.js:393-397`).
+  PiEventNormalizer's `stopReason`/`errorMessage` and the executor's
+  failed-turn path depend on exactly this.
+- BC4 ★ `agent_end` is always the final event, exactly once per run
+  (`agent-loop.js:109,156,171`; `agent.js:353`). Listeners are awaited
+  sequentially in subscription order before the run settles
+  (`agent.js:406-408`).
+
+**Loop structure**
+
+- BC5 ★ Steering is polled BEFORE the first model call (user may have typed
+  while waiting; `agent-loop.js:82`) and again AFTER each turn
+  (`agent-loop.js:159`). With `steeringMode: 'all'` a drain returns the whole
+  queue in FIFO order (`agent.js:63-68`).
+- BC6 ★ Drained steering messages are emitted as `message_start` +
+  `message_end` pairs and appended to the transcript BEFORE the next model
+  call (`agent-loop.js:95-103`). A steer that arrives DURING a model call is
+  therefore never visible to the in-flight call — it lands next iteration.
+- BC7 ★ `turn_start` is emitted at every inner-loop iteration after the first
+  (`agent-loop.js:88-93`); `turn_end(message, toolResults)` after each
+  assistant message + its tool batch (`agent-loop.js:130`).
+- BC8 ★ Assistant `stopReason === 'error' | 'aborted'` short-circuits:
+  `turn_end(message, [])` then `agent_end`, loop exits
+  (`agent-loop.js:107-111`).
+- BC9 ★ Loop continues while there are tool calls or pending steering; when
+  neither remains, the run ends with `agent_end` (`agent-loop.js:87,161-171`;
+  follow-up queue is unused in Tenon — see Dropped ledger).
+
+**Model call**
+
+- BC10 ★ Per call, in order: `transformContext(…)` (Tenon: full canonical
+  re-projection), then build `{ systemPrompt, messages, tools }`, then resolve
+  the API key FRESH (`getApiKey(provider) || config.apiKey` — expiring OAuth
+  tokens; `agent-loop.js:177-198`), then stream.
+- BC11 ★ Stream event mapping (`agent-loop.js:199-254`):
+  `start` → push partial to transcript + `message_start` (copy of partial);
+  `text_*`/`thinking_*`/`toolcall_*` → replace transcript tail +
+  `message_update` with `assistantMessageEvent` + message copy;
+  `done`/`error` → final from `response.result()`, replace-or-push tail,
+  `message_start` first if no `start` ever arrived (non-streamed error), then
+  `message_end`. Copies (`{ ...partialMessage }`) are part of the contract —
+  subscribers mutate freely.
+
+**Tool batches**
+
+- BC12 ★ Batch mode: sequential iff `toolExecution === 'sequential'` OR any
+  called tool declares `executionMode: 'sequential'` (`agent-loop.js:287-293`).
+  Tenon's skill and image-generation tools do — a batch containing a skill
+  invocation must serialize the WHOLE batch.
+- BC13 ★ Parallel path (`agent-loop.js:332-376`): for each call in call order —
+  emit `tool_execution_start`, then prepare (BC14) SEQUENTIALLY (prepare of
+  call N+1 does not start before call N's prepare settles); immediate
+  errors finalize inline (`tool_execution_end` immediately); prepared calls
+  become async thunks. Then all thunks run concurrently
+  (`Promise.all`) — so `tool_execution_end` events may interleave OUT of call
+  order — but `toolResult` messages are emitted (as `message_start` +
+  `message_end` pairs, `agent-loop.js:541-544`) strictly IN call order
+  afterwards. Sequential path: full prepare→execute→finalize per call in
+  order; abort breaks between calls (`agent-loop.js:323-325`).
+- BC14 ★ Prepare (`agent-loop.js:393-448`): unknown tool → immediate error
+  result "Tool ${name} not found"; `prepareArguments` applied if declared;
+  `validateToolArguments` (from `pi-ai/compat`); abort re-checked around the
+  (unused in Tenon) `beforeToolCall` hook; any throw → immediate error result
+  with the thrown message. Tool `execute` throw → error result with the thrown
+  message (`agent-loop.js:468-475`). Error results carry
+  `content: [{ type: 'text', text }]` and empty `details`
+  (`agent-loop.js:513-518`).
+- BC15 ★ `tool_execution_update` is emitted for partial results during
+  `execute` and stops being accepted once `execute` settles
+  (`agent-loop.js:449-478`). No Tenon consumer today; emit anyway.
+- BC16 ★ `stopReason === 'length'` with tool calls: every call in the message
+  is failed WITHOUT execution (truncated-arguments hazard) with the exact
+  error text of `agent-loop.js:263-283`, and the loop CONTINUES (model sees
+  the errors and may re-issue).
+- BC17 ★ Batch termination: `terminate` only when the batch is non-empty and
+  EVERY finalized result has `terminate === true` (`agent-loop.js:377-379`);
+  then the inner loop stops requesting another model call.
+- BC18 ★ `toolResult` message shape: `role, toolCallId, toolName,
+  content (result.content ?? []), details, isError, timestamp`
+  (`agent-loop.js:528-540`).
+
+**State reduction** (needed for `PiAgentRuntime.state` and tests)
+
+- BC19 `message_end` appends to `state.messages`; `turn_end` with an assistant
+  `errorMessage` sets `state.errorMessage`; `tool_execution_start/end`
+  maintain `pendingToolCalls`; `agent_end` clears the streaming message
+  (`agent.js:369-401`). The kernel's compat shell needs `errorMessage`
+  faithfully; the rest may be maintained minimally but must not diverge where
+  tests observe it.
 
 ## Design
 
-New directory `src/main/agent/runtime/kernel/`. Five files, each a port or the
-loop. All types Tenon-owned; `pi-ai` types (`Model<Api>`, `Context`,
-`Message`, `AssistantMessage`, usage) remain the transport vocabulary — they
-already permeate the projection layer and are NOT being replaced.
+New directory `src/main/agent/runtime/kernel/`. All types Tenon-owned;
+`pi-ai` types (`Model<Api>`, `Context`, `Message`, `AssistantMessage`, usage)
+remain the transport vocabulary.
 
-### 1. `kernel/types.ts` — owned vocabulary
+### 1. `kernel/types.ts`
 
-- Re-declare the tool authoring types with identical structure:
-  `AgentTool`, `AgentToolResult`, `AfterToolCallResult`, `StreamFn`. They are
-  structurally identical to pi-agent-core's; the 9 capability files change
-  **only the import specifier**. Grep-verifiable completion:
-  `rg "@earendil-works/pi-agent-core" src/` → zero hits.
-- `KernelEvent`: exactly the union the normalizer + diagnostics consume today
-  (`agent_start`, `turn_start`, `message_start`, `message_update`,
-  `message_end`, `turn_end`, `tool_execution_start`, `tool_execution_end`,
-  `agent_end`), same field shapes. `PiEventNormalizer.handle` and
-  `TurnDiagnosticsCollector.captureEvent` switch their parameter type to
-  `KernelEvent` with no logic change.
-- `ModelError`: typed classification owned at the gateway boundary —
-  `{ kind: 'contextOverflow' | 'rateLimit' | 'serverError' | 'transport' |
-  'badRequest' | 'aborted'; status?: number; message: string }`.
-  The existing regexes move INTO the gateway adapter as the single place that
-  maps pi-ai's string errors to `ModelError` (koma's lesson: errors are values
-  at the port, strings only at the adapter edge).
+- Re-declare `AgentTool`, `AgentToolResult`, `AfterToolCallResult`, `StreamFn`
+  structurally identical to pi-agent-core's (the 9 capability files change
+  ONLY the import specifier — completion is `rg`-verifiable).
+- `KernelEvent`: the exact union in BC2-BC18 — `agent_start`, `turn_start`,
+  `message_start`, `message_update` (`assistantMessageEvent` + message copy),
+  `message_end`, `turn_end`, `tool_execution_start`, `tool_execution_update`,
+  `tool_execution_end`, `agent_end` — field shapes copied from current usage.
+  `PiEventNormalizer.handle` and `TurnDiagnosticsCollector.captureEvent`
+  change parameter type only.
+- `ModelError`: `{ kind: 'contextOverflow' | 'rateLimit' | 'serverError' |
+  'transport' | 'badRequest' | 'aborted'; status?: number; message: string }`.
+  The `agentStreamAbort` regexes move into the gateway adapter as the single
+  string→value mapping site.
 
-### 2. `kernel/ModelGateway.ts` — transport port
+### 2. `kernel/ModelGateway.ts`
 
 ```ts
 interface ModelGatewayRequest {
   model: Model<Api>;
-  context: Context;            // already payload-profile agnostic
-  options: SimpleStreamOptions; // sessionId, cacheRetention, timeout, signal…
+  context: Context;                 // { systemPrompt, messages, tools }
+  options: SimpleStreamOptions;     // apiKey, signal, sessionId, reasoning,
+                                    // cacheRetention, timeoutMs, maxRetryDelayMs…
 }
 interface ModelGateway {
   stream(request: ModelGatewayRequest): AsyncIterable<AssistantMessageEvent>;
-  // errors THROWN as ModelError, never yielded (koma gateway contract)
+  // terminal errors THROWN as ModelError, never yielded
 }
 ```
 
-`PiModelGateway` implements it over `piStreamSimple` with `maxRetries: 0`
-pinned (retry is the kernel's job, permanently, not a suppression hack), maps
-thrown/streamed errors to `ModelError`, and exposes the two capture hooks as
-constructor options: `onPayload` (payload-profile transform + provider-request
-capture) and `onResponse` (transport capture). These become first-class gateway
-concerns instead of pi callbacks.
+`PiModelGateway` wraps `piStreamSimple` with `maxRetries: 0` pinned (retry is
+the kernel's, permanently), maps errors to `ModelError`, and hosts the two
+capture hooks (`onPayload` payload-profile transform + provider-request
+capture; `onResponse` transport capture) as constructor options.
 
-### 3. `kernel/retryPolicy.ts` — the single retry owner
+### 3. `kernel/retryPolicy.ts`
 
-Absorbs `agentStreamAbort.ts` behavior verbatim: request/stream budgets and
-defaults, delay schedule + jitter + cap, buffer-before-retry, abort settling,
-`onProviderRetry` observation. Exposed as one function the kernel calls around
-`gateway.stream`. `ModelError.kind === 'contextOverflow'` is NOT retried here —
-it is returned to the loop for the recovery path (see kernel step 4).
-`tests/core/agentStreamAbort.test.ts` moves to
-`tests/core/kernelRetryPolicy.test.ts` with assertions unchanged — the suite IS
-the semantics spec.
+Absorbs `agentStreamAbort.ts` verbatim: budgets/defaults (4 request, 1 stream;
+`providerMaxRetries` overrides both), delay schedule + jitter + cap,
+buffer-before-retry, abort settling, `onProviderRetry` observation.
+`kind: 'contextOverflow'` is NOT retried here — returned to the loop for the
+recovery path. `tests/core/agentStreamAbort.test.ts` →
+`tests/core/kernelRetryPolicy.test.ts`, assertions unchanged (the suite IS the
+semantics spec).
 
-### 4. `kernel/kernel.ts` — the loop (~200 lines, zero business logic)
+### 4. `kernel/kernel.ts` (~250 lines, zero business logic)
 
-Per iteration (koma `run()` shape, Tenon semantics):
+Implements BC1-BC18 as the loop. Per iteration: drain steering (BC5/BC6) →
+project (`transformContext`; BC10) → stream via `retryPolicy(gateway)`
+(BC11) → on `contextOverflow`: `compactContext('providerOverflow',
+activeAdmissionCursor(turn))`, on success re-project and retry the call, else
+fail the turn (BC3/BC8) → tool batch (BC12-BC18) → `turn_end` → repeat or
+`agent_end` (BC9). Abort at any await settles per BC3/BC8 with
+`stopReason: 'aborted'`.
 
-1. **Drain steering queue** → emit queued user `Message`s into the working
-   message list (preserves pi's "inject before next assistant response";
-   `steeringMode: 'all'` means steer is accepted at every iteration boundary).
-2. **Project**: `context = await transformContext()` (already rebuilds
-   evidence, frozen projections, budget plan, preflight compaction — unchanged
-   contract from #444). koma's `contextOverride` corresponds to the re-run
-   after overflow recovery below.
-3. **Stream via retryPolicy(gateway)** → on success an `AssistantMessage`;
-   emit `message_start` / `message_update` / `message_end` with today's exact
-   cadence (the normalizer's item lifecycle depends on it).
-   - On `ModelError contextOverflow`: call
-     `compactContext('providerOverflow', activeAdmissionCursor(turn))`; if it
-     staged+committed, loop back to step 2 (fresh projection), else terminate
-     the turn with the error.
-   - On retry-budget exhaustion or non-retryable error: terminate with error
-     (normalizer sees `agent_end` with `stopReason: 'error'`).
-4. **No tool calls** → emit `turn_end` + `agent_end`, return (Tenon has no
-   koma `Controller.onNoToolCalls` continuation — Goal continuation lives in
-   `ThreadService`, deliberately outside the kernel).
-5. **Tool batch**: run all calls with `toolExecution: 'parallel'` semantics —
-   `Promise.all`, ordered finalization, `tool_execution_start`/`end` per call,
-   every call resolved before the next model call. Reuses the existing tool
-   invocation path (`AgentTool.execute` shape) — the ToolRunner port is this
-   step extracted, not a new tool system.
-6. `turn_end`; next iteration.
+### 5. `kernel/NativeAgentRuntime.ts`
 
-Abort (`signal`) at any await: settle partial state exactly as
-`agentStreamAbort` does today, emit `agent_end`, return.
-
-### 5. `kernel/NativeAgentRuntime.ts` — the compatibility shell
-
-Implements `PiAgentRuntime` (`state` / `subscribe` / `steer` / `prompt` /
-`abort`) by driving `kernel.run` and fanning events to subscribers. `steer(msg)`
-enqueues; `prompt(msg)` seeds the message list and runs the loop to completion;
-`state.errorMessage` mirrors the terminal error. This keeps
-`PiTurnExecutor.execute` structurally unchanged.
+Implements `PiAgentRuntime` exactly: `state` (BC19 reduction), `subscribe`
+(sequential awaited listeners, BC4), `steer` (enqueue; drain per BC5),
+`prompt` (BC1/BC2; runs the kernel to completion), `abort`. Constructed from
+`PiModelGateway` + `retryPolicy` + the same wiring values the executor passes
+today.
 
 ### Executor diff (the whole integration)
 
-In `PiTurnExecutor.ts`:
+`PiTurnExecutor.ts`: default factory → `NativeAgentRuntime`; delete the
+`createAbortSettledStreamFn` wrapping and the `maxRetries: 0` spread in
+`configuredStream` (both subsumed); imports from `kernel/`. **No other logic
+changes in this file.** `ThreadService.ts` and `codec.ts` are not touched.
 
-- default factory: `new Agent(options)` → `new NativeAgentRuntime(...)` built
-  from `PiModelGateway` + `retryPolicy` + the same wiring values
-  (`getApiKey`, `sessionId`, `transformContext`, capture hooks, providerOptions).
-- Delete the `createAbortSettledStreamFn(...)` wrapping and the
-  `{ ...options, ...providerOptions, maxRetries: 0 }` spread in
-  `configuredStream` (both subsumed).
-- Imports of `Agent`/`AgentEvent` etc. → `kernel/`.
+### Dropped-behavior ledger (intentional, verified unused)
 
-`ThreadService` does not change. `codec.ts` does not change.
+`followUp`/`getFollowUpMessages` outer loop (`agent-loop.js:161-167`),
+`continue()`, `reset()`, `convertToLlm` (Tenon messages are already provider
+`Message`s), `beforeToolCall`/`afterToolCall`, `prepareNextTurn*`,
+`thinkingBudgets`, `transport`, `prompt(string, images)` normalization.
+Each entry: assert unused with `rg` at build time; if a hit appears (rebase
+drift), STOP and escalate to the PM — do not implement on your own judgment.
 
 ### Dependency removal
 
-`package.json` / `bun.lock`: drop `@earendil-works/pi-agent-core`. These are
-infrastructure-ownership files — this PR *is* the coordinated change; other
-agents rebase after merge. `@earendil-works/pi-ai` stays pinned.
+`package.json` / `bun.lock`: drop `@earendil-works/pi-agent-core`
+(infrastructure files — this PR IS the coordinated change). `pi-ai` stays.
+
+## Tripwires (mechanical deviation guards)
+
+The PR reviewer (main agent) enforces these with commands, not judgment:
+
+- Allowed diff surface: `src/main/agent/runtime/kernel/**` (new),
+  `PiTurnExecutor.ts`, `agentStreamAbort.ts` (deleted), the 9 import-swap
+  files (import lines only — `git diff` on each must touch only imports),
+  `package.json`, `bun.lock`, `tests/core/**`, `docs/spec/agent-model-runtime.md`,
+  `docs/spec/agent-core.md`. **Any other changed file fails the gate.**
+- `git diff origin/main -- src/main/agent/ThreadService.ts src/core/` → empty.
+- `rg "@earendil-works/pi-agent-core" src/` → empty (stage 3 exit).
+- `rg "maxRetries: 0" src/main/agent/runtime/PiTurnExecutor.ts` → empty
+  (the hack must die in the executor; it lives ONLY inside `PiModelGateway`).
+- Behavior questions not answered by a BC rule or the ledger: STOP, escalate.
+  The answer becomes a plan edit, not an inline decision.
 
 ## Verification
 
-1. **Ported suites**: `agentPiTurnExecutor.test.ts` (incl. the #444 additions:
-   steering-refresh, finalize-completed, retry activities) must pass against
-   the native runtime with zero assertion edits — the `createAgent` seam means
-   most of it already targets the interface. `agentStreamAbort.test.ts` →
-   `kernelRetryPolicy.test.ts`, assertions unchanged.
-2. **Golden Item-stream parity** (the load-bearing check): a fixture-driven
-   test that feeds a scripted gateway (canned `AssistantMessageEvent`
-   sequences: text + thinking deltas, parallel tool calls, mid-stream retry,
-   overflow → compaction, steering injection, abort) through BOTH the old
-   `Agent` (fixture recorded before the swap, committed as JSON) and the native
-   kernel, asserting the normalized `ThreadItem` stream and the
-   `TurnDiagnosticsCollector` activity list are deep-equal.
-3. **Full gates**: `bun run typecheck`, `test:core`, `test:renderer`,
-   `docs:check`, `rg "@earendil-works/pi-agent-core" src/` → empty.
-4. **Real-run smoke** (dev userData, cc-switch provider): one thread with
-   mid-turn steering, one parallel-tool turn, one `/clear`, one forced-overflow
-   compaction; confirm Model Interactions timeline (model calls, retries,
-   batches) renders identically and `cacheRead` stays non-trivial across
-   consecutive calls.
+1. **Ported suites**: `agentPiTurnExecutor.test.ts` (incl. #444 additions)
+   green against the native runtime with zero assertion edits;
+   `agentStreamAbort.test.ts` → `kernelRetryPolicy.test.ts` unchanged.
+2. **Golden Item-stream parity** (load-bearing): scripted-gateway fixtures
+   (canned `AssistantMessageEvent` sequences) covering: text+thinking deltas;
+   parallel tool batch (incl. out-of-order `tool_execution_end`, in-order
+   `toolResult` messages — BC13); a batch containing the sequential skill tool
+   (BC12); `stopReason 'length'` with tool calls (BC16); mid-stream retry;
+   overflow → compaction → re-projection; steering during and between calls
+   (BC5/BC6); abort mid-stream and mid-batch; loop-body throw (BC3).
+   Recorded against `pi-agent-core` BEFORE the swap (committed JSON), asserted
+   deep-equal on: emitted `KernelEvent` sequence, normalized `ThreadItem`
+   stream, `TurnDiagnosticsCollector` activity list.
+3. **Validate the judge** (a judge that cannot fail is not a judge): mutation
+   runs that must FAIL the parity fixture before it counts as a gate —
+   (a) swap two `tool_execution_start` emissions, (b) emit `toolResult`
+   messages in completion order instead of call order, (c) drop the BC3
+   failure-message synthesis, (d) run a sequential-tool batch in parallel.
+   Implemented as a test that runs the fixture against 4 deliberately broken
+   kernel variants and asserts each is caught.
+4. **Full gates**: `bun run typecheck`, `test:core`, `test:renderer`,
+   `docs:check`, plus every Tripwire command above.
+5. **Real-run smoke** (dev userData, cc-switch): mid-turn steering; a
+   skill invocation inside a mixed tool batch; `/clear`; forced-overflow
+   compaction; confirm Model Interactions renders identically and `cacheRead`
+   stays non-trivial across consecutive calls.
 
 ## Spec updates (same PR)
 
-- `docs/spec/agent-model-runtime.md`: runtime-ownership section — the turn
-  loop, retry policy, and error taxonomy are Tenon-owned under
+- `docs/spec/agent-model-runtime.md`: runtime ownership — the turn loop, retry
+  policy, and error taxonomy are Tenon-owned under
   `src/main/agent/runtime/kernel/`; `pi-ai` is transport-only behind
-  `ModelGateway`; the two-layer retry note from the #444 review fix is replaced
-  by "the kernel is the only retry owner".
+  `ModelGateway`; "the kernel is the only retry owner".
 - `docs/spec/agent-core.md`: one line under Runtime Ownership pointing at the
   kernel directory.
 
-## Build order (stages inside the one PR)
+## Build order (stages inside the one PR; exit criteria are commands)
 
-1. `kernel/types.ts` + `kernel/ModelGateway.ts` + `kernel/retryPolicy.ts`,
-   with `kernelRetryPolicy.test.ts` ported and green.
-2. `kernel/kernel.ts` + `kernel/NativeAgentRuntime.ts`; golden-parity fixture
-   recorded against pi-agent-core **before** the swap, then asserted against
-   the kernel.
-3. Swap the executor default, migrate the 9 type-only imports, delete
-   `agentStreamAbort.ts` (logic now in `retryPolicy.ts`), drop the dependency,
-   spec updates, full gates + real-run smoke.
+1. `kernel/types.ts` + `kernel/ModelGateway.ts` + `kernel/retryPolicy.ts`.
+   Exit: `kernelRetryPolicy.test.ts` green; typecheck green.
+2. `kernel/kernel.ts` + `kernel/NativeAgentRuntime.ts`; record golden fixtures
+   against pi-agent-core FIRST, then implement until parity + judge-mutation
+   tests are green. Exit: Verification §2 + §3 green.
+3. Swap the executor default; migrate the 9 type-only imports; delete
+   `agentStreamAbort.ts`; drop the dependency; spec updates.
+   Exit: Verification §1/§4 green, all Tripwire commands pass, §5 smoke done.
 
 ## Risks
 
-- **Event-order divergence** (normalizer item lifecycle, diagnostics activity
-  order). Mitigation: golden parity fixture is stage-2 blocking; the cadence
-  rules (`message_start` before first delta, `tool_execution_*` pairing,
-  single `agent_end`) are encoded in it.
-- **Steering timing**: pi drains steering at specific points; the kernel must
-  not accept a steer mid-model-call into the *current* projection (it lands
-  next iteration). Existing steering tests + the #444 `refreshDiagnostics`
-  path cover the tail-window case.
-- **Partial-stream retry UX**: `shouldBufferBeforeRetryDecision` must move
-  verbatim; a behavior change here shows partial garbage to the renderer on
-  retried requests.
-- **Hidden pi-agent-core behaviors** not exercised by our wiring (e.g. its
-  internal message-pruning or non-'parallel' tool modes): out of contract —
-  the kernel implements only the options Tenon passes (`steeringMode: 'all'`,
-  `toolExecution: 'parallel'`), asserted by the golden fixture.
+- **Event-order divergence** — mitigated by fixtures encoding BC2-BC18 and the
+  judge-mutation tests; the cadence is asserted, not eyeballed.
+- **Sequential-batch regression** — the skill tool silently executing in
+  parallel is the worst failure mode; BC12 has its own fixture and mutation.
+- **Steering timing** — BC5/BC6 fixtures cover during-call and between-call
+  steers; the #444 `refreshDiagnostics` path covers the tail window.
+- **Partial-stream retry UX** — `shouldBufferBeforeRetryDecision` moves
+  verbatim with its tests.
+- **Rebase drift** — if main moves under the plan (new Agent options, new
+  event consumers), the Dropped ledger's `rg` assertions catch it; escalate,
+  don't improvise.
 
 ## Open questions
 
-- None blocking. Two deferred-by-design decisions recorded here: (a) `Pi*`
-  renames happen in a later mechanical PR; (b) gateway middleware chain
-  (redaction, payload profiles as composable wrappers, koma
-  `wrap-gateway.ts` style) is a follow-up once the port exists.
+None blocking. Deferred by design: (a) `Pi*` renames (later mechanical PR);
+(b) gateway middleware chain (redaction / payload profiles as composable
+wrappers, koma `wrap-gateway` style) once the port exists.
 
 ## Checklist
 
-- [ ] Stage 1: types + gateway + retryPolicy, ported retry suite green
-- [ ] Stage 2: kernel + NativeAgentRuntime, golden Item-stream parity green
+- [ ] Stage 1: types + gateway + retryPolicy; ported retry suite green
+- [ ] Stage 2: fixtures recorded from pi-agent-core; kernel + runtime reach
+      parity; judge-mutation tests green
 - [ ] Stage 3: executor swap, 9 import migrations, delete agentStreamAbort,
       drop dependency, spec updates
-- [ ] `typecheck` / `test:core` / `test:renderer` / `docs:check` green
-- [ ] `rg "@earendil-works/pi-agent-core" src/` returns nothing
-- [ ] Real-run smoke on cc-switch (steering, parallel tools, compaction,
+- [ ] All Tripwire commands pass; `typecheck` / `test:core` / `test:renderer`
+      / `docs:check` green
+- [ ] Real-run smoke on cc-switch (steering, skill-in-batch, compaction,
       cache-hit observation)

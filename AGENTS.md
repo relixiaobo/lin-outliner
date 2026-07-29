@@ -79,6 +79,12 @@ every change MUST follow them. Full detail lives in `docs/spec/` (see
 - **A10 — Cross-agent coordination.** Dev agents work on feature branches and
   open PRs; only the main agent merges to `main`. Coordinate before touching the
   infrastructure-ownership files listed below.
+- **A11 — Batch work is resumable by construction.** Any multi-file sweep
+  (migration, mass rename, guard-driven refactor) derives its work queue from
+  artifacts on disk — `rg` hits, file existence, failing tests — never from an
+  agent's memory or a hand-maintained checklist. Re-running the driver after an
+  interruption must resume correctly for free, and "done" is a command's empty
+  output, not a claim.
 
 ### Visual / design system
 
