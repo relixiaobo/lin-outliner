@@ -74,16 +74,22 @@ Why now (evidence from the 2026-07-29 incident + PR #444 review):
 
 ## Current state (verified facts)
 
-**Dependency surface.** 11 files import `@earendil-works/pi-agent-core`:
+**Dependency surface.** 12 files import `@earendil-works/pi-agent-core`
+(count them with a multi-line-safe search — `rg -l "pi-agent-core" src/` —
+NOT a single-line `from '...'` grep, which misses split imports; an earlier
+draft of this plan undercounted exactly that way):
 
 - Runtime-critical (2): `src/main/agent/runtime/PiTurnExecutor.ts`
   (`Agent`, `AgentEvent`, `AgentState`, message types),
   `src/main/agent/capabilities/agentStreamAbort.ts` (`StreamFn`).
-- Type-only tool vocabulary (9): `agentSkills.ts`, `agentImageGenerationTool.ts`,
-  `agentToolEnvelope.ts` (`AgentToolResult`, `AfterToolCallResult`),
-  `agentNodeToolVisibility.ts`, `agentLocalTools.ts`, `agentNodeTools.ts`,
-  `agentTools.ts`, `runtime/ToolRuntime.ts`, `automations/AutomationTool.ts` —
-  only `AgentTool` / `AgentToolResult` / `AfterToolCallResult`.
+- Type-swap only (10): `src/main/agent/context/TurnDiagnostics.ts`
+  (`AgentEvent` for `captureEvent`, `AgentState` for the thinking-level type),
+  plus the 9 tool-vocabulary files — `agentSkills.ts`,
+  `agentImageGenerationTool.ts`, `agentToolEnvelope.ts` (`AgentToolResult`,
+  `AfterToolCallResult`), `agentNodeToolVisibility.ts`, `agentLocalTools.ts`,
+  `agentNodeTools.ts`, `agentTools.ts`, `runtime/ToolRuntime.ts`,
+  `automations/AutomationTool.ts` (`AgentTool` / `AgentToolResult` /
+  `AfterToolCallResult`).
 
 **The executor is already programmed against an interface.**
 `PiTurnExecutor.ts:125-131` defines `PiAgentRuntime`
@@ -104,11 +110,15 @@ see Dropped-behavior ledger): `convertToLlm`, `beforeToolCall`,
 `followUp`/`followUpMode`, `thinkingBudgets`, `transport`, `continue()`,
 `reset()`, `images` on `prompt()`.
 
-**Tenon tools DO declare `executionMode: 'sequential'`** — the skill tool
-(`agentSkills.ts:646`) and image generation (`agentImageGenerationTool.ts:173`);
-all other declarations are `'parallel'`. Therefore the kernel MUST implement
-both batch paths and the batch-downgrade rule (BC12). This was the single
-biggest deviation trap in the earlier draft of this plan.
+**Tenon tools DO declare `executionMode: 'sequential'` — widely.** 15
+declarations across 6 files as of `79c87380`: `agentSkills.ts`,
+`agentImageGenerationTool.ts`, `agentNodeTools.ts` (×4), `agentLocalTools.ts`
+(×5), `runtime/ToolRuntime.ts` (×3), `automations/AutomationTool.ts`. The
+kernel MUST implement both batch paths and the batch-downgrade rule (BC12).
+Derive the authoritative list at build time with
+`rg "executionMode: 'sequential'" src/` (A11), do not trust this snapshot.
+Sequential batches are the COMMON case, not an edge case — an earlier draft of
+this plan claimed only two sequential tools off a truncated grep.
 
 **Not used anywhere in Tenon** (verified `rg`, keep verifying at build time):
 `prepareArguments` on tools (implement anyway — 8 lines, part of the tool
@@ -195,6 +205,19 @@ BC rule; deviations are plan changes and go back to the PM.
   `message_start` first if no `start` ever arrived (non-streamed error), then
   `message_end`. Copies (`{ ...partialMessage }`) are part of the contract —
   subscribers mutate freely.
+- BC20 ★ Provider failures are DATA, not exceptions: a failed call settles
+  with a terminal `AssistantMessage` (`stopReason: 'error' | 'aborted'`)
+  preserving partial content, usage, provider facts, and `errorMessage`
+  (`agentStreamAbort.ts` `settleWithTerminalMessage`); the normalizer and
+  diagnostics consume that message like any other. The kernel throws only for
+  non-provider exceptions (BC3).
+- BC21 ★ Completed-tool-call salvage: on a custom-Responses stream-termination
+  error where the partial message contains tool calls and EVERY one of them
+  finished streaming (`completedToolCallIds`), the terminal message is
+  salvaged to `stopReason: 'toolUse'` with the error dropped, and the turn
+  proceeds to execute the batch instead of failing
+  (`agentStreamAbort.ts` `salvageTerminatedCustomResponsesToolUse`; dedicated
+  test at `tests/core/agentStreamAbort.test.ts:625`).
 
 **Tool batches**
 
@@ -252,7 +275,7 @@ remain the transport vocabulary.
 ### 1. `kernel/types.ts`
 
 - Re-declare `AgentTool`, `AgentToolResult`, `AfterToolCallResult`, `StreamFn`
-  structurally identical to pi-agent-core's (the 9 capability files change
+  structurally identical to pi-agent-core's (the 10 type-swap files change
   ONLY the import specifier — completion is `rg`-verifiable).
 - `KernelEvent`: the exact union in BC2-BC18 — `agent_start`, `turn_start`,
   `message_start`, `message_update` (`assistantMessageEvent` + message copy),
@@ -261,9 +284,16 @@ remain the transport vocabulary.
   `PiEventNormalizer.handle` and `TurnDiagnosticsCollector.captureEvent`
   change parameter type only.
 - `ModelError`: `{ kind: 'contextOverflow' | 'rateLimit' | 'serverError' |
-  'transport' | 'badRequest' | 'aborted'; status?: number; message: string }`.
-  The `agentStreamAbort` regexes move into the gateway adapter as the single
-  string→value mapping site.
+  'transport' | 'badRequest' | 'aborted'; status?: number; message: string }` —
+  a **derived classification** of a terminal error `AssistantMessage`
+  (`classifyModelFailure`), never a thrown replacement for it. The
+  `agentStreamAbort` regexes move into that single string→value mapping site.
+- Tenon-owned replacements for every remaining pi-agent-core type the swap
+  files need: `AgentState` (TurnDiagnostics' thinking-level type and the
+  `Pick<AgentState, 'errorMessage'>` in `PiAgentRuntime`) and
+  `KernelAgentOptions` — the explicit constructor options of
+  `NativeAgentRuntime` replacing pi's `AgentOptions` (see §5). The dependency
+  cannot be deleted while any of these lack a home.
 
 ### 2. `kernel/ModelGateway.ts`
 
@@ -275,25 +305,37 @@ interface ModelGatewayRequest {
                                     // cacheRetention, timeoutMs, maxRetryDelayMs…
 }
 interface ModelGateway {
-  stream(request: ModelGatewayRequest): AsyncIterable<AssistantMessageEvent>;
-  // terminal errors THROWN as ModelError, never yielded
+  stream(request: ModelGatewayRequest): AssistantMessageEventStream;
+  // Provider failures NEVER throw: the stream always settles with a terminal
+  // AssistantMessage (stopReason 'error' | 'aborted' preserves partial
+  // content, usage, provider facts, errorMessage) — BC11/BC21 flow.
+  // Only non-provider exceptions (bugs, aborted setup) propagate → BC3.
 }
+classifyModelFailure(message: AssistantMessage): ModelError | null;
+  // Derived, typed VIEW of a terminal error message for policy decisions
+  // (retryability, overflow recovery). Classification never replaces the
+  // message: the normalizer and diagnostics always receive the full terminal
+  // AssistantMessage, exactly as today (agentStreamAbort.ts
+  // settleWithTerminalMessage preserves content/usage/provider facts — a
+  // thrown slim error here would erase them and break Item-stream parity).
 ```
 
 `PiModelGateway` wraps `piStreamSimple` with `maxRetries: 0` pinned (retry is
-the kernel's, permanently), maps errors to `ModelError`, and hosts the two
-capture hooks (`onPayload` payload-profile transform + provider-request
-capture; `onResponse` transport capture) as constructor options.
+the kernel's, permanently), and hosts the two capture hooks (`onPayload`
+payload-profile transform + provider-request capture; `onResponse` transport
+capture) as constructor options.
 
 ### 3. `kernel/retryPolicy.ts`
 
 Absorbs `agentStreamAbort.ts` verbatim: budgets/defaults (4 request, 1 stream;
 `providerMaxRetries` overrides both), delay schedule + jitter + cap,
-buffer-before-retry, abort settling, `onProviderRetry` observation.
-`kind: 'contextOverflow'` is NOT retried here — returned to the loop for the
-recovery path. `tests/core/agentStreamAbort.test.ts` →
-`tests/core/kernelRetryPolicy.test.ts`, assertions unchanged (the suite IS the
-semantics spec).
+buffer-before-retry, abort settling, the completed-tool-call salvage (BC21),
+`onProviderRetry` observation. Decisions run on `classifyModelFailure` of the
+terminal message: `contextOverflow` is NOT retried here — surfaced to the loop
+for the recovery path; retry exhaustion settles with the LAST terminal
+AssistantMessage intact, never a synthesized one.
+`tests/core/agentStreamAbort.test.ts` → `tests/core/kernelRetryPolicy.test.ts`,
+assertions unchanged (the suite IS the semantics spec).
 
 ### 4. `kernel/kernel.ts` (~250 lines, zero business logic)
 
@@ -309,16 +351,43 @@ fail the turn (BC3/BC8) → tool batch (BC12-BC18) → `turn_end` → repeat or
 
 Implements `PiAgentRuntime` exactly: `state` (BC19 reduction), `subscribe`
 (sequential awaited listeners, BC4), `steer` (enqueue; drain per BC5),
-`prompt` (BC1/BC2; runs the kernel to completion), `abort`. Constructed from
-`PiModelGateway` + `retryPolicy` + the same wiring values the executor passes
-today.
+`prompt` (BC1/BC2; runs the kernel to completion), `abort`. Constructed with
+an explicit Tenon-owned options type — pi's `AgentOptions` has no injection
+port for the overflow-recovery closure, so the plan defines one instead of
+pretending the wiring is unchanged:
+
+```ts
+interface KernelAgentOptions {
+  initialState: { systemPrompt; model; thinkingLevel; tools; messages };
+  gateway: ModelGateway;                    // PiModelGateway in production;
+                                            // tests inject a scripted gateway
+                                            // (replaces today's
+                                            // PiTurnExecutorOptions.streamSimple
+                                            // seam — that option is REMOVED and
+                                            // its tests re-target the gateway)
+  retryOptions: { maxRequestRetries?; maxStreamRetries?; maxRetryDelayMs?;
+                  onProviderRetry };
+  transformContext: () => Promise<Message[]>;         // per-call re-projection
+  recoverContextOverflow: () => Promise<Message[] | null>;
+    // wraps context.compactContext('providerOverflow',
+    // activeAdmissionCursor(turn)) + re-projection — the closure that today
+    // lives inline in the executor's onContextOverflow (PiTurnExecutor.ts:278)
+  getApiKey; onPayload; onResponse; sessionId; providerOptions;
+  steeringMode: 'all'; toolExecution: 'parallel';
+}
+```
 
 ### Executor diff (the whole integration)
 
-`PiTurnExecutor.ts`: default factory → `NativeAgentRuntime`; delete the
-`createAbortSettledStreamFn` wrapping and the `maxRetries: 0` spread in
-`configuredStream` (both subsumed); imports from `kernel/`. **No other logic
-changes in this file.** `ThreadService.ts` and `codec.ts` are not touched.
+`PiTurnExecutor.ts`: the single Agent construction site (`:258`) is rewired to
+build `NativeAgentRuntime` with `KernelAgentOptions` — same values, explicit
+ports: the `createAbortSettledStreamFn` wrapping, the
+`{ ...options, ...providerOptions, maxRetries: 0 }` spread, and the inline
+`onContextOverflow` closure are deleted (subsumed by gateway / retryPolicy /
+`recoverContextOverflow`); `PiTurnExecutorOptions.streamSimple` is removed in
+favor of gateway injection; imports move to `kernel/`. **No changes outside
+the construction-site rewiring and those deletions.** `ThreadService.ts` and
+`codec.ts` are not touched.
 
 ### Dropped-behavior ledger (intentional, verified unused)
 
@@ -339,8 +408,9 @@ drift), STOP and escalate to the PM — do not implement on your own judgment.
 The PR reviewer (main agent) enforces these with commands, not judgment:
 
 - Allowed diff surface: `src/main/agent/runtime/kernel/**` (new),
-  `PiTurnExecutor.ts`, `agentStreamAbort.ts` (deleted), the 9 import-swap
-  files (import lines only — `git diff` on each must touch only imports),
+  `PiTurnExecutor.ts`, `agentStreamAbort.ts` (deleted), the 10 type-swap
+  files incl. `context/TurnDiagnostics.ts` (import/type lines only — `git
+  diff` on each must touch only imports and type references),
   `package.json`, `bun.lock`, `tests/core/**`, `docs/spec/agent-model-runtime.md`,
   `docs/spec/agent-core.md`. **Any other changed file fails the gate.**
 - `git diff origin/main -- src/main/agent/ThreadService.ts src/core/` → empty.
@@ -361,7 +431,10 @@ The PR reviewer (main agent) enforces these with commands, not judgment:
    `toolResult` messages — BC13); a batch containing the sequential skill tool
    (BC12); `stopReason 'length'` with tool calls (BC16); mid-stream retry;
    overflow → compaction → re-projection; steering during and between calls
-   (BC5/BC6); abort mid-stream and mid-batch; loop-body throw (BC3).
+   (BC5/BC6); abort mid-stream and mid-batch; loop-body throw (BC3); a
+   provider failure settling as a terminal message with partial content and
+   usage preserved (BC20); completed-tool-call salvage on a custom-Responses
+   termination error (BC21).
    Recorded against `pi-agent-core` BEFORE the swap (committed JSON), asserted
    deep-equal on: emitted `KernelEvent` sequence, normalized `ThreadItem`
    stream, `TurnDiagnosticsCollector` activity list.
@@ -395,7 +468,7 @@ The PR reviewer (main agent) enforces these with commands, not judgment:
 2. `kernel/kernel.ts` + `kernel/NativeAgentRuntime.ts`; record golden fixtures
    against pi-agent-core FIRST, then implement until parity + judge-mutation
    tests are green. Exit: Verification §2 + §3 green.
-3. Swap the executor default; migrate the 9 type-only imports; delete
+3. Swap the executor default; migrate the 10 type-swap imports; delete
    `agentStreamAbort.ts`; drop the dependency; spec updates.
    Exit: Verification §1/§4 green, all Tripwire commands pass, §5 smoke done.
 
@@ -424,7 +497,7 @@ wrappers) once the port exists.
 - [ ] Stage 1: types + gateway + retryPolicy; ported retry suite green
 - [ ] Stage 2: fixtures recorded from pi-agent-core; kernel + runtime reach
       parity; judge-mutation tests green
-- [ ] Stage 3: executor swap, 9 import migrations, delete agentStreamAbort,
+- [ ] Stage 3: executor swap, 10 import migrations, delete agentStreamAbort,
       drop dependency, spec updates
 - [ ] All Tripwire commands pass; `typecheck` / `test:core` / `test:renderer`
       / `docs:check` green
