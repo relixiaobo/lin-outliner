@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Native turn kernel (PR #445, codex-2)** — replaced `@earendil-works/pi-agent-core`
+  (dependency deleted) with a Tenon-owned turn kernel under
+  `src/main/agent/runtime/kernel/`: a pure loop over four ports (`ModelGateway`
+  transport port in front of `pi-ai`, `retryPolicy` as the sole owner of retry
+  and overflow-recovery attempt hiding, `NativeAgentRuntime` behind the existing
+  `PiAgentRuntime` seam, Tenon-owned kernel types incl. the re-exported
+  transport vocabulary). Behavior is bug-for-bug pi parity per the plan's
+  22-rule behavioral contract: identical normalized Item streams (golden
+  fixture + four deliberate judge mutations), steering drain points, sequential
+  batch downgrade, truncated-tool-call rejection, provider failures as data
+  with full terminal messages, completed-tool-call salvage, overflow-failure
+  prefixes, and internal-memory raw-transcript turns. The `maxRetries: 0`
+  suppression hack and the 500-line `agentStreamAbort` wrapper are gone
+  (absorbed as `kernel/retryPolicy.ts`, rename-tracked, assertions unchanged);
+  error classification is typed and status-first with a dedicated regression
+  test. **Gate (main):** plan tripwires, typecheck, 1528 core / 781 renderer
+  tests, high-effort multi-agent review (10 verified findings — one retry
+  classification-order regression plus nine cleanups — all fixed same-day),
+  real-run smoke against cc-switch (mixed sequential/parallel tool batch,
+  mid-stream steering, diagnostics parity).
+
 - **Agent context runtime completion + Model Interactions (PR #444, codex-3)** —
   completed and closed the `agent-context-integrity` plan (PR 3 of 3): deterministic
   per-request context budgeting with indivisible tool exchanges; automatic

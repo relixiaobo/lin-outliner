@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,7 +31,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-29).** Open PR queue: empty. Recently merged: #444
+**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #445
+(`codex-2/native-turn-kernel`) after mechanical tripwire gate, golden-parity +
+judge-mutation suites, high-effort multi-agent review (10 findings, all fixed
+same-day), and a real-run smoke — the turn loop, retry policy, and error
+taxonomy are now Tenon-owned and `pi-agent-core` is deleted; see *Agent
+capabilities*. #444
 (`codex-3/agent-context-runtime-completion`) after a high-effort multi-agent
 review (10 verified findings, all fixed), a live-incident forensic report
 (R1–R5, all addressed), and full gate runs — completing and closing the
@@ -311,19 +316,20 @@ before any directional/security-sensitive build.
   capability contract in the catalog, `agent.skill` child source). Design
   folded into `docs/spec/agent-*.md`; plan archived at
   `docs/plans/archive/agent-context-integrity.md`.
-- **native-turn-kernel** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan, ready for a
-  dev agent to claim and execute as written**) — absorb `@earendil-works/pi-agent-core` (954 dist
-  lines) into a Tenon-owned turn kernel structured as four ports around a pure loop (`ModelGateway` /
-  `retryPolicy` / kernel loop / `NativeAgentRuntime` behind the existing `PiAgentRuntime` seam,
-  `PiTurnExecutor.ts:125-131`); `pi-ai` stays as pure transport. One retry owner (removes the
-  `maxRetries: 0` suppression), typed `ModelError` classification at the gateway boundary,
-  diagnostics capture as first-class call sites, `agentStreamAbort.ts` absorbed. Motivated by the
-  2026-07-29 incident + PR #444 review (F3 stacked retries, R2 regex-layer classification).
-  **Prerequisite met 2026-07-29 (#444 merged) — claimable now; rebase plan line references if
-  main moves.** Follow-up once merged (fast-track, mechanical, A11 queue): route existing
-  `pi-ai` type imports in the context/runtime layers through the `kernel/types` chokepoint so
-  only gateway/transport files import `pi-ai` directly. One complete PR; golden
-  Item-stream parity fixture is the load-bearing gate. See `docs/plans/native-turn-kernel.md`.
+- **native-turn-kernel** (P2, `done` 2026-07-30; PR #445, codex-2) — absorbed
+  `@earendil-works/pi-agent-core` (954 dist lines, dependency deleted) into the Tenon-owned turn
+  kernel under `src/main/agent/runtime/kernel/` (`ModelGateway` / `retryPolicy` / kernel loop /
+  `NativeAgentRuntime` behind the `PiAgentRuntime` seam); `pi-ai` is now pure transport. One
+  retry owner, typed `ModelError` classification (status-first, regression-tested), three ordered
+  gateway capture hooks, `agentStreamAbort.ts` absorbed as `kernel/retryPolicy.ts` (rename-tracked,
+  assertions unchanged). Gate: golden Item-stream parity (8/8 incl. four judge mutations),
+  high-effort review (10 verified findings, all fixed same-day), real-run smoke (mixed
+  sequential/parallel batch, mid-stream steering). Plan (with its two dev-review revision rounds)
+  archived at `docs/plans/archive/native-turn-kernel.md`. **Unblocked and claimable now:**
+  the vocabulary-fronting import sweep (fast-track, mechanical, A11 queue: route `pi-ai` type
+  imports in context/runtime layers through `kernel/types` so only gateway/transport files import
+  `pi-ai` directly), `subagent-budget-propagation` PR B, the `agent-browser-control` plan
+  revision, and the `Pi*` mechanical rename.
 - **subagent-budget-propagation** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan,
   shape (b): two complete PRs**) — connect the existing Goal budget mechanism
   (`ThreadGoal.tokenBudget` → `budgetLimited`, `GoalStore.ts:123-132`) to the existing fan-out
