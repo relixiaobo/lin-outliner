@@ -183,24 +183,12 @@
 }
 
 .thread-turn-details-timeline {
-  position: relative;
   min-width: 0;
   max-width: 100%;
   gap: 0;
 }
 
-.thread-turn-details-timeline::before {
-  position: absolute;
-  top: 20px;
-  bottom: 20px;
-  left: 7px;
-  width: 1px;
-  background: var(--separator);
-  content: '';
-}
-
 .thread-turn-details-timeline-activity {
-  position: relative;
   min-width: 0;
   max-width: 100%;
   content-visibility: auto;
@@ -324,6 +312,84 @@
   line-height: var(--line-ui-sm-tight);
 }
 
+.thread-turn-details-parameter-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-3);
+}
+
+.thread-turn-details-parameter-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-xs);
+  font-weight: 650;
+  line-height: var(--line-ui-xs);
+}
+
+.thread-turn-details-parameter-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+}
+
+.thread-turn-details-parameter-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(150px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  border-top: 1px solid var(--separator);
+  padding: var(--space-3) 0;
+}
+
+.thread-turn-details-parameter-list > div:first-child {
+  border-top: 0;
+}
+
+.thread-turn-details-parameter-list dt,
+.thread-turn-details-parameter-list dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-turn-details-parameter-list dt {
+  color: var(--text-faint);
+}
+
+.thread-turn-details-parameter-list dt code {
+  color: inherit;
+  font-family: var(--font-family-mono);
+  font-size: inherit;
+  overflow-wrap: anywhere;
+}
+
+.thread-turn-details-parameter-list dd {
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.thread-turn-details-parameter-list.is-compact {
+  gap: var(--space-2);
+}
+
+.thread-turn-details-parameter-list.is-compact > div {
+  grid-template-columns: minmax(80px, 0.42fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  border-top: 0;
+  padding: 0;
+}
+
+.thread-turn-details-parameter-list.is-compact dd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .thread-turn-details-request-usage-extras {
   display: flex;
   min-width: 0;
@@ -392,7 +458,6 @@
 }
 
 .thread-turn-details-timeline-fact {
-  position: relative;
   display: grid;
   min-width: 0;
   align-items: center;
@@ -402,16 +467,6 @@
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-}
-
-.thread-turn-details-timeline-marker {
-  position: absolute;
-  left: 4px;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-pill);
-  background: var(--bg-content);
 }
 
 .thread-turn-details-timeline-fact strong {
@@ -453,10 +508,8 @@
 }
 
 .thread-turn-details-phase {
-  position: relative;
   gap: var(--space-2);
-  border-left: 1px solid var(--separator);
-  padding: var(--space-3) 0 var(--space-4) var(--space-5);
+  padding: var(--space-3) 0 var(--space-4);
 }
 
 .thread-turn-details-phase:last-child {
@@ -469,17 +522,6 @@
   font-size: var(--font-ui-xs);
   font-weight: 650;
   line-height: var(--line-ui-xs);
-}
-
-.thread-turn-details-phase > h4::before {
-  position: absolute;
-  top: calc(var(--space-3) + 4px);
-  left: -3px;
-  width: 5px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--text-faint);
-  content: '';
 }
 
 .thread-turn-details-request,
@@ -522,8 +564,7 @@
   border-top: 0;
 }
 
-.thread-turn-details-request-message-head,
-.thread-turn-details-inline-field {
+.thread-turn-details-request-message-head {
   display: grid;
   min-width: 0;
   align-items: baseline;
@@ -538,12 +579,7 @@
   grid-template-columns: minmax(42px, max-content) minmax(90px, max-content) minmax(0, 1fr);
 }
 
-.thread-turn-details-inline-field {
-  grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-}
-
-.thread-turn-details-request-message-head code,
-.thread-turn-details-inline-field code {
+.thread-turn-details-request-message-head code {
   min-width: 0;
   color: var(--text-faint);
   font-family: var(--font-family-mono);
@@ -558,8 +594,7 @@
   overflow-wrap: anywhere;
 }
 
-.thread-turn-details-request-message-head span,
-.thread-turn-details-inline-field span {
+.thread-turn-details-request-message-head span {
   min-width: 0;
   color: var(--text-faint);
   overflow-wrap: anywhere;
@@ -567,7 +602,6 @@
 
 .thread-turn-details-part-list {
   margin-left: var(--space-5);
-  border-left: 1px solid var(--separator);
   padding-left: var(--space-4);
 }
 
@@ -680,16 +714,21 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .thread-turn-details-timeline-fact > span:not(.thread-turn-details-timeline-marker) {
+  .thread-turn-details-timeline-fact > span {
     display: none;
   }
 
-  .thread-turn-details-phase {
-    padding-left: var(--space-4);
+  .thread-turn-details-parameter-list > div {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
   }
 
-  .thread-turn-details-request-message-head,
-  .thread-turn-details-inline-field {
+  .thread-turn-details-parameter-list.is-compact > div {
+    grid-template-columns: minmax(80px, 0.42fr) minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .thread-turn-details-request-message-head {
     grid-template-columns: minmax(36px, max-content) minmax(0, 1fr);
     gap: var(--space-2);
   }

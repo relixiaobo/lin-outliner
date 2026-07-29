@@ -812,12 +812,16 @@ the tool-execution, request/stream-retry, and automatic-preflight/provider-overf
 activities that bridge them. Accepted initial/steering input is retained as Internal
 diagnostics rather than presented as provider interaction. A Model Call alone owns Request
 and Response; tool batches remain sibling activities linked to their source and consuming
-Calls. Request renders the final post-adapter Provider Request first. Its object-key order is
-never numbered or used to imply model precedence. The pre-adapter context remains available
-through a secondary disclosure in semantic order (`system instructions -> tool definitions ->
-messages`) and is explicitly labeled as Tenon's adapter input. There is no separate context
-construction account. Each Model Call header keeps ordinal and status visible, exposes its
-model/provider/timing/usage/cost facts through a hover/focus control, and copies the
+Calls. Request renders the content-bearing fields from the final post-adapter Provider Request
+first. Inline provider parameters remain available in the Model Call information surface and
+Request metadata rather than interrupting the content flow; raw JSON and copied diagnostics
+retain every field. Object-key order is never numbered or used to imply model precedence. The
+pre-adapter context remains available through a secondary disclosure in semantic order
+(`system instructions -> tool definitions -> messages`) and is explicitly labeled as Tenon's
+adapter input. There is no separate context construction account. Timeline hierarchy uses
+indentation and horizontal separators without a vertical guide-line axis. Each Model Call
+header keeps ordinal and status visible, exposes its model/provider/timing/usage/cost facts
+through a hover/focus control, and copies the
 typed request-diagnostics export, including Model Context, ordered image-sanitized Provider
 Payload, runtime selection, and Request Facts, by materializing the fragment pool only when
 requested. Canonical Items, prompt source blocks, configuration, and provenance mount only

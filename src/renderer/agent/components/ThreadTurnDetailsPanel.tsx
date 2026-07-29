@@ -56,6 +56,14 @@ interface ThreadTurnDetailsPanelProps {
 
 type TurnDetailsLabels = ReturnType<typeof useT>['agent']['turnDetails'];
 type JsonRecord = Readonly<Record<string, JsonValue>>;
+type InlineProviderRequestField = Extract<
+  TurnDiagnosticsProviderRequestField,
+  { readonly representation: 'inline' }
+>;
+type FragmentedProviderRequestField = Extract<
+  TurnDiagnosticsProviderRequestField,
+  { readonly representation: 'fragments' }
+>;
 
 export function ThreadTurnDetailsPanel({
   canGoBack,
@@ -404,7 +412,6 @@ function ProviderRetryActivity({
   const t = useT();
   return (
     <div className="thread-turn-details-timeline-fact">
-      <span className="thread-turn-details-timeline-marker" />
       <strong>{activity.retryKind === 'request'
         ? t.agent.turnDetails.requestRetry
         : t.agent.turnDetails.streamRetry}</strong>
@@ -619,6 +626,7 @@ function RequestFactsCard({
     ...usage,
     cost: { ...usage.cost, currency: 'USD' as const },
   } : null;
+  const parameterFields = providerParameterFields(call.request);
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
@@ -626,12 +634,13 @@ function RequestFactsCard({
       call.index,
       call.requestedAt,
       call.response?.receivedAt ?? 'pending',
+      call.requestFingerprint,
       runtime.provider,
       runtime.model,
       usage?.totalTokens ?? 0,
       usage?.cost.total ?? 0,
     ].join(':'),
-    maxHeight: 480,
+    maxHeight: 640,
     placement: 'bottom-end',
     width: 320,
   });
@@ -666,6 +675,14 @@ function RequestFactsCard({
           <div><dt>{t.agent.message.cost}</dt><dd>{formatUsageCost(usage.cost.total)}</dd></div>
         ) : null}
       </dl>
+      {parameterFields.length > 0 ? (
+        <section className="thread-turn-details-parameter-section">
+          <div className="thread-turn-details-parameter-title">
+            {t.agent.turnDetails.providerParameters}
+          </div>
+          <ProviderParameterList compact fields={parameterFields} />
+        </section>
+      ) : null}
       {usage && usageBreakdown ? (
         <>
           <ThreadUsageBreakdown usage={usageBreakdown} />
@@ -702,6 +719,7 @@ function ProviderRequestView({
   readonly toolSchemasByName: ReadonlyMap<string, TurnDiagnosticsPayload['toolSchemas'][number]>;
 }) {
   const t = useT();
+  const parameterFields = providerParameterFields(call.request);
   return (
     <div className="thread-turn-details-request">
       <FlowGroup title={t.agent.turnDetails.providerRequest}>
@@ -730,6 +748,11 @@ function ProviderRequestView({
         title={t.agent.turnDetails.requestMetadata}
         render={() => (
           <>
+            {parameterFields.length > 0 ? (
+              <FlowGroup title={t.agent.turnDetails.providerParameters}>
+                <ProviderParameterList fields={parameterFields} />
+              </FlowGroup>
+            ) : null}
             <dl className="thread-turn-details-fact-grid is-compact">
               <Fact label={t.agent.turnDetails.estimatedInputTokens} value={formatNumber(call.estimatedInputTokens)} />
               <Fact label={t.agent.turnDetails.inputTokenLimit} value={formatNumber(call.inputTokenLimit)} />
@@ -834,13 +857,42 @@ function ProviderPayloadView({
   readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
   readonly request: TurnDiagnosticsProviderRequest;
 }) {
+  const t = useT();
   if (request.kind === 'value') return <SemanticValue value={request.value} />;
+  const contentFields = request.fields.filter((field): field is FragmentedProviderRequestField => (
+    field.representation === 'fragments'
+  ));
+  if (contentFields.length === 0) {
+    return <p className="thread-turn-details-notice">{t.agent.turnDetails.noProviderRequestContent}</p>;
+  }
   return (
     <div className="thread-turn-details-flow-fields">
-      {request.fields.map((field) => (
+      {contentFields.map((field) => (
         <ProviderRequestFieldView field={field} fragmentsById={fragmentsById} key={field.name} />
       ))}
     </div>
+  );
+}
+
+function ProviderParameterList({
+  compact = false,
+  fields,
+}: {
+  readonly compact?: boolean;
+  readonly fields: readonly InlineProviderRequestField[];
+}) {
+  return (
+    <dl className={`thread-turn-details-parameter-list${compact ? ' is-compact' : ''}`}>
+      {fields.map((field) => {
+        const value = providerParameterText(field.value);
+        return (
+          <div key={field.name}>
+            <dt><code>{field.name}</code></dt>
+            <dd title={jsonText(field.value)}>{value}</dd>
+          </div>
+        );
+      })}
+    </dl>
   );
 }
 
@@ -857,21 +909,11 @@ function ProviderRequestFieldView({
   field,
   fragmentsById,
 }: {
-  readonly field: TurnDiagnosticsProviderRequestField;
+  readonly field: FragmentedProviderRequestField;
   readonly fragmentsById: ReadonlyMap<string, TurnDiagnosticsPayload['requestFragments'][number]>;
 }) {
   const t = useT();
   const resetKey = `provider-payload:${field.name}`;
-  if (field.representation === 'inline') {
-    return isPrimitiveJson(field.value) ? (
-      <div className="thread-turn-details-inline-field">
-        <code>{field.name}</code>
-        <span>{primitiveText(field.value)}</span>
-      </div>
-    ) : (
-      <JsonDisclosure resetKey={resetKey} title={field.name} value={field.value} />
-    );
-  }
   const fragments = field.fragmentIds.flatMap((id) => {
     const fragment = fragmentsById.get(id);
     return fragment ? [fragment] : [];
@@ -1444,6 +1486,17 @@ function materializeProviderRequest(
     return [field.name, field.container === 'array' ? values : values[0] ?? null] as const;
   });
   return Object.fromEntries(entries);
+}
+
+function providerParameterFields(
+  request: TurnDiagnosticsProviderRequest,
+): readonly InlineProviderRequestField[] {
+  if (request.kind !== 'object') return [];
+  return request.fields.filter((field): field is InlineProviderRequestField => field.representation === 'inline');
+}
+
+function providerParameterText(value: JsonValue): string {
+  return isPrimitiveJson(value) ? primitiveText(value) : compactPreview(jsonText(value));
 }
 
 function materializeRequestDiagnostics(

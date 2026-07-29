@@ -81,7 +81,7 @@ describe('ThreadTurnDetailsPanel', () => {
     let callText = firstCall.textContent ?? '';
     expect(callText).toContain('Request');
     expect(callText).toContain('Response');
-    expect(callText).toContain('Provider Request');
+    expect(callText).toContain('Provider Request Content');
     expect(callText).toContain('Pre-adapter context');
     expect(callText).not.toContain('System instructions');
     expect(callText).toContain('Model Response');
@@ -120,6 +120,12 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(requestFacts?.textContent).toContain('Model call information');
     expect(requestFacts?.textContent).toContain('Modeltest-model');
     expect(requestFacts?.textContent).toContain('Provideropenai');
+    expect(requestFacts?.textContent).toContain('Provider parameters');
+    expect(requestFacts?.textContent).toContain('streamtrue');
+    expect(requestFacts?.textContent).toContain('storefalse');
+    expect(requestFacts?.textContent).toContain('reasoning{ "effort": "medium" }');
+    expect(requestFacts?.textContent).toContain('tool_choiceauto');
+    expect(requestFacts?.textContent).toContain('parallel_tool_callstrue');
     expect(requestFacts?.textContent).toContain('Estimated input tokens120');
     expect(requestFacts?.textContent).toContain('Input100');
     expect(requestFacts?.textContent).toContain('Output20');
@@ -171,7 +177,7 @@ describe('ThreadTurnDetailsPanel', () => {
 
     const flowGroups = [...firstCall.querySelectorAll('.thread-turn-details-flow-group')];
     expect(flowGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
-      'Provider Request',
+      'Provider Request Content',
       'Model Response',
     ]);
     const providerFieldList = flowGroups[0]!.querySelector(
@@ -180,15 +186,26 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(providerFieldList).not.toBeNull();
     const providerFields = [...providerFieldList!.children].map((element) => element.textContent?.trim());
     expect(providerFields).toEqual([
-      'modeltest-model',
       expect.stringContaining('instructions'),
       expect.stringContaining('input'),
       expect.stringContaining('tools'),
     ]);
-    expect(callText.indexOf('Provider Request')).toBeLessThan(callText.indexOf('Pre-adapter context'));
+    expect(providerFieldList?.textContent).not.toContain('model');
+    expect(providerFieldList?.textContent).not.toContain('stream');
+    expect(callText.indexOf('Provider Request Content')).toBeLessThan(callText.indexOf('Pre-adapter context'));
     expect(callText.indexOf('System instructions')).toBeLessThan(callText.indexOf('Tool definitions (1)'));
     expect(callText.indexOf('Tool definitions (1)')).toBeLessThan(callText.indexOf('Messages (1)'));
     expect(callText).not.toContain('0. model');
+
+    await openDetailsContaining(rendered.document, 'Request metadata');
+    const requestMetadata = [...firstCall.querySelectorAll<HTMLDetailsElement>('.thread-turn-details-disclosure')]
+      .find((details) => details.querySelector(':scope > summary')?.textContent?.includes('Request metadata'));
+    expect(requestMetadata?.textContent).toContain('Provider parameters');
+    expect(requestMetadata?.textContent).toContain('modeltest-model');
+    expect(requestMetadata?.textContent).toContain('streamtrue');
+    expect(requestMetadata?.textContent).toContain('max_output_tokens8192');
+    expect(requestMetadata?.textContent).toContain('include[ "reasoning.encrypted_content" ]');
+    expect(requestMetadata?.textContent).toContain('text{ "verbosity": "low" }');
 
     await openDetailsContaining(rendered.document, 'Response metadata');
     const responseText = rendered.document.body.textContent;
@@ -642,6 +659,14 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
           kind: 'object',
           fields: [
             { name: 'model', representation: 'inline', value: 'test-model' },
+            { name: 'stream', representation: 'inline', value: true },
+            { name: 'store', representation: 'inline', value: false },
+            { name: 'max_output_tokens', representation: 'inline', value: 8_192 },
+            { name: 'reasoning', representation: 'inline', value: { effort: 'medium' } },
+            { name: 'include', representation: 'inline', value: ['reasoning.encrypted_content'] },
+            { name: 'text', representation: 'inline', value: { verbosity: 'low' } },
+            { name: 'tool_choice', representation: 'inline', value: 'auto' },
+            { name: 'parallel_tool_calls', representation: 'inline', value: true },
             {
               name: 'instructions',
               representation: 'fragments',
@@ -686,6 +711,14 @@ function diagnosticsPayload(marker: string, turnId: string): TurnDiagnosticsPayl
           kind: 'object',
           fields: [
             { name: 'model', representation: 'inline', value: 'test-model' },
+            { name: 'stream', representation: 'inline', value: true },
+            { name: 'store', representation: 'inline', value: false },
+            { name: 'max_output_tokens', representation: 'inline', value: 8_192 },
+            { name: 'reasoning', representation: 'inline', value: { effort: 'medium' } },
+            { name: 'include', representation: 'inline', value: ['reasoning.encrypted_content'] },
+            { name: 'text', representation: 'inline', value: { verbosity: 'low' } },
+            { name: 'tool_choice', representation: 'inline', value: 'auto' },
+            { name: 'parallel_tool_calls', representation: 'inline', value: true },
             {
               name: 'instructions',
               representation: 'fragments',

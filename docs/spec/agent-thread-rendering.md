@@ -189,10 +189,16 @@ results, not a child of either Response or Request. Parallel tools from one mode
 one batch; a transient tool with no canonical Item remains an explicit execution fact.
 Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
 provider SDK remain part of that SDK invocation.
+The timeline expresses hierarchy with disclosure indentation and horizontal activity
+separators only; it does not draw a vertical guide-line axis through nested content.
 
-Request first renders the final post-adapter **Provider Request** observed immediately before
-transport. Its fields preserve top-level insertion order only as a serialization fact; they
-receive no synthetic numeric context order. `messages`,
+Request first renders the content-bearing fields from the final post-adapter **Provider
+Request** observed immediately before transport. Stable provider parameters such as model,
+streaming, output limits, reasoning options, and tool-selection controls stay out of the main
+content flow and appear in the Model Call information surface and Request metadata. The raw
+Provider Request JSON and copied request diagnostics remain complete and lossless. Provider
+fields preserve top-level insertion order only as a serialization fact; they receive no
+synthetic numeric context order. `messages`,
 `input`, `contents`, and equivalent sequence fields preserve element order and every
 message's content-part order. The renderer may add presentation labels such as attachment
 or system reminder, but never derives authority, reorders, merges, or substitutes the

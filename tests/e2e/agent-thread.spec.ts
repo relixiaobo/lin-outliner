@@ -114,7 +114,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turnDetails).toContainText('Request');
     await expect(turnDetails).toContainText('Response');
     const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
-    await expect(request).toContainText('Provider Request');
+    await expect(request).toContainText('Provider Request Content');
     await expect(request).toContainText('Provider request JSON');
     await expect(request).toContainText('Pre-adapter context');
     await expect(request).not.toContainText('System instructions');
@@ -129,6 +129,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(requestFacts).toBeVisible();
     await expect(requestFacts).toContainText('Modelopenai/gpt-5.4');
     await expect(requestFacts).toContainText('Provideropenai');
+    await expect(requestFacts).toContainText('Provider parameters');
+    await expect(requestFacts).toContainText('modelopenai/gpt-5.4');
     await expect(requestFacts).toContainText('Estimated input tokens');
     await expect(requestFacts).toContainText('Usage details');
     const copyRequest = firstCall.locator('button.thread-turn-details-call-action').last();
@@ -152,8 +154,13 @@ test.describe('canonical agent Thread surface', () => {
       input: expect.any(Array),
       tools: expect.any(Array),
     });
+    const providerRequestContent = request.locator('.thread-turn-details-flow-group').first();
+    await expect(providerRequestContent).not.toContainText('modelopenai/gpt-5.4');
+    await request.getByText('Request metadata', { exact: true }).click();
+    await expect(request).toContainText('Provider parameters');
+    await expect(request).toContainText('modelopenai/gpt-5.4');
     const requestText = await request.textContent() ?? '';
-    expect(requestText.indexOf('Provider Request')).toBeLessThan(requestText.indexOf('Pre-adapter context'));
+    expect(requestText.indexOf('Provider Request Content')).toBeLessThan(requestText.indexOf('Pre-adapter context'));
     expect(requestText.indexOf('System instructions')).toBeLessThan(requestText.indexOf('Tool definitions (1)'));
     expect(requestText.indexOf('Tool definitions (1)')).toBeLessThan(requestText.indexOf('Messages (1)'));
     expect(requestText).not.toContain('0. model');
