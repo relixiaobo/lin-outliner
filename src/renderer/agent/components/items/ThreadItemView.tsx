@@ -361,11 +361,21 @@ function userMessageCopyText(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
 ): string {
-  return content.map((part) => {
+  return content.map((part, contentIndex) => {
+    const separator = hasAdjacentAttachmentBefore(content, contentIndex) ? ' ' : '';
     if (part.type === 'text') return part.text;
-    if (part.type === 'attachment') return part.name;
+    if (part.type === 'attachment') return `${separator}${part.name}`;
     return threadNodeReferenceDisplayLabel(part.note ?? '', part.nodeId, index, part.nodeId);
   }).join('');
+}
+
+function hasAdjacentAttachmentBefore(
+  content: readonly ThreadUserContent[],
+  contentIndex: number,
+): boolean {
+  return contentIndex > 0
+    && content[contentIndex]?.type === 'attachment'
+    && content[contentIndex - 1]?.type === 'attachment';
 }
 
 function renderUserContent(
@@ -379,6 +389,7 @@ function renderUserContent(
   const images: ThreadAttachmentContent[] = [];
   const narrative: ReactNode[] = [];
   content.forEach((part, contentIndex) => {
+    if (hasAdjacentAttachmentBefore(content, contentIndex)) narrative.push(' ');
     if (part.type === 'attachment' && part.mimeType.startsWith('image/')) {
       images.push(part);
       narrative.push(

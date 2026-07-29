@@ -803,7 +803,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(sequence.locator(':scope > *')).toHaveCount(2);
     await expect(bubbles).toHaveCount(1);
     await expect(bubbles.locator('.thread-user-inline-content')).toContainText(
-      'Beforeagenda.pdfmiddlereference-1.pngreference-2.pngreference-3.pngreference-4.pngreference-5.pngreference-6.pngAfter',
+      'Beforeagenda.pdfmiddlereference-1.png reference-2.png reference-3.png reference-4.png reference-5.png reference-6.pngAfter',
     );
     await expect(gallery).toHaveAccessibleName('6 images');
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
@@ -871,7 +871,7 @@ test.describe('canonical agent Thread surface', () => {
     await message.hover();
     await message.getByRole('button', { name: 'Copy message' }).click();
     expect(await clipboardText(page)).toBe(
-      'Beforeagenda.pdfmiddlereference-1.pngreference-2.pngreference-3.pngreference-4.pngreference-5.pngreference-6.pngAfter',
+      'Beforeagenda.pdfmiddlereference-1.png reference-2.png reference-3.png reference-4.png reference-5.png reference-6.pngAfter',
     );
 
     await showAll.click();

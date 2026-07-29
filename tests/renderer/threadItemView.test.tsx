@@ -62,7 +62,7 @@ describe('ThreadItemView user message presentation', () => {
       '/workspace/notes.pdf',
       '/workspace/second.png',
     ]);
-    expect(narrative?.textContent).toBe('Compare first.pngnotes.pdfsecond.png with the notes.');
+    expect(narrative?.textContent).toBe('Compare first.png notes.pdf second.png with the notes.');
   });
 });
 
