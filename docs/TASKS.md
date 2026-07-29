@@ -330,6 +330,16 @@ before any directional/security-sensitive build.
   imports in context/runtime layers through `kernel/types` so only gateway/transport files import
   `pi-ai` directly), `subagent-budget-propagation` PR B, the `agent-browser-control` plan
   revision, and the `Pi*` mechanical rename.
+- **threadservice-decomposition** (P2, `draft` — **PM-directed 2026-07-30; main-authored plan,
+  shape (b): four independent complete refactor PRs**) — split the 4,375-line / 107-method
+  `ThreadService.ts` into four owned modules (`ThreadResourceOps`, `ThreadCatalogOps`,
+  `SubagentCollaboration`, `TurnLifecycle`) coordinated through one small shared `ThreadCore`
+  (single `KeyedMutex` by construction — the F2 lesson), behind a byte-compatible facade: zero
+  behavior change, `src/core/` and `runtime/` untouched, tests unmodified except import paths.
+  Normative state-ownership table with `field:line` references; per-PR mechanical tripwires
+  (facade surface frozen, monotonic line-count decrease, mutex singularity). PR 1 claimable now;
+  collision rule: `subagent-budget-propagation` PR A must land before decomposition PR 3/4 or
+  those rebase after it. See `docs/plans/threadservice-decomposition.md`.
 - **subagent-budget-propagation** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan,
   shape (b): two complete PRs**) — connect the existing Goal budget mechanism
   (`ThreadGoal.tokenBudget` → `budgetLimited`, `GoalStore.ts:123-132`) to the existing fan-out
