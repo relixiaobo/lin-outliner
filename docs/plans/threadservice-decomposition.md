@@ -1,9 +1,11 @@
 # ThreadService Decomposition — four owned modules behind an unchanged facade
 
-Shape: **(b) a SET of four independent complete refactor PRs**, each a pure
-structural move with zero behavior change, independently shippable and gated.
-Ordered by coupling (least first); any can stop the series without leaving a
-partial mechanism — after every PR the system is whole.
+Shape: **(a) ONE complete feature in one PR.** The four extractions below are
+build order INSIDE that single PR — each stage a pure structural move kept
+green (full gates + tripwires) before the next begins — not separate releases.
+The decomposition is one refactor with one end state; sequencing inside the
+branch is risk discipline, and the mechanical judge (unmodified test suite +
+tripwires) covers a 3,400-line move exactly as well as four 900-line ones.
 
 All line references are against main at `e57ad9c3` (post-#445). Re-derive
 member inventories at build time (A11):
@@ -28,7 +30,7 @@ concerns an owner and makes the next incident's blast radius legible.
 - **Zero behavior change.** No notification reordering, no mutex-scope change,
   no error-message edits. Where current behavior is odd, it moves as-is; file
   follow-ups.
-- No protocol change (`src/core/` diff empty across all four PRs), no public
+- No protocol change (`src/core/` diff empty across all four stages), no public
   method renames, no changes under `src/main/agent/runtime/` (kernel/executor)
   or to `GoalExtension`/`ExtensionRegistry`.
 - No test rewrites: the existing suites (`agentThreadService.test.ts` and
@@ -153,32 +155,37 @@ re-export. Public API is byte-compatible: callers and tests do not change.
 - Circular imports resolved by constructor injection of narrow interfaces
   (declared in the consuming module's file), never by a shared "types" grab-bag.
 
-## Per-PR breakdown (each independently complete)
+## Build order (stages inside the one PR; every stage fully green before the next)
 
-1. **PR 1 — `ThreadResourceOps`** (least coupled): attachments, resources,
+1. **Stage 1 — `ThreadResourceOps`** (least coupled): attachments, resources,
    observations, reference enumeration, prune surfaces. Facade delegates.
-2. **PR 2 — `ThreadCore` + `ThreadCatalogOps`**: the shared core extraction is
-   PR 2 (not PR 1) so it lands together with its first heavy consumer; catalog
-   ops (incl. subtree stop) move onto it. PR 1 is rebased onto the core by the
-   facade only.
-3. **PR 3 — `SubagentCollaboration`**: the four collaboration state maps and
-   all spawn/wait/activity machinery.
-4. **PR 4 — `TurnLifecycle`**: the largest and last, when every dependency it
-   calls already has an owned home.
+2. **Stage 2 — `ThreadCore` + `ThreadCatalogOps`**: the shared core lands
+   together with its first heavy consumer; catalog ops (incl. subtree stop)
+   move onto it; stage 1's delegation is rebased onto the core.
+3. **Stage 3 — `SubagentCollaboration`**: the four collaboration state maps
+   and all spawn/wait/activity machinery.
+4. **Stage 4 — `TurnLifecycle`**: the largest and last, when every dependency
+   it calls already has an owned home.
 
-Collision note: any concurrent PR touching `ThreadService.ts` (e.g.
-`subagent-budget-propagation` PR A: spawn wiring + admission gate + views)
-must land BEFORE the decomposition PR that owns those lines (PR 3/PR 4), or
-rebase after it. The claiming dev re-runs the collision check per PR.
+Stage discipline: `typecheck` + `test:core` + the tripwire commands run and
+pass at every stage boundary (a broken stage is fixed or redone before the
+next move starts); commits are per-stage so the gate can review the PR as
+four mechanical moves.
 
-## Tripwires (every PR, mechanical)
+Collision note: `subagent-budget-propagation` PR A (spawn wiring + admission
+gate + views) touches lines stages 3-4 will move — it lands FIRST (it is
+small), then this PR starts from a rebase on top of it. Any other concurrent
+`ThreadService.ts` PR follows the same rule. The claiming dev re-runs the
+collision check at claim time.
+
+## Tripwires (every stage boundary and the final PR, mechanical)
 
 - `git diff origin/main -- src/core/ src/main/agent/runtime/` → empty.
 - Facade surface frozen:
   `rg -nE "^  (async )?[a-zA-Z]+\(" src/main/agent/ThreadService.ts | wc -l`
   public-method inventory identical before/after (extraction removes only
   `private` members from the file).
-- `wc -l src/main/agent/ThreadService.ts` strictly decreases per PR; the
+- `wc -l src/main/agent/ThreadService.ts` strictly decreases per stage; the
   four module files plus remaining facade sum to within +5% of the original
   (growth beyond that means logic was added, not moved).
 - Test diffs: `git diff --stat origin/main -- tests/` shows import-path
@@ -186,20 +193,19 @@ rebase after it. The claiming dev re-runs the collision check per PR.
 - Mutex singularity: `rg "new KeyedMutex" src/main/agent/` → exactly one hit,
   in `ThreadCore.ts` (final state).
 
-## Verification (every PR)
+## Verification
 
-`bun run typecheck`; `test:core` (1528, unmodified assertions);
-`test:renderer`; `docs:check`; the tripwire commands above. No new tests
-required — if a move breaks an existing test, the move changed behavior and
-must be redone, not the test. PR 4 additionally: one real-run smoke (steering
-mid-turn + subagent spawn/wait + /clear) since it moves `executeActiveTurn`.
+Per stage boundary: `bun run typecheck`; `test:core` (1528, unmodified
+assertions); tripwires. Final PR: `test:renderer`; `docs:check`; one real-run
+smoke (steering mid-turn + subagent spawn/wait + /clear) since stage 4 moves
+`executeActiveTurn`. No new tests required — if a move breaks an existing
+test, the move changed behavior and must be redone, not the test.
 
 ## Spec updates
 
 `docs/spec/agent-core.md` Runtime Ownership: replace the "canonical execution
 and persistence live under `src/main/agent/`" paragraph's implicit
-single-class story with the five-module map (one sentence each), in the same
-PR as each extraction lands (incremental, PR-by-PR).
+single-class story with the five-module map (one sentence each), in this PR.
 
 ## Open questions
 
@@ -209,8 +215,9 @@ absorb `applyEphemeralNotification`'s projection logic into the history store
 
 ## Checklist
 
-- [ ] PR 1: ThreadResourceOps extracted; gates + tripwires green
-- [ ] PR 2: ThreadCore + ThreadCatalogOps; single-mutex tripwire green
-- [ ] PR 3: SubagentCollaboration; collision check vs budget PR A re-run
-- [ ] PR 4: TurnLifecycle; real-run smoke; final mutex-singularity check
-- [ ] Spec map updated PR-by-PR
+- [ ] Budget PR A landed first (or confirmed absent); branch starts rebased
+- [ ] Stage 1: ThreadResourceOps; stage gates + tripwires green
+- [ ] Stage 2: ThreadCore + ThreadCatalogOps; single-mutex tripwire green
+- [ ] Stage 3: SubagentCollaboration
+- [ ] Stage 4: TurnLifecycle; real-run smoke; final mutex-singularity check
+- [ ] Spec map updated; full gates green; per-stage commits preserved
