@@ -285,10 +285,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           : undefined,
         getApiKey: runtime.getApiKey,
         transformContext,
-        steeringMode: 'all',
         sessionId: cacheAffinity,
         providerOptions,
-        toolExecution: 'parallel',
       });
       if (context.signal.aborted) {
         agent.abort();

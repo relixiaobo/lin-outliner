@@ -72,7 +72,7 @@ export async function runKernel(
     if (toolCalls.length > 0) {
       const batch = message.stopReason === 'length'
         ? await failTruncatedToolCalls(toolCalls, emit)
-        : await executeToolCalls(context, message, options, signal, emit);
+        : await executeToolCalls(context, toolCalls, signal, emit);
       toolResults.push(...batch.messages);
       hasMoreToolCalls = !batch.terminate;
       for (const result of toolResults) {
@@ -125,7 +125,7 @@ async function streamAssistantResponse(
 
   let partialMessage: AssistantMessage | null = null;
   let addedPartial = false;
-  for await (const event of response) {
+  streamEvents: for await (const event of response) {
     switch (event.type) {
       case 'start':
         partialMessage = event.partial;
@@ -153,17 +153,8 @@ async function streamAssistantResponse(
         }
         break;
       case 'done':
-      case 'error': {
-        const finalMessage = await response.result();
-        if (addedPartial) {
-          context.messages[context.messages.length - 1] = finalMessage;
-        } else {
-          context.messages.push(finalMessage);
-          await emit({ type: 'message_start', message: { ...finalMessage } });
-        }
-        await emit({ type: 'message_end', message: finalMessage });
-        return finalMessage;
-      }
+      case 'error':
+        break streamEvents;
     }
   }
 
@@ -231,16 +222,14 @@ async function failTruncatedToolCalls(
 
 async function executeToolCalls(
   context: KernelContext,
-  assistantMessage: AssistantMessage,
-  options: KernelAgentOptions,
+  toolCalls: AgentToolCall[],
   signal: AbortSignal,
   emit: KernelEventSink,
 ): Promise<ExecutedToolBatch> {
-  const toolCalls = assistantMessage.content.filter((part): part is AgentToolCall => part.type === 'toolCall');
   const hasSequentialTool = toolCalls.some((call) => (
     context.tools.find((tool) => tool.name === call.name)?.executionMode === 'sequential'
   ));
-  return options.toolExecution === 'parallel' && !hasSequentialTool
+  return !hasSequentialTool
     ? executeToolCallsParallel(context, toolCalls, signal, emit)
     : executeToolCallsSequential(context, toolCalls, signal, emit);
 }

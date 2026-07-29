@@ -17,7 +17,7 @@ import {
   wrapStreamWithAbortSettling,
 } from '../../src/main/agent/runtime/kernel/retryPolicy';
 import {
-  isProviderContextOverflowError,
+  classifyModelFailure,
   isRetryableResponsesRequestError,
 } from '../../src/main/agent/runtime/kernel/ModelGateway';
 
@@ -368,6 +368,12 @@ describe('kernel retry policy', () => {
   });
 
   test('classifies Responses 429, 5xx, and bounded transport failures as request-retryable', () => {
+    const rateLimitWithOverflowWording = 'OpenAI API error (429): input token count is too long';
+    expect(classifyError(rateLimitWithOverflowWording)).toEqual({
+      kind: 'rateLimit',
+      status: 429,
+      message: rateLimitWithOverflowWording,
+    });
     expect(isRetryableResponsesRequestError('OpenAI API error (500): internal error')).toBe(true);
     expect(isRetryableResponsesRequestError('OpenAI API error (524): 524 status code (no body)')).toBe(true);
     expect(isRetryableResponsesRequestError('Azure OpenAI API error (599): upstream error')).toBe(true);
@@ -385,11 +391,11 @@ describe('kernel retry policy', () => {
   });
 
   test('classifies provider context overflow without matching ordinary capacity language', () => {
-    expect(isProviderContextOverflowError('context_length_exceeded')).toBe(true);
-    expect(isProviderContextOverflowError('Prompt is too long: 120000 tokens > 100000 maximum')).toBe(true);
-    expect(isProviderContextOverflowError('The input token count is too long')).toBe(true);
-    expect(isProviderContextOverflowError('The request timed out while reading the response')).toBe(false);
-    expect(isProviderContextOverflowError('Output token limit reached')).toBe(false);
+    expect(classifyError('context_length_exceeded')?.kind).toBe('contextOverflow');
+    expect(classifyError('Prompt is too long: 120000 tokens > 100000 maximum')?.kind).toBe('contextOverflow');
+    expect(classifyError('The input token count is too long')?.kind).toBe('contextOverflow');
+    expect(classifyError('The request timed out while reading the response')?.kind).toBe('transport');
+    expect(classifyError('Output token limit reached')?.kind).toBe('badRequest');
   });
 
   test('uses Codex-style exponential request retry delays with bounded jitter', () => {
@@ -746,6 +752,13 @@ function normalizeAssistant(message: ReturnType<typeof fauxAssistantMessage>, mo
     usage: message.usage ?? EMPTY_USAGE,
     timestamp: message.timestamp ?? Date.now(),
   };
+}
+
+function classifyError(errorMessage: string) {
+  return classifyModelFailure(normalizeAssistant(fauxAssistantMessage([], {
+    stopReason: 'error',
+    errorMessage,
+  }), OPENAI_RESPONSES_MODEL));
 }
 
 function errorStream(errorMessage: string, model: Model<Api> = OPENAI_RESPONSES_MODEL) {

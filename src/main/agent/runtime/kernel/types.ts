@@ -40,12 +40,14 @@ export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhi
 export type AgentMessage = Message;
 export type AgentToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
 
-export interface AfterToolCallResult {
-  content?: (TextContent | ImageContent)[];
-  details?: unknown;
-  isError?: boolean;
-  terminate?: boolean;
-}
+export const EMPTY_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 export interface AgentToolResult<T> {
   content: (TextContent | ImageContent)[];
@@ -71,10 +73,8 @@ export interface AgentState {
   systemPrompt: string;
   model: Model<any>;
   thinkingLevel: ThinkingLevel;
-  set tools(tools: AgentTool<any>[]);
-  get tools(): AgentTool<any>[];
-  set messages(messages: AgentMessage[]);
-  get messages(): AgentMessage[];
+  tools: AgentTool<any>[];
+  messages: AgentMessage[];
   readonly isStreaming: boolean;
   readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: ReadonlySet<string>;
@@ -143,6 +143,4 @@ export interface KernelAgentOptions {
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;
   providerOptions?: SimpleStreamOptions;
-  steeringMode: 'all';
-  toolExecution: 'parallel';
 }

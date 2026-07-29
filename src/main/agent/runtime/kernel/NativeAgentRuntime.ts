@@ -1,32 +1,14 @@
 import { runKernel } from './kernel';
+import { EMPTY_USAGE } from './types';
 import type {
   AgentEvent,
-  AgentMessage,
   AgentState,
-  AgentTool,
   AssistantMessage,
   KernelAgentOptions,
   Message,
 } from './types';
 
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
-type MutableAgentState = Omit<
-  AgentState,
-  'isStreaming' | 'streamingMessage' | 'pendingToolCalls' | 'errorMessage'
-> & {
-  isStreaming: boolean;
-  streamingMessage?: AgentMessage;
-  pendingToolCalls: Set<string>;
-  errorMessage?: string;
-};
+type MutableAgentState = { -readonly [Key in keyof AgentState]: AgentState[Key] };
 
 interface ActiveRun {
   abortController: AbortController;
@@ -42,24 +24,12 @@ export class NativeAgentRuntime {
   private activeRun?: ActiveRun;
 
   constructor(private readonly options: KernelAgentOptions) {
-    let tools = [...options.initialState.tools];
-    let messages = [...options.initialState.messages];
     this.mutableState = {
       systemPrompt: options.initialState.systemPrompt,
       model: options.initialState.model,
       thinkingLevel: options.initialState.thinkingLevel,
-      get tools() {
-        return tools;
-      },
-      set tools(nextTools: AgentTool[]) {
-        tools = [...nextTools];
-      },
-      get messages() {
-        return messages;
-      },
-      set messages(nextMessages: Message[]) {
-        messages = [...nextMessages];
-      },
+      tools: [...options.initialState.tools],
+      messages: [...options.initialState.messages],
       isStreaming: false,
       streamingMessage: undefined,
       pendingToolCalls: new Set(),
@@ -87,7 +57,7 @@ export class NativeAgentRuntime {
   async prompt(message: Message | Message[]): Promise<void> {
     if (this.activeRun) {
       throw new Error(
-        'Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.',
+        'Agent is already processing a prompt. Use steer() to queue messages, or wait for completion.',
       );
     }
     const prompts = Array.isArray(message) ? message : [message];

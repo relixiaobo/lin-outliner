@@ -1,4 +1,4 @@
-import type { AgentToolResult, AfterToolCallResult } from '../runtime/kernel/types';
+import type { AgentToolResult } from '../runtime/kernel/types';
 
 export type ToolStatus = 'success' | 'partial' | 'unchanged' | 'denied' | 'error';
 
@@ -107,12 +107,6 @@ export function errorEnvelope<TData = unknown>(
     },
     ...compactOptions(options),
   };
-}
-
-export function toolEnvelopeAfterToolCall(details: unknown, isError: boolean): AfterToolCallResult | undefined {
-  if (isError || !isToolEnvelope(details)) return undefined;
-  if (details.ok) return undefined;
-  return { isError: true };
 }
 
 export function isToolEnvelope(value: unknown): value is ToolEnvelope {

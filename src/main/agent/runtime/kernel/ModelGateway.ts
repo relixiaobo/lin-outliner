@@ -54,24 +54,20 @@ export function classifyModelFailure(message: AssistantMessage): ModelError | nu
 }
 
 function classifyErrorMessage(errorMessage: string): ModelError {
-  if (CONTEXT_OVERFLOW_RE.test(errorMessage)) {
-    return { kind: 'contextOverflow', message: errorMessage };
-  }
   const statusMatch = RESPONSES_API_STATUS_RE.exec(errorMessage);
   if (statusMatch) {
     const status = Number(statusMatch[1]);
     if (status === 429) return { kind: 'rateLimit', status, message: errorMessage };
     if (status >= 500 && status <= 599) return { kind: 'serverError', status, message: errorMessage };
-    return { kind: 'badRequest', status, message: errorMessage };
   }
+  if (CONTEXT_OVERFLOW_RE.test(errorMessage)) {
+    return { kind: 'contextOverflow', message: errorMessage };
+  }
+  if (statusMatch) return { kind: 'badRequest', status: Number(statusMatch[1]), message: errorMessage };
   if (RETRYABLE_RESPONSES_TRANSPORT_RE.test(errorMessage)) {
     return { kind: 'transport', message: errorMessage };
   }
   return { kind: 'badRequest', message: errorMessage };
-}
-
-export function isProviderContextOverflowError(errorMessage: string | undefined): boolean {
-  return Boolean(errorMessage && CONTEXT_OVERFLOW_RE.test(errorMessage));
 }
 
 export function isRetryableResponsesRequestError(errorMessage: string | undefined): boolean {

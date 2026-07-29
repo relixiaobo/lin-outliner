@@ -9,45 +9,29 @@ import {
 } from '@earendil-works/pi-ai';
 import { isCustomOpenAIResponsesEndpoint } from '../../../openAIResponsesCompat';
 import { classifyModelFailure } from './ModelGateway';
-import type { ProviderRetryLifecycleEvent } from './types';
+import {
+  EMPTY_USAGE,
+  type ProviderRetryLifecycleEvent,
+  type RetryPolicyOptions,
+} from './types';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
 type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overflow';
-type RequestRetryDelayMs = (retryCount: number) => number;
-
-type ProviderRetryLifecycleHandler = (event: ProviderRetryLifecycleEvent) => void;
-
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
 
 const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
 const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
 const RESPONSES_REQUEST_RETRY_JITTER = 0.1;
-export function streamWithPolicy(input: {
+
+type StreamWithPolicyInput = RetryPolicyOptions & {
   model: Model<Api>;
   attempt: (messages: Message[] | null, signal: AbortSignal) => AssistantMessageEventStream
     | Promise<AssistantMessageEventStream>;
   recoverContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
-  requestRetryDelayMs?: RequestRetryDelayMs;
-  onProviderRetry?: ProviderRetryLifecycleHandler;
-  maxRequestRetries?: number;
-  maxStreamRetries?: number;
-  maxRetryDelayMs?: number;
   signal?: AbortSignal;
-}): AssistantMessageEventStream {
+};
+
+export function streamWithPolicy(input: StreamWithPolicyInput): AssistantMessageEventStream {
   const abortCtrl = new AbortController();
   const signal = chainAbortSignals(input.signal, abortCtrl);
   let refreshedMessages: Message[] | null = null;
@@ -78,15 +62,10 @@ export function streamWithPolicy(input: {
   });
 }
 
-type AbortSettlingOptions = {
+type AbortSettlingOptions = RetryPolicyOptions & {
   abortCtrl: AbortController;
   model: Model<Api>;
   retrySource?: () => Promise<AssistantMessageEventStream>;
-  requestRetryDelayMs?: RequestRetryDelayMs;
-  onProviderRetry?: ProviderRetryLifecycleHandler;
-  maxRequestRetries?: number;
-  maxStreamRetries?: number;
-  maxRetryDelayMs?: number;
   retryContextOnOverflow?: (errorMessage: string) => Promise<boolean>;
 };
 

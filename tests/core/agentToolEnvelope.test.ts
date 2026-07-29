@@ -2,9 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   agentToolResult,
   errorEnvelope,
-  isToolEnvelope,
   successEnvelope,
-  toolEnvelopeAfterToolCall,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 
 describe('agent tool envelope', () => {
@@ -45,16 +43,4 @@ describe('agent tool envelope', () => {
     });
   });
 
-  test('maps Lin error envelopes to kernel tool errors after execution', () => {
-    const envelope = errorEnvelope('example_tool', 'bad_input', 'Bad input');
-
-    expect(isToolEnvelope(envelope)).toBe(true);
-    expect(toolEnvelopeAfterToolCall(envelope, false)).toEqual({ isError: true });
-  });
-
-  test('does not override successful or already-error tool results', () => {
-    expect(toolEnvelopeAfterToolCall(successEnvelope('example_tool', {}), false)).toBeUndefined();
-    expect(toolEnvelopeAfterToolCall(errorEnvelope('example_tool', 'bad_input', 'Bad input'), true)).toBeUndefined();
-    expect(toolEnvelopeAfterToolCall({ ok: false }, false)).toBeUndefined();
-  });
 });

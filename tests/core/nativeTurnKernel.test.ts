@@ -220,7 +220,9 @@ describe('native turn kernel parity', () => {
     const running = runtime.prompt(USER);
     await waitFor(() => gateway.requests.length === 1);
     runtime.steer({ role: 'user', content: 'during', timestamp: 3 });
-    await expect(runtime.prompt(USER)).rejects.toThrow('Agent is already processing a prompt');
+    await expect(runtime.prompt(USER)).rejects.toThrow(
+      'Agent is already processing a prompt. Use steer() to queue messages, or wait for completion.',
+    );
     controlled.finish(assistant([{ type: 'text', text: 'first' }]));
     await running;
 
@@ -328,8 +330,6 @@ function createRuntime(
     transformContext: overrides.transformContext,
     getApiKey: overrides.getApiKey,
     providerOptions: overrides.providerOptions,
-    steeringMode: 'all',
-    toolExecution: 'parallel',
   });
 }
 
