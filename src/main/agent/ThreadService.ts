@@ -284,6 +284,8 @@ export interface SpawnChildThreadInput {
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
   readonly inheritedContext?: InheritedContextPayload;
+  /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
+  readonly childKind?: 'collaboration' | 'isolatedSkill';
 }
 
 export interface SpawnChildThreadResult {
@@ -311,6 +313,20 @@ export interface CollaborationAgentView {
   readonly nickname: string | null;
   readonly role: string | null;
   readonly status: 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored';
+}
+
+export interface CollaborationTerminalOutcome {
+  readonly taskPath: string;
+  readonly threadId: ThreadId;
+  readonly status: 'interrupted' | 'completed' | 'errored';
+  readonly result: string | null;
+  readonly error: string | null;
+}
+
+export interface CollaborationWaitResult {
+  readonly reason: 'terminal' | 'steering' | 'idle';
+  readonly updates: readonly CollaborationTerminalOutcome[];
+  readonly agents: readonly CollaborationAgentView[];
 }
 
 interface EphemeralThreadState {
@@ -345,6 +361,7 @@ interface PendingUserInput {
 
 interface PendingSubagentActivity {
   readonly agentThreadId: ThreadId;
+  readonly agentTurnId: TurnId;
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
 }
@@ -2121,7 +2138,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const thread = await this.createThread({
         name: input.taskPath.split('/').at(-1) ?? 'Subagent',
         ephemeral: parent.thread.ephemeral,
-        source: 'collaboration',
+        source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
         threadSource: 'subagent',
         modelProvider: parent.thread.modelProvider,
         cwd: parent.thread.cwd,
@@ -2158,13 +2175,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
       if (stagedThreadId) await this.deleteThread(stagedThreadId).catch(() => undefined);
       throw error;
     }
-    await this.recordSubagentActivity(
-      input.parentThreadId,
-      input.parentTurnId,
-      result.thread.id,
-      result.taskPath,
-      'started',
-    );
+    if (result.thread.source === 'collaboration') {
+      await this.recordSubagentActivity(
+        input.parentThreadId,
+        input.parentTurnId,
+        result.thread.id,
+        result.taskPath,
+        'started',
+      );
+    }
     return result;
   }
 
@@ -2221,6 +2240,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
       role: input.readOnly ? 'explorer' : 'worker',
       allowedTools: input.allowedTools,
+      childKind: 'isolatedSkill',
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     });
@@ -2284,7 +2304,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       queued.push({ content });
       this.mailbox.set(targetThread.id, queued);
     }
-    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
@@ -2314,16 +2333,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
         },
       });
     }
-    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
   listCollaborationAgents(senderThreadId: ThreadId, pathPrefix?: string): readonly CollaborationAgentView[] {
     const sender = this.requireThread(senderThreadId).thread;
+    const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
+    const descendantPrefix = `${senderPath}/`;
     const persisted = this.metadata.childEdges(rootThreadId(sender, (id) => this.requireThread(id).thread), true);
     const ephemeral = [...this.ephemeralSpawnEdges.entries()].map(([childThreadId, edge]) => ({ childThreadId, ...edge }));
     return [...persisted, ...ephemeral]
       .filter((edge) => this.requireThread(edge.childThreadId).thread.sessionId === sender.sessionId)
+      .filter((edge) => edge.taskPath.startsWith(descendantPrefix))
+      .filter((edge) => this.isCollaborationDescendant(senderThreadId, edge.childThreadId))
       .filter((edge) => !pathPrefix || edge.taskPath.startsWith(pathPrefix))
       .map((edge) => this.collaborationView(edge.childThreadId));
   }
@@ -2343,37 +2365,56 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async waitForCollaborationActivity(
     senderThreadId: ThreadId,
     senderTurnId: string,
-    timeoutMs: number | undefined,
     signal?: AbortSignal,
-  ): Promise<readonly CollaborationAgentView[]> {
+  ): Promise<CollaborationWaitResult> {
     this.requireActiveTurn(senderThreadId, senderTurnId);
     if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
-    const bounded = Math.max(0, Math.min(timeoutMs ?? 30_000, 60_000));
-    if (this.takePendingCollaborationActivity(senderThreadId)) {
-      await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-      return this.listCollaborationAgents(senderThreadId);
+
+    if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {
+      this.takePendingCollaborationActivity(senderThreadId);
+      const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+      return this.collaborationWaitResult(senderThreadId, 'terminal', activities);
     }
+    if (this.takePendingCollaborationActivity(senderThreadId)) {
+      return this.collaborationWaitResult(senderThreadId, 'steering', []);
+    }
+    const agents = this.listCollaborationAgents(senderThreadId);
+    if (!agents.some((agent) => (
+      agent.parentThreadId === senderThreadId
+      && (agent.status === 'pendingInit' || agent.status === 'running')
+    ))) {
+      return {
+        reason: 'idle',
+        updates: agents.flatMap((agent) => (
+          agent.status === 'completed' || agent.status === 'interrupted' || agent.status === 'errored'
+            ? [this.collaborationTerminalOutcome(agent.threadId, agent.taskPath, agent.status)]
+            : []
+        )),
+        agents,
+      };
+    }
+
     const state = this.collaborationActivityState(senderThreadId);
     await new Promise<void>((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | null = null;
       const done = () => {
-        if (timer) clearTimeout(timer);
         state.waiters.delete(done);
         signal?.removeEventListener('abort', aborted);
         resolve();
       };
       const aborted = () => {
-        if (timer) clearTimeout(timer);
         state.waiters.delete(done);
         reject(new Error('Collaboration wait was interrupted'));
       };
       state.waiters.add(done);
       signal?.addEventListener('abort', aborted, { once: true });
-      timer = setTimeout(done, bounded);
     });
     this.takePendingCollaborationActivity(senderThreadId);
-    await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-    return this.listCollaborationAgents(senderThreadId);
+    const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+    return this.collaborationWaitResult(
+      senderThreadId,
+      activities.length > 0 ? 'terminal' : 'steering',
+      activities,
+    );
   }
 
   async withThreadAdmissionBarrier<T>(
@@ -2808,7 +2849,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       else if (executionError) await this.extensions.turnError(thread, turn, executionError);
       else await this.extensions.turnStopped(thread, turn);
     }
-    this.queueChildTurnActivity(thread, status);
+    this.queueChildTurnActivity(thread, turn);
     if (!hidden) await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
   }
 
@@ -2995,7 +3036,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
     if (thread && failedTurn) this.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
-    if (thread) this.queueChildTurnActivity(thread, 'failed');
+    if (thread && failedTurn) this.queueChildTurnActivity(thread, failedTurn);
   }
 
   private async createThread(
@@ -3505,7 +3546,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!edge) throw new Error(`Subagent task path not found: ${target}`);
     const thread = this.requireThread(edge.childThreadId).thread;
     if (thread.sessionId !== sender.sessionId) throw new Error('Subagent target is outside the current Thread tree');
+    if (!this.isCollaborationDescendant(senderThreadId, thread.id)) {
+      throw new Error('Subagent target is outside the sender collaboration subtree');
+    }
     return thread;
+  }
+
+  private isCollaborationDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current = this.requireThread(childThreadId).thread;
+    while (current.parentThreadId !== null && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.source !== 'collaboration') return false;
+      if (current.parentThreadId === senderThreadId) return true;
+      current = this.requireThread(current.parentThreadId).thread;
+    }
+    return false;
   }
 
   private collaborationView(threadId: ThreadId): CollaborationAgentView {
@@ -3532,6 +3588,49 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
   }
 
+  private collaborationWaitResult(
+    senderThreadId: ThreadId,
+    reason: CollaborationWaitResult['reason'],
+    activities: readonly PendingSubagentActivity[],
+  ): CollaborationWaitResult {
+    return {
+      reason,
+      updates: activities.flatMap((activity) => activity.kind === 'started'
+        ? []
+        : [this.collaborationTerminalOutcome(
+            activity.agentThreadId,
+            activity.agentPath,
+            activity.kind === 'errored' ? 'errored' : activity.kind,
+            activity.agentTurnId,
+          )]),
+      agents: this.listCollaborationAgents(senderThreadId),
+    };
+  }
+
+  private collaborationTerminalOutcome(
+    threadId: ThreadId,
+    taskPath: string,
+    status: CollaborationTerminalOutcome['status'],
+    turnId?: TurnId,
+  ): CollaborationTerminalOutcome {
+    const terminalTurn = turnId === undefined
+      ? this.allTurns(threadId).at(-1)
+      : this.readTurn(threadId, turnId);
+    const result = terminalTurn?.items
+      .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
+        ? [item.text.trim()]
+        : [])
+      .filter(Boolean)
+      .join('\n\n') ?? '';
+    return {
+      taskPath,
+      threadId,
+      status,
+      result: result || null,
+      error: terminalTurn?.error?.message ?? null,
+    };
+  }
+
   private async recordSubagentActivity(
     ownerThreadId: ThreadId,
     ownerTurnId: string,
@@ -3551,24 +3650,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }, this.now());
   }
 
-  private queueChildTurnActivity(thread: Thread, status: Turn['status']): void {
-    if (!thread.parentThreadId) return;
+  private queueChildTurnActivity(thread: Thread, turn: Turn): void {
+    if (!thread.parentThreadId || thread.source !== 'collaboration') return;
     const agentPath = this.taskPathForThread(thread.id);
     if (!agentPath) return;
-    const kind: PendingSubagentActivity['kind'] = status === 'completed'
+    const kind: PendingSubagentActivity['kind'] = turn.status === 'completed'
       ? 'completed'
-      : status === 'interrupted'
+      : turn.status === 'interrupted'
         ? 'interrupted'
         : 'errored';
     const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
-    queued.push({ agentThreadId: thread.id, agentPath, kind });
+    queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind });
     this.pendingSubagentActivities.set(thread.parentThreadId, queued);
     this.signalCollaborationActivity(thread.parentThreadId);
   }
 
-  private async flushPendingSubagentActivities(threadId: ThreadId, turnId: string): Promise<void> {
+  private async flushPendingSubagentActivities(
+    threadId: ThreadId,
+    turnId: string,
+  ): Promise<readonly PendingSubagentActivity[]> {
     const queued = this.pendingSubagentActivities.get(threadId);
-    if (!queued || queued.length === 0) return;
+    if (!queued || queued.length === 0) return [];
     this.pendingSubagentActivities.delete(threadId);
     let index = 0;
     try {
@@ -3592,6 +3694,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
       throw error;
     }
+    return queued;
   }
 
   private consumePendingSubagentActivities(

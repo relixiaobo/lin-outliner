@@ -228,12 +228,10 @@ export class ToolRuntime {
           requiredString(input.message, 'message'),
         );
       }),
-      collaborationTool('wait_agent', 'Wait for Subagents', async (_itemId, params, signal) => {
-        const input = record(params, 'collaboration.wait_agent');
+      collaborationTool('wait_agent', 'Wait for Subagents', async (_itemId, _params, signal) => {
         return this.service.waitForCollaborationActivity(
           threadId,
           turnId,
-          optionalNonNegativeNumber(input.timeout_ms, 'timeout_ms'),
           signal,
         );
       }),
@@ -549,14 +547,6 @@ function optionalPositiveInteger(value: unknown, path: string): number | undefin
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`${path} must be a positive integer`);
   return value as number;
-}
-
-function optionalNonNegativeNumber(value: unknown, path: string): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${path} must be a non-negative finite number`);
-  }
-  return value;
 }
 
 function optionalReasoningEffort(value: unknown): ReasoningEffort | undefined {

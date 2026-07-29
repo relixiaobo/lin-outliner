@@ -4304,9 +4304,23 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(2);
     expect(isolated.thread.parentThreadId).toBe(root.id);
     expect(isolated.thread.threadSource).toBe('subagent');
+    expect(isolated.thread.source).toBe('agent.skill');
     expect(fixture.executor.contexts[2]?.configuration.tools).toEqual([]);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(isolated.thread.id);
+
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' },
+    ]);
+    const collaborationResult = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(collaborationResult).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
+      agents: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
+    });
+    expect(fixture.executor.contexts[0]!.recorder.orderedItems().some((item) => (
+      item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id
+    ))).toBe(false);
 
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
@@ -4487,6 +4501,13 @@ describe('ThreadService', () => {
     fixture.executor.finish(1);
     const childId = (spawned.details as { thread_id: string }).thread_id;
     await fixture.service.waitForIdle(childId);
+    const waited = await executeTool(tools, 'collaboration__wait_agent', 'wait-item', {});
+    expect(waited.details).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: childId, status: 'completed', result: 'Done' }],
+      agents: [{ threadId: childId, status: 'completed' }],
+      capabilityAudit: { behavior: 'allow' },
+    });
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
     const stored = fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread;
@@ -4717,7 +4738,6 @@ describe('ThreadService', () => {
     await expect(fixture.service.waitForCollaborationActivity(
       root.id,
       rootTurn.turn.id,
-      1_000,
       interrupted.signal,
     )).rejects.toThrow('interrupted');
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'wait-spawn');
@@ -4732,13 +4752,6 @@ describe('ThreadService', () => {
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
-    const alreadyPending = await fixture.service.waitForCollaborationActivity(
-      root.id,
-      rootTurn.turn.id,
-      1_000,
-    );
-    expect(alreadyPending).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
-
     await fixture.service.followupCollaborationTask(
       root.id,
       rootTurn.turn.id,
@@ -4747,11 +4760,24 @@ describe('ThreadService', () => {
       'Complete again',
     );
     await fixture.executor.waitUntilWaiting(2);
+    const alreadyPending = await fixture.service.waitForCollaborationActivity(
+      root.id,
+      rootTurn.turn.id,
+    );
+    expect(alreadyPending).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, status: 'completed', result: 'Done', error: null }],
+      agents: [{ threadId: child.thread.id, status: 'running' }],
+    });
+    expect(await fixture.service.waitForCollaborationActivity(
+      child.thread.id,
+      fixture.executor.contexts[2]!.turn.id,
+    ))
+      .toMatchObject({ reason: 'idle', updates: [], agents: [] });
     let resolved = false;
     const waiting = fixture.service.waitForCollaborationActivity(
       root.id,
       rootTurn.turn.id,
-      1_000,
     ).then((result) => {
       resolved = true;
       return result;
@@ -4778,11 +4804,134 @@ describe('ThreadService', () => {
 
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(child.thread.id);
-    expect(await waiting).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
+    expect(await waiting).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, status: 'completed', result: 'Done', error: null }],
+      agents: [{ threadId: child.thread.id, status: 'completed' }],
+    });
     fixture.executor.finish(0);
     fixture.executor.finish(3);
     await fixture.service.waitForIdle(root.id);
     await fixture.service.waitForIdle(unrelated.id);
+    await fixture.service.close();
+  });
+
+  test('batches terminal collaboration outcomes and keeps them available when the tree is idle', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate parallel child work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'batch-spawn-a');
+    const childA = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'batch-spawn-a',
+      taskName: 'batch_a',
+      message: 'Complete A',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'batch-spawn-b');
+    const childB = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'batch-spawn-b',
+      taskName: 'batch_b',
+      message: 'Complete B',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(2);
+    await Promise.all([
+      fixture.service.waitForIdle(childA.thread.id),
+      fixture.service.waitForIdle(childB.thread.id),
+    ]);
+
+    const terminal = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(terminal.reason).toBe('terminal');
+    expect([...terminal.updates].sort((left, right) => left.taskPath.localeCompare(right.taskPath))).toEqual([
+      expect.objectContaining({ taskPath: '/root/batch_a', status: 'completed', result: 'Done' }),
+      expect.objectContaining({ taskPath: '/root/batch_b', status: 'completed', result: 'Done' }),
+    ]);
+
+    const idle = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(idle.reason).toBe('idle');
+    expect(idle.updates).toHaveLength(2);
+    expect(idle.agents.every((agent) => agent.status === 'completed')).toBe(true);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('scopes child collaboration views and waits to the sender subtree', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate nested work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'scope-spawn-a');
+    const childA = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'scope-spawn-a',
+      taskName: 'scope_a',
+      message: 'Coordinate a grandchild',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'scope-spawn-b');
+    const childB = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'scope-spawn-b',
+      taskName: 'scope_b',
+      message: 'Run as a sibling',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'scope-spawn-grandchild');
+    const grandchild = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: childA.thread.id,
+      senderTurnId: childA.turn.id,
+      parentItemId: 'scope-spawn-grandchild',
+      taskName: 'nested',
+      message: 'Complete nested work',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+
+    expect(fixture.service.listCollaborationAgents(childA.thread.id)).toMatchObject([
+      { taskPath: '/root/scope_a/nested', parentThreadId: childA.thread.id, status: 'running' },
+    ]);
+    const waiting = fixture.service.waitForCollaborationActivity(childA.thread.id, childA.turn.id);
+    fixture.executor.finish(3);
+    await fixture.service.waitForIdle(grandchild.thread.id);
+    expect(await waiting).toMatchObject({
+      reason: 'terminal',
+      updates: [{ taskPath: '/root/scope_a/nested', status: 'completed', result: 'Done' }],
+    });
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(2);
+    await Promise.all([
+      fixture.service.waitForIdle(childA.thread.id),
+      fixture.service.waitForIdle(childB.thread.id),
+    ]);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 

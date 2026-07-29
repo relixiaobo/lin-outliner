@@ -43,7 +43,8 @@ The fixed `collaboration` namespace contains:
 - `collaboration.send_message`: queue a message without forcing a new Turn
 - `collaboration.followup_task`: start work when idle or deliver at a safe active
   boundary
-- `collaboration.wait_agent`: wait for child activity or a bounded timeout
+- `collaboration.wait_agent`: block until terminal child activity or steering and
+  return batched child outcomes
 - `collaboration.list_agents`: query the live descendant tree
 - `collaboration.interrupt_agent`: interrupt a child's current Turn
 
@@ -54,6 +55,12 @@ Task paths are host-session addresses such as `/root/research`. Their uniqueness
 and lookup scope is one `sessionId`, so independent root Thread trees may use the
 same path without conflict. They route live coordination and are not durable
 entity IDs. Durable relationships use Thread IDs.
+
+List and wait views are scoped to the sender's descendant subtree; sibling branches
+in the same session are never returned. A wait blocks on active direct children,
+because those are the Threads whose terminal transitions are delivered to that
+sender. Descendant status remains visible, but a detached grandchild cannot leave an
+ancestor blocked on an event routed to a different parent.
 
 ## History And Activity
 
@@ -66,15 +73,33 @@ terminal. If no parent Turn is active, the activity remains pending for the next
 one. Child output remains in the child rollout. Parent-visible summaries are
 Items, not copied child history.
 
-Waiting is interruptible and uses a pending latch scoped to the sender Thread.
-It returns on that Thread's mailbox or steering activity, direct-child terminal
-activity, or timeout. Activity that arrives immediately before the wait is
-retained; unrelated Thread activity cannot wake it. Interrupt changes only the
-active child Turn and retains the Thread for follow-up work.
+Waiting is interruptible and uses a pending latch scoped to the sender Thread. It
+has no model-controlled polling timeout: while a child is active, it returns only
+for sender steering or direct-child terminal activity. If no child is active it
+returns immediately. One return drains every terminal activity already queued,
+includes each child's final non-commentary result and error, and also includes the
+current child-tree status. This makes one blocking wait after fan-out sufficient;
+the parent synthesizes completed outcomes instead of polling or repeating covered
+work. Each queued outcome is bound to the exact child Turn that emitted the terminal
+transition; starting a follow-up cannot replace the queued result with newer child
+state. Activity that arrives immediately before the wait is retained, and unrelated
+Thread activity cannot wake it. Interrupt changes only the active child Turn and
+retains the Thread for follow-up work.
+
+If terminal activities were admitted before the current Turn, an idle wait returns
+the terminal outcomes from the current child tree so the result remains recoverable
+without copying child history into every parent Turn. The completed wait tool result
+then becomes the durable parent-side record of the delivered findings.
 
 An isolated Skill uses the same child-Thread mechanism with a bounded tool
-catalog. Read-only isolation is a catalog constraint, not an operating-system
-sandbox.
+catalog, but not the collaboration result channel. Its child is absent from
+`list_agents` and `wait_agent`; the invoking `skill` tool is the single parent-facing
+owner of its outcome. This prevents one completed Skill result from being replayed
+again as collaboration work. Its model-facing catalog description states the
+single-child execution contract and whether the declared tool ceiling excludes
+Subagent spawning. A completed isolated result is framed as work product for direct
+synthesis, not a request to repeat the task. Read-only isolation is a catalog
+constraint, not an operating-system sandbox.
 
 ## Inherited Context
 

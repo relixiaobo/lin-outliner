@@ -1240,6 +1240,7 @@ function collaborationViews(result: unknown): Array<Record<string, unknown>> {
   const details = toolDetails(result);
   if (Array.isArray(details)) return details.filter(isRecord);
   if (!isRecord(details)) return [];
+  if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
   if (typeof details.thread_id === 'string') {
     return [{ threadId: details.thread_id, status: 'running' }];
   }

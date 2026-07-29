@@ -127,6 +127,55 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('records child identities from structured collaboration wait results', async () => {
+    const fixture = createContext();
+    const childThreadId = uuidV7(1_720_000_001_100);
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-collab-wait',
+      toolName: 'collaboration__wait_agent',
+      args: {},
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-collab-wait',
+      toolName: 'collaboration__wait_agent',
+      result: {
+        content: [{ type: 'text', text: 'completed child result' }],
+        details: {
+          reason: 'terminal',
+          updates: [{
+            taskPath: '/root/worker',
+            threadId: childThreadId,
+            status: 'completed',
+            result: 'Done',
+            error: null,
+          }],
+          agents: [{
+            taskPath: '/root/worker',
+            threadId: childThreadId,
+            parentThreadId: fixture.context.thread.id,
+            nickname: null,
+            role: 'worker',
+            status: 'completed',
+          }],
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'collabAgentToolCall',
+      id: 'call-collab-wait',
+      tool: 'wait_agent',
+      status: 'completed',
+      receiverThreadIds: [childThreadId],
+      agentsStates: { [childThreadId]: 'completed' },
+    });
+  });
+
   test('keeps update_plan out of the recorded tool Item stream', async () => {
     const fixture = createContext();
     const observed: unknown[] = [];
@@ -1322,7 +1371,7 @@ describe('PiTurnExecutor event normalization', () => {
         return stagedTestCompaction(fixture.recorder, item);
       },
     };
-    const smallModel = { ...testModel, contextWindow: 2_020, maxTokens: 200 };
+    const smallModel = { ...testModel, contextWindow: 2_120, maxTokens: 200 };
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => ({

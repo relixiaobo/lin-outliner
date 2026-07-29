@@ -147,6 +147,8 @@ function capabilityBlocks(
         '# Collaboration',
         '- Subagents are separate-context Threads that share host files, processes, credentials, ports, and application state.',
         '- Delegate bounded independent work only, avoid conflicting mutations, and integrate returned evidence yourself.',
+        '- A completed child or isolated Skill result is work product to synthesize, not a plan to re-execute. Repeat covered work only for an explicit verification need or a reported gap.',
+        '- After parallel fan-out, call wait_agent; it blocks until meaningful activity and batches terminal outcomes. Do not poll with list_agents.',
       ].join('\n'),
     });
   }

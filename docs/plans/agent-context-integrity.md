@@ -622,6 +622,25 @@ One Turn cannot observe two execution configurations. Therefore:
   applying, ignoring, or partially applying them; and
 - isolated Skills continue to intersect every capability with the parent ceiling.
 
+The model-facing catalog derives an execution constraint for every isolated Skill.
+It states that the Skill runs as one isolated child and, when its explicit tool
+ceiling excludes `collaboration.spawn_agent`, directs parallel fan-out back to the
+parent. The host reserves catalog budget for this constraint before truncating
+authored descriptions, including under large Skill catalogs. Isolated completion
+output carries the actual child Turn outcome and frames
+completed findings as work product to synthesize rather than a plan to execute again.
+The `skill` tool owns that child outcome exclusively; collaboration list/wait results
+exclude isolated Skill children so the same findings cannot be delivered twice.
+
+Collaboration waiting is terminal-state driven. `wait_agent` has no model-selected
+polling timeout: it blocks while children run, wakes for a direct-child terminal
+transition or sender steering, drains all queued terminal outcomes into one result,
+and returns immediately only when the tree is idle. Each outcome includes the final
+non-commentary child result and error from the exact Turn that reached terminal state,
+so a later follow-up cannot replace an earlier queued result. The current child tree
+remains a separate status view. This bounds fan-out coordination to meaningful
+provider turns instead of paying for a fresh request on every polling tick.
+
 `contextCompaction.restoredStateRef` checkpoints the effective catalog hash and
 announced entries, active Skill payload references, Role catalog state, and user-view
 diff baseline derived at the covered cursor. Summary plus restore state serialize once

@@ -156,6 +156,15 @@ standing authorization are specified in
 These tools operate on child Threads as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+`collaboration.wait_agent` is event-driven rather than a model polling primitive.
+It takes no timeout argument, remains locally blocked while children are running,
+and returns for terminal child activity or steering. Its structured result batches
+queued terminal outcomes, including final result text and errors, alongside the
+current child tree. A queued outcome reads the exact child Turn that produced its
+terminal event rather than whichever Turn is newest at delivery time. When the tree
+is already idle, it returns immediately with terminal outcomes so a later parent Turn
+can still recover completed work.
+
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill

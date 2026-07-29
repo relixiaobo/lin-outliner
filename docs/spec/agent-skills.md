@@ -134,6 +134,24 @@ forward instead of re-reading mutable Skill files.
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
 
+Every isolated Skill catalog entry appends a host-derived execution constraint.
+The constraint states that invocation runs once in a single isolated child Thread
+under an explicit tool ceiling. When that ceiling does not declare
+`collaboration.spawn_agent`, the catalog explicitly tells the parent that the Skill
+cannot perform Subagent fan-out and that parallel orchestration belongs in the
+parent Thread. This capability fact is derived from the effective Skill definition;
+it is not hand-maintained prose in individual Skill bodies. Catalog budgeting
+reserves every isolated execution constraint before allocating space to authored
+descriptions, so pressure cannot silently remove the capability contract.
+
+The isolated Skill tool result records the child Turn outcome separately from the
+Skill execution mode. A completed outcome wraps the child's final non-commentary
+text as a result to synthesize directly and tells the parent not to repeat covered
+work unless the result reports a gap or independent verification is explicitly
+required. The Skill tool is the only model-facing result channel for that isolated
+child; collaboration listing and waiting exclude it. Failed or interrupted outcomes
+are labeled as partial evidence rather than being described as completed.
+
 ## Authoring And Trust
 
 Mutable Skill edits are ordinary file mutations. Provenance records accepted

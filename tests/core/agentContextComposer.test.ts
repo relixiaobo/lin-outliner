@@ -70,6 +70,8 @@ describe('stable agent prompt composition', () => {
       'neva-identity',
     ]);
     expect(prompt.text).toContain('# Collaboration');
+    expect(prompt.text).toContain('not a plan to re-execute');
+    expect(prompt.text).toContain('Do not poll with list_agents');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:Display name^/absolute/path]]');

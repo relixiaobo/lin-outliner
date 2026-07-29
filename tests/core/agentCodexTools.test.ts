@@ -38,6 +38,16 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(modelToolContract('codex_app.automation_update')?.description).toContain(
       'Never use shell sleep or polling',
     );
+    const collaborationWait = modelToolContract('collaboration.wait_agent');
+    expect(collaborationWait?.description).toContain('Block without polling');
+    expect(collaborationWait?.description).toContain('Synthesize completed results');
+    expect(collaborationWait?.inputSchema).toEqual({
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    });
+    expect(JSON.stringify(collaborationWait?.outputSchema)).toContain('updates');
   });
 
   test('round-trips canonical and flat provider encodings without aliases', () => {
