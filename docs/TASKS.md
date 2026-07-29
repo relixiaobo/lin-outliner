@@ -635,8 +635,8 @@ anything.
   same-Turn refresh, restart, and publication-retry integrity. This is a clean
   pre-release replacement with no migration, compatibility reader, fallback, or
   dual-write path. The current design is folded into the Agent runtime, Skill,
-  and rendering specs; the plan remains `in-progress` at
-  `docs/plans/agent-context-integrity.md` for PRs 3–6.
+  and rendering specs; the plan completed with #444 and is archived at
+  `docs/plans/archive/agent-context-integrity.md`.
   **Gate (main):** iterative review caught expanded reference-target children
   missing from the user-view and child count, namespaced extension tools being
   classified as Core L1 capabilities, and expanded table records duplicating
@@ -685,7 +685,8 @@ anything.
   images remain previewable and can be ingested into the outline without
   exposing canonical or scratch paths. The current interface design is folded
   into the Agent, runtime, rendering, command, and workspace specs; the plan
-  remains `in-progress` at `docs/plans/agent-context-integrity.md` for PRs 2–6.
+  completed with #444 and is archived at
+  `docs/plans/archive/agent-context-integrity.md`.
   **Gate (main):** iterative review caught payload kind confusion, persisted
   scratch observation paths, an attachment-sized allocation ceiling, cleanup
   errors misreporting durable rollback, source-owned inherited images, and the
