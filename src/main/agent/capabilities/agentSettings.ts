@@ -51,7 +51,9 @@ import {
   imageModelOptionsForProvider,
   piRefreshImageModels,
 } from '../../piImageModels';
-import { customOpenAIResponsesPayloadProfileOption } from '../../openAIResponsesCompat';
+import {
+  customOpenAIResponsesPayloadProfileOption,
+} from '../../openAIResponsesCompat';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -244,7 +246,7 @@ export function providerStreamOptionsFromRuntimeSettings(
     AgentRuntimeSettings,
     'providerTimeoutMs' | 'providerMaxRetries' | 'providerMaxRetryDelayMs' | 'providerCacheRetention'
   > | null,
-  model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
+  _model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
 ): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> {
   const options: Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> = {};
   if (settings?.providerTimeoutMs !== null && settings?.providerTimeoutMs !== undefined) {

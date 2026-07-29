@@ -28,6 +28,53 @@ function turnEnvironmentPayload(acceptedAt = 1_720_000_000_000) {
     executionMode: 'root',
     replyIdentity: null,
     todayNodeId: null,
+    todayNodeTitle: null,
+  } as const;
+}
+
+function turnDiagnosticsPayload(contextEpochId = 'initial') {
+  return {
+    schemaVersion: 1,
+    contextEpochId,
+    cacheAffinity: 'a'.repeat(64),
+    configuration: {
+      profileName: 'default',
+      developerInstructions: [],
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    },
+    stablePrompt: null,
+    toolSchemas: [],
+    runtime: {
+      provider: 'openai',
+      model: 'test-model',
+      api: 'openai-responses',
+      configuredBaseUrl: 'https://api.openai.com/v1',
+      transportSelection: 'auto',
+      contextWindow: 128_000,
+      maxOutputTokens: 8_192,
+      thinkingLevel: 'medium',
+      timeoutMs: null,
+      maxRetries: null,
+      maxRetryDelayMs: 60_000,
+      cacheRetention: 'short',
+      toolExecution: 'parallel',
+      steeringMode: 'all',
+    },
+    canonicalMessages: [],
+    requestFragments: [],
+    providerCalls: [],
+    activities: [{
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: 0,
+      itemIds: ['input-item'],
+      consumedByCallIndex: null,
+    }],
   } as const;
 }
 
@@ -179,6 +226,52 @@ describe('Agent tool payload store', () => {
 
     await store.deleteThread(sourceThreadId);
     expect(await store.readContext(targetThreadId, ref)).toEqual(payload);
+  });
+
+  test('owns Turn diagnostics across fork copy, pruning, and source deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const conflictThreadId = uuidV7(1_720_000_000_002);
+    const retainedPayload = turnDiagnosticsPayload();
+    const retained = await store.writeTurnDiagnostics(sourceThreadId, retainedPayload);
+    const orphan = await store.writeTurnDiagnostics(sourceThreadId, turnDiagnosticsPayload('reset-1'));
+
+    expect(await store.readTurnDiagnostics(sourceThreadId, retained)).toEqual(retainedPayload);
+    expect(await store.copyTurnDiagnosticsToThread(sourceThreadId, targetThreadId, retained)).toBe(true);
+    await store.deleteThread(sourceThreadId);
+    expect(await store.readTurnDiagnostics(targetThreadId, retained)).toEqual(retainedPayload);
+
+    const conflictDirectory = join(root, conflictThreadId, 'turn-diagnostics');
+    await mkdir(conflictDirectory, { recursive: true });
+    await writeFile(join(conflictDirectory, `${retained.id}.json`), 'x'.repeat(retained.byteLength));
+    await expect(store.copyTurnDiagnosticsToThread(targetThreadId, conflictThreadId, retained))
+      .rejects.toThrow('conflict with existing bytes');
+
+    const secondOrphan = await store.writeTurnDiagnostics(targetThreadId, turnDiagnosticsPayload('reset-2'));
+    await store.pruneUnreferencedTurnDiagnostics(targetThreadId, [retained]);
+    expect(await store.readTurnDiagnostics(targetThreadId, retained)).toEqual(retainedPayload);
+    expect(await store.readTurnDiagnostics(targetThreadId, secondOrphan)).toBeNull();
+    expect(await store.readTurnDiagnostics(targetThreadId, orphan)).toBeNull();
+  });
+
+  test('rejects diagnostics pools whose content addresses do not match their values', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const payload = turnDiagnosticsPayload();
+
+    await expect(store.writeTurnDiagnostics(threadId, {
+      ...payload,
+      canonicalMessages: [{ id: 'b'.repeat(64), estimatedTokens: 1, value: { role: 'user' } }],
+    })).rejects.toThrow('message digest does not match');
+    await expect(store.writeTurnDiagnostics(threadId, {
+      ...payload,
+      requestFragments: [{ id: 'c'.repeat(64), value: { role: 'user' } }],
+    })).rejects.toThrow('fragment digest does not match');
   });
 
   test('rejects invalid or corrupt context payloads and prunes orphans', async () => {

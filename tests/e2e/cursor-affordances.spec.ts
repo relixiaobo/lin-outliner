@@ -41,7 +41,7 @@ const textCursorSelectors = new Map([
 const tooltipSurfaceSelectors = new Map([
   ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
   ['.thread-response-usage-card', 'Pointer-delayed Thread response usage tooltip.'],
-  ['.thread-run-details-usage-popover', 'Run Details usage tooltip.'],
+  ['.thread-turn-details-usage-popover', 'Turn Diagnostics usage tooltip.'],
   ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
 ]);
 const readOnlyTooltipComponents = new Map([

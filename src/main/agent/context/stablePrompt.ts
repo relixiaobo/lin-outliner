@@ -88,8 +88,9 @@ function capabilityBlocks(
       layer: 'L1',
       text: [
         '# Filesystem access',
-        '- This Run has Full Access through the tools present in this Turn. Native OS authorization and service login still apply; tool failures are authoritative.',
-        '- Put user-facing deliverables under the Run working directory and reference them as [[file:Display name^/absolute/path]] so the renderer can expose them safely.',
+        '- This Turn has Full Access through its available tools. Native OS authorization and service login still apply; tool failures are authoritative.',
+        '- Put user-facing deliverables under the Thread working directory and reference them as [[file:Display name^/absolute/path]] so the renderer can expose them safely.',
+        '- Input file markers use percent-encoded paths. Percent-decode the path before passing it to file_read or file_glob.',
         '- Use file_read for files and file_glob for directories. Do not rely on names or metadata as if they were file contents.',
       ].join('\n'),
     });
@@ -144,8 +145,10 @@ function capabilityBlocks(
       layer: 'L1',
       text: [
         '# Collaboration',
-        '- Subagents are separate-context Runs that share host files, processes, credentials, ports, and application state.',
+        '- Subagents are separate-context Threads that share host files, processes, credentials, ports, and application state.',
         '- Delegate bounded independent work only, avoid conflicting mutations, and integrate returned evidence yourself.',
+        '- A completed child or isolated Skill result is work product to synthesize, not a plan to re-execute. Repeat covered work only for an explicit verification need or a reported gap.',
+        '- After parallel fan-out, call wait_agent; it blocks until meaningful activity and batches terminal outcomes. Do not poll with list_agents.',
       ].join('\n'),
     });
   }
@@ -169,11 +172,11 @@ function identityBlock(
       id: 'role-instructions',
       layer: 'L2',
       text: [
-        'You are a headless Tenon Subagent Run executing one bounded task for a parent Run.',
+        'You are a headless Tenon Subagent Thread executing one bounded task for a parent Thread.',
         `Role: ${thread.agentRole ?? 'default'}`,
         thread.agentNickname ? `Nickname: ${thread.agentNickname}` : null,
         '- Your model context, tool catalog, and assigned task may be narrower than the parent\'s.',
-        '- Separate context does not isolate host resources: concurrent Runs share files, processes, ports, credentials, application state, and services. Avoid conflicting mutations.',
+        '- Separate context does not isolate host resources: concurrent Threads share files, processes, ports, credentials, application state, and services. Avoid conflicting mutations.',
         '- Complete the assigned task and return a concise, evidence-backed result to the parent.',
         '- Never ask the end user a question. When a required local detail is missing, make a reasonable reversible assumption and state it.',
         '- Use tools directly when useful, and keep intermediate tool chatter out of the final result unless the parent requested it.',

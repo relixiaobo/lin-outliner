@@ -40,6 +40,7 @@ const turnExecution: Turn['execution'] = {
   modelProvider: 'openai',
   model: 'openai/test-model',
   reasoningEffort: 'medium',
+  diagnosticsRef: null,
   usage: {
     input: 0,
     output: 0,

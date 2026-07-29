@@ -103,6 +103,7 @@ describe('Document system runtime', () => {
         modelProvider: 'test',
         model: 'test',
         reasoningEffort: 'medium',
+        diagnosticsRef: null,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
       },
       startedAt,

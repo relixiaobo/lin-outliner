@@ -4,13 +4,14 @@ import {
   type AssistantMessage,
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
+  type Message,
   type Model,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { isCustomOpenAIResponsesEndpoint } from '../../openAIResponsesCompat';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
-type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream';
+type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overflow';
 type RequestRetryDelayMs = (retryCount: number) => number;
 
 export interface ProviderRetryLifecycleEvent {
@@ -49,14 +50,19 @@ export function createAbortSettledStreamFn(
   retryOptions: {
     requestRetryDelayMs?: RequestRetryDelayMs;
     onProviderRetry?: ProviderRetryLifecycleHandler;
+    maxRequestRetries?: number;
+    maxStreamRetries?: number;
+    maxRetryDelayMs?: number;
+    onContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
   } = {},
 ): StreamFn {
   return ((model, context, options = {}) => {
     const abortCtrl = new AbortController();
     const signal = chainAbortSignals(options.signal, abortCtrl);
+    let providerContext = context;
     const startSource = () => {
       try {
-        return Promise.resolve(sourceFn(model, context, {
+        return Promise.resolve(sourceFn(model, providerContext, {
           ...options,
           signal,
         }));
@@ -70,6 +76,17 @@ export function createAbortSettledStreamFn(
       retrySource: startSource,
       requestRetryDelayMs: retryOptions.requestRetryDelayMs,
       onProviderRetry: retryOptions.onProviderRetry,
+      maxRequestRetries: retryOptions.maxRequestRetries,
+      maxStreamRetries: retryOptions.maxStreamRetries,
+      maxRetryDelayMs: retryOptions.maxRetryDelayMs,
+      retryContextOnOverflow: retryOptions.onContextOverflow
+        ? async (errorMessage) => {
+            const messages = await retryOptions.onContextOverflow!(errorMessage);
+            if (!messages) return false;
+            providerContext = { ...providerContext, messages: [...messages] };
+            return true;
+          }
+        : undefined,
     });
   }) as StreamFn;
 }
@@ -80,6 +97,10 @@ type AbortSettlingOptions = {
   retrySource?: () => Promise<AssistantMessageEventStream>;
   requestRetryDelayMs?: RequestRetryDelayMs;
   onProviderRetry?: ProviderRetryLifecycleHandler;
+  maxRequestRetries?: number;
+  maxStreamRetries?: number;
+  maxRetryDelayMs?: number;
+  retryContextOnOverflow?: (errorMessage: string) => Promise<boolean>;
 };
 
 export function wrapStreamWithAbortSettling(
@@ -88,8 +109,12 @@ export function wrapStreamWithAbortSettling(
     abortCtrl,
     model,
     retrySource,
-    requestRetryDelayMs = responsesRequestRetryDelayMs,
+    requestRetryDelayMs: configuredRequestRetryDelayMs,
     onProviderRetry,
+    maxRequestRetries: configuredMaxRequestRetries,
+    maxStreamRetries: configuredMaxStreamRetries,
+    maxRetryDelayMs,
+    retryContextOnOverflow,
   }: AbortSettlingOptions,
 ): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
@@ -97,9 +122,21 @@ export function wrapStreamWithAbortSettling(
   const completedToolCallIds = new Set<string>();
   let settled = false;
   const canRetryResponses = Boolean(retrySource) && isOpenAIResponsesModel(model);
-  const maxRequestRetries = canRetryResponses ? MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES : 0;
-  const maxStreamRetries = canRetryResponses ? MAX_RETRYABLE_RESPONSES_TERMINATIONS : 0;
+  const maxRequestRetries = canRetryResponses
+    ? normalizedRetryLimit(configuredMaxRequestRetries, MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES)
+    : 0;
+  const maxStreamRetries = canRetryResponses
+    ? normalizedRetryLimit(configuredMaxStreamRetries, MAX_RETRYABLE_RESPONSES_TERMINATIONS)
+    : 0;
+  const requestRetryDelayMs = configuredRequestRetryDelayMs ?? ((retryCount: number) => {
+    const delay = responsesRequestRetryDelayMs(retryCount);
+    return maxRetryDelayMs === undefined || maxRetryDelayMs === 0
+      ? delay
+      : Math.min(delay, maxRetryDelayMs);
+  });
+  const canRetryOverflow = Boolean(retrySource && retryContextOnOverflow);
   let activeRetryStatus: Omit<ProviderRetryLifecycleEvent, 'phase'> | null = null;
+  let pendingOverflowMessage: AssistantMessage | null = null;
 
   const emitProviderRetry = (event: ProviderRetryLifecycleEvent) => {
     try {
@@ -156,11 +193,28 @@ export function wrapStreamWithAbortSettling(
     let source = Promise.resolve(sourceInput);
     let requestRetryCount = 0;
     let streamRetryCount = 0;
+    let overflowRetryCount = 0;
     try {
       while (!settled) {
-        const outcome = await consumeSourceAttempt(source, requestRetryCount, streamRetryCount);
+        const outcome = await consumeSourceAttempt(
+          source,
+          requestRetryCount,
+          streamRetryCount,
+          overflowRetryCount,
+        );
         if (outcome === 'settled') break;
-        if (outcome === 'retry-request') {
+        if (outcome === 'retry-overflow') {
+          const overflow = pendingOverflowMessage as AssistantMessage | null;
+          pendingOverflowMessage = null;
+          if (!overflow) throw new Error('Context-overflow retry lost its provider error.');
+          clearProviderRetry();
+          overflowRetryCount += 1;
+          const recovered = await retryContextOnOverflow?.(overflow.errorMessage ?? 'Provider context overflow');
+          if (!recovered) {
+            settleWithTerminalMessage(contextOverflowFailure(overflow, false), 'error');
+            break;
+          }
+        } else if (outcome === 'retry-request') {
           requestRetryCount += 1;
           showProviderRetry('request', requestRetryCount, maxRequestRetries);
           await waitForAbortableDelay(requestRetryDelayMs(requestRetryCount), abortCtrl.signal);
@@ -193,6 +247,7 @@ export function wrapStreamWithAbortSettling(
     sourceInputAttempt: AssistantMessageEventStream | Promise<AssistantMessageEventStream>,
     requestRetryCount: number,
     streamRetryCount: number,
+    overflowRetryCount: number,
   ): Promise<RetryOutcome> {
     let bufferedEvents: AssistantMessageEvent[] = [];
     let flushed = false;
@@ -204,6 +259,28 @@ export function wrapStreamWithAbortSettling(
       flushed = true;
       for (const bufferedEvent of bufferedEvents) out.push(bufferedEvent);
       bufferedEvents = [];
+    };
+
+    const contextOverflowOutcome = (
+      message: AssistantMessage,
+      reason: 'aborted' | 'error',
+    ): RetryOutcome | null => {
+      if (
+        reason !== 'error'
+        || sawMaterialOutput
+        || completedToolCallIds.size > 0
+        || !isProviderContextOverflowError(message.errorMessage)
+      ) return null;
+      if (canRetryOverflow && overflowRetryCount === 0) {
+        pendingOverflowMessage = message;
+        return 'retry-overflow';
+      }
+      if (overflowRetryCount > 0) {
+        bufferedEvents = [];
+        settleWithTerminalMessage(contextOverflowFailure(message, true), 'error');
+        return 'settled';
+      }
+      return null;
     };
 
     const pushNonTerminalEvent = (event: AssistantMessageEvent) => {
@@ -239,6 +316,8 @@ export function wrapStreamWithAbortSettling(
             out.end(salvage);
             break;
           }
+          const overflow = contextOverflowOutcome(event.error, event.reason);
+          if (overflow) return overflow;
           const retry = retryOutcomeForResponsesError(
             event.error,
             event.reason,
@@ -269,6 +348,11 @@ export function wrapStreamWithAbortSettling(
       }
       if (!settled) {
         const result = await source.result();
+        const overflow = contextOverflowOutcome(
+          result,
+          result.stopReason === 'aborted' ? 'aborted' : 'error',
+        );
+        if (overflow) return overflow;
         const retry = retryOutcomeForResponsesError(
           result,
           result.stopReason === 'aborted' ? 'aborted' : 'error',
@@ -296,6 +380,11 @@ export function wrapStreamWithAbortSettling(
         abortCtrl.signal.aborted ? 'aborted' : 'error',
         latestPartial,
       );
+      const overflow = contextOverflowOutcome(
+        message,
+        message.stopReason === 'aborted' ? 'aborted' : 'error',
+      );
+      if (overflow) return overflow;
       const retry = retryOutcomeForResponsesError(
         message,
         message.stopReason === 'aborted' ? 'aborted' : 'error',
@@ -351,7 +440,7 @@ function retryOutcomeForResponsesError(
   sawStreamEvent: boolean,
   sawMaterialOutput: boolean,
   completedToolCallIds: ReadonlySet<string>,
-): Exclude<RetryOutcome, 'settled'> | null {
+): Exclude<RetryOutcome, 'settled' | 'retry-overflow'> | null {
   if (reason !== 'error' || sawMaterialOutput || completedToolCallIds.size > 0) return null;
   if (!sawStreamEvent
     && requestRetryCount < maxRequestRetries
@@ -369,9 +458,14 @@ export function isRetryableResponsesRequestError(errorMessage: string | undefine
   const statusMatch = RESPONSES_API_STATUS_RE.exec(errorMessage);
   if (statusMatch) {
     const status = Number(statusMatch[1]);
-    return status >= 500 && status <= 599;
+    return status === 429 || (status >= 500 && status <= 599);
   }
   return RETRYABLE_RESPONSES_TRANSPORT_RE.test(errorMessage);
+}
+
+export function isProviderContextOverflowError(errorMessage: string | undefined): boolean {
+  if (!errorMessage) return false;
+  return /\bcontext[_ -]?length[_ -]?exceeded\b|\bmaximum context length\b|\bcontext window(?: limit)? (?:is )?(?:exceeded|too (?:large|small))\b|\bprompt is too long\b|\binput (?:token count )?(?:is )?too long\b|\btoo many (?:input )?tokens\b|\btoken count exceeds (?:the )?(?:model['’]?s )?maximum\b/i.test(errorMessage);
 }
 
 export function responsesRequestRetryDelayMs(
@@ -396,6 +490,21 @@ async function waitForAbortableDelay(delayMs: number, signal: AbortSignal): Prom
     signal.addEventListener('abort', finish, { once: true });
     if (signal.aborted) finish();
   });
+}
+
+function normalizedRetryLimit(value: number | undefined, fallback: number): number {
+  return value === undefined ? fallback : Math.max(0, Math.floor(value));
+}
+
+function contextOverflowFailure(message: AssistantMessage, exhausted: boolean): AssistantMessage {
+  const prefix = exhausted
+    ? 'Provider context overflow persisted after one canonical compaction retry.'
+    : 'Provider rejected the canonical context as too large, but no eligible context could be compacted.';
+  return {
+    ...message,
+    stopReason: 'error',
+    errorMessage: `${prefix}${message.errorMessage ? ` ${message.errorMessage}` : ''}`,
+  };
 }
 
 export function chainAbortSignals(upstream: AbortSignal | undefined, local: AbortController): AbortSignal {

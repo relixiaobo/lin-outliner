@@ -146,6 +146,255 @@ export interface TurnExecutionDetails {
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort;
   readonly usage: TurnTokenUsage;
+  readonly diagnosticsRef: TurnDiagnosticsPayloadReference | null;
+}
+
+export interface TurnDiagnosticsPayloadReference {
+  /** Content-addressed lowercase SHA-256 digest. */
+  readonly id: string;
+  readonly mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json';
+  readonly byteLength: number;
+  readonly schemaVersion: 1;
+}
+
+export interface TurnDiagnosticsStablePromptBlock {
+  readonly id: string;
+  readonly layer: 'L0' | 'L1' | 'L2';
+  readonly text: string;
+  readonly fingerprint: string;
+}
+
+export interface TurnDiagnosticsStablePrompt {
+  readonly blocks: readonly TurnDiagnosticsStablePromptBlock[];
+  readonly fingerprints: {
+    readonly l0: string;
+    readonly l1: string;
+    readonly l2: string;
+    readonly complete: string;
+  };
+}
+
+export interface TurnDiagnosticsConfiguration {
+  readonly profileName: string | null;
+  readonly developerInstructions: readonly string[];
+  readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly tools: readonly string[];
+  readonly skills: readonly string[];
+  readonly plugins: readonly string[];
+  readonly mcpServers: readonly string[];
+}
+
+export interface TurnDiagnosticsToolSchema {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: JsonValue;
+}
+
+export interface TurnDiagnosticsRuntime {
+  readonly provider: string;
+  readonly model: string;
+  readonly api: string;
+  readonly configuredBaseUrl: string;
+  readonly transportSelection: 'sse' | 'websocket' | 'websocket-cached' | 'auto';
+  readonly contextWindow: number;
+  readonly maxOutputTokens: number;
+  readonly thinkingLevel: string;
+  readonly timeoutMs: number | null;
+  readonly maxRetries: number | null;
+  readonly maxRetryDelayMs: number | null;
+  readonly cacheRetention: 'none' | 'short' | 'long';
+  readonly toolExecution: 'parallel';
+  readonly steeringMode: 'all';
+}
+
+export interface TurnDiagnosticsMessage {
+  readonly id: string;
+  readonly estimatedTokens: number;
+  readonly value: JsonValue;
+}
+
+export interface TurnDiagnosticsRequestFragment {
+  /** Content-addressed lowercase SHA-256 digest of `value`. */
+  readonly id: string;
+  readonly value: JsonValue;
+}
+
+export type TurnDiagnosticsProviderRequestField =
+  | {
+      readonly name: string;
+      readonly representation: 'inline';
+      readonly value: JsonValue;
+    }
+  | {
+      readonly name: string;
+      readonly representation: 'fragments';
+      readonly container: 'array' | 'value';
+      readonly fragmentIds: readonly string[];
+      /** Typed canonical origins for each fragment's ordered content parts, when mapping is exact. */
+      readonly fragmentPartProvenance: readonly (
+        readonly TurnDiagnosticsMessagePartProvenance[] | null
+      )[];
+    };
+
+export type TurnDiagnosticsProviderRequest =
+  | {
+      readonly kind: 'object';
+      /** Preserves the post-adapter payload's top-level insertion order. */
+      readonly fields: readonly TurnDiagnosticsProviderRequestField[];
+    }
+  | {
+      readonly kind: 'value';
+      readonly value: JsonValue;
+    };
+
+export interface TurnDiagnosticsPreparedContext {
+  /** Content-addressed exact system prompt supplied to the provider adapter. */
+  readonly systemPromptFragmentId: string;
+  /** Canonical tool schemas supplied to the provider adapter, in runtime order. */
+  readonly toolNames: readonly string[];
+  /** Canonical messages supplied to the provider adapter, in model-context order. */
+  readonly messageIds: readonly string[];
+  /** Typed source for every content part of every canonical message, in the same order. */
+  readonly messagePartProvenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[];
+}
+
+export type TurnDiagnosticsMessagePartProvenance =
+  | {
+      readonly source: 'systemContext';
+      readonly entries: readonly TurnDiagnosticsSystemContextEntry[];
+    }
+  | {
+      readonly source: 'userInput' | 'assistantHistory' | 'toolResult' | 'unknown';
+    };
+
+export interface TurnDiagnosticsSystemContextEntry {
+  readonly kind: ContextPayloadKind;
+  readonly authority: ContextAuthority;
+  readonly purpose: ContextPurpose;
+}
+
+export interface TurnDiagnosticsProviderUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cacheWrite1h: number | null;
+  readonly reasoning: number | null;
+  readonly totalTokens: number;
+  readonly cost: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly total: number;
+  };
+}
+
+export interface TurnDiagnosticsProviderResponse {
+  readonly receivedAt: number;
+  readonly stopReason: 'stop' | 'length' | 'toolUse' | 'error' | 'aborted';
+  readonly errorMessage: string | null;
+  readonly usage: TurnDiagnosticsProviderUsage;
+  /** Provider-neutral assistant message emitted by the model runtime. */
+  readonly value: JsonValue;
+}
+
+export interface TurnDiagnosticsTransportResponse {
+  readonly headersReceivedAt: number;
+  readonly httpStatus: number;
+  readonly requestId: string | null;
+}
+
+export interface TurnDiagnosticsProviderCall {
+  readonly index: number;
+  readonly requestedAt: number;
+  readonly preparedContext: TurnDiagnosticsPreparedContext;
+  readonly protectedFromMessageIndex: number;
+  readonly estimatedInputTokens: number;
+  readonly inputTokenLimit: number;
+  readonly reservedOutputTokens: number;
+  readonly commonPrefixMessageCount: number;
+  /** Reconstructable, image-sanitized request captured at the post-adapter send boundary. */
+  readonly request: TurnDiagnosticsProviderRequest;
+  readonly requestFingerprint: string;
+  readonly cacheBreakpoints: readonly string[];
+  readonly transportResponse: TurnDiagnosticsTransportResponse | null;
+  readonly response: TurnDiagnosticsProviderResponse | null;
+}
+
+export interface TurnDiagnosticsAcceptedInputActivity {
+  readonly type: 'acceptedInput';
+  readonly source: 'initial' | 'steering';
+  readonly acceptedAt: number;
+  readonly itemIds: readonly ThreadItemId[];
+  /** The provider call whose prepared context first consumed this input, when observed. */
+  readonly consumedByCallIndex: number | null;
+}
+
+export interface TurnDiagnosticsModelCallActivity {
+  readonly type: 'modelCall';
+  readonly callIndex: number;
+}
+
+export interface TurnDiagnosticsToolExecution {
+  readonly callId: string;
+  readonly toolName: string;
+  /** Null only for deliberately transient tools that have no canonical Thread Item. */
+  readonly itemId: ThreadItemId | null;
+  readonly startedAt: number;
+  readonly completedAt: number | null;
+  readonly status: ItemExecutionStatus;
+}
+
+export interface TurnDiagnosticsToolExecutionBatchActivity {
+  readonly type: 'toolExecutionBatch';
+  readonly sourceCallIndex: number;
+  readonly consumedByCallIndex: number | null;
+  readonly executions: readonly TurnDiagnosticsToolExecution[];
+}
+
+export interface TurnDiagnosticsProviderRetryActivity {
+  readonly type: 'providerRetry';
+  readonly retryKind: 'request' | 'stream';
+  readonly attempt: number;
+  readonly maxRetries: number;
+  readonly occurredAt: number;
+  readonly sourceCallIndex: number;
+  readonly nextCallIndex: number | null;
+}
+
+export interface TurnDiagnosticsContextCompactionActivity {
+  readonly type: 'contextCompaction';
+  readonly trigger: 'automaticPreflight' | 'providerOverflow';
+  readonly itemId: ThreadItemId;
+  readonly completedAt: number;
+  /** Null when compaction happens before the first provider call. */
+  readonly sourceCallIndex: number | null;
+  readonly nextCallIndex: number | null;
+}
+
+export type TurnDiagnosticsActivity =
+  | TurnDiagnosticsAcceptedInputActivity
+  | TurnDiagnosticsModelCallActivity
+  | TurnDiagnosticsToolExecutionBatchActivity
+  | TurnDiagnosticsProviderRetryActivity
+  | TurnDiagnosticsContextCompactionActivity;
+
+/** Immutable provider-boundary facts for one canonical Turn. */
+export interface TurnDiagnosticsPayload {
+  readonly schemaVersion: 1;
+  readonly contextEpochId: string;
+  readonly cacheAffinity: string;
+  readonly configuration: TurnDiagnosticsConfiguration;
+  readonly stablePrompt: TurnDiagnosticsStablePrompt | null;
+  readonly toolSchemas: readonly TurnDiagnosticsToolSchema[];
+  readonly runtime: TurnDiagnosticsRuntime;
+  readonly canonicalMessages: readonly TurnDiagnosticsMessage[];
+  readonly requestFragments: readonly TurnDiagnosticsRequestFragment[];
+  readonly providerCalls: readonly TurnDiagnosticsProviderCall[];
+  /** Ordered runtime activity facts. The renderer must not reconstruct this sequence. */
+  readonly activities: readonly TurnDiagnosticsActivity[];
 }
 
 export type TurnPlanStepStatus = 'pending' | 'in_progress' | 'completed';
@@ -263,6 +512,7 @@ export interface ThreadItemOutputReference {
 }
 
 export const MAX_THREAD_CONTEXT_PAYLOAD_BYTES = 16 * 1024 * 1024;
+export const MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 export interface ThreadContextPayloadReference {
   /** Content-addressed lowercase SHA-256 digest. */
@@ -317,6 +567,7 @@ export interface TurnEnvironmentContextPayload {
   readonly executionMode: 'root' | 'child' | 'automation' | 'memory' | 'feature';
   readonly replyIdentity: string | null;
   readonly todayNodeId: string | null;
+  readonly todayNodeTitle: string | null;
 }
 
 export interface UserViewNodeSnapshot {
@@ -369,7 +620,10 @@ export type AdditionalContextPayloadEntry = ContextTextEntry;
 export interface AdditionalContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'additionalContext';
-  readonly entries: readonly AdditionalContextPayloadEntry[];
+  /** Events that apply only to the admitted user input and must not be deduplicated. */
+  readonly turnEntries: readonly AdditionalContextPayloadEntry[];
+  /** Complete current Thread state, or null when Thread state was not evaluated. */
+  readonly threadState: readonly AdditionalContextPayloadEntry[] | null;
 }
 
 export type ReferencedResourceUnavailableReason =
@@ -484,7 +738,7 @@ export interface InheritedContextPayload {
 export interface CompactionSummaryContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'compactionSummary';
-  readonly source: 'model' | 'fallback';
+  readonly source: 'deterministic';
   readonly text: string;
 }
 
@@ -515,6 +769,7 @@ export interface CompactionRestoredStateContextPayload {
   readonly roleCatalogHash: string | null;
   readonly announcedRoles: readonly ContextCatalogCheckpointEntry[];
   readonly userViewBaselineRef: ThreadContextPayloadReference | null;
+  readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
 }
 
@@ -918,6 +1173,20 @@ export interface ThreadContextReadResponse {
   } | null;
 }
 
+export interface ThreadTurnDetailsReadRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+}
+
+export interface ThreadTurnDetailsReadResponse {
+  readonly thread: Thread;
+  readonly turn: Turn;
+  readonly diagnostics: {
+    readonly ref: TurnDiagnosticsPayloadReference;
+    readonly payload: TurnDiagnosticsPayload;
+  } | null;
+}
+
 export interface ProviderRetryStatus {
   readonly kind: 'request' | 'stream';
   readonly attempt: number;
@@ -1040,6 +1309,7 @@ export const AGENT_CORE_METHODS = [
   'thread/items/list',
   'thread/item/output/read',
   'thread/context/read',
+  'thread/turn/details/read',
   'turn/start',
   'turn/steer',
   'turn/interrupt',
@@ -1068,6 +1338,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/items/list': ThreadItemsListRequest;
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
   readonly 'thread/context/read': ThreadContextReadRequest;
+  readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
@@ -1094,6 +1365,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/items/list': ThreadItemsListResponse;
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
   readonly 'thread/context/read': ThreadContextReadResponse;
+  readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;

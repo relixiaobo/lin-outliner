@@ -1026,6 +1026,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly turn: Turn;
 }) {
   const responseItem = lastAgentResponse(turn);
+  const standaloneContextBoundary = turn.status !== 'inProgress'
+    && isStandaloneContextBoundaryTurn(turn);
   const contentBlocks = groupTurnContent(turn);
   const editUserMessage = useCallback(
     (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
@@ -1054,7 +1056,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') onOpenTurnDetails(turn);
   }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
-  const responseTail = turn.status === 'inProgress' ? null : (
+  const responseTail = turn.status === 'inProgress' || standaloneContextBoundary ? null : (
     <ThreadResponseTail
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
@@ -1075,6 +1077,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onEditUserMessage={editUserMessage}
       onDisclosureToggle={onDisclosureToggle}
       onOpenNodeReference={onOpenNodeReference}
+      onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
@@ -1124,6 +1127,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
     </section>
   );
 });
+
+function isStandaloneContextBoundaryTurn(turn: Turn): boolean {
+  if (turn.items.length !== 1 || turn.provenance.trigger.kind !== 'feature') return false;
+  const item = turn.items[0];
+  return (turn.provenance.trigger.feature === 'context.clear' && item?.type === 'contextReset')
+    || (turn.provenance.trigger.feature === 'context.compact' && item?.type === 'contextCompaction');
+}
 
 function ThreadResponseTail({
   onCopy,
@@ -1467,7 +1477,7 @@ function ThreadProcessBlock({
           ) : null}
         </div>
       )}
-      {turn.status === 'inProgress' || collapsible ? <div aria-hidden className="thread-process-rule" /> : null}
+      {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
       {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
     </div>
   );

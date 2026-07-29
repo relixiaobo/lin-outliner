@@ -66,9 +66,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   child Thread
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Run Details, with no separate Memory Item or disclosure
-- context evidence and reset Items are hidden from the ordinary transcript in the
-  interface-contract stage; compaction retains its existing history-boundary row
+  in the process and Turn Diagnostics, with no separate Memory Item or disclosure
+- context evidence stays hidden from the ordinary transcript; `contextReset` and
+  `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
+  at their exact canonical positions. A completed standalone `/clear` or `/compact`
+  feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
+  response row with Copy or Continue-in-New-Chat actions
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
@@ -104,12 +107,18 @@ final agent messages retain Copy, Continue in new chat, and Details. User messag
 retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
-User-message rendering consumes canonical `ThreadUserContent[]` in submitted
-order. Text, Node references, directories, and every attachment retain an inline
-marker inside a message bubble. Consecutive image attachments additionally form
-one external gallery immediately after their marker-bearing inline run and before
-the next canonical content run; the preview never replaces the image's message
-marker. The gallery uses dedicated
+User-message rendering is a presentation projection over canonical
+`ThreadUserContent[]`; it does not claim to show provider part order. Every image
+attachment in one message is collected in canonical image order into one leading
+gallery. Every attachment, including each gallery image, also retains its inline
+file reference in the following narrative at its canonical position. The reference
+is not duplicate decoration: it exposes the same attachment identity and readable
+path represented by the provider-facing `[[file:...]]` marker, while the gallery is
+only a visual preview. Text, Node references, directories, and file references form
+one narrative bubble in their original relative order. Structured user messages use
+the same block inline flow, whitespace preservation, and overflow wrapping as the
+composer within the established user-bubble measure, so references and adjacent text
+wrap naturally instead of being laid out as separate transcript rows. The gallery uses dedicated
 layouts for one, two, three, and four images. More than four images initially
 show four thumbnails with a `+N` control; expanding shows every image and adds a
 collapse control. The overflow control is a compact bottom-right media-HUD badge:
@@ -118,13 +127,23 @@ image pixels, exposes rest/hover/active/focus feedback, and does not add a
 backdrop filter or the file-preview action shadow. The ordinary file reference
 retains its Thread-scoped preview identity without a second attachment-card
 wrapper; every gallery tile retains the same scoped identity and opens the shared
-reader. Replay and fork consume the same canonical ordering rather than
-reconstructing attachment placement. Free-text editing is exposed only when
+reader. Replay, fork, context projection, and Model Interactions consume the
+unchanged canonical ordering rather than reconstructing attachment placement from
+this presentation projection. Free-text editing is exposed only when
 canonical content contains at most one text part, and replacement preserves every
 non-text part in place. A split-text mixed message omits Edit until a structured
 content editor can represent each text boundary without flattening the sequence.
-Each inline bubble keeps the five-line measured disclosure independently, so
-the collapse mask never crops gallery content.
+The single narrative bubble keeps the five-line measured disclosure, so the
+collapse mask never crops gallery content.
+
+Copy on a user message serializes that complete visible narrative in canonical
+order: authored text remains unchanged, attachments contribute their stable file
+names, directly adjacent attachments receive one presentation space for readability,
+and Node references contribute their current display names. The visible narrative
+uses the same adjacent-attachment separator, without changing canonical content. Copy
+does not include the presentation-only gallery or claim to reproduce the provider
+request. Execution-lifetime managed-resource paths are never invented in renderer
+copy; the Model Call export remains the authority for the recorded provider payload.
 
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Details as
@@ -149,29 +168,113 @@ duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card containing timestamp, provider, model, reasoning effort,
 and the complete token/cost usage breakdown. The card is anchored in a portal
 and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens Run Details in the active workspace
+Details from the native message menu, opens Turn Diagnostics in the active workspace
 pane.
 
-Run Details preserves the established debug-page structure: Summary, Model
-Input disclosures, and an expandable Execution list with raw JSON for every
-canonical Item. It reads the canonical Thread and full Turn rollout directly;
-it does not recreate the removed debug-run, round, or event projection. The
-page adds canonical Thread, Turn, Session, provenance, and trigger identities
-alongside the existing model, timing, tool, token, and cost facts. Opening
-Details pushes the current view onto that pane's Back stack and never creates a
-split. Opening another Turn while Details is current replaces only the target,
+Turn Diagnostics is the technical workspace view for one canonical Turn; its user-facing
+title is **Model Interactions**. The default surface is Summary plus an Interaction Timeline
+grounded on the provider boundary. Tenon's accepted-input records, canonical Items,
+configuration, projection evidence, and provenance live behind one collapsed Internal
+diagnostics disclosure and mount only on demand. They never appear as peers of an outbound
+Request or masquerade as provider `user` messages. There is no independent Context
+Construction section: attachments, stable instructions, system reminders, Skill/Role/view/
+compaction evidence, tool definitions, and provider options are visible in the Request that
+actually carried them, while their Tenon source records remain available in Internal
+diagnostics.
+Summary reads model, timing, status, Model Call count, tool-execution count,
+input/output/cache token usage, cost, and any terminal error code/message/detail from the
+immutable Turn and diagnostics. Canonical Item counts remain internal. `Input tokens`
+means `usage.input`; cache reads and writes remain separate facts and are never relabeled
+as input context.
+
+The renderer performs one `thread/turn/details/read` request. Main returns the exact
+Thread, Turn, and immutable diagnostics payload referenced by
+`Turn.execution.diagnosticsRef`; renderer code never scans Turn pages, recomputes a
+context epoch or cache affinity, or substitutes current configuration for historical
+facts. A Turn without a diagnostics reference explicitly reports that request
+diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
+not match the Turn fails closed instead of appearing absent.
+
+Interaction Timeline renders every Model Call plus the tool-execution, retry, and compaction
+activities that bridge Calls in their recorded order; the renderer never derives the sequence
+by scanning canonical Items. Accepted initial and steering input remain recorded, but are
+input-admission evidence rather than model interaction and therefore appear only in Internal
+diagnostics. A Model Call owns exactly one Request and its corresponding Response. Tool
+execution is a sibling activity after its source Call and before the Call that consumes its
+results, not a child of either Response or Request. Parallel tools from one model response form
+one batch; a transient tool with no canonical Item remains an explicit execution fact.
+Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
+provider SDK remain part of that SDK invocation.
+The timeline expresses hierarchy with disclosure indentation and horizontal activity
+separators only; it does not draw a vertical guide-line axis through nested content.
+
+Request first renders the content-bearing fields from the final post-adapter **Provider
+Request** observed immediately before transport. Stable provider parameters such as model,
+streaming, output limits, reasoning options, and tool-selection controls stay out of the main
+content flow and appear in the Model Call information surface and copied Model Call export.
+Provider fields preserve top-level insertion order only as a serialization fact; they receive no
+synthetic numeric context order. `messages`,
+`input`, `contents`, and equivalent sequence fields preserve element order and every
+message's content-part order. The renderer may add presentation labels such as attachment
+or System Context, but never derives authority, reorders, merges, or substitutes the
+recorded value. Main records exact, unambiguous adapter-to-canonical content-part matches as
+typed provenance; unmatched fragments stay unlabeled. A System Context part expands to its
+ordered semantic entries (Environment, User View, Available Skills, Available Roles, and
+other typed kinds) with authority and purpose, plus the untouched raw provider part. The
+renderer never parses reminder XML, and literal user text that resembles a reminder remains
+ordinary text. The complete image-sanitized provider request is available as JSON from
+the same call's copy action. The recorded pre-adapter Model Context remains available in that
+export in semantic order: System Instructions, Tool Definitions, then Messages. It is nested
+under Request as Tenon's adapter input, not presented as a second transport payload. The main
+Request/Response reading flow contains no parallel raw-JSON, pre-adapter, or metadata
+disclosures; the semantic Provider Request Content and Model Response are the only peers.
+
+Each call distinguishes request time,
+HTTP-headers time and latency,
+and assistant-response completion time and total duration. It exposes an HTTP status and
+allowlisted provider request ID when available, but never arbitrary response headers. It
+also exposes the protected message boundary, token budget, common-prefix count, request
+fingerprint, cache-breakpoint paths, complete provider request, and assistant response.
+Provider-reported input/output/cache/reasoning usage and
+stop reason, plus locally calculated cost and normalized error details, are typed call
+facts rather than renderer inferences. The
+Call summary derives completed, failed, or
+interrupted from the response stop reason rather than treating every response as success.
+The Model Call header keeps only its ordinal and derived result status in the main reading
+flow. Its trailing information control exposes the recorded model, provider, request time,
+HTTP timing/status/request ID, token budget, common-prefix count, provider parameters,
+stop reason, provider-reported token/cache/reasoning usage, calculated cost, and normalized
+error on hover or keyboard focus. The adjacent copy control materializes one typed Model Call
+diagnostics export only when invoked. It contains runtime selection; Request with the complete
+recorded Model Context, ordered image-sanitized Provider Payload, and Request Facts; and
+Response with allowlisted transport facts plus the provider-neutral normalized model response,
+usage, stop reason, and error. A limitations object states that image bytes are omitted with
+length/digest markers and that secret headers and the raw provider response body were not
+recorded. The export does not claim to be a byte-for-byte HTTP exchange.
+Repetition-heavy request fields use the diagnostics fragment pool without losing a value
+or its position. Each fragmented request field carries an aligned optional provenance array;
+the codec requires exact fragment and content-part cardinality whenever provenance exists.
+Image bytes are never returned to the renderer: binary/base64/data-URL
+content is represented by an omission marker containing its byte length and SHA-256.
+
+Internal diagnostics exposes accepted-input admission records, accepted user records,
+canonical Thread/Turn/Session and provenance identities, context epoch, cache affinity,
+effective configuration, L0/L1/L2 prompt blocks and fingerprints, canonical tool schemas,
+the resolved runtime, the prepared message pool, and exhaustive Canonical Items including
+context evidence, reset, and compaction Items. These facts explain or verify a request; they
+do not compete with the post-adapter Request as a second account of what was sent. The whole
+section is collapsed and lazy by default. Large prompt blocks,
+schemas, provider messages, responses, and Item JSON mount
+only while their disclosure is open. Expanding an evidence Item issues one exact
+`(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
+payload; it never receives a canonical payload path or gains digest-only read authority.
+Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
+Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
+split. Opening another Turn while Turn Diagnostics is current replaces only the target,
 without adding history noise; Back or close returns to the prior view.
 
-Run Details includes context evidence/reset/compaction in its exhaustive Item list.
-Evidence uses its bounded canonical summary while collapsed. Expanding an evidence
-row issues one exact `(threadId, turnId, itemId, contextId)` audit read and renders the
-decoded semantic payload; it never receives a canonical payload path or gains digest-only
-read authority. Missing, corrupt, rolled-back, or mismatched evidence remains explicitly
-unavailable. Dedicated reset/compaction presentation arrives with their command and
-planner consumers rather than being inferred from protocol presence.
-
 Normal Thread UI may visually group Items by Turn without printing every Turn
-ID. Run Details and diagnostics must show the same Thread, Turn, and Item
+ID. Turn Diagnostics must show the same Thread, Turn, and Item
 identities as the transport.
 
 Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.
@@ -224,11 +327,15 @@ An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.
 
 Typing `/` opens the established composer command menu. It is populated from
-the current user-invocable Skill catalog and inserts `/<skill> ` without
+the reserved `/compact` and `/clear` commands plus the current user-invocable Skill
+catalog. `/compact` inserts a trailing space for optional instructions; `/clear` inserts
+the complete command. Skill entries insert `/<skill> ` without
 flattening other structured composer content. A direct Skill invocation without
 attachments is resolved by the Turn's Skill runtime before the model prompt is
 sent; the canonical userMessage Item retains exactly what the user submitted.
-Messages with attachments and unknown slash text remain ordinary Turn input.
+The two reserved commands are recognized only as the sole text part and require an idle
+Thread; they create completed feature Turns without sending a user message or launching
+the model. Messages with attachments and unknown slash text remain ordinary Turn input.
 
 Only a root user Thread exposes the composer. Child, Automation, Memory, and
 other feature Threads remain fully inspectable but are driven through their
@@ -329,7 +436,7 @@ checklist; activating the summary opens the same scrollable checklist and moves
 keyboard focus into it. Escape closes it and restores focus to the summary. A
 replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
-or application restart removes it. It never appears in transcript history, Run
+or application restart removes it. It never appears in transcript history, Turn
 Details, response copy, or as `Used update_plan`.
 
 Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI

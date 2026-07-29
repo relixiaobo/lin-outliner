@@ -5,28 +5,50 @@ import {
   type AgentState,
   type AgentTool,
 } from '@earendil-works/pi-agent-core';
+import type { AgentRuntimeSettings } from '../../../core/types';
 import type {
   Api,
   AssistantMessage,
   Context,
   Message,
   Model,
+  SimpleStreamOptions,
   TextContent,
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type {
+  ContextCompactionThreadItem,
+  ContextCursor,
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
   SkillInvocationContextPayload,
   ThreadItem,
   ThreadItemOutputReference,
+  Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
+import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
 import { decodeThreadContextPayload } from '../../../core/agent/codec';
-import { CanonicalContextProjector } from '../context/ContextProjector';
+import {
+  CanonicalContextProjector,
+  type CanonicalContextProjection,
+} from '../context/ContextProjector';
+import {
+  ContextCapacityError,
+  ContextCompactionRequiredError,
+  planContextBudget,
+} from '../context/ContextBudgetPlanner';
+import { freezePendingToolOutputProjections } from '../context/ToolOutputProjection';
+import { cursorFor, latestContextEpochId, selectEffectiveContext } from '../context/ContextEpoch';
 import { composeStablePrompt } from '../context/stablePrompt';
+import {
+  applyAnthropicStablePromptCacheBreakpoints,
+  providerCacheAffinity,
+} from '../context/ProviderCache';
+import { contextPayloadReferenceKey } from '../context/contextDependencies';
+import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
 import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import {
   lowestThinkingLevel,
@@ -89,6 +111,8 @@ export interface PiTurnExecutorOptions {
     context: ThreadNameGenerationContext,
     runtime: PiRuntimeSelection,
   ) => Promise<string | null>;
+  readonly resolveRuntimeSettings?: () => Promise<AgentRuntimeSettings>;
+  readonly streamSimple?: typeof piStreamSimple;
 }
 
 export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
@@ -120,12 +144,19 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const internalMemory = context.thread.threadSource === 'memory_consolidation';
       const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
       if (context.signal.aborted) return { status: 'interrupted' };
-      const tools = internalMemory ? [] : [...(await this.options.createTools?.(context) ?? [])];
+      const runtimeSettings = await (this.options.resolveRuntimeSettings ?? getAgentRuntimeSettings)();
       if (context.signal.aborted) return { status: 'interrupted' };
-      const systemPrompt = internalMemory
-        ? context.configuration.developerInstructions.join('\n\n')
-        : composeStablePrompt({ thread: context.thread, configuration: context.configuration }).text;
-      const projector = new CanonicalContextProjector(runtime.model, context);
+      const tools = internalMemory
+        ? []
+        : canonicalizeAgentTools(await this.options.createTools?.(context) ?? []);
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const stablePrompt = internalMemory
+        ? null
+        : composeStablePrompt({ thread: context.thread, configuration: context.configuration });
+      const systemPrompt = stablePrompt?.text
+        ?? context.configuration.developerInstructions.join('\n\n');
+      const projectionContext = withTurnScopedContextReads(context);
+      const projector = new CanonicalContextProjector(runtime.model, projectionContext);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
       const initialPrompt = currentMessages.at(-1);
@@ -135,14 +166,95 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       priorMessages.push(...currentMessages.slice(0, -1));
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const normalizer = new PiEventNormalizer(context);
+      const providerOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
+      const contextTurns = [...context.historyBeforeTurn, context.turn];
+      const cacheAffinity = providerCacheAffinity(context.thread.id, contextTurns);
+      const diagnostics = new TurnDiagnosticsCollector({
+        contextEpochId: latestContextEpochId(contextTurns, INITIAL_CONTEXT_EPOCH_ID),
+        cacheAffinity,
+        configuration: context.configuration,
+        stablePrompt,
+        tools,
+        model: runtime.model,
+        thinkingLevel: runtime.thinkingLevel,
+        providerOptions,
+        initialInput: {
+          acceptedAt: prompt.timestamp,
+          itemIds: context.turn.items.map((item) => item.id),
+        },
+      });
+      const normalizer = new PiEventNormalizer(context, {
+        started: (execution) => diagnostics.captureToolExecutionStarted(
+          execution.callId,
+          execution.toolName,
+          execution.itemId,
+          execution.startedAt,
+        ),
+        completed: (execution) => diagnostics.captureToolExecutionCompleted(
+          execution.callId,
+          execution.failed,
+          execution.completedAt,
+        ),
+      });
+      if (internalMemory) {
+        const messages = [...priorMessages, prompt];
+        const budget = planContextBudget({
+          model: runtime.model,
+          systemPrompt,
+          tools,
+          messages,
+          protectedFromMessageIndex: priorMessages.length,
+        });
+        diagnostics.prepareProviderPlan({
+          protectedFromMessageIndex: priorMessages.length,
+          budget,
+          messagePartProvenance: messages.map((message) => (
+            'content' in message
+              ? (typeof message.content === 'string' ? [message.content] : message.content)
+                .map(() => ({ source: 'unknown' as const }))
+              : []
+          )),
+        });
+      }
       const transformContext = internalMemory
         ? undefined
         : async () => {
             await normalizer.flush();
             await this.options.beforeProviderContext?.(context);
-            return projectCanonicalProviderContext(context, runtime.model, prompt);
+            await freezePendingToolOutputProjections({
+              turns: [...context.historyBeforeTurn, {
+                ...context.turn,
+                items: currentTurnItems(context),
+              }],
+              model: runtime.model,
+              readContext: projectionContext.readContext,
+              persist: (payload, summary) => context.persistContextEvidence(payload, summary),
+            });
+            return projectCanonicalProviderContext(
+              projectionContext,
+              runtime.model,
+              systemPrompt,
+              tools,
+              prompt,
+              {
+                prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
+                compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
+              },
+            );
           };
+      const streamSimple = this.options.streamSimple ?? piStreamSimple;
+      const configuredStream = (
+        model: Model<Api>,
+        providerContext: Context,
+        options: SimpleStreamOptions = {},
+      ) => {
+        diagnostics.captureProviderContext(providerContext);
+        return streamSimple(
+          model,
+          providerContext,
+          { ...options, ...providerOptions, maxRetries: 0 },
+        );
+      };
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
           systemPrompt,
@@ -151,16 +263,42 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           tools,
           messages: priorMessages,
         },
-        streamFn: createAbortSettledStreamFn(piStreamSimple, {
-          onProviderRetry: (event) => context.onProviderRetry(event.phase === 'retrying'
-            ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
-            : null),
+        streamFn: createAbortSettledStreamFn(configuredStream, {
+          onProviderRetry: (event) => {
+            if (event.phase === 'retrying') diagnostics.captureProviderRetry(event);
+            context.onProviderRetry(event.phase === 'retrying'
+              ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
+              : null);
+          },
+          maxRequestRetries: providerOptions.maxRetries,
+          maxStreamRetries: providerOptions.maxRetries,
+          maxRetryDelayMs: providerOptions.maxRetryDelayMs,
+          ...(transformContext
+            ? {
+                onContextOverflow: async () => {
+                  const compacted = await context.compactContext(
+                    'providerOverflow',
+                    activeAdmissionCursor(context.turn),
+                  );
+                  if (compacted) diagnostics.captureContextCompaction(compacted);
+                  return compacted ? await transformContext() : null;
+                },
+              }
+            : {}),
         }),
         getApiKey: runtime.getApiKey,
-        onPayload: agentProviderPayload,
+        onPayload: (payload, model) => {
+          const transformed = agentProviderPayload(payload, model, stablePrompt);
+          diagnostics.captureProviderRequest(transformed ?? payload);
+          return transformed;
+        },
+        onResponse: (response) => {
+          diagnostics.captureTransportResponse(response);
+        },
         transformContext,
         steeringMode: 'all',
-        sessionId: context.thread.sessionId,
+        sessionId: cacheAffinity,
+        maxRetryDelayMs: runtimeSettings.providerMaxRetryDelayMs ?? undefined,
         toolExecution: 'parallel',
       });
       if (context.signal.aborted) {
@@ -168,26 +306,51 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return { status: 'interrupted' };
       }
       unsubscribe = agent.subscribe(async (event) => {
+        diagnostics.captureEvent(event);
         normalizer.handle(event);
         await normalizer.flush();
       });
       context.onSteer(async (input) => {
+        const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
-        if (!context.signal.aborted) agent?.steer(message);
+        if (!context.signal.aborted && agent) {
+          diagnostics.setSteeringDelivered(activityIndex, true);
+          try {
+            agent.steer(message);
+          } catch (error) {
+            diagnostics.setSteeringDelivered(activityIndex, false);
+            throw error;
+          }
+        }
       });
       await agent.prompt(prompt);
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
-        return { status: 'interrupted', execution: executionDetails(context, runtime, normalizer.usage) };
+        diagnostics.finalizeOpenToolExecutions('interrupted');
+        const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
+        return {
+          status: 'interrupted',
+          execution: persisted.details,
+          refreshDiagnostics: persisted.refresh,
+        };
       }
       if (agent.state.errorMessage || normalizer.stopReason === 'error') {
+        diagnostics.finalizeOpenToolExecutions('failed');
+        const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
         return {
           status: 'failed',
           error: { message: agent.state.errorMessage ?? normalizer.errorMessage ?? 'Model execution failed' },
-          execution: executionDetails(context, runtime, normalizer.usage),
+          execution: persisted.details,
+          refreshDiagnostics: persisted.refresh,
         };
       }
-      return { status: 'completed', execution: executionDetails(context, runtime, normalizer.usage) };
+      diagnostics.finalizeOpenToolExecutions('completed');
+      const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
+      return {
+        status: 'completed',
+        execution: persisted.details,
+        refreshDiagnostics: persisted.refresh,
+      };
     } finally {
       context.signal.removeEventListener('abort', abort);
       unsubscribe?.();
@@ -206,20 +369,131 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
 async function projectCanonicalProviderContext(
   context: TurnExecutionContext,
   model: Model<Api>,
+  systemPrompt: string,
+  tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
+  observer?: {
+    readonly prepared?: (input: {
+      readonly messages: readonly Message[];
+      readonly messagePartProvenance: CanonicalContextProjection['messagePartProvenance'];
+      readonly protectedFromMessageIndex: number;
+      readonly budget: ReturnType<typeof planContextBudget>;
+    }) => void;
+    readonly compacted?: (item: Extract<ThreadItem, { type: 'contextCompaction' }>) => void;
+  },
 ): Promise<Message[]> {
-  const projector = new CanonicalContextProjector(model, context);
-  const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
-  const currentMessages = await projector.projectTurns([{
-    ...context.turn,
-    items: currentTurnItems(context),
-  }]);
-  const initialUserIndex = currentMessages.findIndex((message) => message.role === 'user');
-  if (initialUserIndex < 0) {
-    throw new Error('Canonical Turn projection did not produce an initial user message.');
+  const build = async (stagedCompaction?: ContextCompactionThreadItem) => {
+    const sourceTurns = [
+      ...context.historyBeforeTurn,
+      {
+        ...context.turn,
+        items: [
+          ...currentTurnItems(context),
+          ...(stagedCompaction ? [stagedCompaction] : []),
+        ],
+      },
+    ];
+    const projector = new CanonicalContextProjector(model, context);
+    const projection = await projector.projectTurnsWithBoundaries(sourceTurns);
+    const initialUser = context.turn.items.find((item) => (
+      item.type === 'userMessage' && item.acceptedAt === preparedInitialPrompt.timestamp
+    ));
+    const protectedBoundary = initialUser
+      ? projection.userBoundaries.find((boundary) => (
+          boundary.turnId === context.turn.id && boundary.itemId === initialUser.id
+        ))
+      : null;
+    if (!protectedBoundary) throw new Error('Canonical Turn projection did not preserve the initial user Item.');
+    const selectedTurns = selectEffectiveContext(sourceTurns).turns;
+    return {
+      ...projection,
+      turnBoundaries: projection.turnBoundaries.map((boundary) => {
+        const turn = selectedTurns.find((candidate) => candidate.id === boundary.turnId);
+        if (!turn?.items[0]) throw new Error(`Projected Turn boundary is unreachable: ${boundary.turnId}`);
+        return {
+          ...boundary,
+          preserveFrom: boundary.turnId === context.turn.id
+            ? activeAdmissionCursor(context.turn)
+            : cursorFor(turn, turn.items[0]),
+        };
+      }),
+      protectedFromMessageIndex: protectedBoundary.messageIndex,
+    };
+  };
+  const plan = async (stagedCompaction?: ContextCompactionThreadItem) => {
+    const projection = await build(stagedCompaction);
+    const budget = planContextBudget({
+      model,
+      systemPrompt,
+      tools,
+      messages: projection.messages,
+      protectedFromMessageIndex: projection.protectedFromMessageIndex,
+    });
+    return {
+      budget,
+      messagePartProvenance: projection.messagePartProvenance,
+      protectedFromMessageIndex: projection.protectedFromMessageIndex,
+    };
+  };
+  const preparedMessages = (prepared: Awaited<ReturnType<typeof plan>>) => {
+    observer?.prepared?.({
+      messages: prepared.budget.messages,
+      messagePartProvenance: prepared.messagePartProvenance,
+      protectedFromMessageIndex: prepared.protectedFromMessageIndex,
+      budget: prepared.budget,
+    });
+    return [...prepared.budget.messages];
+  };
+  let initialError: ContextCompactionRequiredError;
+  try {
+    return preparedMessages(await plan());
+  } catch (error) {
+    if (!(error instanceof ContextCompactionRequiredError)) throw error;
+    initialError = error;
   }
-  currentMessages[initialUserIndex] = preparedInitialPrompt;
-  return [...priorMessages, ...currentMessages];
+  const projection = await build();
+  const candidates = uniqueContextCursors([
+    ...projection.turnBoundaries
+      .filter((boundary) => boundary.messageIndex >= initialError.retainFromMessageIndex)
+      .map((boundary) => boundary.preserveFrom),
+    activeAdmissionCursor(context.turn),
+  ]);
+  let lastError = initialError;
+  for (const preserveFrom of candidates) {
+    const staged = await context.stageContextCompaction('automaticPreflight', preserveFrom);
+    if (!staged) continue;
+    try {
+      const prepared = await plan(staged.item);
+      const compacted = await staged.commit();
+      observer?.compacted?.(compacted);
+      return preparedMessages(prepared);
+    } catch (error) {
+      await staged.discard();
+      if (!(error instanceof ContextCompactionRequiredError)) throw error;
+      lastError = error;
+    }
+  }
+  throw new ContextCapacityError(
+    'Canonical history still exceeds the model input capacity after exhausting automatic compaction boundaries.',
+    lastError.estimatedTokens,
+    lastError.availableTokens,
+  );
+}
+
+function activeAdmissionCursor(turn: Turn): ContextCursor {
+  const item = turn.items.find((candidate) => (
+    candidate.type !== 'contextEvidence' || candidate.kind !== 'inheritedContext'
+  )) ?? turn.items[0];
+  if (!item) throw new Error(`Active Turn has no canonical admission boundary: ${turn.id}`);
+  return cursorFor(turn, item);
+}
+
+function contextCursorKey(cursor: ContextCursor): string {
+  return `${cursor.turnId}\0${cursor.itemId}`;
+}
+
+function uniqueContextCursors(cursors: readonly ContextCursor[]): ContextCursor[] {
+  return [...new Map(cursors.map((cursor) => [contextCursorKey(cursor), cursor])).values()];
 }
 
 function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] {
@@ -232,13 +506,20 @@ function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] 
   ];
 }
 
-export function agentProviderPayload(payload: unknown, model: Model<Api>): unknown | undefined {
+export function agentProviderPayload(
+  payload: unknown,
+  model: Model<Api>,
+  stablePrompt?: ReturnType<typeof composeStablePrompt> | null,
+): unknown | undefined {
   const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
-  const source = compatiblePayload ?? payload;
+  const cachePayload = stablePrompt
+    ? applyAnthropicStablePromptCacheBreakpoints(compatiblePayload ?? payload, model, stablePrompt)
+    : undefined;
+  const source = cachePayload ?? compatiblePayload ?? payload;
   if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
-    return compatiblePayload;
+    return cachePayload ?? compatiblePayload;
   }
-  if (source.reasoning.summary === 'detailed') return compatiblePayload;
+  if (source.reasoning.summary === 'detailed') return cachePayload ?? compatiblePayload;
   return {
     ...source,
     reasoning: {
@@ -246,6 +527,14 @@ export function agentProviderPayload(payload: unknown, model: Model<Api>): unkno
       summary: 'detailed',
     },
   };
+}
+
+export function canonicalizeAgentTools(tools: readonly AgentTool[]): AgentTool[] {
+  return [...tools].sort((left, right) => {
+    if (left.name < right.name) return -1;
+    if (left.name > right.name) return 1;
+    return 0;
+  });
 }
 
 function isOpenAIResponsesApi(api: Api): boolean {
@@ -373,7 +662,22 @@ export class PiEventNormalizer {
   private readonly transientToolCallIds = new Set<string>();
   private tail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly context: TurnExecutionContext) {}
+  constructor(
+    private readonly context: TurnExecutionContext,
+    private readonly executionObserver?: {
+      readonly started?: (execution: {
+        readonly callId: string;
+        readonly toolName: string;
+        readonly itemId: string | null;
+        readonly startedAt: number;
+      }) => void;
+      readonly completed?: (execution: {
+        readonly callId: string;
+        readonly failed: boolean;
+        readonly completedAt: number;
+      }) => void;
+    },
+  ) {}
 
   handle(event: AgentEvent): void {
     this.tail = this.tail.then(() => this.process(event));
@@ -482,16 +786,23 @@ export class PiEventNormalizer {
 
   private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
     const identity = canonicalIdentity(providerName);
+    const startedAt = Date.now();
     if (identity.namespace === null && identity.name === 'update_plan') {
       this.transientToolCallIds.add(callId);
+      this.executionObserver?.started?.({ callId, toolName: providerName, itemId: null, startedAt });
       return;
     }
     const item = startedToolItem(this.context, callId, identity, args);
-    this.toolItems.set(callId, { item: await this.context.recorder.started(item), startedAt: Date.now() });
+    const started = await this.context.recorder.started(item);
+    this.toolItems.set(callId, { item: started, startedAt });
+    this.executionObserver?.started?.({ callId, toolName: providerName, itemId: started.id, startedAt });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
-    if (this.transientToolCallIds.delete(callId)) return;
+    if (this.transientToolCallIds.delete(callId)) {
+      this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
+      return;
+    }
     const active = this.toolItems.get(callId);
     if (!active) return;
     const completed = await this.context.recorder.completed(await completedToolItem(
@@ -503,6 +814,7 @@ export class PiEventNormalizer {
     ));
     await persistCompletedToolContext(this.context, completed, result, isError);
     this.toolItems.delete(callId);
+    this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
   }
 }
 
@@ -710,18 +1022,61 @@ async function completedToolItem(
   }
 }
 
-function executionDetails(
+async function executionDetails(
   context: TurnExecutionContext,
   runtime: PiRuntimeSelection,
   usage: TurnExecutionDetails['usage'],
-): TurnExecutionDetails {
+  diagnostics: TurnDiagnosticsCollector,
+): Promise<{
+  readonly details: TurnExecutionDetails;
+  readonly refresh: () => Promise<TurnExecutionDetails['diagnosticsRef']>;
+}> {
+  let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
+  const refresh = async () => {
+    try {
+      diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
+    } catch (error) {
+      diagnosticsRef = null;
+      context.onTurnDiagnosticsError(error);
+    }
+    return diagnosticsRef;
+  };
+  await refresh();
   return {
-    modelProvider: context.thread.modelProvider,
-    model: runtime.model.id,
-    reasoningEffort: context.configuration.reasoningEffort,
-    usage: {
-      ...usage,
-      cost: usage.cost ? { ...usage.cost } : null,
+    details: {
+      modelProvider: context.thread.modelProvider,
+      model: runtime.model.id,
+      reasoningEffort: context.configuration.reasoningEffort,
+      diagnosticsRef,
+      usage: {
+        ...usage,
+        cost: usage.cost ? { ...usage.cost } : null,
+      },
+    },
+    refresh,
+  };
+}
+
+function withTurnScopedContextReads(context: TurnExecutionContext): TurnExecutionContext {
+  const reads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
+  return {
+    ...context,
+    readContext: (ref) => {
+      const key = contextPayloadReferenceKey(ref);
+      const cached = reads.get(key);
+      if (cached) return cached;
+      const pending = context.readContext(ref).then(
+        (payload) => {
+          if (!payload) reads.delete(key);
+          return payload;
+        },
+        (error) => {
+          reads.delete(key);
+          throw error;
+        },
+      );
+      reads.set(key, pending);
+      return pending;
     },
   };
 }
@@ -885,6 +1240,7 @@ function collaborationViews(result: unknown): Array<Record<string, unknown>> {
   const details = toolDetails(result);
   if (Array.isArray(details)) return details.filter(isRecord);
   if (!isRecord(details)) return [];
+  if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
   if (typeof details.thread_id === 'string') {
     return [{ threadId: details.thread_id, status: 'running' }];
   }

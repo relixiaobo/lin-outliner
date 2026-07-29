@@ -11,16 +11,23 @@ import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
 import {
   CONTEXT_PAYLOAD_KINDS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
+  MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   type ContextPayloadKind,
+  type JsonValue,
   type ThreadContextPayload,
   type ThreadContextPayloadReference,
   type ThreadId,
   type ThreadItemOutputReference,
   type ThreadResourceReference,
+  type TurnDiagnosticsPayload,
+  type TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
 import {
+  decodeTurnDiagnosticsPayload,
+  decodeTurnDiagnosticsPayloadJson,
   decodeThreadContextPayload,
   decodeThreadContextPayloadJson,
+  encodeTurnDiagnosticsPayload,
   encodeThreadContextPayload,
 } from '../../../core/agent/codec';
 
@@ -37,8 +44,10 @@ const TEXT_MIME_EXTENSIONS = {
 } as const satisfies Readonly<Record<ThreadItemOutputReference['mimeType'], string>>;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
 const CONTEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
+const TURN_DIAGNOSTICS_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
 const TEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:txt|json)$/;
 const CONTEXT_DIR = 'context';
+const TURN_DIAGNOSTICS_DIR = 'turn-diagnostics';
 const RESOURCE_DIR = 'resources';
 const STAGING_DIR = '.staging';
 
@@ -545,6 +554,130 @@ export class ToolPayloadStore {
     });
   }
 
+  async writeTurnDiagnostics(
+    threadId: ThreadId,
+    payload: unknown,
+  ): Promise<TurnDiagnosticsPayloadReference> {
+    const decoded = decodeTurnDiagnosticsPayload(payload);
+    validateTurnDiagnosticsPoolDigests(decoded);
+    const encoded = encodeTurnDiagnosticsPayload(decoded);
+    const bytes = Buffer.from(encoded, 'utf8');
+    validateTurnDiagnosticsPayloadByteLength(bytes.byteLength);
+    const ref: TurnDiagnosticsPayloadReference = {
+      id: createHash('sha256').update(bytes).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+      byteLength: bytes.byteLength,
+      schemaVersion: 1,
+    };
+    return this.withResourceLock(threadId, async () => {
+      const directory = await this.ensureManagedDirectory(threadId, TURN_DIAGNOSTICS_DIR);
+      const target = join(directory, turnDiagnosticsFileName(ref));
+      const existing = await lstat(target).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Turn diagnostics conflict with existing bytes.');
+        return ref;
+      }
+      await this.assertResourceCapacity(threadId, bytes.byteLength);
+      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
+      const stagingPath = join(stagingDirectory, randomUUID());
+      try {
+        await writeFile(stagingPath, bytes, { flag: 'wx' });
+        await link(stagingPath, target).catch(async (error: unknown) => {
+          if (!isAlreadyExists(error)) throw error;
+          if (!await verifyStoredPayload(target, ref)) {
+            throw new Error('Turn diagnostics conflict with existing bytes.');
+          }
+        });
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Published Turn diagnostics are invalid.');
+        return ref;
+      } finally {
+        await rm(stagingPath, { force: true });
+      }
+    });
+  }
+
+  async readTurnDiagnostics(
+    threadId: ThreadId,
+    ref: TurnDiagnosticsPayloadReference,
+  ): Promise<TurnDiagnosticsPayload | null> {
+    validateTurnDiagnosticsPayloadReference(ref);
+    const directory = await this.existingManagedDirectory(threadId, TURN_DIAGNOSTICS_DIR);
+    if (!directory) return null;
+    const path = join(directory, turnDiagnosticsFileName(ref));
+    const bytes = await readVerifiedPayloadBytes(path, ref);
+    if (!bytes) return null;
+    const payload = decodeTurnDiagnosticsPayloadJson(bytes.toString('utf8'));
+    validateTurnDiagnosticsPoolDigests(payload);
+    return payload;
+  }
+
+  async copyTurnDiagnosticsToThread(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    ref: TurnDiagnosticsPayloadReference,
+  ): Promise<boolean> {
+    validateTurnDiagnosticsPayloadReference(ref);
+    const sourceDirectory = await this.existingManagedDirectory(sourceThreadId, TURN_DIAGNOSTICS_DIR);
+    if (!sourceDirectory) return false;
+    const sourcePath = join(sourceDirectory, turnDiagnosticsFileName(ref));
+    const sourceBytes = await readVerifiedPayloadBytes(sourcePath, ref);
+    if (!sourceBytes) return false;
+    validateTurnDiagnosticsPoolDigests(decodeTurnDiagnosticsPayloadJson(sourceBytes.toString('utf8')));
+    return this.withResourceLock(targetThreadId, async () => {
+      const targetDirectory = await this.ensureManagedDirectory(targetThreadId, TURN_DIAGNOSTICS_DIR);
+      const targetPath = join(targetDirectory, turnDiagnosticsFileName(ref));
+      const existing = await lstat(targetPath).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(targetPath, ref)) {
+          throw new Error('Turn diagnostics conflict with existing bytes.');
+        }
+        return true;
+      }
+      await this.assertResourceCapacity(targetThreadId, ref.byteLength);
+      try {
+        await copyFile(
+          sourcePath,
+          targetPath,
+          constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+        );
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        if (!isAlreadyExists(error)) throw error;
+      }
+      if (!await verifyStoredPayload(targetPath, ref)) {
+        await rm(targetPath, { force: true });
+        throw new Error('Copied Turn diagnostics are invalid.');
+      }
+      return true;
+    });
+  }
+
+  async pruneUnreferencedTurnDiagnostics(
+    threadId: ThreadId,
+    references: readonly TurnDiagnosticsPayloadReference[],
+  ): Promise<void> {
+    const retained = new Set(references.map((ref) => {
+      validateTurnDiagnosticsPayloadReference(ref);
+      return turnDiagnosticsFileName(ref);
+    }));
+    await this.withResourceLock(threadId, async () => {
+      const directory = await this.existingManagedDirectory(threadId, TURN_DIAGNOSTICS_DIR);
+      if (!directory) return;
+      const files = await readdir(directory);
+      for (const fileName of files) {
+        if (!TURN_DIAGNOSTICS_FILENAME_PATTERN.test(fileName) || !retained.has(fileName)) {
+          await rm(join(directory, fileName), { recursive: true, force: true });
+        }
+      }
+    });
+  }
+
   async writeText(
     threadId: ThreadId,
     _itemId: string,
@@ -1011,6 +1144,10 @@ function contextPayloadFileName(ref: ThreadContextPayloadReference): string {
   return `${ref.id}.json`;
 }
 
+function turnDiagnosticsFileName(ref: TurnDiagnosticsPayloadReference): string {
+  return `${ref.id}.json`;
+}
+
 function textPayloadFileName(ref: ThreadItemOutputReference): string {
   return `${ref.id}${TEXT_MIME_EXTENSIONS[ref.mimeType]}`;
 }
@@ -1034,6 +1171,50 @@ function validateContextPayloadReference(ref: ThreadContextPayloadReference): vo
     throw new Error('Invalid context payload kind.');
   }
   validateContextPayloadByteLength(ref.byteLength);
+}
+
+function validateTurnDiagnosticsPayloadReference(ref: TurnDiagnosticsPayloadReference): void {
+  if (!SHA_256_PATTERN.test(ref.id)) throw new Error('Invalid Turn diagnostics digest.');
+  if (ref.mimeType !== 'application/vnd.tenon.agent-turn-diagnostics+json') {
+    throw new Error('Invalid Turn diagnostics MIME type.');
+  }
+  if (ref.schemaVersion !== 1) throw new Error('Invalid Turn diagnostics schema version.');
+  validateTurnDiagnosticsPayloadByteLength(ref.byteLength);
+}
+
+function validateTurnDiagnosticsPayloadByteLength(byteLength: number): void {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    throw new Error('Turn diagnostics byte length must be a non-negative safe integer.');
+  }
+  if (byteLength > MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES) {
+    throw new Error('Turn diagnostics exceed the managed payload budget.');
+  }
+}
+
+function validateTurnDiagnosticsPoolDigests(payload: TurnDiagnosticsPayload): void {
+  for (const message of payload.canonicalMessages) {
+    if (message.id !== diagnosticsValueDigest(message.value)) {
+      throw new Error('Canonical diagnostics message digest does not match its value.');
+    }
+  }
+  for (const fragment of payload.requestFragments) {
+    if (fragment.id !== diagnosticsValueDigest(fragment.value)) {
+      throw new Error('Provider request fragment digest does not match its value.');
+    }
+  }
+}
+
+function diagnosticsValueDigest(value: JsonValue): string {
+  return createHash('sha256').update(stableJsonValue(value), 'utf8').digest('hex');
+}
+
+function stableJsonValue(value: JsonValue): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJsonValue).join(',')}]`;
+  const record = value as Readonly<Record<string, JsonValue>>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${stableJsonValue(record[key])}`
+  )).join(',')}}`;
 }
 
 function validateTextPayloadReference(ref: ThreadItemOutputReference): void {

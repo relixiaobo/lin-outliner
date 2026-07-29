@@ -533,6 +533,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         modelProvider: string;
         model: string;
         reasoningEffort: string;
+        diagnosticsRef: null;
         usage: {
           input: number;
           output: number;
@@ -633,6 +634,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       return thread;
     };
     const emitAgentCoreNotification = (notification: unknown) => {
+      const event = notification as {
+        type?: unknown;
+        threadId?: unknown;
+        turnId?: unknown;
+        turn?: unknown;
+      };
+      if (
+        (event.type === 'turn/started' || event.type === 'turn/completed')
+        && typeof event.threadId === 'string'
+        && typeof event.turnId === 'string'
+        && event.turn !== null
+        && typeof event.turn === 'object'
+      ) {
+        const turns = mockTurns.get(event.threadId);
+        if (turns) {
+          const turn = clone(event.turn) as unknown as MockTurn;
+          const index = turns.findIndex((candidate) => candidate.id === event.turnId);
+          if (index < 0) turns.push(turn);
+          else turns[index] = turn;
+        }
+      }
       for (const listener of agentCoreListeners) listener(clone(notification));
     };
     const emitAutomationNotification = (notification: unknown) => {
@@ -1736,6 +1758,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               modelProvider: 'openai',
               model: 'openai/gpt-5.4',
               reasoningEffort: 'medium',
+              diagnosticsRef: null,
               usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: null },
             },
             startedAt: timestamp,
@@ -1913,7 +1936,212 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ thread, configuration }) as T;
         }
         if (method === 'thread/turns/list') {
-          return clone({ data: mockTurns.get(String(input.threadId)) ?? [], nextCursor: null, backwardsCursor: null }) as T;
+          const turns = mockTurns.get(String(input.threadId)) ?? [];
+          const data = input.sortDirection === 'desc' ? [...turns].reverse() : turns;
+          return clone({ data, nextCursor: null, backwardsCursor: null }) as T;
+        }
+        if (method === 'thread/turn/details/read') {
+          const thread = threadById(String(input.threadId));
+          const turn = (mockTurns.get(thread.id) ?? []).find((candidate) => candidate.id === input.turnId);
+          if (!turn) throw new Error(`Turn not found: ${String(input.turnId)}`);
+          const userItem = turn.items.find((item) => item.type === 'userMessage');
+          if (!userItem) return clone({ thread, turn, diagnostics: null }) as T;
+          const messageId = 'e'.repeat(64);
+          const instructionFragmentId = '6'.repeat(64);
+          const toolFragmentId = '7'.repeat(64);
+          const providerMessage = {
+            role: 'user',
+            content: [
+              ...userItem.content,
+              {
+                type: 'text',
+                text: [
+                  '<system-reminder>',
+                  '<context-evidence kind="turnEnvironment" authority="application" purpose="observation">',
+                  'working_directory=/workspace',
+                  '</context-evidence>',
+                  '</system-reminder>',
+                ].join('\n'),
+              },
+            ],
+            timestamp: userItem.acceptedAt,
+          };
+          const messagePartProvenance = providerMessage.content.map((_part, index) => (
+            index === providerMessage.content.length - 1
+              ? {
+                  source: 'systemContext' as const,
+                  entries: [{
+                    kind: 'turnEnvironment' as const,
+                    authority: 'application' as const,
+                    purpose: 'observation' as const,
+                  }],
+                }
+              : { source: 'userInput' as const }
+          ));
+          const providerTool = {
+            type: 'function',
+            name: 'node_read',
+            description: 'Read a Node',
+            parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+          };
+          const diagnostics = {
+            schemaVersion: 1,
+            contextEpochId: 'initial',
+            cacheAffinity: 'a'.repeat(64),
+            configuration: {
+              profileName: 'default',
+              developerInstructions: [],
+              model: turn.execution.model,
+              reasoningEffort: turn.execution.reasoningEffort,
+              tools: ['node_read'],
+              skills: [],
+              plugins: [],
+              mcpServers: [],
+            },
+            stablePrompt: {
+              blocks: [{
+                id: 'framework-firmware',
+                layer: 'L0',
+                text: 'Canonical mock system prompt.',
+                fingerprint: '1'.repeat(64),
+              }],
+              fingerprints: {
+                l0: '1'.repeat(64),
+                l1: '2'.repeat(64),
+                l2: '3'.repeat(64),
+                complete: '4'.repeat(64),
+              },
+            },
+            toolSchemas: [{
+              name: 'node_read',
+              description: 'Read a Node',
+              parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+            }],
+            runtime: {
+              provider: turn.execution.modelProvider,
+              model: turn.execution.model,
+              api: 'openai-responses',
+              configuredBaseUrl: 'https://api.openai.com/v1',
+              transportSelection: 'auto',
+              contextWindow: 128_000,
+              maxOutputTokens: 8_192,
+              thinkingLevel: turn.execution.reasoningEffort,
+              timeoutMs: 30_000,
+              maxRetries: 2,
+              maxRetryDelayMs: 60_000,
+              cacheRetention: 'short',
+              toolExecution: 'parallel',
+              steeringMode: 'all',
+            },
+            canonicalMessages: [{
+              id: messageId,
+              estimatedTokens: Math.max(1, Math.ceil(JSON.stringify(userItem).length / 4)),
+              value: providerMessage,
+            }],
+            requestFragments: [
+              { id: instructionFragmentId, value: 'Canonical mock system prompt.' },
+              { id: messageId, value: providerMessage },
+              { id: toolFragmentId, value: providerTool },
+            ],
+            providerCalls: [{
+              index: 0,
+              requestedAt: turn.startedAt,
+              preparedContext: {
+                systemPromptFragmentId: instructionFragmentId,
+                toolNames: ['node_read'],
+                messageIds: [messageId],
+                messagePartProvenance: [messagePartProvenance],
+              },
+              protectedFromMessageIndex: 0,
+              estimatedInputTokens: turn.execution.usage.input,
+              inputTokenLimit: 100_000,
+              reservedOutputTokens: 8_192,
+              commonPrefixMessageCount: 0,
+              request: {
+                kind: 'object',
+                fields: [
+                  { name: 'model', representation: 'inline', value: turn.execution.model },
+                  {
+                    name: 'instructions',
+                    representation: 'fragments',
+                    container: 'value',
+                    fragmentIds: [instructionFragmentId],
+                    fragmentPartProvenance: [null],
+                  },
+                  {
+                    name: 'input',
+                    representation: 'fragments',
+                    container: 'array',
+                    fragmentIds: [messageId],
+                    fragmentPartProvenance: [messagePartProvenance],
+                  },
+                  {
+                    name: 'tools',
+                    representation: 'fragments',
+                    container: 'array',
+                    fragmentIds: [toolFragmentId],
+                    fragmentPartProvenance: [null],
+                  },
+                ],
+              },
+              requestFingerprint: '5'.repeat(64),
+              cacheBreakpoints: [],
+              transportResponse: {
+                headersReceivedAt: turn.startedAt,
+                httpStatus: 200,
+                requestId: 'mock-request-1',
+              },
+              response: {
+                receivedAt: turn.completedAt ?? turn.startedAt,
+                stopReason: 'stop',
+                errorMessage: null,
+                usage: {
+                  input: turn.execution.usage.input,
+                  output: turn.execution.usage.output,
+                  cacheRead: turn.execution.usage.cacheRead,
+                  cacheWrite: turn.execution.usage.cacheWrite,
+                  cacheWrite1h: null,
+                  reasoning: null,
+                  totalTokens: turn.execution.usage.totalTokens,
+                  cost: turn.execution.usage.cost
+                    ? {
+                        input: turn.execution.usage.cost.input,
+                        output: turn.execution.usage.cost.output,
+                        cacheRead: turn.execution.usage.cost.cacheRead,
+                        cacheWrite: turn.execution.usage.cost.cacheWrite,
+                        total: turn.execution.usage.cost.total,
+                      }
+                    : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                value: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'Mock response' }],
+                  stopReason: 'stop',
+                },
+              },
+            }],
+            activities: [
+              {
+                type: 'acceptedInput',
+                source: 'initial',
+                acceptedAt: userItem.acceptedAt,
+                itemIds: [userItem.id],
+                consumedByCallIndex: 0,
+              },
+              { type: 'modelCall', callIndex: 0 },
+            ],
+          };
+          const ref = {
+            id: 'd'.repeat(64),
+            mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+            byteLength: JSON.stringify(diagnostics).length,
+            schemaVersion: 1,
+          };
+          return clone({
+            thread,
+            turn: { ...turn, execution: { ...turn.execution, diagnosticsRef: ref } },
+            diagnostics: { ref, payload: diagnostics },
+          }) as T;
         }
         if (method === 'thread/items/list') {
           const turns = mockTurns.get(String(input.threadId)) ?? [];
@@ -1992,7 +2220,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             completedAt: startedAt + 24,
             durationMs: 24,
           };
-          mockTurns.get(thread.id)!.push(completedTurn);
           thread.preview = prompt;
           thread.updatedAt = startedAt + 24;
           emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });

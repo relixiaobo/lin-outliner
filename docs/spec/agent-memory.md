@@ -236,7 +236,7 @@ Markdown escape and character-entity normalization, so every visible Node-link
 affordance has identical citation semantics. Core appends no Memory-specific
 commentary Item or citation disclosure.
 The `node_search` and `node_read` Items remain visible in the process disclosure
-and Run Details.
+and Turn Diagnostics.
 Usage counts distinct current `originItemId` values, so copied fork history
 cannot inflate ranking. Deleting a source Thread does not delete already
 published Memory Nodes or their retained evidence; those Nodes remain
@@ -309,6 +309,6 @@ user Threads.
 
 Memory used by a response appears only as ordinary inline Node references near
 the claims they support. Node-tool calls remain inspectable in the process and
-Run Details; there is no separate Memory disclosure, card view, artifact path,
+Turn Diagnostics; there is no separate Memory disclosure, card view, artifact path,
 internal Thread, SQLite row, job, fingerprint, or publication state in the
 transcript.

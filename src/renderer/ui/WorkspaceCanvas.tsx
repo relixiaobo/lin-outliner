@@ -9,7 +9,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared'
 import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
-import { ThreadRunDetailsPanel } from '../agent/components/ThreadRunDetailsPanel';
+import { ThreadTurnDetailsPanel } from '../agent/components/ThreadTurnDetailsPanel';
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -112,8 +112,8 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 trigger={props.trigger}
                 ui={props.ui}
               />
-            ) : panel.view.kind === 'thread-run-details' ? (
-              <ThreadRunDetailsPanel
+            ) : panel.view.kind === 'thread-turn-details' ? (
+              <ThreadTurnDetailsPanel
                 canGoBack={Boolean(panel.backStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 onClose={() => props.onNavigatePanelBack(panel.id)}

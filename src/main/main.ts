@@ -515,6 +515,7 @@ threadService = ThreadService.open(
       request.cwd,
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
@@ -634,8 +635,9 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
       }
       const result = completed.items
-        .filter((item) => item.type === 'agentMessage')
-        .map((item) => item.text.trim())
+        .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
+          ? [item.text.trim()]
+          : [])
         .filter(Boolean)
         .join('\n\n');
       return {

@@ -117,13 +117,40 @@ canonical name from Thread-owned payload Items. It validates any existing compac
 checkpoint against full prior catalog entries and invocation payload references and
 fails closed rather than inventing display metadata from a sparse checkpoint.
 
-The current provider projector still treats compaction as a marker and does not yet
-select a compacted epoch. Activating summary/checkpoint projection and `/clear` command
-consumption belongs to the context-compaction consumer; it will reuse this reducer and
-will not add a reminder-text fallback.
+The provider projector selects the latest context epoch and replaces compacted raw
+history with the summary plus validated checkpoint. It restores the exact active inline
+Skill payload references as application instructions. `/clear` ends the journal and
+active invocation set; the next ordinary admission records a complete baseline from the
+then-current registry. No reducer state is reconstructed from reminder text or current
+Skill files during replay.
+
+Reduction recursively includes typed inherited Turns and prior compaction checkpoints.
+Child admission uses that inherited catalog hash and announced-entry state when comparing
+the current registry: an unchanged registry costs no additional Item or provider tokens,
+while a newly added, changed, or removed Skill appends the same deterministic delta used
+by an older root conversation. Repeated compaction carries active invocation references
+forward instead of re-reading mutable Skill files.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
+
+Every isolated Skill catalog entry appends a host-derived execution constraint.
+The constraint states that invocation runs once in a single isolated child Thread
+under an explicit tool ceiling. When that ceiling does not declare
+`collaboration.spawn_agent`, the catalog explicitly tells the parent that the Skill
+cannot perform Subagent fan-out and that parallel orchestration belongs in the
+parent Thread. This capability fact is derived from the effective Skill definition;
+it is not hand-maintained prose in individual Skill bodies. Catalog budgeting
+reserves every isolated execution constraint before allocating space to authored
+descriptions, so pressure cannot silently remove the capability contract.
+
+The isolated Skill tool result records the child Turn outcome separately from the
+Skill execution mode. A completed outcome wraps the child's final non-commentary
+text as a result to synthesize directly and tells the parent not to repeat covered
+work unless the result reports a gap or independent verification is explicitly
+required. The Skill tool is the only model-facing result channel for that isolated
+child; collaboration listing and waiting exclude it. Failed or interrupted outcomes
+are labeled as partial evidence rather than being described as completed.
 
 ## Authoring And Trust
 

@@ -89,6 +89,49 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.get(owner.id)?.[0]?.items).toEqual(items);
   });
 
+  test('preserves text spacing around structured composer references', async () => {
+    const owner = thread('thread-1', 1);
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/start') return {};
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const attachment = {
+      type: 'attachment' as const,
+      id: 'attachment-1',
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      source: { kind: 'localFile' as const, path: '/workspace/report.pdf' },
+    };
+
+    await store.send([
+      { type: 'text', text: '  Compare ' },
+      { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+      { type: 'text', text: ' with ' },
+      attachment,
+      { type: 'text', text: ' before deciding.  ' },
+    ]);
+
+    expect(calls.find((call) => call.method === 'turn/start')?.input.input).toEqual([
+      { type: 'text', text: 'Compare ' },
+      { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+      { type: 'text', text: ' with ' },
+      attachment,
+      { type: 'text', text: ' before deciding.' },
+    ]);
+  });
+
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {
     const replacement = thread('thread-1', 1);
     const selected = thread('thread-2', 2);

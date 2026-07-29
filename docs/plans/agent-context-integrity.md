@@ -24,10 +24,13 @@ This restores and unifies all context-bearing behavior:
 - faithful Subagent `fork_turns` inheritance; and
 - provider runtime settings and prompt-cache boundaries.
 
-This plan has shape **(b): a set of complete features**, delivered as five PRs ordered
-by genuine protocol and runtime dependencies. The first PR is the repository-mandated
-shared-interface-first contract change; each later PR leaves its restored capability
-complete and independently verifiable.
+This plan has shape **(b): a set of complete features**, delivered as three complete
+PRs. The first PR is the repository-mandated shared-interface-first contract change;
+the second replaces context composition and admission end to end; the third completes
+the remaining runtime as one atomic feature. Budgeting, context controls, Subagent
+inheritance, Role discovery, provider policy, and prompt-cache integration are internal
+build stages of PR 3, never separate releases. No PR is a scaffold that requires a
+later PR to become useful.
 
 ## Non-goals
 
@@ -81,7 +84,7 @@ state machine:
 | --- | --- |
 | local time/date, timezone, UTC offset, locale | `turnEnvironment` evidence |
 | direct-conversation topology and reply identity | `turnEnvironment` plus root/child prompt mode |
-| Outliner Today/current outline context | main-resolved `userView` evidence |
+| Outliner Today/current outline context | main-resolved `turnEnvironment` identity/title plus `userView` evidence |
 | focused panels, visible outline, selection, explicit Node references | bounded `userView` snapshot |
 | attachment marker and referenced-file reminder | structured user content plus `referencedResources` evidence |
 | available and invoked Skill reminders | `skillCatalog` and `skillInvocation` evidence |
@@ -113,7 +116,7 @@ their wrapper spelling:
 | Historical reminder use | Decision |
 | --- | --- |
 | turn environment, Outliner/view state, referenced resources, Memory/Automation context, Skill/Role discovery, and invoked Skill guidance | retain as typed canonical context evidence |
-| compact summary, catalog/invocation restore, recent file observations, and durable child follow-ups | retain as typed compaction summary, reducer checkpoint, and instruction payloads |
+| compact summary, catalog/invocation restore, recent file observations, and child follow-ups | retain as typed compaction summary, reducer checkpoint, active-Turn canonical user input, and preserved tail |
 | child completion delivery, amendments, controller directives, and other still-supported collaboration transitions | represent through canonical collaboration/feature Items or typed context owned by that feature; never recover state from prose |
 | retired Issue delivery and Dream hidden-anchor prompts | do not restore with the retired runtimes; any future equivalent must define a current canonical contract |
 | literal user/model text containing `<system-reminder>` | preserve as ordinary untrusted text with no parsing or authority upgrade |
@@ -279,7 +282,7 @@ Renderer IPC may author only `untrusted/observation`. Main owns every applicatio
 classification. A payload may contain both application metadata and untrusted document
 values, but the two become separate blocks at projection time.
 
-Context evidence is hidden from the ordinary message transcript. Run Details and
+Context evidence is hidden from the ordinary message transcript. Turn Diagnostics and
 exports expose its bounded summary, kind, source, hash, and availability for audit;
 full untrusted payload text is loaded only through an explicit details action. Reset and
 compaction Items retain dedicated visible boundary rows.
@@ -305,10 +308,10 @@ therefore have identical history. Execution-generated evidence, such as an invok
 Skill, is appended immediately after the completed initiating tool Item and before that
 tool returns control to the next provider request.
 
-The provider serializer renders every structured image attachment as an adjacent
-identity block (name, MIME type, and source byte length) plus its immutable prompt
-snapshot. This preserves the old attachment marker's model-visible identity without
-restoring a string protocol or parser. Admission rejects an image without a
+The provider serializer renders every attachment with the shared file-reference marker
+at its structured user-content position. Node references use the shared Node marker;
+images place their file marker immediately before the immutable prompt snapshot.
+Canonical state never parses those provider strings. Admission rejects an image without a
 Thread-owned prompt snapshot and rejects a non-image carrying one; projection never
 reinterprets either invalid shape as an ordinary file.
 
@@ -370,7 +373,7 @@ The provider-neutral projection preserves semantic event order:
 - every tool Item becomes a paired call/result unit;
 - reset selects the epoch and is not sent as conversational prose;
 - the selected compaction contributes its summary plus the preserved tail; and
-- model-generated summaries are labelled as lossy derived context, never facts.
+- deterministic summaries are labelled as lossy derived context, never facts.
 
 Budgeting may choose a representation only for a new unit that no provider has seen.
 Once exposed, the persisted evidence and any `toolOutputProjection` decision freeze its
@@ -401,7 +404,7 @@ L1 contains only cross-tool framing with a real capability consumer, including f
 Outliner, Memory, Skills, and collaboration. A capability absent from the effective
 catalog contributes no module. The files module preserves Full Access/native-denial
 semantics, read-before-rely, and the rule that a user-facing deliverable is placed under
-the Run working directory and referenced through the renderer-safe absolute-file affordance.
+the Thread working directory and referenced through the renderer-safe absolute-file affordance.
 Tool-specific syntax, including generated-image placement, remains on the owning tool
 description/result instead of being duplicated in the prompt.
 
@@ -469,7 +472,9 @@ visibility, Node-label, and truncation state is derived from renderer/document i
 remains an untrusted observation even after main validates IDs and resolves content.
 
 Canonical evidence always stores a snapshot. The planner emits the first snapshot in
-an epoch and deterministic diffs against later snapshots. This recovers compact
+an epoch and deterministic field-level diffs against later snapshots. An unchanged
+snapshot emits no provider block; nullable state and panel removal use explicit
+tombstones. This recovers compact
 snapshot/diff behavior without a runtime view tracker. A reset naturally removes the
 baseline; restart, rollback, compaction, and fork derive the same baseline from Items.
 Headless, Automation, and Memory Turns record an explicit non-interactive view mode and
@@ -477,8 +482,15 @@ never reuse stale renderer state.
 
 `turnEnvironment` records the execution-start UTC instant, local date/time, resolved
 IANA timezone, UTC offset, locale, working directory, conversation/execution mode,
-reply identity, and current Today Node identity when available. It is generated per
-accepted input and serialized in the uncached tail.
+reply identity, and current Today Node identity/title when available. The ID remains
+application authority while the document-authored title is emitted as untrusted
+evidence. It is generated per
+accepted input. The first payload in an epoch projects a complete snapshot; later
+payloads append only changed fields, normally the accepted instant and clock values.
+Stable environment fields are not repeated in each new `system-reminder`.
+Every stateless provider request still includes retained historical reminder messages as
+the byte-identical cacheable prefix. Delta projection governs only newly appended
+current-Turn evidence; it never removes or regenerates an earlier reminder in place.
 
 ### Attachments and referenced Node resources
 
@@ -487,8 +499,14 @@ Keep the current `ThreadUserContent` attachment contract:
 - a path-backed local attachment remains a canonical live path;
 - a pathless upload remains a Thread-owned content-addressed resource;
 - image prompt snapshots remain normalized and bounded; and
-- directories retain explicit directory identity and instruct `file_glob`, while files
-  instruct `file_read`; inline extracted text retains truncation metadata; and
+- provider projection uses `formatFileReferenceMarker` and
+  `formatNodeReferenceMarker` at the original structured part positions;
+- the surrounding text and markers form one position-faithful user narrative, followed
+  by independent attachment identity/read-path blocks and image bytes in attachment
+  order; neither representation replaces the other;
+- directories retain explicit directory identity, while stable instructions define
+  percent-decoding and route directories to `file_glob` and files to `file_read`;
+  inline extracted text retains truncation metadata; and
 - provider conversion occurs only at the request boundary.
 
 Expand explicit `nodeReference` admission in main:
@@ -503,10 +521,12 @@ Expand explicit `nodeReference` admission in main:
    digest, and safe filename. Verify or repair its bytes before a Turn uses it; delete
    the observation with the Thread or during stale-scratch reconciliation.
 
-A plain Node copies no asset bytes. An image Node emits both an identity/path text block
-and an image block when the provider supports vision, so the model never receives
+A plain Node copies no asset bytes. An available attachment/image Node emits both an
+application-authority readable path and the same untrusted-label file marker used by
+composer attachments; an image Node also emits an image block when
+the provider supports vision, so the model never receives
 anonymous pixels. A non-vision provider receives the identity, explicit limitation, and
-readable observation path. Missing, corrupt, unsupported, or over-budget resources emit
+file marker. Missing, corrupt, unsupported, or over-budget resources emit
 typed unavailability; no path or image claim is fabricated.
 
 Replay, steering, compaction expansion, and child inheritance resolve the same immutable
@@ -519,6 +539,19 @@ Replace anonymous `systemContext: string[]` and execution-only `additionalContex
 typed evidence contributions. Existing keys such as `automation_info` retain their
 source and host-assigned authority. Renderer keys cannot shadow a reserved application
 key. Contribution merge order and duplicate handling are deterministic and tested.
+
+Every entry has one explicit lifetime. Direct privileged or renderer
+`additionalContext` is a Turn-local event and is projected whenever that input is
+admitted, even when its bytes match an earlier event. Extension contributions form one
+complete Thread-state snapshot: the first value and later changes project as `set`, an
+unchanged value emits nothing, and an inactive contributor produces a `cleared`
+tombstone. The registry retains empty snapshots for registered inactive contributors so
+ordinary host admission can clear the last active value. A registry with no Thread-context
+contributors emits no empty payload; `null` remains reserved for modes where state was not
+evaluated. Reset starts a fresh baseline.
+Compaction checkpoints the latest complete Thread-state snapshot and restores only that
+state; Turn-local entries in the same payload remain historical events and are not
+replayed.
 
 The provider serializer appends every volatile contribution as one or more hidden user
 content blocks at its canonical tail position. Admission contributions coalesce with
@@ -589,6 +622,25 @@ One Turn cannot observe two execution configurations. Therefore:
   applying, ignoring, or partially applying them; and
 - isolated Skills continue to intersect every capability with the parent ceiling.
 
+The model-facing catalog derives an execution constraint for every isolated Skill.
+It states that the Skill runs as one isolated child and, when its explicit tool
+ceiling excludes `collaboration.spawn_agent`, directs parallel fan-out back to the
+parent. The host reserves catalog budget for this constraint before truncating
+authored descriptions, including under large Skill catalogs. Isolated completion
+output carries the actual child Turn outcome and frames
+completed findings as work product to synthesize rather than a plan to execute again.
+The `skill` tool owns that child outcome exclusively; collaboration list/wait results
+exclude isolated Skill children so the same findings cannot be delivered twice.
+
+Collaboration waiting is terminal-state driven. `wait_agent` has no model-selected
+polling timeout: it blocks while children run, wakes for a direct-child terminal
+transition or sender steering, drains all queued terminal outcomes into one result,
+and returns immediately only when the tree is idle. Each outcome includes the final
+non-commentary child result and error from the exact Turn that reached terminal state,
+so a later follow-up cannot replace an earlier queued result. The current child tree
+remains a separate status view. This bounds fan-out coordination to meaningful
+provider turns instead of paying for a fresh request on every polling tick.
+
 `contextCompaction.restoredStateRef` checkpoints the effective catalog hash and
 announced entries, active Skill payload references, Role catalog state, and user-view
 diff baseline derived at the covered cursor. Summary plus restore state serialize once
@@ -652,12 +704,14 @@ unit. Image lists follow their existing count/byte bounds and stable payload ref
 Automatic compaction runs when preflight planning cannot retain the configured recent
 tail with the model's reserved output budget. It selects the oldest eligible sequence
 of complete Turns or complete current-Turn tool units, never a partial tool pair. A
-bounded no-tools summarization request produces a lossy summary plus exact covered and
-preserved cursors. It also derives and persists `restoredStateRef` from the effective
-catalogs, active Skill versions, view baseline, and still-active file/Node observations
-at that exact boundary. Durable child follow-ups are stored as
-`compactionInstructions`, not anonymous reminder text. Summary and restore blocks
-receive fixed provider-neutral fingerprints. Only a successful append
+deterministic bounded transcript projection produces a lossy summary plus exact covered
+and preserved cursors. It also derives and persists `restoredStateRef` from the effective
+catalogs, active Skill versions, view baseline, Thread-state extension context, and
+still-active file/Node observations at that exact boundary. Child follow-ups are
+canonical user input in the child Thread: automatic compaction preserves the active
+admission and manual idle compaction summarizes completed follow-up Turns.
+`compactionInstructions` is reserved for explicit manual `/compact` guidance. Summary
+and restore blocks receive fixed provider-neutral fingerprints. Only a successful append
 changes later projection, and that one explicit cache-branch change is never rebuilt
 from current files or runtime trackers.
 
@@ -669,8 +723,9 @@ fails explicitly, preventing retry/compaction loops.
 `/compact [instructions]` is a reserved host command handled before Skill routing. It
 is accepted only while the Thread has no active Turn and creates a completed
 feature-triggered Turn (`feature: 'context.compact'`) containing the manual compaction
-Item. Instructions guide summary emphasis but do not change source coverage. With no
-eligible content it returns a no-op result and creates no phantom boundary.
+Item. Instructions remain typed application guidance after the deterministic summary
+and do not change source coverage. With no eligible content it returns a no-op result
+and creates no phantom boundary.
 
 `/clear` is also a reserved host command and requires an idle Thread. It creates a
 completed feature-triggered Turn (`feature: 'context.clear'`) containing
@@ -708,7 +763,7 @@ images, context evidence, assistant text, reasoning summaries, complete tool pai
 resource references, and compaction/reset semantics. Store it as one
 `inheritedContext` payload in the child before the child's task `userMessage`.
 Inherited history is model context but not duplicated as visible child transcript rows.
-Child Run Details expose the parent Thread ID, exact source cursor, selected Turn count,
+Child Turn Diagnostics expose the parent Thread ID, exact source cursor, selected Turn count,
 and payload hash.
 
 Copy every referenced managed payload into the child's ownership using the existing
@@ -738,6 +793,83 @@ journal as Skills for built-in and effective project/user Roles. An unchanged ca
 adds no tokens; a Role created during an old conversation is appended at the next
 admission without changing prior history. The `spawn_agent` tool still validates Role
 identity and capability ceilings; the catalog only makes accepted values discoverable.
+
+### Turn Diagnostics
+
+Replace the partial post-rewrite diagnostics view with one complete Turn-scoped audit
+surface. `PiTurnExecutor` records two authoritative request boundaries rather than asking
+the renderer to reconstruct either one. The pre-adapter boundary records the actual
+provider `Context` passed to the stream: exact system instructions, canonical-sorted tool
+definitions, and the ordered message/content-part window after projection, budgeting,
+and compaction. The post-adapter boundary records the final provider payload after local
+compatibility, reasoning-summary, and cache-breakpoint policies. It also records the
+effective configuration, layered stable prompt and fingerprints, resolved provider
+settings, context epoch, cache affinity, planned budget, request fingerprint,
+cache-breakpoint paths, HTTP status and request identity, normalized assistant response,
+usage, and stop/error facts. Transport diagnostics retain only an allowlisted provider
+request ID rather than arbitrary response headers.
+
+Repeated prepared messages form one content-fingerprint pool shared by all Provider
+Calls in the Turn. The complete image-sanitized post-adapter request remains
+reconstructable: its top-level field insertion order is retained as a payload
+serialization fact, never presented as model context order, while repetition-heavy
+system, instruction, tool, prompt, and message fields reference an ordered
+content-addressed fragment pool. Binary and image bytes become typed omission markers.
+This preserves every request value and array/content-part position while keeping
+repeated stable prefixes bounded. Diagnostics remain observational and leave outbound
+bytes and cache topology untouched.
+
+Contiguous provider-facing context text is one ordered System Context part containing
+multiple evidence entries, not one reminder part per canonical evidence Item. Images flush
+the current text bundle to preserve exact multimodal order. Canonical Skill/Role payloads
+retain reducer and audit metadata, while their provider projection contains only semantic
+names, descriptions, delta state, and use instructions. Diagnostics records each System
+Context part with typed ordered `kind`/`authority`/`purpose` provenance. It maps that
+provenance onto post-adapter request fragments only through exact, unambiguous content-part
+identity; the renderer never parses XML or upgrades reminder-like user text.
+
+Terminal diagnostics are a versioned content-addressed Thread payload referenced from
+`Turn.execution`, copied on fork, and pruned on rollback/startup/failure when no
+reachable Turn references them. Publication is best-effort and never changes the real
+Turn status, response, or usage when payload validation, quota, or storage fails. One
+`thread/turn/details/read` call is the read
+authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
+renders a user-facing Model Interactions surface: Summary, an ordered Interaction Timeline,
+and one collapsed Internal diagnostics disclosure. The main timeline contains Model Calls and
+the tool-execution, request/stream-retry, and automatic-preflight/provider-overflow-compaction
+activities that bridge them. Accepted initial/steering input is retained as Internal
+diagnostics rather than presented as provider interaction. A Model Call alone owns Request
+and Response; tool batches remain sibling activities linked to their source and consuming
+Calls. Request renders the content-bearing fields from the final post-adapter Provider Request
+first. Inline provider parameters remain available in the Model Call information surface and
+copied Model Call diagnostics rather than interrupting the content flow. The export retains
+every request field and also contains the normalized response, transport/usage/stop/error
+facts, and explicit image/header/raw-response limitations. Object-key order is never numbered
+or used to imply model precedence. The
+Provider Request presents a typed System Context disclosure with its ordered semantic entries
+and untouched raw part whenever exact main-process provenance exists. Unmatched adapter
+fragments remain generic rather than receiving an inferred source. The pre-adapter context
+remains available inside the copied Request in semantic order (`system instructions -> tool
+definitions -> messages`) and is explicitly nested as Tenon's adapter input. The visible Model
+Call contains only semantic Provider Request Content and Model Response; it has no duplicate
+raw JSON, pre-adapter, request-metadata, normalized-response JSON, or response-metadata peers.
+There is no separate context construction account. Timeline hierarchy uses
+indentation and horizontal separators without a vertical guide-line axis. Each Model Call
+header keeps ordinal and status visible, exposes its runtime/parameter/timing/budget/usage/
+cost/stop/error facts through a hover/focus control, and copies the typed Model Call diagnostics
+export by materializing the request fragment pool only when requested. Canonical Items, prompt
+source blocks, configuration, and provenance mount only
+after opening Internal diagnostics. Context payloads remain exact-tuple lazy reads. It does
+not restore the retired event ledger,
+run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
+readers.
+
+The ordinary transcript has a separate presentation-only projection. It collects every image
+attachment in one user message into one leading gallery in canonical image order, then renders
+text, Node references, directories, and non-image attachments as one narrative bubble in their
+original relative order. Image tiles own their filename metadata instead of duplicating inline
+file chips. This does not mutate `ThreadUserContent`, replay/fork input, or the provider order
+shown by Model Interactions.
 
 ### Failure semantics
 
@@ -795,6 +927,7 @@ Primary files:
 
 - `src/main/agent/ThreadService.ts`
 - `src/main/agent/runtime/PiTurnExecutor.ts`
+- `src/main/agent/context/TurnDiagnostics.ts`
 - `src/main/agent/runtime/ToolRuntime.ts`
 - `src/main/agent/runtime/types.ts`
 - new `src/main/agent/context/` composer, evidence, planner, and serializer modules
@@ -809,50 +942,50 @@ Primary files:
 This PR must be sequenced with the active `agent-skills-authoring` plan if that plan
 starts changing the same loader or spec. Authoring behavior is otherwise orthogonal.
 
-#### PR 3: global context budget, `/compact`, and `/clear`
+#### PR 3: complete context runtime
 
-Implement token planning on every provider request, full-output observations,
-preflight/reactive/manual compaction, one overflow retry, epoch selection, reserved
-commands, feature-triggered Turns, and the two transcript boundary rows. Remove time-based
-microcompaction and fixed character-tail truncation.
+Ship every remaining context-integrity consumer as one complete feature. Implement
+token planning on every provider request, frozen full-output observations,
+preflight/reactive/manual compaction, one overflow retry, epoch selection, `/compact`,
+`/clear`, feature-triggered Turns, and transcript boundary rows. Replace the
+collaboration `fork_turns` character flattener with structured snapshots, exact source
+boundaries, child-owned payload copies, planner integration, and Details provenance.
+Apply ordinary Turn runtime settings, separate context overflow from transient retries,
+restore provider cache retention and deterministic epoch affinity, add Anthropic
+L0/per-execution breakpoints, publish the versioned Role catalog tail, expose
+common-prefix/cache usage diagnostics, and lock request shapes with provider contract
+tests. Remove the remaining fixed character-tail and runtime-only context state that
+these canonical consumers replace.
+
+The implementation order inside this PR is foundation before consumers, but no stage
+is an independently mergeable delivery:
+
+1. global budget planner, frozen tool-output projections, active-observation reducer;
+2. compaction/reset engine, reserved commands, context epochs, and boundary UI;
+3. structured Subagent inheritance, child ownership, provenance, and Role discovery;
+4. provider runtime policy, overflow handling, cache adapters, affinity, and diagnostics;
+5. cross-feature restart, rollback, fork, deletion, cache-prefix, and E2E verification.
 
 Primary files:
 
-- context budget/compaction modules
+- context budget/compaction/reducer modules
 - `src/main/agent/ThreadService.ts`
 - `src/main/agent/runtime/PiTurnExecutor.ts`
+- `src/main/agent/runtime/ToolRuntime.ts`
+- `src/main/agent/capabilities/agentSettings.ts`
+- `src/main/agent/AgentConfigurationLoader.ts`
 - `src/main/agent/persistence/ToolPayloadStore.ts`
+- collaboration capability/runtime modules
+- context payload copy/projector/provider-adapter modules
 - `src/renderer/agent/store/threadStore.ts`
 - `src/renderer/agent/components/ThreadDock.tsx`
 - `src/renderer/agent/components/ThreadView.tsx`
 - `src/renderer/agent/components/ThreadComposerEditor.tsx`
-- boundary rendering and E2E tests
-
-#### PR 4: Subagent inheritance fidelity
-
-Replace flattened `fork_turns` context with structured snapshots, exact source
-boundaries, child-owned payload copies, planner integration, and Details provenance.
-
-Primary files:
-
-- `src/main/agent/ThreadService.ts`
-- collaboration capability/runtime modules
-- context payload copy/projector modules
-- Subagent protocol/runtime/persistence tests
-
-#### PR 5: provider controls and prompt cache
-
-Apply ordinary Turn runtime settings, split context overflow from transient retries,
-restore provider cache retention, add Anthropic L0/per-execution breakpoints, add the
-versioned Role catalog tail, expose common-prefix/cache usage diagnostics, and lock
-request shapes with provider contract tests.
-
-Primary files:
-
-- `src/main/agent/runtime/PiTurnExecutor.ts`
-- `src/main/agent/capabilities/agentSettings.ts`
-- `src/main/agent/AgentConfigurationLoader.ts`
-- provider adapters and payload tests
+- `src/renderer/agent/components/ThreadTurnDetailsPanel.tsx`
+- `src/core/agent/protocol.ts`
+- `src/core/agent/codec.ts`
+- budget/property, Subagent protocol/runtime/persistence, provider payload, boundary,
+  and E2E tests
 
 Every behavior PR updates the affected current specs in the same change:
 
@@ -866,7 +999,7 @@ Every behavior PR updates the affected current specs in the same change:
 
 The current specs already over-claim full-output history replay and structured Skill
 compaction restore; those claims must be rewritten to the verified implementation in
-the relevant PR, not left as aspirational text.
+PR 3, not left as aspirational text.
 
 ### Collision result
 
@@ -890,7 +1023,7 @@ choices together:
 
 - canonical context evidence rather than restoration of runtime state;
 - Neva as the root persona and Tenon as the product name;
-- context evidence hidden from ordinary transcript but auditable in Details/export;
+- context evidence hidden from ordinary transcript but auditable in Turn Diagnostics/export;
 - `/clear` as a visible, non-destructive context epoch boundary;
 - `/compact` as non-destructive summary context with exact source cursors;
 - inline Skills as instruction-only, with execution overrides restricted to isolation;
@@ -953,3 +1086,10 @@ choices together:
       post-commit renderer/extension observer failure cannot produce a false rejection.
       Deleting or corrupting the client-id sidecar before restart still deduplicates from
       the canonical user Item and rebuilds the index.
+- [ ] **AC-19:** Turn Diagnostics tests prove one authoritative read exposes every ordered
+      activity and Model Call Request/Response, including tool batches, retries, compaction,
+      and steering; user/file/context reminder content remains in exact request order; and
+      Recorded Evidence exposes stable prompt, tool
+      schemas, cache facts, prepared messages, and canonical Items. Missing/corrupt or
+      mismatched diagnostics fail closed; rollback, fork/source deletion, and startup
+      pruning preserve the Thread-ownership contract without a legacy reader.

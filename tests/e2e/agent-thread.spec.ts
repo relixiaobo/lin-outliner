@@ -42,6 +42,7 @@ test.describe('canonical agent Thread surface', () => {
     const response = turn.locator('.thread-agent-message');
     await expect(userMessage).toContainText('Summarize current outline.');
     await expect(response).toContainText('Current outline focuses on design-system work.');
+    await expect(turn.locator('.thread-process-rule')).toHaveCount(1);
     await page.evaluate(async () => {
       const target = window as unknown as {
         lin?: { agentCoreRequest: (method: string, input: unknown) => Promise<{ data: Array<{ id: string }> }> };
@@ -99,20 +100,96 @@ test.describe('canonical agent Thread surface', () => {
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
     await expect(usage).toHaveCount(0);
-    const runDetails = page.locator('.outline-panel-surface.is-thread-run-details');
-    await expect(runDetails).toBeVisible();
-    await expect(runDetails).toHaveClass(/active-panel/);
+    const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
+    await expect(turnDetails).toBeVisible();
+    await expect(turnDetails).toHaveClass(/active-panel/);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
-    await expect(runDetails).toContainText('Run Details');
-    await expect(runDetails).toContainText('Summary');
-    await expect(runDetails).toContainText('Model Input');
-    await expect(runDetails).toContainText('Execution (1)');
-    await expect(runDetails).toContainText('Thread ID');
-    await expect(runDetails).toContainText('Turn ID');
-    await expect(runDetails).toContainText('Session ID');
-    await runDetails.locator('.thread-run-details-execution-event').first().locator('.thread-run-details-message-head').click();
-    await expect(runDetails.locator('.thread-run-details-execution-event').first()).toContainText('"type": "userMessage"');
-    await runDetails.getByRole('button', { name: 'Previous page' }).click();
+    await expect(turnDetails).toContainText('Model Interactions');
+    await expect(turnDetails).toContainText('Summary');
+    await expect(turnDetails).toContainText('Interaction Timeline (1)');
+    await expect(turnDetails).toContainText('Internal diagnostics');
+    await expect(turnDetails).toContainText('Model calls');
+    await expect(turnDetails).toContainText('Tool executions: 0');
+    await expect(turnDetails).not.toContainText('Canonical Items (2)');
+    await expect(turnDetails).toContainText('Request');
+    await expect(turnDetails).toContainText('Response');
+    const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
+    await expect(request).toContainText('Provider Request Content');
+    await expect(request).not.toContainText('Provider request JSON');
+    await expect(request).not.toContainText('Pre-adapter context');
+    await expect(request).not.toContainText('Request metadata');
+    await request.getByText('input', { exact: true }).click();
+    await expect(request).toContainText('System Context');
+    await request.locator('.thread-turn-details-part-list > .thread-turn-details-disclosure')
+      .filter({ hasText: 'System Context' })
+      .first()
+      .locator(':scope > summary')
+      .click();
+    await expect(request).toContainText('Environment · Application · Observation');
+    await expect(request).toContainText('Raw system context part');
+    const firstCall = turnDetails.locator('.thread-turn-details-timeline-activity').filter({ hasText: 'Model Call 1' });
+    const callInformation = firstCall.getByRole('button', { name: 'Model call information' });
+    await callInformation.hover();
+    const requestFacts = page.locator('.thread-turn-details-request-facts-card');
+    await expect(requestFacts).toBeVisible();
+    await expect(requestFacts).toContainText('Modelopenai/gpt-5.4');
+    await expect(requestFacts).toContainText('Provideropenai');
+    await expect(requestFacts).toContainText('Provider parameters');
+    await expect(requestFacts).toContainText('modelopenai/gpt-5.4');
+    await expect(requestFacts).toContainText('Estimated input tokens');
+    await expect(requestFacts).toContainText('HTTP status200');
+    await expect(requestFacts).toContainText('Stop reasonstop');
+    await expect(requestFacts).toContainText('Usage details');
+    const copyModelCall = firstCall.locator('button.thread-turn-details-call-action').last();
+    await expect(copyModelCall).toHaveAttribute('aria-label', 'Copy model call');
+    await copyModelCall.click();
+    await expect(copyModelCall).toHaveAttribute('aria-label', 'Model call copied');
+    await expect(firstCall).toHaveAttribute('open', '');
+    const copiedCall = JSON.parse(await clipboardText(page)) as Record<string, unknown>;
+    expect(Object.keys(copiedCall)).toEqual([
+      'format', 'runtime', 'request', 'response', 'limitations',
+    ]);
+    expect(copiedCall.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
+    expect(copiedCall.request).toMatchObject({
+      modelContext: {
+        systemInstructions: 'Canonical mock system prompt.',
+        messages: [expect.objectContaining({
+          partProvenance: expect.arrayContaining([
+            expect.objectContaining({ source: 'systemContext' }),
+          ]),
+        })],
+        toolDefinitions: expect.any(Array),
+      },
+      providerPayload: {
+        model: 'openai/gpt-5.4',
+        instructions: 'Canonical mock system prompt.',
+        input: expect.any(Array),
+        tools: expect.any(Array),
+      },
+      facts: expect.objectContaining({ callIndex: 0 }),
+    });
+    expect(copiedCall.response).toMatchObject({
+      transport: expect.any(Object),
+      model: expect.objectContaining({ stopReason: 'stop', value: expect.any(Object) }),
+    });
+    expect(copiedCall.limitations).toEqual({
+      imageBytes: 'omitted-with-byte-length-and-sha256',
+      secretHeaders: 'not-recorded',
+      rawProviderResponseBody: 'not-recorded',
+    });
+    const providerRequestContent = request.locator('.thread-turn-details-flow-group').first();
+    await expect(providerRequestContent).not.toContainText('modelopenai/gpt-5.4');
+    const requestText = await request.textContent() ?? '';
+    expect(requestText).not.toContain('0. model');
+    await turnDetails.getByText('Internal diagnostics', { exact: true }).click();
+    await expect(turnDetails).toContainText('Canonical Items (2)');
+    await expect(turnDetails).toContainText('Stable prompt source blocks');
+    await expect(turnDetails).toContainText('Canonical tool schemas (1)');
+    await turnDetails.getByText('Canonical Items (2)', { exact: true }).click();
+    const userItemDetails = turnDetails.locator('.thread-turn-details-item').filter({ hasText: 'userMessage' });
+    await userItemDetails.locator('.thread-turn-details-row-head').click();
+    await expect(userItemDetails).toContainText('"type": "userMessage"');
+    await turnDetails.getByRole('button', { name: 'Previous page' }).click();
     await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 
     await userMessage.hover();
@@ -138,7 +215,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'thread/list',
       'thread/start',
-      'thread/read',
+      'thread/turn/details/read',
       'thread/turns/list',
       'turn/start',
       'goal/get',
@@ -208,6 +285,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 100,
               output: 20,
@@ -298,6 +376,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -356,6 +435,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -415,6 +495,7 @@ test.describe('canonical agent Thread surface', () => {
             modelProvider: 'openai',
             model: 'openai/gpt-5.4',
             reasoningEffort: 'medium',
+            diagnosticsRef: null,
             usage: {
               input: 0,
               output: 0,
@@ -537,10 +618,14 @@ test.describe('canonical agent Thread surface', () => {
 
     const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
     expect(start?.args.input).toEqual([
-      { type: 'text', text: 'Before' },
+      { type: 'text', text: 'Before ' },
       { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
-      { type: 'text', text: 'after' },
+      { type: 'text', text: ' after' },
     ]);
+    const userMessage = page.locator('.thread-user-message').last();
+    await userMessage.hover();
+    await userMessage.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe('Before Alpha after');
   });
 
   test('keeps same-named files from distinct sources and accepts a regular file above the former shared limit', async ({ page }) => {
@@ -654,7 +739,7 @@ test.describe('canonical agent Thread surface', () => {
     })]);
   });
 
-  test('renders inline files and an expandable image gallery in canonical order', async ({ page }) => {
+  test('renders one leading image gallery and keeps every file reference in message order', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
@@ -715,10 +800,11 @@ test.describe('canonical agent Thread surface', () => {
     const sequence = message.locator('.thread-user-content-sequence');
     const bubbles = sequence.locator(':scope > .thread-user-content-shell');
     const gallery = sequence.locator(':scope > .thread-image-gallery');
-    await expect(sequence.locator(':scope > *')).toHaveCount(3);
-    await expect(bubbles).toHaveCount(2);
-    await expect(bubbles.first().locator('.thread-user-inline-content')).toContainText('Beforeagenda.pdfmiddle');
-    await expect(bubbles.last().locator('.thread-user-inline-content')).toHaveText('After');
+    await expect(sequence.locator(':scope > *')).toHaveCount(2);
+    await expect(bubbles).toHaveCount(1);
+    await expect(bubbles.locator('.thread-user-inline-content')).toContainText(
+      'Beforeagenda.pdfmiddlereference-1.png reference-2.png reference-3.png reference-4.png reference-5.png reference-6.pngAfter',
+    );
     await expect(gallery).toHaveAccessibleName('6 images');
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
     await expect(gallery.locator('.thread-image-gallery-preview').first()).toHaveAccessibleName('reference-1.png');
@@ -728,12 +814,22 @@ test.describe('canonical agent Thread surface', () => {
     await expect(showAll).toHaveText('+2');
     await expect(showAll).toHaveAttribute('aria-expanded', 'false');
     expect(await sequence.evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
-      'thread-user-content-shell',
       'thread-image-gallery',
       'thread-user-content-shell',
     ]);
-    const firstRun = bubbles.first().locator('.thread-user-inline-content');
-    await expect(firstRun.locator('.thread-message-file-ref')).toHaveText([
+    const narrative = bubbles.locator('.thread-user-inline-content');
+    const inlineFlow = await narrative.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        overflowWrap: style.overflowWrap,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    expect(inlineFlow).toEqual({
+      overflowWrap: 'anywhere',
+      whiteSpace: 'pre-wrap',
+    });
+    await expect(narrative.locator('.thread-message-file-ref')).toHaveText([
       'agenda.pdf',
       'reference-1.png',
       'reference-2.png',
@@ -742,7 +838,22 @@ test.describe('canonical agent Thread surface', () => {
       'reference-5.png',
       'reference-6.png',
     ]);
-    expect(await firstRun.evaluate((element) => Array.from(element.children).map((child) => ({
+    expect(await narrative.locator('.thread-message-file-ref').evaluateAll((references) => (
+      references.map((reference) => reference.getAttribute('data-inline-ref-path'))
+    ))).toEqual([
+      '/mock/local-root/agenda.pdf',
+      '/mock/local-root/reference-1.png',
+      '/mock/local-root/reference-2.png',
+      '/mock/local-root/reference-3.png',
+      '/mock/local-root/reference-4.png',
+      '/mock/local-root/reference-5.png',
+      '/mock/local-root/reference-6.png',
+    ]);
+    const imageReferenceTops = await narrative.locator('.thread-message-file-ref').evaluateAll((references) => (
+      references.slice(1).map((reference) => Math.round(reference.getBoundingClientRect().top))
+    ));
+    expect(new Set(imageReferenceTops).size).toBeLessThan(imageReferenceTops.length);
+    expect(await narrative.evaluate((element) => Array.from(element.children).map((child) => ({
       className: child.className,
       text: child.textContent,
     })))).toEqual([
@@ -755,7 +866,13 @@ test.describe('canonical agent Thread surface', () => {
       { className: 'inline-ref thread-message-file-ref', text: 'reference-4.png' },
       { className: 'inline-ref thread-message-file-ref', text: 'reference-5.png' },
       { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
+      { className: '', text: 'After' },
     ]);
+    await message.hover();
+    await message.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe(
+      'Beforeagenda.pdfmiddlereference-1.png reference-2.png reference-3.png reference-4.png reference-5.png reference-6.pngAfter',
+    );
 
     await showAll.click();
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(6);
@@ -1004,6 +1121,8 @@ test.describe('canonical agent Thread surface', () => {
     await composer.fill('/');
 
     const menu = page.getByRole('listbox', { name: 'Thread slash commands' });
+    await expect(menu.getByRole('option', { name: /compact/ })).toContainText('Replace earlier context with a durable summary');
+    await expect(menu.getByRole('option', { name: /clear/ })).toContainText('Start a new context epoch without deleting history');
     const skill = menu.getByRole('option', { name: /workspace-review/ });
     await expect(skill).toContainText('Review workspace conventions before automatic use.');
     await skill.click();
@@ -1013,6 +1132,192 @@ test.describe('canonical agent Thread surface', () => {
     expect((await commandCalls(page)).filter((call) => call.cmd === 'agent_list_all_skills').at(-1)?.args)
       .toMatchObject({ userInvocableOnly: true });
   });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`renders context boundaries and reset affinity in ${colorScheme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await createNewThread(page);
+      const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+      await composer.fill('Establish context before reset.');
+      await page.getByRole('button', { name: 'Send' }).click();
+
+      const fixture = await page.evaluate(async () => {
+        const target = window as Window & {
+          lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+          __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+        };
+        const threadResponse = await target.lin!.agentCoreRequest<{
+          data: Array<{ id: string }>;
+        }>('thread/list', {});
+        const threadId = threadResponse.data[0]?.id;
+        if (!threadId) throw new Error('Mock Thread not found');
+        const turnsResponse = await target.lin!.agentCoreRequest<{
+          data: Array<{ id: string; items: Array<{ id: string }> }>;
+        }>('thread/turns/list', { threadId, itemsView: 'full' });
+        const prior = turnsResponse.data.at(-1);
+        const clearedItem = prior?.items.at(-1);
+        if (!prior || !clearedItem) throw new Error('Mock prior Turn not found');
+        const resetTurnId = '01910000-0000-7000-8000-00000000fc01';
+        const resetItemId = '01910000-0000-7000-8000-00000000fc02';
+        const epochTurnId = '01910000-0000-7000-8000-00000000fc03';
+        const epochUserItemId = '01910000-0000-7000-8000-00000000fc04';
+        const epochAgentItemId = '01910000-0000-7000-8000-00000000fc05';
+        const compactionTurnId = '01910000-0000-7000-8000-00000000fc06';
+        const compactionItemId = '01910000-0000-7000-8000-00000000fc07';
+        const execution = {
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.4',
+          reasoningEffort: 'medium',
+          diagnosticsRef: null,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: null,
+          },
+        };
+        const emitTurn = (turn: unknown, turnId: string) => target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId,
+          turnId,
+          turn,
+        });
+        emitTurn({
+          id: resetTurnId,
+          items: [{
+            id: resetItemId,
+            type: 'contextReset',
+            provenance: { originThreadId: threadId, originTurnId: resetTurnId, originItemId: resetItemId },
+            clearedThrough: { turnId: prior.id, itemId: clearedItem.id },
+          }],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: resetTurnId,
+            trigger: { kind: 'feature', feature: 'context.clear', ref: 'e2e-clear' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 100,
+          completedAt: 101,
+          durationMs: 1,
+        }, resetTurnId);
+
+        const epochItemProvenance = (itemId: string) => ({
+          originThreadId: threadId,
+          originTurnId: epochTurnId,
+          originItemId: itemId,
+        });
+        emitTurn({
+          id: epochTurnId,
+          items: [
+            {
+              id: epochUserItemId,
+              type: 'userMessage',
+              provenance: epochItemProvenance(epochUserItemId),
+              clientId: null,
+              acceptedAt: 102,
+              content: [{ type: 'text', text: 'Establish context after reset.' }],
+            },
+            {
+              id: epochAgentItemId,
+              type: 'agentMessage',
+              provenance: epochItemProvenance(epochAgentItemId),
+              text: 'The new context epoch is active.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: epochTurnId,
+            trigger: { kind: 'user' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 102,
+          completedAt: 103,
+          durationMs: 1,
+        }, epochTurnId);
+
+        const summaryRef = {
+          id: 'a'.repeat(64),
+          mimeType: 'application/vnd.tenon.agent-context+json',
+          byteLength: 100,
+          schemaVersion: 1,
+          kind: 'compactionSummary',
+        };
+        const restoredStateRef = {
+          id: 'b'.repeat(64),
+          mimeType: 'application/vnd.tenon.agent-context+json',
+          byteLength: 100,
+          schemaVersion: 1,
+          kind: 'compactionRestoredState',
+        };
+        emitTurn({
+          id: compactionTurnId,
+          items: [{
+            id: compactionItemId,
+            type: 'contextCompaction',
+            provenance: {
+              originThreadId: threadId,
+              originTurnId: compactionTurnId,
+              originItemId: compactionItemId,
+            },
+            trigger: 'manual',
+            coveredFrom: { turnId: epochTurnId, itemId: epochUserItemId },
+            coveredThrough: { turnId: epochTurnId, itemId: epochAgentItemId },
+            preservedFrom: null,
+            summaryRef,
+            restoredStateRef,
+            instructionsRef: null,
+            contextRefs: [],
+            resourceRefs: [],
+            outputRefs: [],
+          }],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: threadId,
+            originTurnId: compactionTurnId,
+            trigger: { kind: 'feature', feature: 'context.compact', ref: 'e2e-compact' },
+          },
+          status: 'completed',
+          error: null,
+          execution,
+          startedAt: 104,
+          completedAt: 105,
+          durationMs: 1,
+        }, compactionTurnId);
+        return { compactionTurnId, resetItemId };
+      });
+
+      const boundaries = page.locator('.thread-compaction');
+      await expect(boundaries).toHaveText(['Context cleared.', 'Context compacted.']);
+      await expect(boundaries.last()).toBeInViewport();
+      const transcript = page.locator('.thread-transcript');
+      await expect.poll(() => transcript.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+      await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+        .toBe(colorScheme === 'dark');
+
+      const compactionTurn = page.locator(`[data-thread-turn-row="${fixture.compactionTurnId}"]`);
+      await expect(compactionTurn.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
+      await expect(compactionTurn.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
+      await compactionTurn.hover();
+      await compactionTurn.getByRole('button', { name: 'Details' }).click();
+      const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
+      await expect(turnDetails).toContainText('Model Interactions');
+      await expect(turnDetails).toContainText('Request diagnostics have not been recorded for this Turn.');
+      await turnDetails.getByText('Internal diagnostics', { exact: true }).click();
+      await turnDetails.getByText('Canonical Items (1)', { exact: true }).click();
+      await expect(turnDetails).toContainText('contextCompaction');
+      await expect.poll(() => turnDetails.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+    });
+  }
 
   test('keeps Thread actions in an anchored keyboard menu', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 620 });
@@ -1618,6 +1923,7 @@ test.describe('canonical agent Thread surface', () => {
           modelProvider: 'openai',
           model: 'openai/gpt-5.4',
           reasoningEffort: 'medium',
+          diagnosticsRef: null,
           usage: {
             input: 0,
             output: 0,

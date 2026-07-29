@@ -7,6 +7,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import {
   AgentSkillRuntime,
+  createSkillTool,
   parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
   resolveUserSkillInvocation,
@@ -513,8 +514,12 @@ describe('agent skills', () => {
     expect(skill?.allowedTools).toEqual(['Bash(git status:*)', 'file_read']);
     expect(skill?.paths).toEqual(['src/**', 'docs/**/*.md']);
     expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
-    expect(listing.entries.find((entry) => entry.name === 'demo')?.description)
-      .toBe('Demo skill with wrapped text');
+    expect(listing.entries.find((entry) => entry.name === 'demo')?.description).toContain(
+      'Demo skill with wrapped text',
+    );
+    expect(listing.entries.find((entry) => entry.name === 'demo')?.description).toContain(
+      'no Subagents',
+    );
   });
 
   test('renders skill content with base directory and standard arguments', async () => {
@@ -1074,6 +1079,10 @@ describe('agent skills', () => {
     const skill = await runtime.getSkill('research');
 
     expect(catalog.entries.some((entry) => entry.name === 'research')).toBe(true);
+    expect(catalog.entries.find((entry) => entry.name === 'research')?.description)
+      .toContain('Read-only isolated child');
+    expect(catalog.entries.find((entry) => entry.name === 'research')?.description)
+      .toContain('cannot spawn Subagents');
     expect(skill).toMatchObject({
       name: 'research',
       source: 'built-in',
@@ -1109,6 +1118,54 @@ describe('agent skills', () => {
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.status).toBe('completed');
+
+    const toolResult = await createSkillTool(runtime).execute('research-tool-call', {
+      skill: 'research',
+      args: 'map the current spec',
+    });
+    const text = toolResult.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+    expect(text).toContain('outcome: completed');
+    expect(text).toContain('Synthesize the completed result below; do not repeat covered work');
+    expect(text).toContain('<skill-result>');
+  });
+
+  test('preserves isolated capability contracts when the catalog description budget is shared', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkills: [
+        {
+          name: 'isolated-budget',
+          description: `Isolated catalog entry ${'x'.repeat(220)}`,
+          body: 'Complete the isolated task.',
+          execution: 'isolated',
+          allowedTools: ['file_read'],
+          modelInvocable: true,
+        },
+        ...Array.from({ length: 99 }, (_, index) => ({
+          name: `budget-${String(index).padStart(2, '0')}`,
+          description: `Catalog pressure ${index} ${'y'.repeat(220)}`,
+          body: 'Complete the task.',
+          execution: 'isolated' as const,
+          allowedTools: ['file_read'],
+          modelInvocable: true,
+        })),
+      ],
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const isolated = catalog.entries.find((entry) => entry.name === 'isolated-budget');
+
+    expect(catalog.entries.length).toBeGreaterThanOrEqual(100);
+    expect(isolated?.description).toContain('Isolated child');
+    expect(isolated?.description).toContain('no Subagents');
+    expect(isolated?.description).toContain('parent handles fan-out');
+    expect(catalog.entries.filter((entry) => entry.name.startsWith('budget-')).every((entry) => (
+      entry.description.includes('no Subagents')
+      && entry.description.includes('parent handles fan-out')
+    ))).toBe(true);
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBeLessThanOrEqual(8_000);
   });
 
   test('disabled skill gates apply to built-in research', async () => {
@@ -1124,6 +1181,28 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(false);
     if (invocation.ok) return;
     expect(invocation.code).toBe('skill_disabled');
+  });
+
+  test('labels failed isolated Skill output as partial evidence', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      executeIsolatedSkill: async () => ({
+        threadId: 'failed-research-thread',
+        agentRole: 'explorer',
+        status: 'failed',
+        result: 'Partial evidence',
+        error: 'Provider unavailable',
+      }),
+    });
+
+    const toolResult = await createSkillTool(runtime).execute('failed-research-tool-call', {
+      skill: 'research',
+      args: 'inspect the failure path',
+    });
+    const text = toolResult.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+    expect(text).toContain('outcome: failed');
+    expect(text).toContain('partial evidence only');
+    expect(text).not.toContain('Synthesize the completed result');
   });
 
   test('rejects execution overrides on inline Skills', async () => {
@@ -1171,7 +1250,7 @@ describe('agent skills', () => {
     await acceptSkillForTest(runtime, 'isolated');
 
     expect((await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => entry.name === 'isolated')?.description)
-      .toBe('Isolated skill');
+      .toContain('Isolated skill');
     const invocation = await runtime.invokeSkill({
       skill: 'isolated',
       args: 'demo',

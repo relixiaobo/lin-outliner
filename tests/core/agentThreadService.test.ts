@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
+import type { Message } from '@earendil-works/pi-ai';
 import { mkdirSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,13 @@ import type {
 } from '../../src/core/agent/extensions';
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
-import type { AgentCoreNotification, ThreadItem, Turn } from '../../src/core/agent/protocol';
+import type {
+  AgentCoreNotification,
+  RoleCatalogContextPayload,
+  SkillCatalogContextPayload,
+  ThreadItem,
+  Turn,
+} from '../../src/core/agent/protocol';
 import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
@@ -31,6 +38,7 @@ import type {
 } from '../../src/main/agent/runtime/types';
 import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
 import { Core } from '../../src/core/core';
 import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import {
@@ -54,6 +62,8 @@ class ControlledExecutor implements TurnExecutor {
   private steeringCalls = 0;
   private steeringBlock: Promise<void> | null = null;
   private releaseSteeringBlock: (() => void) | null = null;
+  private steeringRegistrationBlock: Promise<void> | null = null;
+  private releaseSteeringRegistrationBlock: (() => void) | null = null;
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     this.contexts.push(context);
@@ -67,6 +77,7 @@ class ControlledExecutor implements TurnExecutor {
       memoryCitation: null,
     };
     await context.recorder.started(started);
+    if (this.steeringRegistrationBlock) await this.steeringRegistrationBlock;
     context.onSteer(async (input) => {
       this.steeringCalls += 1;
       if (this.steeringBlock) await this.steeringBlock;
@@ -105,6 +116,18 @@ class ControlledExecutor implements TurnExecutor {
     this.steeringBlock = new Promise<void>((resolve) => {
       this.releaseSteeringBlock = resolve;
     });
+  }
+
+  blockSteeringRegistration(): void {
+    this.steeringRegistrationBlock = new Promise<void>((resolve) => {
+      this.releaseSteeringRegistrationBlock = resolve;
+    });
+  }
+
+  releaseSteeringRegistration(): void {
+    this.releaseSteeringRegistrationBlock?.();
+    this.releaseSteeringRegistrationBlock = null;
+    this.steeringRegistrationBlock = null;
   }
 
   releaseSteering(): void {
@@ -241,13 +264,14 @@ class FailingContextPayloadExecutor extends ControlledExecutor {
     this.contextRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'additionalContext',
-      entries: [{
+      turnEntries: [{
         key: 'orphaned-runtime-context',
         source: 'test',
         authority: 'application',
         purpose: 'observation',
         text: 'This payload never reached a canonical Item.',
       }],
+      threadState: [],
     });
     throw new Error('Runtime failed after persisting context');
   }
@@ -288,18 +312,19 @@ class ContextPayloadExecutor extends ControlledExecutor {
       executionMode: 'root',
       replyIdentity: null,
       todayNodeId: null,
+      todayNodeTitle: null,
     } as const;
     const payloadRef = await this.payloads.writeContext(context.thread.id, payload);
     const nestedPayloadRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'fallback',
+      source: 'deterministic',
       text: 'Nested context dependency',
     });
     const summaryRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
       kind: 'compactionSummary',
-      source: 'model',
+      source: 'deterministic',
       text: 'Compacted context summary',
     });
     const restoredStateRef = await this.payloads.writeContext(context.thread.id, {
@@ -311,6 +336,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       roleCatalogHash: null,
       announcedRoles: [],
       userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
       activeObservations: [],
     });
     const instructionsRef = await this.payloads.writeContext(context.thread.id, {
@@ -414,6 +440,25 @@ class ContextPayloadExecutor extends ControlledExecutor {
       resourceRefs: [resourceRef],
       outputRefs: [outputRef],
     });
+    return completedExecutionResult();
+  }
+}
+
+class ProviderOverflowCompactionExecutor extends ControlledExecutor {
+  compaction: Extract<ThreadItem, { type: 'contextCompaction' }> | null = null;
+  projected: Message[] = [];
+  private executions = 0;
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    this.contexts.push(context);
+    this.executions += 1;
+    if (this.executions === 1) return completedExecutionResult();
+    this.compaction = await context.compactContext('providerOverflow');
+    if (!this.compaction) throw new Error('Expected provider-overflow compaction to cover prior history.');
+    this.projected = await new CanonicalContextProjector(projectionModel(), context).projectTurns([
+      ...context.historyBeforeTurn,
+      { ...context.turn, items: context.recorder.orderedItems() },
+    ]);
     return completedExecutionResult();
   }
 }
@@ -1053,6 +1098,232 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('records /compact and /clear as idle feature Turns without launching the model', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      name: 'Context boundaries',
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep the verified implementation details.' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    const compactRequest = {
+      threadId: thread.id,
+      input: [{ type: 'text' as const, text: '/compact emphasize verified decisions' }],
+      clientUserMessageId: 'compact-submit-1',
+    };
+    const compacted = await fixture.service.startRendererTurn(compactRequest);
+    expect(compacted.turn).toMatchObject({
+      provenance: { trigger: { kind: 'feature', feature: 'context.compact', ref: 'compact-submit-1' } },
+      status: 'completed',
+      items: [{ type: 'contextCompaction', trigger: 'manual' }],
+    });
+    expect(fixture.executor.contexts).toHaveLength(1);
+    expect(await fixture.service.startRendererTurn(compactRequest)).toEqual({ ...compacted, deduplicated: true });
+    const compactItem = compacted.turn.items[0];
+    if (compactItem?.type !== 'contextCompaction' || !compactItem.instructionsRef) {
+      throw new Error('Expected manual compaction payloads.');
+    }
+    expect(await fixture.stores.payloads.readContext(thread.id, compactItem.summaryRef)).toMatchObject({
+      kind: 'compactionSummary',
+      source: 'deterministic',
+      text: expect.stringContaining('Keep the verified implementation details.'),
+    });
+    expect(await fixture.stores.payloads.readContext(thread.id, compactItem.instructionsRef)).toMatchObject({
+      kind: 'compactionInstructions',
+      entries: [{ text: 'emphasize verified decisions' }],
+    });
+
+    const clearRequest = {
+      threadId: thread.id,
+      input: [{ type: 'text' as const, text: '/clear' }],
+      clientUserMessageId: 'clear-submit-1',
+    };
+    const cleared = await fixture.service.startRendererTurn(clearRequest);
+    expect(cleared.turn).toMatchObject({
+      provenance: { trigger: { kind: 'feature', feature: 'context.clear', ref: 'clear-submit-1' } },
+      status: 'completed',
+      items: [{
+        type: 'contextReset',
+        clearedThrough: { turnId: compacted.turn.id, itemId: compacted.acceptedItemId },
+      }],
+    });
+    expect(await fixture.service.startRendererTurn(clearRequest)).toEqual({ ...cleared, deduplicated: true });
+    const turnsBeforeNoop = fixture.service.listTurns({ threadId: thread.id, limit: 100 }).data;
+    const consecutive = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '/clear' }],
+      clientUserMessageId: 'clear-submit-2',
+    });
+    expect(consecutive).toEqual({ ...cleared, deduplicated: true });
+    expect(fixture.service.listTurns({ threadId: thread.id, limit: 100 }).data).toHaveLength(turnsBeforeNoop.length);
+
+    await fixture.service.close();
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(await reopened.service.startRendererTurn(compactRequest)).toEqual({ ...compacted, deduplicated: true });
+    await reopened.service.close();
+  });
+
+  test('persists provider-overflow compaction and rebuilds the same context after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-provider-overflow-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const clock = () => ++now;
+    const executor = new ProviderOverflowCompactionExecutor();
+    const opened = await openFixture(root, executor, clock);
+    await opened.service.initialize();
+    const thread = (await opened.service.startThread({
+      name: 'Provider overflow',
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    await opened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Retain the original implementation decision.' }],
+    });
+    await opened.service.waitForIdle(thread.id);
+    const active = await opened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Continue after provider overflow.' }],
+    });
+    await opened.service.waitForIdle(thread.id);
+
+    const stored = opened.service.readTurnForHost(thread.id, active.turn.id);
+    if (!stored) throw new Error('Missing completed provider-overflow Turn.');
+    const compaction = stored.items.find((item) => item.type === 'contextCompaction');
+    expect(compaction).toMatchObject({
+      type: 'contextCompaction',
+      trigger: 'providerOverflow',
+      instructionsRef: null,
+    });
+    if (compaction?.type !== 'contextCompaction') throw new Error('Missing provider-overflow compaction.');
+    expect(compaction).toEqual(executor.compaction);
+    expect(await opened.stores.payloads.readContext(thread.id, compaction.summaryRef)).toMatchObject({
+      kind: 'compactionSummary',
+      source: 'deterministic',
+      text: expect.stringContaining('Retain the original implementation decision.'),
+    });
+    expect(await opened.stores.payloads.readContext(thread.id, compaction.restoredStateRef)).toMatchObject({
+      kind: 'compactionRestoredState',
+      activeSkills: [],
+      activeObservations: [],
+    });
+    expect(JSON.stringify(executor.projected)).toContain('lossy_derived_context=true');
+    expect(JSON.stringify(executor.projected)).toContain('Continue after provider overflow.');
+
+    await opened.service.close();
+    const reopened = await openFixture(root, new ControlledExecutor(), clock);
+    await reopened.service.initialize();
+    const turns = reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns ?? [];
+    const replayed = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => reopened.stores.payloads.readContext(thread.id, ref),
+      readOutput: (ref) => reopened.stores.payloads.readTextReference(thread.id, ref),
+      readResource: (ref) => reopened.stores.payloads.readResource(thread.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(turns);
+    expect(replayed).toEqual(executor.projected);
+    await reopened.service.close();
+  });
+
+  test('serializes staged compaction cleanup with active Turn context writes', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'History eligible for compaction' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this active while cleanup is staged' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const staged = await fixture.executor.contexts[1]!.stageContextCompaction('automaticPreflight');
+    if (!staged) throw new Error('Expected a staged compaction.');
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let pruneCalls = 0;
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      pruneCalls += 1;
+      return prune(...args);
+    };
+    const threadMutex = Reflect.get(fixture.service, 'threadMutex') as {
+      run<T>(key: string, operation: () => Promise<T>): Promise<T>;
+    };
+    let releaseLock!: () => void;
+    let markLocked!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      markLocked = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const holder = threadMutex.run(thread.id, async () => {
+      markLocked();
+      await release;
+    });
+    await locked;
+
+    const discarded = staged.discard();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pruneCalls).toBe(0);
+    releaseLock();
+    await Promise.all([holder, discarded]);
+    expect(pruneCalls).toBe(1);
+    fixture.stores.payloads.pruneUnreferencedContexts = prune;
+
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('rejects reserved context commands while a Turn is active', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep working.' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    await expect(fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '/compact' }],
+    })).rejects.toThrow('active Turn');
+    await expect(fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '/clear' }],
+    })).rejects.toThrow('active Turn');
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('rebuilds a missing client-input sidecar from canonical history during runtime', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -1181,6 +1452,102 @@ describe('ThreadService', () => {
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
+  });
+
+  test('journals effective Roles only for spawn-capable Turns', async () => {
+    let version = 1;
+    const roleSnapshot = () => ({
+      schemaVersion: 1 as const,
+      kind: 'roleCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: String(version).repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: version === 1 ? 'worker' : 'reviewer',
+        displayName: version === 1 ? 'worker' : 'reviewer',
+        source: 'project' as const,
+        identity: `project:${version === 1 ? 'worker' : 'reviewer'}`,
+        contentHash: String(version + 1).repeat(64),
+        description: version === 1 ? 'Implement the task.' : 'Review the task.',
+      }],
+    });
+    const fixture = await createFixture(undefined, { resolveRoleCatalog: roleSnapshot });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Use a worker' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{ type: 'text', text: 'The Roles are unchanged' }],
+    });
+    version = 2;
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{ type: 'text', text: 'A reviewer was added' }],
+    });
+    const turn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const roleItems = turn.items.filter((item) => item.type === 'contextEvidence' && item.kind === 'roleCatalog');
+    expect(roleItems).toHaveLength(2);
+    expect((await fixture.stores.payloads.readContext(thread.id, roleItems[0]!.payloadRef))).toMatchObject({
+      mode: 'baseline',
+      entries: [{ name: 'worker', change: 'available' }],
+    });
+    expect((await fixture.stores.payloads.readContext(thread.id, roleItems[1]!.payloadRef))).toMatchObject({
+      mode: 'delta',
+      previousCatalogHash: '1'.repeat(64),
+      entries: [
+        { name: 'reviewer', change: 'added' },
+        { name: 'worker', change: 'removed' },
+      ],
+    });
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+
+    let catalogReads = 0;
+    const noSpawn = await createFixture(undefined, {
+      resolveConfiguration: () => ({
+        profileName: 'no-spawn',
+        developerInstructions: [],
+        model: 'inherit',
+        reasoningEffort: 'medium',
+        tools: ['example.spawn_agent'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      }),
+      resolveRoleCatalog: () => {
+        catalogReads += 1;
+        return roleSnapshot();
+      },
+    });
+    const noSpawnThread = (await noSpawn.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: noSpawn.root,
+    })).thread;
+    await noSpawn.service.startRendererTurn({
+      threadId: noSpawnThread.id,
+      input: [{ type: 'text', text: 'No built-in collaboration tool' }],
+    });
+    await noSpawn.executor.waitUntilWaiting();
+    expect(catalogReads).toBe(0);
+    expect(noSpawn.service.readThread({ threadId: noSpawnThread.id, includeTurns: true }).thread.turns![0]!.items)
+      .not.toContainEqual(expect.objectContaining({ type: 'contextEvidence', kind: 'roleCatalog' }));
+    noSpawn.executor.finish();
+    await noSpawn.service.waitForIdle(noSpawnThread.id);
+    await noSpawn.service.close();
   });
 
   test('publishes steering evidence and user input as one atomic Item batch', async () => {
@@ -1406,6 +1773,58 @@ describe('ThreadService', () => {
       item.type === 'userMessage'
       && item.content.some((part) => part.type === 'text' && part.text === 'Do not admit this after execution ends')
     ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('refreshes diagnostics only after queued steering delivery drains', async () => {
+    const fixture = await createFixture();
+    fixture.executor.blockSteeringRegistration();
+    fixture.executor.blockSteering();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Queue steering before provider registration' }],
+    });
+    await waitUntil(() => fixture.executor.contexts.length === 1);
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      clientUserMessageId: 'queued-diagnostics-steering',
+      input: [{ type: 'text', text: 'Persist this before final diagnostics' }],
+    });
+
+    fixture.executor.releaseSteeringRegistration();
+    await fixture.executor.waitUntilWaiting();
+    await fixture.executor.waitUntilSteering();
+    const finalRef = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json' as const,
+      byteLength: 256,
+      schemaVersion: 1 as const,
+    };
+    let refreshes = 0;
+    fixture.executor.finish(0, {
+      ...completedExecutionResult(),
+      refreshDiagnostics: async () => {
+        refreshes += 1;
+        return finalRef;
+      },
+    });
+    const activeTurns = Reflect.get(fixture.service, 'activeTurns') as Map<string, { finishing: boolean }>;
+    await waitUntil(() => activeTurns.get(thread.id)?.finishing === true);
+    expect(refreshes).toBe(0);
+
+    fixture.executor.releaseSteering();
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(refreshes).toBe(1);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toEqual(finalRef);
     await fixture.service.close();
   });
 
@@ -1691,6 +2110,10 @@ describe('ThreadService', () => {
       ? [fixture.stores.payloads.readContext(thread.id, item.payloadRef)]
       : []));
     const userView = payloads.find((payload) => payload?.kind === 'userView');
+    expect(payloads.find((payload) => payload?.kind === 'turnEnvironment')).toMatchObject({
+      todayNodeId: 'root',
+      todayNodeTitle: 'Authoritative root',
+    });
     expect(userView).toMatchObject({
       focusedNode: { nodeId: 'focus', title: 'Authoritative title' },
       selectedNodes: [{ nodeId: 'focus', title: 'Authoritative title' }],
@@ -1704,13 +2127,14 @@ describe('ThreadService', () => {
       }],
     });
     expect(payloads.find((payload) => payload?.kind === 'additionalContext')).toMatchObject({
-      entries: [{
+      turnEntries: [{
         key: 'renderer_note',
         source: 'renderer',
         authority: 'untrusted',
         purpose: 'observation',
         text: 'Renderer observation',
       }],
+      threadState: null,
     });
     const resources = payloads.find((payload) => payload?.kind === 'referencedResources');
     expect(resources).toMatchObject({
@@ -1772,7 +2196,7 @@ describe('ThreadService', () => {
     const payload = await fixture.stores.payloads.readContext(thread.id, evidence.payloadRef);
     expect(payload).toMatchObject({
       kind: 'additionalContext',
-      entries: expect.arrayContaining([
+      turnEntries: expect.arrayContaining([
         {
           key: 'automation_info',
           source: 'main',
@@ -1780,6 +2204,8 @@ describe('ThreadService', () => {
           purpose: 'instruction',
           text: 'Host schedule guidance',
         },
+      ]),
+      threadState: expect.arrayContaining([
         {
           key: 'context-probe:extension_instruction',
           source: 'extension:context-probe',
@@ -1798,6 +2224,59 @@ describe('ThreadService', () => {
     });
 
     fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('records an empty Thread-state snapshot when the last extension value is cleared', async () => {
+    let active = true;
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'state-probe',
+      contributeThreadContext: () => active ? {
+        extensionId: 'state-probe',
+        additionalContext: {
+          policy: { kind: 'application', value: 'ACTIVE THREAD POLICY' },
+        },
+      } : null,
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First request' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+
+    active = false;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Second request' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const secondTurn = fixture.executor.contexts[1]!.turn;
+    const additional = secondTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'additionalContext'
+    ));
+    if (!additional || additional.type !== 'contextEvidence') {
+      throw new Error('Expected empty Thread-state evidence.');
+    }
+    expect(await fixture.stores.payloads.readContext(thread.id, additional.payloadRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [],
+      threadState: [],
+    });
+
+    fixture.executor.finish(1);
     await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
   });
@@ -1966,6 +2445,111 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('serves immutable Turn diagnostics and keeps fork copies independent of the source Thread', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Inspect the exact provider request' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const payload = turnDiagnosticsPayload(accepted.acceptedItemId);
+    const ref = await fixture.executor.contexts[0]!.persistTurnDiagnostics(payload);
+    const result = completedExecutionResult();
+    fixture.executor.finish(0, {
+      ...result,
+      execution: { ...result.execution!, diagnosticsRef: ref },
+    });
+    await fixture.service.waitForIdle(source.id);
+
+    await expect(fixture.service.request('thread/turn/details/read', {
+      threadId: source.id,
+      turnId: accepted.turn.id,
+    })).resolves.toMatchObject({ diagnostics: { ref, payload } });
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const copiedTurn = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
+    const copiedUser = copiedTurn.items.find((item) => item.type === 'userMessage');
+    if (!copiedUser || !copiedTurn.execution.diagnosticsRef) {
+      throw new Error('Forked Turn diagnostics are missing.');
+    }
+    expect(copiedTurn.execution.diagnosticsRef).not.toEqual(ref);
+    await fixture.service.deleteThread(source.id);
+    const copiedDetails = await fixture.service.request('thread/turn/details/read', {
+      threadId: fork.id,
+      turnId: copiedTurn.id,
+    });
+    expect(copiedDetails.diagnostics).toMatchObject({
+      ref: copiedTurn.execution.diagnosticsRef,
+      payload: {
+        activities: [{
+          type: 'acceptedInput',
+          source: 'initial',
+          itemIds: [copiedUser.id],
+        }],
+      },
+    });
+
+    await fixture.service.rollbackThread({ threadId: fork.id, numTurns: 1 });
+    expect(await fixture.stores.payloads.readTurnDiagnostics(
+      fork.id,
+      copiedTurn.execution.diagnosticsRef,
+    )).toBeNull();
+    await fixture.service.close();
+  });
+
+  test('keeps Details and fork available when inspection-only diagnostics are missing', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Keep canonical history independent from diagnostics' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const missingRef = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json' as const,
+      byteLength: 512,
+      schemaVersion: 1 as const,
+    };
+    const result = completedExecutionResult();
+    fixture.executor.finish(0, {
+      ...result,
+      execution: { ...result.execution!, diagnosticsRef: missingRef },
+    });
+    await fixture.service.waitForIdle(source.id);
+
+    const details = await fixture.service.request('thread/turn/details/read', {
+      threadId: source.id,
+      turnId: accepted.turn.id,
+    });
+    expect(details.diagnostics).toBeNull();
+    expect(details.turn.execution.diagnosticsRef).toBeNull();
+    expect(fixture.service.readThread({ threadId: source.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toEqual(missingRef);
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    expect(fixture.service.readThread({ threadId: fork.id, includeTurns: true })
+      .thread.turns?.[0]?.execution.diagnosticsRef).toBeNull();
+    await fixture.service.close();
+  });
+
   test('rewrites context cursors and owns every inherited context dependency after source deletion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
@@ -2030,7 +2614,7 @@ describe('ThreadService', () => {
       .toEqual({
         schemaVersion: 1,
         kind: 'compactionSummary',
-        source: 'fallback',
+        source: 'deterministic',
         text: 'Nested context dependency',
       });
     expect(await stores.payloads.readResource(fork.id, forkEvidence.resourceRefs[0]!))
@@ -2053,6 +2637,116 @@ describe('ThreadService', () => {
     expect(previewFile.path).not.toContain(join('payloads', fork.id));
     expect(await readFile(previewFile.path, 'utf8')).toBe('nested inherited image');
     await service.close();
+  });
+
+  test('compacts a fork after source deletion with owned Skill, view, and Thread-state checkpoints', async () => {
+    const catalog = {
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: 'a'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'fork-skill',
+        displayName: 'Fork Skill',
+        source: 'project' as const,
+        identity: 'project:fork-skill',
+        contentHash: 'b'.repeat(64),
+        description: 'Fork-owned Skill description.',
+      }],
+    };
+    const invocation = {
+      schemaVersion: 1 as const,
+      kind: 'skillInvocation' as const,
+      name: 'fork-skill',
+      displayName: 'Fork Skill',
+      source: 'project' as const,
+      identity: 'project:fork-skill',
+      resourceRoot: '/workspace/.agents/skills/fork-skill',
+      contentHash: 'b'.repeat(64),
+      instructions: 'Use the fork-owned Skill instructions.',
+      arguments: '',
+      execution: 'inline' as const,
+      invocationSource: 'user' as const,
+      constraints: { allowedTools: [], model: null, effort: null },
+      invokedAt: 1,
+    };
+    const extensions = new ExtensionRegistry();
+    extensions.register({
+      id: 'fork-context',
+      contributeThreadContext: () => ({
+        extensionId: 'fork-context',
+        additionalContext: {
+          policy: { kind: 'application', value: 'Use the fork-owned Thread policy.' },
+        },
+      }),
+    });
+    const fixture = await createFixture(extensions, {
+      getDocumentProjection: () => contextProjection([contextNode('root', 'Fork-owned view root')]),
+      resolveSkillAdmission: () => ({ catalogSnapshot: catalog, invocation }),
+    });
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Create fork-owned context' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(source.id);
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+
+    await fixture.service.deleteThread(source.id);
+    const compacted = await fixture.service.startRendererTurn({
+      threadId: fork.id,
+      input: [{ type: 'text', text: '/compact' }],
+    });
+    const compaction = compacted.turn.items.find((item) => item.type === 'contextCompaction');
+    if (!compaction || compaction.type !== 'contextCompaction') {
+      throw new Error('Expected fork compaction Item.');
+    }
+    const restored = await fixture.stores.payloads.readContext(fork.id, compaction.restoredStateRef);
+    if (!restored || restored.kind !== 'compactionRestoredState') {
+      throw new Error('Expected fork compaction restored state.');
+    }
+    expect(restored).toMatchObject({
+      skillCatalogHash: catalog.catalogHash,
+      activeSkills: [{ name: 'fork-skill', contentHash: invocation.contentHash }],
+    });
+    expect(restored.userViewBaselineRef?.kind).toBe('userView');
+    expect(restored.userViewBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(restored.additionalContextBaselineRef?.kind).toBe('additionalContext');
+    expect(restored.additionalContextBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(await fixture.stores.payloads.readContext(fork.id, restored.activeSkills[0]!.payloadRef))
+      .toMatchObject({ kind: 'skillInvocation', instructions: invocation.instructions });
+    expect(await fixture.stores.payloads.readContext(fork.id, restored.userViewBaselineRef!))
+      .toMatchObject({ kind: 'userView', panels: [{ rootTitle: 'Fork-owned view root' }] });
+    expect(await fixture.stores.payloads.readContext(fork.id, restored.additionalContextBaselineRef!))
+      .toMatchObject({
+        kind: 'additionalContext',
+        threadState: [{ text: 'Use the fork-owned Thread policy.' }],
+      });
+
+    const turns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const projected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(turns);
+    expect(JSON.stringify(projected)).toContain('Fork-owned Skill description.');
+    expect(JSON.stringify(projected)).toContain('Use the fork-owned Skill instructions.');
+    expect(JSON.stringify(projected)).toContain('Fork-owned view root');
+    expect(JSON.stringify(projected)).toContain('Use the fork-owned Thread policy.');
+    await fixture.service.close();
   });
 
   test('keeps inherited text and image payloads after deleting the source Thread', async () => {
@@ -2866,6 +3560,8 @@ describe('ThreadService', () => {
       input: [{ type: 'text', text: `Delegate ${index + 1}` }],
     })));
     await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-first');
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'spawn-second');
 
     const first = await fixture.service.spawnCollaborationAgent({
       senderThreadId: roots[0]!.id,
@@ -2887,6 +3583,517 @@ describe('ThreadService', () => {
     expect(first.thread.id).not.toBe(second.thread.id);
     expect(fixture.service.listCollaborationAgents(roots[0]!.id).map((view) => view.threadId)).toEqual([first.thread.id]);
     expect(fixture.service.listCollaborationAgents(roots[1]!.id).map((view) => view.threadId)).toEqual([second.thread.id]);
+    await fixture.service.close();
+  });
+
+  test('rejects a Subagent spawn whose canonical parent boundary is missing', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate only at the recorded tool boundary' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    await expect(fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-spawn-item',
+      taskName: 'missing_boundary',
+      message: 'Must not create a child',
+      forkTurns: 'none',
+    })).rejects.toThrow('Subagent spawn Item is outside the active parent Turn');
+    expect(fixture.service.listCollaborationAgents(root.id)).toEqual([]);
+    expect(fixture.service.listThreads().data.map((thread) => thread.id)).toEqual([root.id]);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('removes a staged child and copied payloads when inherited dependency admission fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with managed context' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const imageRef = await context.persistOutputImage(
+      Buffer.from('dependency removed before copy').toString('base64'),
+      'image/png',
+    );
+    await context.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: 'managed-image-item',
+      provenance: context.recorder.localProvenance('managed-image-item'),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/missing.png' },
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
+      success: true,
+      durationMs: 1,
+    });
+    expect(await fixture.stores.payloads.deleteResource(root.id, imageRef)).toBe(true);
+    await recordCollaborationSpawnBoundary(context, 'copy-failure-spawn');
+    const notifications: AgentCoreNotification[] = [];
+    fixture.service.subscribe((notification) => notifications.push(notification));
+
+    await expect(fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'copy-failure-spawn',
+      taskName: 'copy_failure',
+      message: 'Must fail before child admission',
+    })).rejects.toThrow('Missing inherited managed resource');
+
+    const stagedChild = notifications.find((notification) => (
+      notification.type === 'thread/started' && notification.threadId !== root.id
+    ));
+    if (!stagedChild || stagedChild.type !== 'thread/started') {
+      throw new Error('Expected staged child start notification.');
+    }
+    expect(fixture.stores.metadata.read(stagedChild.threadId)).toBeNull();
+    expect(fixture.service.listThreads().data.map((thread) => thread.id)).toEqual([root.id]);
+    await expect(readdir(join(fixture.root, 'agent', 'payloads', stagedChild.threadId))).rejects.toThrow();
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('does not repeat unchanged Skill or Role catalogs after child inheritance', async () => {
+    const skillCatalog = {
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: 'a'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'review',
+        displayName: 'Review',
+        source: 'project' as const,
+        identity: 'project:review',
+        contentHash: 'b'.repeat(64),
+        description: 'Review the current change.',
+      }],
+    };
+    const roleCatalog = {
+      schemaVersion: 1 as const,
+      kind: 'roleCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: 'c'.repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: 'worker',
+        displayName: 'Worker',
+        source: 'built-in' as const,
+        identity: 'built-in:worker',
+        contentHash: 'd'.repeat(64),
+        description: 'Implement the assigned task.',
+      }],
+    };
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: () => ({ catalogSnapshot: skillCatalog, invocation: null }),
+      resolveRoleCatalog: () => roleCatalog,
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with the current registries' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'catalog-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'catalog-spawn',
+      taskName: 'catalog_child',
+      message: 'Use the inherited registries',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(child.turn.items).toContainEqual(expect.objectContaining({
+      type: 'contextEvidence',
+      kind: 'inheritedContext',
+    }));
+    expect(child.turn.items).not.toContainEqual(expect.objectContaining({
+      type: 'contextEvidence',
+      kind: 'skillCatalog',
+    }));
+    expect(child.turn.items).not.toContainEqual(expect.objectContaining({
+      type: 'contextEvidence',
+      kind: 'roleCatalog',
+    }));
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(0);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('expands bounded inheritance to preserve selected Skill and Role catalog deltas', async () => {
+    let skillCatalog: SkillCatalogContextPayload = {
+      schemaVersion: 1,
+      kind: 'skillCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+      catalogHash: '1'.repeat(64),
+      entries: [{
+        change: 'available',
+        name: 'review',
+        displayName: 'Review',
+        source: 'project',
+        identity: 'project:review',
+        contentHash: '2'.repeat(64),
+        description: 'Review the current change.',
+      }],
+    };
+    let roleCatalog: RoleCatalogContextPayload = {
+      schemaVersion: 1,
+      kind: 'roleCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+      catalogHash: '3'.repeat(64),
+      entries: [{
+        change: 'available',
+        name: 'worker',
+        displayName: 'Worker',
+        source: 'built-in',
+        identity: 'built-in:worker',
+        contentHash: '4'.repeat(64),
+        description: 'Implement the assigned task.',
+      }],
+    };
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: () => ({ catalogSnapshot: skillCatalog, invocation: null }),
+      resolveRoleCatalog: () => roleCatalog,
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Establish catalog baselines' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    skillCatalog = {
+      ...skillCatalog,
+      catalogHash: '5'.repeat(64),
+      entries: [{
+        ...skillCatalog.entries[0]!,
+        contentHash: '6'.repeat(64),
+        description: 'Review the current change and its tests.',
+      }],
+    };
+    roleCatalog = {
+      ...roleCatalog,
+      catalogHash: '7'.repeat(64),
+      entries: [{
+        ...roleCatalog.entries[0]!,
+        contentHash: '8'.repeat(64),
+        description: 'Implement and verify the assigned task.',
+      }],
+    };
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate after both catalogs changed' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'delta-catalog-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'delta-catalog-spawn',
+      taskName: 'delta_catalog_child',
+      message: 'Use the changed registries',
+      forkTurns: '1',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    const inheritedItem = child.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!inheritedItem || inheritedItem.type !== 'contextEvidence') {
+      throw new Error('Expected inherited context evidence.');
+    }
+    const inherited = await fixture.stores.payloads.readContext(child.thread.id, inheritedItem.payloadRef);
+    expect(inherited).toMatchObject({ kind: 'inheritedContext', requestedTurns: 1 });
+    if (!inherited || inherited.kind !== 'inheritedContext') {
+      throw new Error('Expected inherited context payload.');
+    }
+    expect(inherited.turns).toHaveLength(2);
+    expect(child.turn.items).not.toContainEqual(expect.objectContaining({
+      type: 'contextEvidence',
+      kind: 'skillCatalog',
+    }));
+    expect(child.turn.items).not.toContainEqual(expect.objectContaining({
+      type: 'contextEvidence',
+      kind: 'roleCatalog',
+    }));
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('inherits none, N, or all structured parent Turns with child-owned payloads', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Earlier parent Turn' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Current parent request' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const parentContext = fixture.executor.contexts[1]!;
+    const toolId = parentContext.recorder.createItemId();
+    const outputRef = await parentContext.persistOutputText(
+      toolId,
+      'COMPLETE INHERITED TOOL OUTPUT',
+      'text/plain',
+      'Inherited tool output',
+    );
+    const imageRef = await parentContext.persistOutputImage(
+      Buffer.from('inherited-managed-image').toString('base64'),
+      'image/png',
+    );
+    const sharedResourceBytes = Buffer.from('same resource bytes');
+    const typedImageRef = await fixture.stores.payloads.writeResource(
+      root.id,
+      sharedResourceBytes,
+      'image/png',
+      'same-resource.bin',
+    );
+    const typedBinaryRef = await fixture.stores.payloads.writeResource(
+      root.id,
+      sharedResourceBytes,
+      'application/octet-stream',
+      'same-resource.bin',
+    );
+    const sharedOutputText = '{"same":true}';
+    const plainOutputRef = await parentContext.persistOutputText(
+      'same-output-plain',
+      sharedOutputText,
+      'text/plain',
+      'Plain output identity',
+    );
+    const jsonOutputRef = await parentContext.persistOutputText(
+      'same-output-json',
+      sharedOutputText,
+      'application/json',
+      'JSON output identity',
+    );
+    const alternateSummaryOutputRef = await parentContext.persistOutputText(
+      'same-output-json-summary',
+      sharedOutputText,
+      'application/json',
+      'Alternate JSON output identity',
+    );
+    await parentContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: parentContext.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/inherited.png' },
+      status: 'completed',
+      outputRef,
+      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
+      success: true,
+      durationMs: 1,
+    });
+    await parentContext.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'full' },
+    }, 'Frozen inherited tool output');
+    const typedDependenciesRef = await fixture.stores.payloads.writeContext(root.id, {
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [],
+      threadState: [],
+    });
+    await parentContext.recorder.completedImmediately({
+      type: 'contextEvidence',
+      id: 'typed-dependencies',
+      provenance: parentContext.recorder.localProvenance('typed-dependencies'),
+      kind: 'additionalContext',
+      payloadRef: typedDependenciesRef,
+      summary: 'Typed dependency identity coverage',
+      contextRefs: [],
+      resourceRefs: [typedImageRef, typedBinaryRef],
+      outputRefs: [plainOutputRef, jsonOutputRef, alternateSummaryOutputRef],
+    });
+
+    await recordCollaborationSpawnBoundary(parentContext, 'spawn-all');
+    await parentContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: 'post-spawn-item',
+      provenance: parentContext.recorder.localProvenance('post-spawn-item'),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/post-spawn.txt' },
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'text', text: 'MUST NOT BE INHERITED' }],
+      success: true,
+      durationMs: 1,
+    });
+    const inheritedAll = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'spawn-all',
+      taskName: 'inherit_all',
+      message: 'Use all parent context',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await recordCollaborationSpawnBoundary(parentContext, 'spawn-one');
+    const inheritedOne = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'spawn-one',
+      taskName: 'inherit_one',
+      message: 'Use one parent Turn',
+      forkTurns: '1',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    await recordCollaborationSpawnBoundary(parentContext, 'spawn-none');
+    const inheritedNone = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'spawn-none',
+      taskName: 'inherit_none',
+      message: 'Use no parent context',
+      forkTurns: 'none',
+    });
+    await fixture.executor.waitUntilWaiting(4);
+
+    const allEvidence = inheritedAll.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    const oneEvidence = inheritedOne.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    expect(allEvidence).toMatchObject({
+      type: 'contextEvidence',
+      kind: 'inheritedContext',
+      resourceRefs: [imageRef, typedImageRef, typedBinaryRef],
+      outputRefs: [outputRef, plainOutputRef, jsonOutputRef, alternateSummaryOutputRef],
+    });
+    expect(oneEvidence).toMatchObject({ type: 'contextEvidence', kind: 'inheritedContext' });
+    expect(inheritedNone.turn.items.some((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ))).toBe(false);
+    if (allEvidence?.type !== 'contextEvidence' || oneEvidence?.type !== 'contextEvidence') {
+      throw new Error('Expected inherited context evidence.');
+    }
+    const allPayload = await fixture.stores.payloads.readContext(inheritedAll.thread.id, allEvidence.payloadRef);
+    const onePayload = await fixture.stores.payloads.readContext(inheritedOne.thread.id, oneEvidence.payloadRef);
+    expect(allPayload).toMatchObject({ kind: 'inheritedContext', requestedTurns: 'all' });
+    expect(onePayload).toMatchObject({ kind: 'inheritedContext', requestedTurns: 1 });
+    if (allPayload?.kind !== 'inheritedContext' || onePayload?.kind !== 'inheritedContext') {
+      throw new Error('Expected inherited context payload.');
+    }
+    expect(allPayload.turns).toHaveLength(2);
+    expect(onePayload.turns).toHaveLength(1);
+    expect(JSON.stringify(allPayload)).toContain('Current parent request');
+    expect(JSON.stringify(allPayload)).not.toContain('spawn-all');
+    expect(JSON.stringify(allPayload)).not.toContain('MUST NOT BE INHERITED');
+
+    await fixture.stores.payloads.deleteThread(root.id);
+    expect(await fixture.stores.payloads.readContext(inheritedAll.thread.id, allEvidence.payloadRef)).toEqual(allPayload);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, outputRef))
+      .toBe('COMPLETE INHERITED TOOL OUTPUT');
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, imageRef))
+      .toEqual(Buffer.from('inherited-managed-image'));
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedImageRef))
+      .toEqual(sharedResourceBytes);
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedBinaryRef))
+      .toEqual(sharedResourceBytes);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, plainOutputRef))
+      .toBe(sharedOutputText);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, jsonOutputRef))
+      .toBe(sharedOutputText);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, alternateSummaryOutputRef))
+      .toBe(sharedOutputText);
+    const childContext = fixture.executor.contexts[2]!;
+    const projected = await new CanonicalContextProjector({
+      id: 'inheritance-test',
+      name: 'Inheritance Test',
+      api: 'openai-responses',
+      provider: 'openai',
+      baseUrl: 'https://example.test',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 8_192,
+    }, childContext).projectTurns([inheritedAll.turn]);
+    expect(projected.map((message) => message.role)).toEqual([
+      'user', 'assistant', 'user', 'assistant', 'toolResult', 'user',
+    ]);
+    expect(JSON.stringify(projected)).toContain('COMPLETE INHERITED TOOL OUTPUT');
+    expect(JSON.stringify(projected)).toContain(Buffer.from('inherited-managed-image').toString('base64'));
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(3);
+    fixture.executor.finish(4);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(inheritedAll.thread.id),
+      fixture.service.waitForIdle(inheritedOne.thread.id),
+      fixture.service.waitForIdle(inheritedNone.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
     await fixture.service.close();
   });
 
@@ -3066,6 +4273,7 @@ describe('ThreadService', () => {
       input: [{ type: 'text', text: 'Delegate' }],
     });
     await fixture.executor.waitUntilWaiting();
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-item');
     const child = await fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
       senderTurnId: rootTurn.turn.id,
@@ -3096,9 +4304,23 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(2);
     expect(isolated.thread.parentThreadId).toBe(root.id);
     expect(isolated.thread.threadSource).toBe('subagent');
+    expect(isolated.thread.source).toBe('agent.skill');
     expect(fixture.executor.contexts[2]?.configuration.tools).toEqual([]);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(isolated.thread.id);
+
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' },
+    ]);
+    const collaborationResult = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(collaborationResult).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
+      agents: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
+    });
+    expect(fixture.executor.contexts[0]!.recorder.orderedItems().some((item) => (
+      item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id
+    ))).toBe(false);
 
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
@@ -3261,6 +4483,7 @@ describe('ThreadService', () => {
       token_budget: 100,
     });
     expect(createdGoal.details).toMatchObject({ goal: { status: 'active', tokenBudget: 100 } });
+    await recordCollaborationSpawnBoundary(context, 'spawn-item');
     const spawned = await executeTool(tools, 'collaboration__spawn_agent', 'spawn-item', {
       task_name: 'helper',
       message: 'Inspect the runtime',
@@ -3278,6 +4501,13 @@ describe('ThreadService', () => {
     fixture.executor.finish(1);
     const childId = (spawned.details as { thread_id: string }).thread_id;
     await fixture.service.waitForIdle(childId);
+    const waited = await executeTool(tools, 'collaboration__wait_agent', 'wait-item', {});
+    expect(waited.details).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: childId, status: 'completed', result: 'Done' }],
+      agents: [{ threadId: childId, status: 'completed' }],
+      capabilityAudit: { behavior: 'allow' },
+    });
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
     const stored = fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread;
@@ -3288,6 +4518,58 @@ describe('ThreadService', () => {
       { kind: 'started', agentThreadId: childId, agentPath: '/root/helper' },
       { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper' },
     ]);
+    await fixture.service.close();
+  });
+
+  test('admits idle-time Subagent activity before the next trailing user message', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const first = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate and finish without waiting' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-idle-child');
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: first.turn.id,
+      parentItemId: 'spawn-idle-child',
+      prompt: 'Finish after the parent becomes idle',
+      taskPath: '/root/idle-child',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Continue with the child result' }],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const items = fixture.executor.contexts[2]!.turn.items;
+    const completedActivityIndex = items.findIndex((item) => (
+      item.type === 'subAgentActivity'
+      && item.kind === 'completed'
+      && item.agentThreadId === child.thread.id
+    ));
+    const currentUserIndex = items.findIndex((item) => (
+      item.type === 'userMessage'
+      && item.content.some((part) => part.type === 'text' && part.text === 'Continue with the child result')
+    ));
+    expect(completedActivityIndex).toBeGreaterThanOrEqual(0);
+    expect(completedActivityIndex).toBeLessThan(currentUserIndex);
+    expect(items.at(-1)?.type).toBe('userMessage');
+
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 
@@ -3456,9 +4738,9 @@ describe('ThreadService', () => {
     await expect(fixture.service.waitForCollaborationActivity(
       root.id,
       rootTurn.turn.id,
-      1_000,
       interrupted.signal,
     )).rejects.toThrow('interrupted');
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'wait-spawn');
     const child = await fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
       senderTurnId: rootTurn.turn.id,
@@ -3470,13 +4752,6 @@ describe('ThreadService', () => {
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
-    const alreadyPending = await fixture.service.waitForCollaborationActivity(
-      root.id,
-      rootTurn.turn.id,
-      1_000,
-    );
-    expect(alreadyPending).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
-
     await fixture.service.followupCollaborationTask(
       root.id,
       rootTurn.turn.id,
@@ -3485,11 +4760,24 @@ describe('ThreadService', () => {
       'Complete again',
     );
     await fixture.executor.waitUntilWaiting(2);
+    const alreadyPending = await fixture.service.waitForCollaborationActivity(
+      root.id,
+      rootTurn.turn.id,
+    );
+    expect(alreadyPending).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, status: 'completed', result: 'Done', error: null }],
+      agents: [{ threadId: child.thread.id, status: 'running' }],
+    });
+    expect(await fixture.service.waitForCollaborationActivity(
+      child.thread.id,
+      fixture.executor.contexts[2]!.turn.id,
+    ))
+      .toMatchObject({ reason: 'idle', updates: [], agents: [] });
     let resolved = false;
     const waiting = fixture.service.waitForCollaborationActivity(
       root.id,
       rootTurn.turn.id,
-      1_000,
     ).then((result) => {
       resolved = true;
       return result;
@@ -3516,11 +4804,134 @@ describe('ThreadService', () => {
 
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(child.thread.id);
-    expect(await waiting).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
+    expect(await waiting).toMatchObject({
+      reason: 'terminal',
+      updates: [{ threadId: child.thread.id, status: 'completed', result: 'Done', error: null }],
+      agents: [{ threadId: child.thread.id, status: 'completed' }],
+    });
     fixture.executor.finish(0);
     fixture.executor.finish(3);
     await fixture.service.waitForIdle(root.id);
     await fixture.service.waitForIdle(unrelated.id);
+    await fixture.service.close();
+  });
+
+  test('batches terminal collaboration outcomes and keeps them available when the tree is idle', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate parallel child work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'batch-spawn-a');
+    const childA = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'batch-spawn-a',
+      taskName: 'batch_a',
+      message: 'Complete A',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'batch-spawn-b');
+    const childB = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'batch-spawn-b',
+      taskName: 'batch_b',
+      message: 'Complete B',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(2);
+    await Promise.all([
+      fixture.service.waitForIdle(childA.thread.id),
+      fixture.service.waitForIdle(childB.thread.id),
+    ]);
+
+    const terminal = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(terminal.reason).toBe('terminal');
+    expect([...terminal.updates].sort((left, right) => left.taskPath.localeCompare(right.taskPath))).toEqual([
+      expect.objectContaining({ taskPath: '/root/batch_a', status: 'completed', result: 'Done' }),
+      expect.objectContaining({ taskPath: '/root/batch_b', status: 'completed', result: 'Done' }),
+    ]);
+
+    const idle = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+    expect(idle.reason).toBe('idle');
+    expect(idle.updates).toHaveLength(2);
+    expect(idle.agents.every((agent) => agent.status === 'completed')).toBe(true);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('scopes child collaboration views and waits to the sender subtree', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate nested work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'scope-spawn-a');
+    const childA = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'scope-spawn-a',
+      taskName: 'scope_a',
+      message: 'Coordinate a grandchild',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'scope-spawn-b');
+    const childB = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'scope-spawn-b',
+      taskName: 'scope_b',
+      message: 'Run as a sibling',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'scope-spawn-grandchild');
+    const grandchild = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: childA.thread.id,
+      senderTurnId: childA.turn.id,
+      parentItemId: 'scope-spawn-grandchild',
+      taskName: 'nested',
+      message: 'Complete nested work',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+
+    expect(fixture.service.listCollaborationAgents(childA.thread.id)).toMatchObject([
+      { taskPath: '/root/scope_a/nested', parentThreadId: childA.thread.id, status: 'running' },
+    ]);
+    const waiting = fixture.service.waitForCollaborationActivity(childA.thread.id, childA.turn.id);
+    fixture.executor.finish(3);
+    await fixture.service.waitForIdle(grandchild.thread.id);
+    expect(await waiting).toMatchObject({
+      reason: 'terminal',
+      updates: [{ taskPath: '/root/scope_a/nested', status: 'completed', result: 'Done' }],
+    });
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(2);
+    await Promise.all([
+      fixture.service.waitForIdle(childA.thread.id),
+      fixture.service.waitForIdle(childB.thread.id),
+    ]);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 
@@ -4013,6 +5424,7 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
       modelProvider: 'openai',
       model: 'test-model',
       reasoningEffort: 'medium',
+      diagnosticsRef: null,
       usage: {
         input: tokens,
         output: 0,
@@ -4022,6 +5434,67 @@ function completedExecutionResult(tokens = 7): TurnExecutionResult {
         cost: null,
       },
     },
+  };
+}
+
+function turnDiagnosticsPayload(initialItemId = 'input-item') {
+  return {
+    schemaVersion: 1,
+    contextEpochId: 'initial',
+    cacheAffinity: 'a'.repeat(64),
+    configuration: {
+      profileName: 'default',
+      developerInstructions: [],
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      tools: [],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    },
+    stablePrompt: null,
+    toolSchemas: [],
+    runtime: {
+      provider: 'openai',
+      model: 'test-model',
+      api: 'openai-responses',
+      configuredBaseUrl: 'https://api.openai.com/v1',
+      transportSelection: 'auto',
+      contextWindow: 128_000,
+      maxOutputTokens: 8_192,
+      thinkingLevel: 'medium',
+      timeoutMs: null,
+      maxRetries: null,
+      maxRetryDelayMs: 60_000,
+      cacheRetention: 'short',
+      toolExecution: 'parallel',
+      steeringMode: 'all',
+    },
+    canonicalMessages: [],
+    requestFragments: [],
+    providerCalls: [],
+    activities: [{
+      type: 'acceptedInput',
+      source: 'initial',
+      acceptedAt: 0,
+      itemIds: [initialItemId],
+      consumedByCallIndex: null,
+    }],
+  } as const;
+}
+
+function projectionModel() {
+  return {
+    id: 'projection-test',
+    name: 'Projection Test',
+    api: 'openai-responses' as const,
+    provider: 'openai',
+    baseUrl: 'https://example.test',
+    reasoning: false,
+    input: ['text'] as const,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 8_192,
   };
 }
 
@@ -4077,6 +5550,7 @@ async function createFixture(
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveRoleCatalog'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
@@ -4106,6 +5580,7 @@ async function openFixture(
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveRoleCatalog'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
@@ -4201,4 +5676,24 @@ async function executeTool(
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool.execute(itemId, params);
+}
+
+async function recordCollaborationSpawnBoundary(
+  context: TurnExecutionContext,
+  itemId: string,
+): Promise<void> {
+  await context.recorder.started({
+    type: 'collabAgentToolCall',
+    id: itemId,
+    provenance: context.recorder.localProvenance(itemId),
+    tool: 'spawn_agent',
+    status: 'inProgress',
+    senderThreadId: context.thread.id,
+    receiverThreadIds: [],
+    prompt: null,
+    model: null,
+    reasoningEffort: null,
+    agentsStates: {},
+    outputRef: null,
+  });
 }

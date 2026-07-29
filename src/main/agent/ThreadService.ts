@@ -80,15 +80,24 @@ import type {
   ThreadUserContent,
   ThreadAttachmentContent,
   ContextEvidenceThreadItem,
+  ContextCompactionThreadItem,
+  InheritedContextPayload,
+  ContextEvidenceKind,
+  ThreadContextPayload,
   ThreadContextPayloadReference,
   ThreadContextReadRequest,
   ThreadContextReadResponse,
+  ThreadTurnDetailsReadRequest,
+  ThreadTurnDetailsReadResponse,
   ThreadItemOutputReference,
   ThreadResourceReference,
+  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
   JsonValue,
   Turn,
+  TurnDiagnosticsPayload,
+  TurnDiagnosticsPayloadReference,
   TurnId,
   TurnInputRequest,
   TurnStartResponse,
@@ -124,17 +133,29 @@ import {
 } from './persistence/ToolPayloadStore';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { admitContextEvidence, contextEvidenceItem } from './context/evidenceAdmission';
-import { observedSkillFilePaths, planSkillCatalogEvidence } from './context/SkillContextReducer';
+import {
+  observedSkillFilePaths,
+  planSkillCatalogEvidence,
+  reduceSkillContext,
+} from './context/SkillContextReducer';
+import { planRoleCatalogEvidence, reduceRoleContext } from './context/RoleContextReducer';
+import { planContextCompaction } from './context/ContextCompaction';
+import { cursorFor, selectEffectiveContext } from './context/ContextEpoch';
 import { assertCanonicalUserContent } from './context/userContentIntegrity';
 import {
   assertContextPayloadDependencies,
+  contextPayloadReferenceKey,
   itemContextPayloadReferences,
+  itemOutputReferences,
   itemResourceReferences,
+  outputReferenceKey,
+  resourceReferenceKey,
 } from './context/contextDependencies';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
   SteeredTurnInput,
+  StagedContextCompaction,
   ThreadNameGenerator,
   TurnExecutionResult,
   TurnExecutor,
@@ -189,6 +210,9 @@ export interface ThreadServiceOptions {
     input: SkillAdmissionResolutionInput,
   ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
+  readonly resolveRoleCatalog?: (
+    cwd: string,
+  ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
 }
@@ -259,6 +283,9 @@ export interface SpawnChildThreadInput {
   /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
+  readonly inheritedContext?: InheritedContextPayload;
+  /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
+  readonly childKind?: 'collaboration' | 'isolatedSkill';
 }
 
 export interface SpawnChildThreadResult {
@@ -286,6 +313,20 @@ export interface CollaborationAgentView {
   readonly nickname: string | null;
   readonly role: string | null;
   readonly status: 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored';
+}
+
+export interface CollaborationTerminalOutcome {
+  readonly taskPath: string;
+  readonly threadId: ThreadId;
+  readonly status: 'interrupted' | 'completed' | 'errored';
+  readonly result: string | null;
+  readonly error: string | null;
+}
+
+export interface CollaborationWaitResult {
+  readonly reason: 'terminal' | 'steering' | 'idle';
+  readonly updates: readonly CollaborationTerminalOutcome[];
+  readonly agents: readonly CollaborationAgentView[];
 }
 
 interface EphemeralThreadState {
@@ -320,6 +361,7 @@ interface PendingUserInput {
 
 interface PendingSubagentActivity {
   readonly agentThreadId: ThreadId;
+  readonly agentTurnId: TurnId;
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
 }
@@ -340,6 +382,19 @@ interface AcceptedTurn {
   readonly thread: Thread;
   readonly active: ActiveTurn | null;
 }
+
+interface StagedContextEvidence {
+  readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
+  readonly payloadRef: ThreadContextPayloadReference;
+  readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly outputRefs: readonly ThreadItemOutputReference[];
+  readonly summary: string;
+}
+
+type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
+  readonly stagedContextEvidence?: readonly StagedContextEvidence[];
+};
 
 type NotificationListener = (notification: AgentCoreNotification) => void;
 
@@ -370,6 +425,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     input: SkillAdmissionResolutionInput,
   ) => Promise<SkillAdmissionResolution>;
   private readonly resolveRole: (name: string, cwd: string) => AgentRole;
+  private readonly resolveRoleCatalog: (
+    cwd: string,
+  ) => Promise<RoleCatalogContextPayload | null>;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -424,6 +482,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       invocation: null,
     };
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
+    this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -471,6 +530,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await Promise.all(knownThreadIds.flatMap((threadId) => [
       this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId)),
       this.payloads.pruneUnreferencedContexts(threadId, this.threadContextPayloadReferences(threadId)),
+      this.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.threadTurnDiagnosticsReferences(threadId)),
       this.payloads.pruneUnreferencedTextOutputs(threadId, this.threadTextPayloadReferences(threadId)),
     ]));
     const resumableThreads: Thread[] = [];
@@ -760,6 +820,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.readContextPayload(
           decoded as AgentCoreRequestByMethod['thread/context/read'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/turn/details/read':
+        return await this.readTurnDetails(
+          decoded as AgentCoreRequestByMethod['thread/turn/details/read'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/start':
         return await this.startRendererTurn(decoded as AgentCoreRequestByMethod['turn/start']) as AgentCoreResponseByMethod[Method];
       case 'turn/steer':
@@ -818,6 +882,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!payload) return { context: null };
     assertContextPayloadDependencies(item, payload);
     return { context: { ref: item.payloadRef, payload } };
+  }
+
+  async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
+    const thread = this.requireThread(request.threadId).thread;
+    const turn = this.readTurn(request.threadId, request.turnId);
+    if (!turn) throw new Error(`Unknown Turn: ${request.turnId}`);
+    const ref = turn.execution.diagnosticsRef;
+    if (!ref) return { thread, turn, diagnostics: null };
+    const payload = await this.payloads.readTurnDiagnostics(request.threadId, ref).catch(() => null);
+    if (!payload) {
+      return {
+        thread,
+        turn: decodeTurn({ ...turn, execution: { ...turn.execution, diagnosticsRef: null } }),
+        diagnostics: null,
+      };
+    }
+    return { thread, turn, diagnostics: { ref, payload } };
   }
 
   async beginAttachmentUpload(input: {
@@ -905,7 +986,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ref: ThreadResourceReference,
   ): Promise<Buffer | null> {
     this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+    if (!this.threadResourceReferences(threadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) {
       return null;
     }
     return this.payloads.readResource(threadId, ref);
@@ -983,7 +1066,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ref: ThreadResourceReference,
   ): Promise<ResolvedThreadResourceFile | null> {
     this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+    if (!this.threadResourceReferences(threadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) {
       return null;
     }
     const identity = `resource:${ref.id}:${ref.fileName}`;
@@ -1072,6 +1157,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
+  }
+
+  private threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
+    return this.allTurns(threadId).flatMap((turn) => (
+      turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
+    ));
   }
 
   private threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
@@ -1289,6 +1380,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           copiedTurns[index] = await this.copyForkedTurnPayloads(
             source.id,
             thread.id,
+            inherited[index]!,
             copiedTurns[index]!,
           );
         }
@@ -1311,8 +1403,26 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private async copyForkedTurnPayloads(
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
+    sourceTurn: Turn,
     copiedTurn: Turn,
   ): Promise<Turn> {
+    let diagnosticsRef = copiedTurn.execution.diagnosticsRef;
+    if (diagnosticsRef) {
+      try {
+        const payload = await this.payloads.readTurnDiagnostics(sourceThreadId, diagnosticsRef);
+        if (!payload) {
+          diagnosticsRef = null;
+        } else {
+          const itemIds = new Map(sourceTurn.items.map((item, index) => [item.id, copiedTurn.items[index]!.id]));
+          diagnosticsRef = await this.payloads.writeTurnDiagnostics(
+            targetThreadId,
+            rewriteForkedTurnDiagnostics(payload, itemIds),
+          );
+        }
+      } catch {
+        diagnosticsRef = null;
+      }
+    }
     for (const item of copiedTurn.items) {
       for (const ref of itemResourceReferences(item)) {
         const copied = await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
@@ -1345,7 +1455,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
       }
     }
-    return copiedTurn;
+    return diagnosticsRef === copiedTurn.execution.diagnosticsRef
+      ? copiedTurn
+      : decodeTurn({ ...copiedTurn, execution: { ...copiedTurn.execution, diagnosticsRef } });
   }
 
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
@@ -1417,6 +1529,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await Promise.all([
         this.payloads.pruneUnreferencedResources(thread.id, this.threadResourceReferences(thread.id)),
         this.payloads.pruneUnreferencedContexts(thread.id, this.threadContextPayloadReferences(thread.id)),
+        this.payloads.pruneUnreferencedTurnDiagnostics(
+          thread.id,
+          this.threadTurnDiagnosticsReferences(thread.id),
+        ),
         this.payloads.pruneUnreferencedTextOutputs(thread.id, this.threadTextPayloadReferences(thread.id)),
       ]).catch(() => undefined);
       if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
@@ -1587,8 +1703,154 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
+    const contextCommand = parseContextCommand(request.input);
+    if (contextCommand) return this.startContextCommand(request, contextCommand);
     const privileged: PrivilegedTurnStartRequest = { ...request, trigger: { kind: 'user' } };
     return (await this.acceptAndLaunch(privileged)).response;
+  }
+
+  private async startContextCommand(
+    request: RendererTurnStartRequest,
+    command: ContextCommand,
+  ): Promise<TurnStartResponse> {
+    return this.threadMutex.run(request.threadId, async () => {
+      const record = this.requireThread(request.threadId);
+      const existing = request.clientUserMessageId
+        ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
+        : null;
+      if (existing) return { turn: existing.turn, acceptedItemId: existing.itemId, deduplicated: true };
+      if (this.stoppingThreads.has(request.threadId)) throw new ThreadBusyError('Thread is stopping');
+      if (record.archived) throw new ThreadBusyError('Thread is archived');
+      if (this.activeTurns.has(request.threadId)) throw new ThreadBusyError('Thread already has an active Turn');
+      if (record.thread.status.type !== 'idle') throw new ThreadBusyError('Thread is not idle');
+
+      const turns = this.allTurns(request.threadId);
+      const selected = selectEffectiveContext(turns);
+      if (command.kind === 'clear' && selected.latestReset && !hasContextSinceBoundary(selected.turns)) {
+        const prior = findItemOwner(turns, selected.latestReset.id);
+        if (!prior) throw new Error('The latest context reset is unreachable.');
+        if (request.clientUserMessageId) {
+          this.bindClientInput(request.threadId, request.clientUserMessageId, prior.id, selected.latestReset.id);
+        }
+        return { turn: prior, acceptedItemId: selected.latestReset.id, deduplicated: true };
+      }
+
+      const startedAt = this.now();
+      const turnId = uuidV7(startedAt);
+      const itemId = uuidV7(startedAt + 1);
+      const provenance = {
+        originThreadId: request.threadId,
+        originTurnId: turnId,
+        originItemId: itemId,
+      } as const;
+      let item: ThreadItem;
+      const createdContextRefs: ThreadContextPayloadReference[] = [];
+      try {
+        if (command.kind === 'clear') {
+          const last = turns.flatMap((turn) => turn.items.map((candidate) => ({ turn, item: candidate }))).at(-1);
+          if (!last) throw new Error('There is no context to clear.');
+          item = {
+            type: 'contextReset',
+            id: itemId,
+            provenance,
+            clearedThrough: cursorFor(last.turn, last.item),
+          };
+        } else {
+          const plan = await planContextCompaction({
+            turns,
+            readContext: (ref) => this.payloads.readContext(request.threadId, ref),
+          });
+          if (!plan) {
+            const prior = selected.latestCompaction
+              ? findItemOwner(turns, selected.latestCompaction.id)
+              : null;
+            if (!prior || !selected.latestCompaction) throw new Error('There is no context to compact.');
+            if (request.clientUserMessageId) {
+              this.bindClientInput(request.threadId, request.clientUserMessageId, prior.id, selected.latestCompaction.id);
+            }
+            return { turn: prior, acceptedItemId: selected.latestCompaction.id, deduplicated: true };
+          }
+          const summaryRef = await this.payloads.writeContext(request.threadId, plan.summary);
+          createdContextRefs.push(summaryRef);
+          const restoredStateRef = await this.payloads.writeContext(request.threadId, plan.restoredState);
+          createdContextRefs.push(restoredStateRef);
+          const instructionsPayload = command.instructions
+            ? {
+                schemaVersion: 1 as const,
+                kind: 'compactionInstructions' as const,
+                entries: [{
+                  key: 'manual_compaction_instructions',
+                  source: 'user',
+                  authority: 'application' as const,
+                  purpose: 'instruction' as const,
+                  text: command.instructions,
+                }],
+              }
+            : null;
+          const instructionsRef = instructionsPayload
+            ? await this.payloads.writeContext(request.threadId, instructionsPayload)
+            : null;
+          if (instructionsRef) createdContextRefs.push(instructionsRef);
+          item = {
+            type: 'contextCompaction',
+            id: itemId,
+            provenance,
+            trigger: 'manual',
+            coveredFrom: plan.coveredFrom,
+            coveredThrough: plan.coveredThrough,
+            preservedFrom: plan.preservedFrom,
+            summaryRef,
+            restoredStateRef,
+            instructionsRef,
+            contextRefs: plan.contextRefs,
+            resourceRefs: [],
+            outputRefs: plan.outputRefs,
+          };
+          assertContextPayloadDependencies(item, plan.summary);
+          assertContextPayloadDependencies(item, plan.restoredState);
+          if (instructionsPayload) assertContextPayloadDependencies(item, instructionsPayload);
+        }
+
+        const trigger = {
+          kind: 'feature' as const,
+          feature: command.kind === 'clear' ? 'context.clear' : 'context.compact',
+          ...(request.clientUserMessageId ? { ref: request.clientUserMessageId } : {}),
+        };
+        const inProgress = decodeTurn({
+          id: turnId,
+          items: [item],
+          itemsView: 'full',
+          provenance: { originThreadId: request.threadId, originTurnId: turnId, trigger },
+          status: 'inProgress',
+          error: null,
+          execution: initialTurnExecution(record.thread, record.configuration),
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        });
+        await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn: inProgress });
+        const completedAt = this.now();
+        const completed = decodeTurn({
+          ...inProgress,
+          status: 'completed',
+          completedAt,
+          durationMs: Math.max(0, completedAt - startedAt),
+        });
+        await this.recordNotification({ type: 'turn/completed', threadId: request.threadId, turnId, turn: completed });
+        if (request.clientUserMessageId) {
+          this.bindClientInput(request.threadId, request.clientUserMessageId, turnId, item.id);
+        }
+        return { turn: completed, acceptedItemId: item.id, deduplicated: false };
+      } catch (error) {
+        if (createdContextRefs.length > 0) {
+          await this.payloads.pruneUnreferencedContexts(
+            request.threadId,
+            this.threadContextPayloadReferences(request.threadId),
+          ).catch(() => undefined);
+        }
+        throw error;
+      }
+    });
   }
 
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
@@ -1641,6 +1903,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
           snapshot: skillAdmission.catalogSnapshot,
           readContext: (ref) => this.payloads.readContext(thread.id, ref),
         });
+        const roleCatalog = await planRoleCatalogEvidence({
+          turns: canonicalTurns,
+          snapshot: active.configuration.tools.includes('collaboration.spawn_agent')
+            ? await this.resolveRoleCatalog(thread.cwd)
+            : null,
+          readContext: (ref) => this.payloads.readContext(thread.id, ref),
+        });
         const evidence = await admitContextEvidence({
           thread,
           turnId: active.turnId,
@@ -1650,6 +1919,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           additionalContext: request.additionalContext,
           extensionContext,
           skillCatalog,
+          roleCatalog,
           skillInvocation: skillAdmission.invocation,
           includeHostContext: !this.hiddenEphemeralThreads.has(request.threadId),
           projection: this.getDocumentProjection(),
@@ -1851,7 +2121,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
     this.requireActiveTurn(input.parentThreadId, input.parentTurnId);
-    const result = await this.threadTreeMutex.run(async () => {
+    let stagedThreadId: ThreadId | null = null;
+    let result: SpawnChildThreadResult;
+    try {
+      result = await this.threadTreeMutex.run(async () => {
       if (this.stoppingThreads.has(input.parentThreadId)) throw new ThreadBusyError('Parent Thread is stopping');
       const parent = this.requireThread(input.parentThreadId);
       const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
@@ -1865,7 +2138,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const thread = await this.createThread({
         name: input.taskPath.split('/').at(-1) ?? 'Subagent',
         ephemeral: parent.thread.ephemeral,
-        source: 'collaboration',
+        source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
         threadSource: 'subagent',
         modelProvider: parent.thread.modelProvider,
         cwd: parent.thread.cwd,
@@ -1881,7 +2154,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         reasoningEffortOverride: input.reasoningEffort ?? null,
         taskPath: input.taskPath,
       });
-      const response = await this.startPrivilegedTurn({
+      stagedThreadId = thread.id;
+      const stagedContextEvidence = input.inheritedContext
+        ? [await this.copyInheritedContextToChild(input.parentThreadId, thread.id, input.inheritedContext)]
+        : [];
+      const accepted = await this.acceptAndLaunch({
         threadId: thread.id,
         input: [{ type: 'text', text: input.prompt }],
         trigger: {
@@ -1890,17 +2167,64 @@ export class ThreadService implements ThreadServiceExtensionHost {
           parentItemId: input.parentItemId,
         },
         ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+        ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
       });
-      return { thread, turn: response.turn, taskPath: input.taskPath };
-    });
-    await this.recordSubagentActivity(
-      input.parentThreadId,
-      input.parentTurnId,
-      result.thread.id,
-      result.taskPath,
-      'started',
-    );
+      return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
+      });
+    } catch (error) {
+      if (stagedThreadId) await this.deleteThread(stagedThreadId).catch(() => undefined);
+      throw error;
+    }
+    if (result.thread.source === 'collaboration') {
+      await this.recordSubagentActivity(
+        input.parentThreadId,
+        input.parentTurnId,
+        result.thread.id,
+        result.taskPath,
+        'started',
+      );
+    }
     return result;
+  }
+
+  private async copyInheritedContextToChild(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    payload: InheritedContextPayload,
+  ): Promise<StagedContextEvidence> {
+    const contextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
+      turn.items.flatMap(itemContextPayloadReferences)
+    )));
+    const resourceRefs = uniqueResourceReferences(payload.turns.flatMap((turn) => (
+      turn.items.flatMap(itemResourceReferences)
+    )));
+    const outputRefs = uniqueOutputReferences(payload.turns.flatMap((turn) => (
+      turn.items.flatMap(itemOutputReferences)
+    )));
+    for (const ref of contextRefs) {
+      if (!await this.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
+        throw new Error(`Missing inherited context payload: ${ref.id}`);
+      }
+    }
+    for (const ref of resourceRefs) {
+      if (!await this.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
+        throw new Error(`Missing inherited managed resource: ${ref.id}`);
+      }
+    }
+    for (const ref of outputRefs) {
+      if (!await this.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref)) {
+        throw new Error(`Missing inherited tool output: ${ref.id}`);
+      }
+    }
+    const payloadRef = await this.payloads.writeContext(targetThreadId, payload);
+    return {
+      payload,
+      payloadRef,
+      contextRefs,
+      resourceRefs,
+      outputRefs,
+      summary: `Inherited parent context (${payload.turns.length} Turns)`,
+    };
   }
 
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
@@ -1916,6 +2240,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
       role: input.readOnly ? 'explorer' : 'worker',
       allowedTools: input.allowedTools,
+      childKind: 'isolatedSkill',
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     });
@@ -1940,7 +2265,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const taskPath = `${parentPath}/${input.taskName}`;
     const sessionId = this.requireThread(input.senderThreadId).thread.sessionId;
     if (this.findSpawnEdgeByPath(sessionId, taskPath)) throw new Error(`Subagent task path already exists: ${taskPath}`);
-    const additionalContext = collaborationHistoryContext(this.allTurns(input.senderThreadId), input.forkTurns);
+    const inheritedContext = await collaborationInheritedContext({
+      turns: this.allTurns(input.senderThreadId),
+      sourceThreadId: input.senderThreadId,
+      activeTurnId: input.senderTurnId,
+      spawnItemId: input.parentItemId,
+      forkTurns: input.forkTurns,
+      readContext: (ref) => this.payloads.readContext(input.senderThreadId, ref),
+    });
     const result = await this.spawnChild({
       parentThreadId: input.senderThreadId,
       parentTurnId: input.senderTurnId,
@@ -1950,7 +2282,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...(input.role === undefined ? {} : { role: input.role }),
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
-      ...(additionalContext === undefined ? {} : { additionalContext }),
+      ...(inheritedContext === null ? {} : { inheritedContext }),
     });
     return result;
   }
@@ -1972,7 +2304,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       queued.push({ content });
       this.mailbox.set(targetThread.id, queued);
     }
-    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
@@ -2002,16 +2333,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
         },
       });
     }
-    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
   listCollaborationAgents(senderThreadId: ThreadId, pathPrefix?: string): readonly CollaborationAgentView[] {
     const sender = this.requireThread(senderThreadId).thread;
+    const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
+    const descendantPrefix = `${senderPath}/`;
     const persisted = this.metadata.childEdges(rootThreadId(sender, (id) => this.requireThread(id).thread), true);
     const ephemeral = [...this.ephemeralSpawnEdges.entries()].map(([childThreadId, edge]) => ({ childThreadId, ...edge }));
     return [...persisted, ...ephemeral]
       .filter((edge) => this.requireThread(edge.childThreadId).thread.sessionId === sender.sessionId)
+      .filter((edge) => edge.taskPath.startsWith(descendantPrefix))
+      .filter((edge) => this.isCollaborationDescendant(senderThreadId, edge.childThreadId))
       .filter((edge) => !pathPrefix || edge.taskPath.startsWith(pathPrefix))
       .map((edge) => this.collaborationView(edge.childThreadId));
   }
@@ -2031,37 +2365,56 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async waitForCollaborationActivity(
     senderThreadId: ThreadId,
     senderTurnId: string,
-    timeoutMs: number | undefined,
     signal?: AbortSignal,
-  ): Promise<readonly CollaborationAgentView[]> {
+  ): Promise<CollaborationWaitResult> {
     this.requireActiveTurn(senderThreadId, senderTurnId);
     if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
-    const bounded = Math.max(0, Math.min(timeoutMs ?? 30_000, 60_000));
-    if (this.takePendingCollaborationActivity(senderThreadId)) {
-      await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-      return this.listCollaborationAgents(senderThreadId);
+
+    if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {
+      this.takePendingCollaborationActivity(senderThreadId);
+      const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+      return this.collaborationWaitResult(senderThreadId, 'terminal', activities);
     }
+    if (this.takePendingCollaborationActivity(senderThreadId)) {
+      return this.collaborationWaitResult(senderThreadId, 'steering', []);
+    }
+    const agents = this.listCollaborationAgents(senderThreadId);
+    if (!agents.some((agent) => (
+      agent.parentThreadId === senderThreadId
+      && (agent.status === 'pendingInit' || agent.status === 'running')
+    ))) {
+      return {
+        reason: 'idle',
+        updates: agents.flatMap((agent) => (
+          agent.status === 'completed' || agent.status === 'interrupted' || agent.status === 'errored'
+            ? [this.collaborationTerminalOutcome(agent.threadId, agent.taskPath, agent.status)]
+            : []
+        )),
+        agents,
+      };
+    }
+
     const state = this.collaborationActivityState(senderThreadId);
     await new Promise<void>((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | null = null;
       const done = () => {
-        if (timer) clearTimeout(timer);
         state.waiters.delete(done);
         signal?.removeEventListener('abort', aborted);
         resolve();
       };
       const aborted = () => {
-        if (timer) clearTimeout(timer);
         state.waiters.delete(done);
         reject(new Error('Collaboration wait was interrupted'));
       };
       state.waiters.add(done);
       signal?.addEventListener('abort', aborted, { once: true });
-      timer = setTimeout(done, bounded);
     });
     this.takePendingCollaborationActivity(senderThreadId);
-    await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-    return this.listCollaborationAgents(senderThreadId);
+    const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+    return this.collaborationWaitResult(
+      senderThreadId,
+      activities.length > 0 ? 'terminal' : 'steering',
+      activities,
+    );
   }
 
   async withThreadAdmissionBarrier<T>(
@@ -2090,7 +2443,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async acceptAndLaunch(
-    request: PrivilegedTurnStartRequest,
+    request: InternalTurnStartRequest,
     onlyIfIdle = false,
   ): Promise<AcceptedTurn> {
     const record = this.requireThread(request.threadId);
@@ -2121,7 +2474,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async acceptTurn(
-    request: PrivilegedTurnStartRequest,
+    request: InternalTurnStartRequest,
     onlyIfIdle: boolean,
   ): Promise<AcceptedTurn> {
     const record = this.requireThread(request.threadId);
@@ -2167,7 +2520,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async commitAcceptedTurn(
-    request: PrivilegedTurnStartRequest,
+    request: InternalTurnStartRequest,
     record: ThreadCatalogRecord,
     turnId: TurnId,
     startedAt: number,
@@ -2193,6 +2546,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
       completedAt: null,
       durationMs: null,
     });
+    const stagedItems = (request.stagedContextEvidence ?? []).map((staged) => {
+      const stagedItem = contextEvidenceItem({
+        thread: record.thread,
+        turnId,
+        createItemId: () => uuidV7(),
+      }, staged.payload.kind, staged.payloadRef, staged.summary, staged.resourceRefs, {
+        contextRefs: staged.contextRefs,
+        outputRefs: staged.outputRefs,
+      });
+      assertContextPayloadDependencies(stagedItem, staged.payload);
+      return stagedItem;
+    });
     const threadBarrier = createThreadAdmissionBarrierSnapshot(
       request.threadId,
       this.threadBarrierGenerations.get(request.threadId) ?? 0,
@@ -2211,7 +2576,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const extensionContext = this.hiddenEphemeralThreads.has(request.threadId)
       ? []
       : await this.extensions.threadContext(record.thread);
-    const canonicalTurns = this.allTurns(request.threadId);
+    const canonicalTurns = [
+      ...this.allTurns(request.threadId),
+      ...(stagedItems.length > 0 ? [{ ...provisionalTurn, items: stagedItems }] : []),
+    ];
     const skillAdmission = this.hiddenEphemeralThreads.has(request.threadId)
       ? { catalogSnapshot: null, invocation: null }
       : await this.resolveSkillAdmission({
@@ -2226,6 +2594,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       snapshot: skillAdmission.catalogSnapshot,
       readContext: (ref) => this.payloads.readContext(record.thread.id, ref),
     });
+    const roleCatalog = await planRoleCatalogEvidence({
+      turns: canonicalTurns,
+      snapshot: record.configuration.tools.includes('collaboration.spawn_agent')
+        ? await this.resolveRoleCatalog(record.thread.cwd)
+        : null,
+      readContext: (ref) => this.payloads.readContext(record.thread.id, ref),
+    });
     const evidence = await admitContextEvidence({
       thread: record.thread,
       turnId,
@@ -2235,6 +2610,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       additionalContext: request.additionalContext,
       extensionContext,
       skillCatalog,
+      roleCatalog,
       skillInvocation: skillAdmission.invocation,
       includeHostContext: !this.hiddenEphemeralThreads.has(request.threadId),
       projection: this.getDocumentProjection(),
@@ -2249,7 +2625,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ),
       onResourceCreated: recordCreatedEvidenceResource,
     });
-    const initialItems = [...evidence.items, item];
+    const pendingSubagentActivities = [
+      ...(this.pendingSubagentActivities.get(request.threadId) ?? []),
+    ];
+    const pendingSubagentItems = pendingSubagentActivities.map((activity) => (
+      subagentActivityItem(request.threadId, turnId, activity)
+    ));
+    const initialItems = [...pendingSubagentItems, ...stagedItems, ...evidence.items, item];
     const turn = decodeTurn({ ...provisionalTurn, items: initialItems });
     const recorder = new ItemRecorder(
       request.threadId,
@@ -2278,6 +2660,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
 
     await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
+    this.consumePendingSubagentActivities(request.threadId, pendingSubagentActivities);
+    if (!this.pendingSubagentActivities.has(request.threadId)) {
+      this.takePendingCollaborationActivity(request.threadId);
+    }
     this.activeTurns.set(request.threadId, active);
     if (!record.thread.preview.trim() && preview) {
       try {
@@ -2306,8 +2692,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async executeActiveTurn(active: ActiveTurn): Promise<void> {
-    this.takePendingCollaborationActivity(active.threadId);
-    await this.flushPendingSubagentActivities(active.threadId, active.turnId);
     let result: TurnExecutionResult = {};
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
@@ -2324,6 +2708,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         signal: active.controller.signal,
         recorder: active.recorder,
         readContext: (ref) => this.payloads.readContext(active.threadId, ref),
+        readOutput: (ref) => this.payloads.readTextReference(active.threadId, ref),
         resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
         readResource: (ref) => this.payloads.readResource(active.threadId, ref),
         persistOutputImage: async (dataBase64, mimeType) => {
@@ -2344,6 +2729,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
           payload,
           summary,
         ),
+        persistTurnDiagnostics: (payload) => this.payloads.writeTurnDiagnostics(active.threadId, payload),
+        onTurnDiagnosticsError: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[agent] Turn diagnostics persistence failed: ${message}`);
+        },
         persistSkillCatalog: (snapshot) => this.threadMutex.run(active.threadId, async () => {
           const catalog = await planSkillCatalogEvidence({
             turns: this.allTurns(active.threadId),
@@ -2358,6 +2748,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
             `Available Skills (${catalog.entries.length})`,
           );
         }),
+        compactContext: async (trigger, preserveFromTurnId) => {
+          const staged = await this.stageRuntimeContextCompaction(active, trigger, preserveFromTurnId);
+          return staged ? await staged.commit() : null;
+        },
+        stageContextCompaction: (trigger, preserveFromTurnId) => this.stageRuntimeContextCompaction(
+          active,
+          trigger,
+          preserveFromTurnId,
+        ),
         onProviderRetry: (retryStatus) => this.emitTransientNotification({
           type: 'turn/providerRetry/changed',
           threadId: active.threadId,
@@ -2382,6 +2781,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await active.steeringDelivery;
     this.takePendingCollaborationActivity(active.threadId);
     await this.flushPendingSubagentActivities(active.threadId, active.turnId);
+    if (result.refreshDiagnostics && result.execution) {
+      const diagnosticsRef = await result.refreshDiagnostics();
+      result = {
+        ...result,
+        execution: { ...result.execution, diagnosticsRef },
+      };
+    }
     const aborted = active.controller.signal.aborted;
     const executionError = active.fatalError ?? thrown;
     const status = executionError ? 'failed' : aborted ? 'interrupted' : result.status ?? 'completed';
@@ -2420,6 +2826,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         active.threadId,
         this.threadContextPayloadReferences(active.threadId),
       ).catch(() => undefined);
+      await this.payloads.pruneUnreferencedTurnDiagnostics(
+        active.threadId,
+        this.threadTurnDiagnosticsReferences(active.threadId),
+      ).catch(() => undefined);
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
     });
@@ -2439,14 +2849,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       else if (executionError) await this.extensions.turnError(thread, turn, executionError);
       else await this.extensions.turnStopped(thread, turn);
     }
-    this.queueChildTurnActivity(thread, status);
+    this.queueChildTurnActivity(thread, turn);
     if (!hidden) await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
   }
 
   private persistExecutionContextEvidence(
     active: ActiveTurn,
     thread: Thread,
-    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem> {
     return this.threadMutex.run(active.threadId, () => this.persistExecutionContextEvidenceLocked(
@@ -2457,10 +2867,88 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ));
   }
 
+  private stageRuntimeContextCompaction(
+    active: ActiveTurn,
+    trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
+    preserveFrom?: ContextCursor,
+  ): Promise<StagedContextCompaction | null> {
+    return this.threadMutex.run(active.threadId, async () => {
+      const turns = this.allTurns(active.threadId).map((turn) => turn.id === active.turnId
+        ? { ...turn, items: active.recorder.orderedItems() }
+        : turn);
+      const plan = await planContextCompaction({
+        turns,
+        preserveFrom: preserveFrom ?? firstTurnCursor(turns, active.turnId),
+        readContext: (ref) => this.payloads.readContext(active.threadId, ref),
+      });
+      if (!plan) return null;
+      const cleanupLocked = () => this.payloads.pruneUnreferencedContexts(
+        active.threadId,
+        this.threadContextPayloadReferences(active.threadId),
+      ).catch(() => undefined);
+      const cleanup = () => this.threadMutex.run(active.threadId, cleanupLocked);
+      try {
+        const summaryRef = await this.payloads.writeContext(active.threadId, plan.summary);
+        const restoredStateRef = await this.payloads.writeContext(active.threadId, plan.restoredState);
+        const id = active.recorder.createItemId();
+        const item: ContextCompactionThreadItem = {
+          type: 'contextCompaction',
+          id,
+          provenance: active.recorder.localProvenance(id),
+          trigger,
+          coveredFrom: plan.coveredFrom,
+          coveredThrough: plan.coveredThrough,
+          preservedFrom: plan.preservedFrom,
+          summaryRef,
+          restoredStateRef,
+          instructionsRef: null,
+          contextRefs: plan.contextRefs,
+          resourceRefs: [],
+          outputRefs: plan.outputRefs,
+        };
+        assertContextPayloadDependencies(item, plan.summary);
+        assertContextPayloadDependencies(item, plan.restoredState);
+        let state: 'staged' | 'committing' | 'committed' | 'discarded' = 'staged';
+        return {
+          item,
+          commit: async () => {
+            if (state !== 'staged') throw new Error('Context compaction is no longer staged.');
+            state = 'committing';
+            try {
+              const committed = await this.threadMutex.run(active.threadId, async () => {
+                if (this.activeTurns.get(active.threadId) !== active) {
+                  throw new Error('Context compaction active Turn changed before commit.');
+                }
+                return await active.recorder.completedImmediately(
+                  item,
+                  this.now(),
+                ) as ContextCompactionThreadItem;
+              });
+              state = 'committed';
+              return committed;
+            } catch (error) {
+              state = 'discarded';
+              await cleanup();
+              throw error;
+            }
+          },
+          discard: async () => {
+            if (state !== 'staged') return;
+            state = 'discarded';
+            await cleanup();
+          },
+        };
+      } catch (error) {
+        await cleanupLocked();
+        throw error;
+      }
+    });
+  }
+
   private async persistExecutionContextEvidenceLocked(
     active: ActiveTurn,
     thread: Thread,
-    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem> {
     const payloadRef = await this.payloads.writeContext(active.threadId, payload);
@@ -2469,7 +2957,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         thread,
         turnId: active.turnId,
         createItemId: () => active.recorder.createItemId(),
-      }, payload.kind, payloadRef, summary, []);
+      }, payload.kind, payloadRef, summary, [], {
+        outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
+      });
       assertContextPayloadDependencies(item, payload);
       return await active.recorder.completedImmediately(item, this.now()) as ContextEvidenceThreadItem;
     } catch (error) {
@@ -2530,15 +3020,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.extensions.turnError(this.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
       }
     }
-    await this.threadMutex.run(active.threadId, () => this.payloads.pruneUnreferencedContexts(
-      active.threadId,
-      this.threadContextPayloadReferences(active.threadId),
-    )).catch(() => undefined);
+    await this.threadMutex.run(active.threadId, async () => {
+      await Promise.all([
+        this.payloads.pruneUnreferencedContexts(
+          active.threadId,
+          this.threadContextPayloadReferences(active.threadId),
+        ),
+        this.payloads.pruneUnreferencedTurnDiagnostics(
+          active.threadId,
+          this.threadTurnDiagnosticsReferences(active.threadId),
+        ),
+      ]);
+    }).catch(() => undefined);
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
     if (thread && failedTurn) this.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
-    if (thread) this.queueChildTurnActivity(thread, 'failed');
+    if (thread && failedTurn) this.queueChildTurnActivity(thread, failedTurn);
   }
 
   private async createThread(
@@ -2955,15 +3453,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const turn = this.readTurn(threadId, binding.turnId);
       const item = turn?.items.find((candidate) => (
         candidate.id === binding.itemId
-        && candidate.type === 'userMessage'
-        && candidate.clientId === clientId
+        && itemMatchesClientBinding(turn, candidate, clientId)
       ));
       if (turn && item) return { turn, itemId: item.id };
       if (!this.ephemeral.has(threadId)) this.metadata.deleteClientInput(threadId, clientId);
     }
     for (const turn of this.allTurns(threadId)) {
       const item = turn.items.find((candidate) => (
-        candidate.type === 'userMessage' && candidate.clientId === clientId
+        itemMatchesClientBinding(turn, candidate, clientId)
       ));
       if (!item) continue;
       this.bindClientInput(threadId, clientId, turn.id, item.id);
@@ -3049,7 +3546,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!edge) throw new Error(`Subagent task path not found: ${target}`);
     const thread = this.requireThread(edge.childThreadId).thread;
     if (thread.sessionId !== sender.sessionId) throw new Error('Subagent target is outside the current Thread tree');
+    if (!this.isCollaborationDescendant(senderThreadId, thread.id)) {
+      throw new Error('Subagent target is outside the sender collaboration subtree');
+    }
     return thread;
+  }
+
+  private isCollaborationDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current = this.requireThread(childThreadId).thread;
+    while (current.parentThreadId !== null && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.source !== 'collaboration') return false;
+      if (current.parentThreadId === senderThreadId) return true;
+      current = this.requireThread(current.parentThreadId).thread;
+    }
+    return false;
   }
 
   private collaborationView(threadId: ThreadId): CollaborationAgentView {
@@ -3076,6 +3588,49 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
   }
 
+  private collaborationWaitResult(
+    senderThreadId: ThreadId,
+    reason: CollaborationWaitResult['reason'],
+    activities: readonly PendingSubagentActivity[],
+  ): CollaborationWaitResult {
+    return {
+      reason,
+      updates: activities.flatMap((activity) => activity.kind === 'started'
+        ? []
+        : [this.collaborationTerminalOutcome(
+            activity.agentThreadId,
+            activity.agentPath,
+            activity.kind === 'errored' ? 'errored' : activity.kind,
+            activity.agentTurnId,
+          )]),
+      agents: this.listCollaborationAgents(senderThreadId),
+    };
+  }
+
+  private collaborationTerminalOutcome(
+    threadId: ThreadId,
+    taskPath: string,
+    status: CollaborationTerminalOutcome['status'],
+    turnId?: TurnId,
+  ): CollaborationTerminalOutcome {
+    const terminalTurn = turnId === undefined
+      ? this.allTurns(threadId).at(-1)
+      : this.readTurn(threadId, turnId);
+    const result = terminalTurn?.items
+      .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
+        ? [item.text.trim()]
+        : [])
+      .filter(Boolean)
+      .join('\n\n') ?? '';
+    return {
+      taskPath,
+      threadId,
+      status,
+      result: result || null,
+      error: terminalTurn?.error?.message ?? null,
+    };
+  }
+
   private async recordSubagentActivity(
     ownerThreadId: ThreadId,
     ownerTurnId: string,
@@ -3095,24 +3650,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }, this.now());
   }
 
-  private queueChildTurnActivity(thread: Thread, status: Turn['status']): void {
-    if (!thread.parentThreadId) return;
+  private queueChildTurnActivity(thread: Thread, turn: Turn): void {
+    if (!thread.parentThreadId || thread.source !== 'collaboration') return;
     const agentPath = this.taskPathForThread(thread.id);
     if (!agentPath) return;
-    const kind: PendingSubagentActivity['kind'] = status === 'completed'
+    const kind: PendingSubagentActivity['kind'] = turn.status === 'completed'
       ? 'completed'
-      : status === 'interrupted'
+      : turn.status === 'interrupted'
         ? 'interrupted'
         : 'errored';
     const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
-    queued.push({ agentThreadId: thread.id, agentPath, kind });
+    queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind });
     this.pendingSubagentActivities.set(thread.parentThreadId, queued);
     this.signalCollaborationActivity(thread.parentThreadId);
   }
 
-  private async flushPendingSubagentActivities(threadId: ThreadId, turnId: string): Promise<void> {
+  private async flushPendingSubagentActivities(
+    threadId: ThreadId,
+    turnId: string,
+  ): Promise<readonly PendingSubagentActivity[]> {
     const queued = this.pendingSubagentActivities.get(threadId);
-    if (!queued || queued.length === 0) return;
+    if (!queued || queued.length === 0) return [];
     this.pendingSubagentActivities.delete(threadId);
     let index = 0;
     try {
@@ -3136,6 +3694,20 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
       throw error;
     }
+    return queued;
+  }
+
+  private consumePendingSubagentActivities(
+    threadId: ThreadId,
+    consumed: readonly PendingSubagentActivity[],
+  ): void {
+    if (consumed.length === 0) return;
+    const queued = this.pendingSubagentActivities.get(threadId);
+    if (!queued) return;
+    const consumedSet = new Set(consumed);
+    const remaining = queued.filter((activity) => !consumedSet.has(activity));
+    if (remaining.length > 0) this.pendingSubagentActivities.set(threadId, remaining);
+    else this.pendingSubagentActivities.delete(threadId);
   }
 
   private collaborationActivityState(threadId: ThreadId): CollaborationActivityState {
@@ -3248,6 +3820,38 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
 }
 
+type ContextCommand =
+  | { readonly kind: 'clear' }
+  | { readonly kind: 'compact'; readonly instructions: string };
+
+function parseContextCommand(input: readonly ThreadUserContent[]): ContextCommand | null {
+  if (input.length !== 1 || input[0]?.type !== 'text') return null;
+  const text = input[0].text.trim();
+  if (text === '/clear') return { kind: 'clear' };
+  const compact = /^\/compact(?:\s+([\s\S]*))?$/.exec(text);
+  if (!compact) return null;
+  return { kind: 'compact', instructions: compact[1]?.trim() ?? '' };
+}
+
+function hasContextSinceBoundary(turns: readonly Turn[]): boolean {
+  return turns.some((turn) => turn.items.some((item) => (
+    item.type !== 'contextReset'
+    && item.type !== 'contextCompaction'
+    && !(item.type === 'contextEvidence' && item.kind === 'toolOutputProjection')
+  )));
+}
+
+function findItemOwner(turns: readonly Turn[], itemId: string): Turn | null {
+  return turns.find((turn) => turn.items.some((item) => item.id === itemId)) ?? null;
+}
+
+function itemMatchesClientBinding(turn: Turn | undefined, item: ThreadItem, clientId: string): boolean {
+  if (item.type === 'userMessage') return item.clientId === clientId;
+  if (!turn || turn.provenance.trigger.kind !== 'feature' || turn.provenance.trigger.ref !== clientId) return false;
+  return (turn.provenance.trigger.feature === 'context.clear' && item.type === 'contextReset')
+    || (turn.provenance.trigger.feature === 'context.compact' && item.type === 'contextCompaction');
+}
+
 function createAbortError(message: string): Error {
   const error = new Error(message);
   error.name = 'AbortError';
@@ -3322,32 +3926,184 @@ function rootThreadId(thread: Thread, read: (threadId: ThreadId) => Thread): Thr
   return current.id;
 }
 
-function collaborationHistoryContext(turns: readonly Turn[], forkTurns = 'all'): AdditionalContext | undefined {
-  const normalized = forkTurns.trim() || 'all';
-  if (normalized === 'none') return undefined;
-  const count = normalized === 'all'
-    ? turns.length
-    : /^[1-9]\d*$/.test(normalized)
-      ? Number(normalized)
-      : NaN;
-  if (!Number.isSafeInteger(count) || count < 1) {
+async function collaborationInheritedContext(input: {
+  readonly turns: readonly Turn[];
+  readonly sourceThreadId: ThreadId;
+  readonly activeTurnId: TurnId;
+  readonly spawnItemId: string;
+  readonly forkTurns?: string;
+  readonly readContext: (
+    ref: ThreadContextPayloadReference,
+  ) => Promise<ThreadContextPayload | null>;
+}): Promise<InheritedContextPayload | null> {
+  const requestedTurns = parseForkTurns(input.forkTurns);
+  const epoch = turnsAfterLatestReset(input.turns);
+  const activeIndex = epoch.findIndex((turn) => turn.id === input.activeTurnId);
+  if (activeIndex < 0) throw new Error('Active parent Turn is outside the current context epoch');
+  const active = epoch[activeIndex]!;
+  const spawnIndex = active.items.findIndex((item) => item.id === input.spawnItemId);
+  if (spawnIndex < 0) throw new Error('Subagent spawn Item is outside the active parent Turn');
+  const spawnItem = active.items[spawnIndex]!;
+  if (spawnItem.type !== 'collabAgentToolCall' || spawnItem.tool !== 'spawn_agent') {
+    throw new Error('Subagent spawn boundary does not reference a spawn_agent Item');
+  }
+  if (requestedTurns === 'none') return null;
+  const prefix = [
+    ...epoch.slice(0, activeIndex),
+    { ...active, items: active.items.slice(0, spawnIndex) },
+  ].flatMap((turn) => {
+    const items = turn.items.filter((item) => !('status' in item) || item.status !== 'inProgress');
+    if (items.length === 0) return [];
+    return [{
+      ...turn,
+      items,
+      status: turn.status === 'inProgress' ? 'completed' as const : turn.status,
+      completedAt: turn.completedAt ?? turn.startedAt,
+      durationMs: turn.durationMs ?? 0,
+    }];
+  });
+  if (prefix.length === 0) return null;
+  let start = requestedTurns === 'all' ? 0 : Math.max(0, prefix.length - requestedTurns);
+  start = await expandForContextDependencies(prefix, start, input.readContext);
+  const selected = prefix.slice(start);
+  const lastTurn = selected.at(-1)!;
+  const lastItem = lastTurn.items.at(-1)!;
+  return {
+    schemaVersion: 1,
+    kind: 'inheritedContext',
+    sourceThreadId: input.sourceThreadId,
+    coveredThrough: cursorFor(lastTurn, lastItem),
+    requestedTurns,
+    turns: selected,
+  };
+}
+
+async function expandForContextDependencies(
+  turns: readonly Turn[],
+  initialStart: number,
+  readContext: (
+    ref: ThreadContextPayloadReference,
+  ) => Promise<ThreadContextPayload | null>,
+): Promise<number> {
+  let start = expandForCompactionCursors(turns, initialStart);
+  for (;;) {
+    try {
+      const selected = turns.slice(start);
+      await Promise.all([
+        reduceSkillContext(selected, readContext),
+        reduceRoleContext(selected, readContext),
+      ]);
+      return start;
+    } catch (error) {
+      const kind = catalogJournalBoundaryKind(error);
+      if (start === 0 || kind === null) throw error;
+      const preceding = previousCatalogStateTurn(turns, start, kind);
+      if (preceding < 0) throw error;
+      start = expandForCompactionCursors(turns, preceding);
+    }
+  }
+}
+
+function catalogJournalBoundaryKind(
+  error: unknown,
+): Extract<ContextEvidenceKind, 'skillCatalog' | 'roleCatalog'> | null {
+  if (!(error instanceof Error)) return null;
+  if (error.message === 'Skill catalog journal does not continue from the canonical catalog hash.') {
+    return 'skillCatalog';
+  }
+  if (error.message === 'Role catalog journal does not continue from the canonical catalog hash.') {
+    return 'roleCatalog';
+  }
+  return null;
+}
+
+function previousCatalogStateTurn(
+  turns: readonly Turn[],
+  start: number,
+  kind: Extract<ContextEvidenceKind, 'skillCatalog' | 'roleCatalog'>,
+): number {
+  for (let index = start - 1; index >= 0; index -= 1) {
+    if (turns[index]!.items.some((item) => (
+      item.type === 'contextCompaction'
+      || (item.type === 'contextEvidence' && (
+        item.kind === kind || item.kind === 'inheritedContext'
+      ))
+    ))) return index;
+  }
+  return -1;
+}
+
+function firstTurnCursor(turns: readonly Turn[], turnId: TurnId): ContextCursor {
+  const turn = turns.find((candidate) => candidate.id === turnId);
+  const item = turn?.items[0];
+  if (!turn || !item) throw new Error(`Compaction preserve Turn is unreachable: ${turnId}`);
+  return cursorFor(turn, item);
+}
+
+function parseForkTurns(value = 'all'): 'none' | 'all' | number {
+  const normalized = value.trim() || 'all';
+  if (normalized === 'none' || normalized === 'all') return normalized;
+  if (!/^[1-9]\d*$/.test(normalized)) {
     throw new Error('fork_turns must be none, all, or a positive integer string');
   }
-  const selected = turns.slice(-count);
-  const lines = selected.flatMap((turn) => turn.items.flatMap((item) => {
-    if (item.type === 'userMessage') {
-      return [`User: ${item.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')}`];
+  const count = Number(normalized);
+  if (!Number.isSafeInteger(count)) throw new Error('fork_turns is outside the safe integer range');
+  return count;
+}
+
+function turnsAfterLatestReset(turns: readonly Turn[]): Turn[] {
+  let resetTurnIndex = -1;
+  let resetItemIndex = -1;
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
+    for (let itemIndex = 0; itemIndex < turns[turnIndex]!.items.length; itemIndex += 1) {
+      if (turns[turnIndex]!.items[itemIndex]!.type !== 'contextReset') continue;
+      resetTurnIndex = turnIndex;
+      resetItemIndex = itemIndex;
     }
-    if (item.type === 'agentMessage' && item.text) return [`Assistant: ${item.text}`];
-    return [];
-  }));
-  if (lines.length === 0) return undefined;
-  return {
-    parent_thread_history: {
-      kind: 'application',
-      value: lines.join('\n\n').slice(-50_000),
-    },
-  };
+  }
+  if (resetTurnIndex < 0) return [...turns];
+  const first = turns[resetTurnIndex]!;
+  const remaining = first.items.slice(resetItemIndex + 1);
+  return [
+    ...(remaining.length > 0 ? [{ ...first, items: remaining }] : []),
+    ...turns.slice(resetTurnIndex + 1),
+  ];
+}
+
+function expandForCompactionCursors(turns: readonly Turn[], initialStart: number): number {
+  let start = initialStart;
+  const turnIndexById = new Map(turns.map((turn, index) => [turn.id, index]));
+  for (;;) {
+    let expanded = start;
+    for (const turn of turns.slice(start)) {
+      for (const item of turn.items) {
+        if (item.type !== 'contextCompaction') continue;
+        for (const cursor of [item.coveredFrom, item.coveredThrough, item.preservedFrom].filter(
+          (candidate): candidate is ContextCursor => candidate !== null,
+        )) {
+          const cursorTurnIndex = turnIndexById.get(cursor.turnId);
+          if (cursorTurnIndex === undefined) throw new Error('Inherited compaction cursor is unreachable');
+          expanded = Math.min(expanded, cursorTurnIndex);
+        }
+      }
+    }
+    if (expanded === start) return start;
+    start = expanded;
+  }
+}
+
+function uniqueContextReferences(
+  refs: readonly ThreadContextPayloadReference[],
+): ThreadContextPayloadReference[] {
+  return [...new Map(refs.map((ref) => [contextPayloadReferenceKey(ref), ref])).values()];
+}
+
+function uniqueResourceReferences(refs: readonly ThreadResourceReference[]): ThreadResourceReference[] {
+  return [...new Map(refs.map((ref) => [resourceReferenceKey(ref), ref])).values()];
+}
+
+function uniqueOutputReferences(refs: readonly ThreadItemOutputReference[]): ThreadItemOutputReference[] {
+  return [...new Map(refs.map((ref) => [outputReferenceKey(ref), ref])).values()];
 }
 
 function pageEphemeralTurns(
@@ -3437,22 +4193,12 @@ function attachmentSourcesEqual(
   if (left.source.kind === 'localFile' && right.source.kind === 'localFile') {
     if (left.source.path !== right.source.path) return false;
   } else if (left.source.kind === 'threadPayload' && right.source.kind === 'threadPayload') {
-    if (!resourceReferencesEqual(left.source.ref, right.source.ref)) return false;
+    if (resourceReferenceKey(left.source.ref) !== resourceReferenceKey(right.source.ref)) return false;
   } else {
     return false;
   }
   if (!left.promptImage || !right.promptImage) return left.promptImage === right.promptImage;
-  return resourceReferencesEqual(left.promptImage, right.promptImage);
-}
-
-function resourceReferencesEqual(
-  left: ThreadResourceReference,
-  right: ThreadResourceReference,
-): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.fileName === right.fileName;
+  return resourceReferenceKey(left.promptImage) === resourceReferenceKey(right.promptImage);
 }
 
 function userMessage(
@@ -3473,6 +4219,22 @@ function userMessage(
   });
 }
 
+function subagentActivityItem(
+  threadId: ThreadId,
+  turnId: TurnId,
+  activity: PendingSubagentActivity,
+): ThreadItem {
+  const id = uuidV7();
+  return {
+    type: 'subAgentActivity',
+    id,
+    provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
+    kind: activity.kind,
+    agentThreadId: activity.agentThreadId,
+    agentPath: activity.agentPath,
+  };
+}
+
 function initialTurnExecution(
   thread: Thread,
   configuration: EffectiveThreadConfiguration,
@@ -3481,6 +4243,7 @@ function initialTurnExecution(
     modelProvider: thread.modelProvider,
     model: configuration.model,
     reasoningEffort: configuration.reasoningEffort,
+    diagnosticsRef: null,
     usage: {
       input: 0,
       output: 0,
@@ -3500,6 +4263,38 @@ function copyTurn(source: Turn, now: number): Turn {
     items: source.items.map((item) => copyItem(item, now)),
     itemsView: 'full',
   });
+}
+
+function rewriteForkedTurnDiagnostics(
+  payload: TurnDiagnosticsPayload,
+  itemIds: ReadonlyMap<string, string>,
+): TurnDiagnosticsPayload {
+  const rewriteItemId = (itemId: string): string => {
+    const copied = itemIds.get(itemId);
+    if (!copied) throw new Error(`Turn diagnostics Item is outside the forked Turn: ${itemId}`);
+    return copied;
+  };
+  return {
+    ...payload,
+    activities: payload.activities.map((activity) => {
+      if (activity.type === 'acceptedInput') {
+        return { ...activity, itemIds: activity.itemIds.map(rewriteItemId) };
+      }
+      if (activity.type === 'toolExecutionBatch') {
+        return {
+          ...activity,
+          executions: activity.executions.map((execution) => ({
+            ...execution,
+            itemId: execution.itemId === null ? null : rewriteItemId(execution.itemId),
+          })),
+        };
+      }
+      if (activity.type === 'contextCompaction') {
+        return { ...activity, itemId: rewriteItemId(activity.itemId) };
+      }
+      return activity;
+    }),
+  };
 }
 
 function forkedCursorMap(sourceTurns: readonly Turn[], copiedTurns: readonly Turn[]): Map<string, ContextCursor> {

@@ -312,6 +312,23 @@ const collaborationTargetSchema = objectSchema({
   target: stringSchema('Relative or canonical task path returned by spawn_agent.'),
 }, ['target']);
 
+const collaborationAgentViewSchema = objectSchema({
+  taskPath: stringSchema('Canonical child task path.'),
+  threadId: stringSchema('Child Thread identifier.'),
+  parentThreadId: stringSchema('Parent Thread identifier.'),
+  nickname: { type: ['string', 'null'] },
+  role: { type: ['string', 'null'] },
+  status: enumSchema(['pendingInit', 'running', 'interrupted', 'completed', 'errored']),
+}, ['taskPath', 'threadId', 'parentThreadId', 'nickname', 'role', 'status']);
+
+const collaborationTerminalOutcomeSchema = objectSchema({
+  taskPath: stringSchema('Canonical child task path.'),
+  threadId: stringSchema('Child Thread identifier.'),
+  status: enumSchema(['interrupted', 'completed', 'errored']),
+  result: { type: ['string', 'null'] },
+  error: { type: ['string', 'null'] },
+}, ['taskPath', 'threadId', 'status', 'result', 'error']);
+
 const collaborationToolContracts: readonly ModelToolContract[] = [
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' },
@@ -344,12 +361,15 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
   },
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'wait_agent' },
-    description: 'Wait for child mailbox activity, completion, steered root input, or a bounded timeout.',
+    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Synthesize completed results instead of repeating covered work.',
     scope: 'anyThread',
     schemaOwner: 'core',
-    inputSchema: objectSchema({
-      timeout_ms: numberSchema('Bounded wait timeout in milliseconds.'),
-    }),
+    inputSchema: objectSchema({}),
+    outputSchema: objectSchema({
+      reason: enumSchema(['terminal', 'steering', 'idle']),
+      updates: arraySchema(collaborationTerminalOutcomeSchema),
+      agents: arraySchema(collaborationAgentViewSchema),
+    }, ['reason', 'updates', 'agents']),
     actionKinds: ['agent.subagent.read'],
   },
   {

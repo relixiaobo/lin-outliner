@@ -65,21 +65,21 @@ export function assertContextPayloadDependencies(
   assertReferencesIncluded(
     dependencies.contexts,
     owner.contextRefs,
-    contextReferencesEqual,
+    contextPayloadReferenceKey,
     'contextRefs',
     (ref) => ref.id,
   );
   assertReferencesIncluded(
     dependencies.resources,
     owner.resourceRefs,
-    resourceReferencesEqual,
+    resourceReferenceKey,
     'resourceRefs',
     (ref) => `${ref.id}/${ref.fileName}`,
   );
   assertReferencesIncluded(
     dependencies.outputs,
     owner.outputRefs,
-    outputReferencesEqual,
+    outputReferenceKey,
     'outputRefs',
     (ref) => ref.id,
   );
@@ -104,6 +104,7 @@ function contextPayloadDependencies(payload: ThreadContextPayload): ContextPaylo
         contexts: [
           ...payload.activeSkills.map((skill) => skill.payloadRef),
           ...(payload.userViewBaselineRef ? [payload.userViewBaselineRef] : []),
+          ...(payload.additionalContextBaselineRef ? [payload.additionalContextBaselineRef] : []),
           ...payload.activeObservations.map((observation) => observation.projectionRef),
         ],
         resources: [],
@@ -134,44 +135,26 @@ function emptyDependencies(
 function assertReferencesIncluded<T>(
   required: readonly T[],
   declared: readonly T[],
-  equals: (left: T, right: T) => boolean,
+  key: (ref: T) => string,
   field: string,
   describe: (ref: T) => string,
 ): void {
   for (const ref of required) {
-    if (!declared.some((candidate) => equals(candidate, ref))) {
+    const requiredKey = key(ref);
+    if (!declared.some((candidate) => key(candidate) === requiredKey)) {
       throw new Error(`Context payload dependency is missing from Item ${field}: ${describe(ref)}`);
     }
   }
 }
 
-function contextReferencesEqual(
-  left: ThreadContextPayloadReference,
-  right: ThreadContextPayloadReference,
-): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.schemaVersion === right.schemaVersion
-    && left.kind === right.kind;
+export function contextPayloadReferenceKey(ref: ThreadContextPayloadReference): string {
+  return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.schemaVersion, ref.kind]);
 }
 
-function resourceReferencesEqual(
-  left: ThreadResourceReference,
-  right: ThreadResourceReference,
-): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.fileName === right.fileName;
+export function resourceReferenceKey(ref: ThreadResourceReference): string {
+  return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.fileName]);
 }
 
-function outputReferencesEqual(
-  left: ThreadItemOutputReference,
-  right: ThreadItemOutputReference,
-): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.summary === right.summary;
+export function outputReferenceKey(ref: ThreadItemOutputReference): string {
+  return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.summary]);
 }

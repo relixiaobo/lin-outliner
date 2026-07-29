@@ -1,25 +1,35 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   Thread,
+  ContextCursor,
   ThreadContextPayload,
   ContextEvidenceThreadItem,
+  ContextCompactionThreadItem,
+  ContextEvidenceKind,
   ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
+  TurnDiagnosticsPayload,
+  TurnDiagnosticsPayloadReference,
   TurnExecutionDetails,
   TurnError,
   TurnStatus,
   SkillCatalogContextPayload,
-  SkillInvocationContextPayload,
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
 
 export interface SteeredTurnInput {
   readonly items: readonly ThreadItem[];
   readonly acceptedAt: number;
+}
+
+export interface StagedContextCompaction {
+  readonly item: ContextCompactionThreadItem;
+  commit(): Promise<ContextCompactionThreadItem>;
+  discard(): Promise<void>;
 }
 
 export interface TurnExecutionContext {
@@ -30,6 +40,7 @@ export interface TurnExecutionContext {
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+  readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
@@ -43,12 +54,24 @@ export interface TurnExecutionContext {
     summary: string,
   ): Promise<ThreadItemOutputReference>;
   persistContextEvidence(
-    payload: SkillCatalogContextPayload | SkillInvocationContextPayload,
+    payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem>;
+  persistTurnDiagnostics(
+    payload: TurnDiagnosticsPayload,
+  ): Promise<TurnDiagnosticsPayloadReference>;
+  onTurnDiagnosticsError(error: unknown): void;
   persistSkillCatalog(
     snapshot: SkillCatalogContextPayload,
   ): Promise<ContextEvidenceThreadItem | null>;
+  compactContext(
+    trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
+    preserveFrom?: ContextCursor,
+  ): Promise<ContextCompactionThreadItem | null>;
+  stageContextCompaction(
+    trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
+    preserveFrom?: ContextCursor,
+  ): Promise<StagedContextCompaction | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }
@@ -57,6 +80,7 @@ export interface TurnExecutionResult {
   readonly status?: Exclude<TurnStatus, 'inProgress'>;
   readonly error?: TurnError | null;
   readonly execution?: TurnExecutionDetails;
+  readonly refreshDiagnostics?: () => Promise<TurnDiagnosticsPayloadReference | null>;
 }
 
 export interface TurnExecutor {

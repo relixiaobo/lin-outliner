@@ -2,6 +2,7 @@ import {
   CONTEXT_EVIDENCE_KINDS,
   CONTEXT_PAYLOAD_KINDS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
+  MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   THREAD_HISTORY_MODE,
   THREAD_ITEM_TYPES,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -43,6 +44,9 @@ import {
   type ThreadUserContent,
   type ThreadResourceReference,
   type Turn,
+  type TurnDiagnosticsPayload,
+  type TurnDiagnosticsMessagePartProvenance,
+  type TurnDiagnosticsPayloadReference,
   type TurnProvenance,
   type TurnTrigger,
 } from './protocol';
@@ -935,6 +939,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/context/read':
       decoded = decodeThreadContextReadRequest(value);
       break;
+    case 'thread/turn/details/read':
+      decoded = decodeThreadTurnDetailsReadRequest(value);
+      break;
     case 'turn/start':
       decoded = decodeRendererTurnStartRequest(value);
       break;
@@ -1007,6 +1014,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/context/read':
       decoded = decodeThreadContextReadResponse(value);
+      break;
+    case 'thread/turn/details/read':
+      decoded = decodeThreadTurnDetailsReadResponse(value);
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
@@ -1270,6 +1280,17 @@ function decodeThreadContextReadRequest(
   });
 }
 
+function decodeThreadTurnDetailsReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/turn/details/read'] {
+  const record = recordValue(value, 'thread/turn/details/read');
+  exactKeys(record, ['threadId', 'turnId'], 'thread/turn/details/read');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/turn/details/read.threadId'),
+    turnId: uuidV7(record.turnId, 'thread/turn/details/read.turnId'),
+  });
+}
+
 function decodeRendererTurnSteerRequest(value: unknown): AgentCoreRequestByMethod['turn/steer'] {
   const record = recordValue(value, 'turn/steer');
   exactKeys(record, [
@@ -1408,6 +1429,66 @@ function decodeThreadContextReadResponse(
     fail('thread/context/read response.context.payload', 'byte length must match the context reference');
   }
   return deepFreeze({ context: { ref, payload } });
+}
+
+function decodeThreadTurnDetailsReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/turn/details/read'] {
+  const record = recordValue(value, 'thread/turn/details/read response');
+  exactKeys(record, ['thread', 'turn', 'diagnostics'], 'thread/turn/details/read response');
+  const thread = decodeThread(record.thread);
+  const turn = decodeTurn(record.turn);
+  if (record.diagnostics === null) {
+    if (turn.execution.diagnosticsRef !== null) {
+      fail('thread/turn/details/read response.diagnostics', 'is required by the Turn execution reference');
+    }
+    return deepFreeze({ thread, turn, diagnostics: null });
+  }
+  const diagnostics = recordValue(record.diagnostics, 'thread/turn/details/read response.diagnostics');
+  exactKeys(diagnostics, ['ref', 'payload'], 'thread/turn/details/read response.diagnostics');
+  const ref = decodeTurnDiagnosticsPayloadReference(
+    diagnostics.ref,
+    'thread/turn/details/read response.diagnostics.ref',
+  );
+  const payload = decodeTurnDiagnosticsPayload(diagnostics.payload);
+  const turnItemsById = new Map(turn.items.map((item) => [item.id, item]));
+  payload.activities.forEach((activity, activityIndex) => {
+    const path = `thread/turn/details/read response.diagnostics.payload.activities[${activityIndex}]`;
+    if (activity.type === 'acceptedInput') {
+      activity.itemIds.forEach((itemId, itemIndex) => {
+        if (!turnItemsById.has(itemId)) {
+          fail(`${path}.itemIds[${itemIndex}]`, 'must reference an Item in the returned Turn');
+        }
+      });
+    } else if (activity.type === 'toolExecutionBatch') {
+      activity.executions.forEach((execution, executionIndex) => {
+        if (execution.itemId === null) return;
+        const item = turnItemsById.get(execution.itemId);
+        if (!item || executionStatusOf(item) === null) {
+          fail(`${path}.executions[${executionIndex}].itemId`, 'must reference an executable Item in the returned Turn');
+        }
+      });
+    } else if (activity.type === 'contextCompaction') {
+      if (turnItemsById.get(activity.itemId)?.type !== 'contextCompaction') {
+        fail(`${path}.itemId`, 'must reference a context compaction Item in the returned Turn');
+      }
+    }
+  });
+  const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(payload)).byteLength;
+  if (byteLength !== ref.byteLength) {
+    fail('thread/turn/details/read response.diagnostics.payload', 'byte length must match the diagnostics reference');
+  }
+  const turnRef = turn.execution.diagnosticsRef;
+  if (
+    !turnRef
+    || turnRef.id !== ref.id
+    || turnRef.mimeType !== ref.mimeType
+    || turnRef.byteLength !== ref.byteLength
+    || turnRef.schemaVersion !== ref.schemaVersion
+  ) {
+    fail('thread/turn/details/read response.diagnostics.ref', 'must match the Turn execution reference');
+  }
+  return deepFreeze({ thread, turn, diagnostics: { ref, payload } });
 }
 
 function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['turn/start'] {
@@ -1761,7 +1842,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       exactKeys(record, [
         'schemaVersion', 'kind', 'acceptedAt', 'utcInstant', 'localDate', 'localTime',
         'timeZone', 'utcOffsetMinutes', 'locale', 'workingDirectory', 'conversationMode',
-        'executionMode', 'replyIdentity', 'todayNodeId',
+        'executionMode', 'replyIdentity', 'todayNodeId', 'todayNodeTitle',
       ], 'contextPayload');
       return deepFreeze({
         schemaVersion: 1,
@@ -1786,6 +1867,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         ),
         replyIdentity: nullableString(record.replyIdentity, 'contextPayload.replyIdentity'),
         todayNodeId: nullableString(record.todayNodeId, 'contextPayload.todayNodeId'),
+        todayNodeTitle: nullableString(record.todayNodeTitle, 'contextPayload.todayNodeTitle'),
       });
     case 'userView': {
       exactKeys(record, [
@@ -1817,11 +1899,16 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       });
     }
     case 'additionalContext': {
-      exactKeys(record, ['schemaVersion', 'kind', 'entries'], 'contextPayload');
-      const entries = arrayValue(record.entries, 'contextPayload.entries')
-        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.entries[${index}]`));
-      requireUnique(entries.map((entry) => entry.key), 'contextPayload.entries', 'keys');
-      return deepFreeze({ schemaVersion: 1, kind, entries });
+      exactKeys(record, ['schemaVersion', 'kind', 'turnEntries', 'threadState'], 'contextPayload');
+      const turnEntries = arrayValue(record.turnEntries, 'contextPayload.turnEntries')
+        .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.turnEntries[${index}]`));
+      const threadState = record.threadState === null
+        ? null
+        : arrayValue(record.threadState, 'contextPayload.threadState')
+          .map((entry, index) => decodeContextTextEntry(entry, `contextPayload.threadState[${index}]`));
+      requireUnique(turnEntries.map((entry) => entry.key), 'contextPayload.turnEntries', 'keys');
+      if (threadState) requireUnique(threadState.map((entry) => entry.key), 'contextPayload.threadState', 'keys');
+      return deepFreeze({ schemaVersion: 1, kind, turnEntries, threadState });
     }
     case 'referencedResources':
       exactKeys(record, ['schemaVersion', 'kind', 'resources'], 'contextPayload');
@@ -1955,13 +2042,14 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       return deepFreeze({
         schemaVersion: 1,
         kind,
-        source: enumValue(record.source, ['model', 'fallback'], 'contextPayload.source'),
+        source: enumValue(record.source, ['deterministic'], 'contextPayload.source'),
         text: stringValue(record.text, 'contextPayload.text', true),
       });
     case 'compactionRestoredState':
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
-        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef', 'activeObservations',
+        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef',
+        'additionalContextBaselineRef', 'activeObservations',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -2012,6 +2100,16 @@ function decodeCompactionRestoredState(
           decodeThreadContextPayloadReference(record.userViewBaselineRef, 'contextPayload.userViewBaselineRef'),
           'userView',
           'contextPayload.userViewBaselineRef',
+        ),
+    additionalContextBaselineRef: record.additionalContextBaselineRef === null
+      ? null
+      : expectContextPayloadKind(
+          decodeThreadContextPayloadReference(
+            record.additionalContextBaselineRef,
+            'contextPayload.additionalContextBaselineRef',
+          ),
+          'additionalContext',
+          'contextPayload.additionalContextBaselineRef',
         ),
     activeObservations,
   });
@@ -2305,7 +2403,7 @@ function decodeTurnError(value: unknown): Turn['error'] {
 
 function decodeTurnExecution(value: unknown): Turn['execution'] {
   const record = recordValue(value, 'turn.execution');
-  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort', 'usage'], 'turn.execution');
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort', 'usage', 'diagnosticsRef'], 'turn.execution');
   const usage = recordValue(record.usage, 'turn.execution.usage');
   exactKeys(usage, ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens', 'cost'], 'turn.execution.usage');
   const cost = usage.cost === null ? null : decodeTurnTokenCost(usage.cost);
@@ -2317,6 +2415,9 @@ function decodeTurnExecution(value: unknown): Turn['execution'] {
     modelProvider: stringValue(record.modelProvider, 'turn.execution.modelProvider'),
     model: stringValue(record.model, 'turn.execution.model'),
     reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, 'turn.execution.reasoningEffort'),
+    diagnosticsRef: record.diagnosticsRef === null
+      ? null
+      : decodeTurnDiagnosticsPayloadReference(record.diagnosticsRef, 'turn.execution.diagnosticsRef'),
     usage: {
       input,
       output,
@@ -2330,6 +2431,779 @@ function decodeTurnExecution(value: unknown): Turn['execution'] {
     fail('turn.execution.usage.totalTokens', 'must cover input, output, cache-read, and cache-write tokens');
   }
   return deepFreeze(result);
+}
+
+export function decodeTurnDiagnosticsPayloadReference(
+  value: unknown,
+  field = 'turnDiagnosticsPayloadReference',
+): TurnDiagnosticsPayloadReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'mimeType', 'byteLength', 'schemaVersion'], field);
+  const id = sha256(record.id, `${field}.id`);
+  const byteLength = nonNegativeInteger(record.byteLength, `${field}.byteLength`);
+  if (byteLength > MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES) {
+    fail(`${field}.byteLength`, 'exceeds the managed diagnostics payload budget');
+  }
+  if (record.schemaVersion !== 1) fail(`${field}.schemaVersion`, 'expected schema version 1');
+  return deepFreeze({
+    id,
+    mimeType: enumValue(
+      record.mimeType,
+      ['application/vnd.tenon.agent-turn-diagnostics+json'],
+      `${field}.mimeType`,
+    ),
+    byteLength,
+    schemaVersion: 1,
+  });
+}
+
+export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPayload {
+  const record = recordValue(value, 'turnDiagnostics');
+  exactKeys(record, [
+    'schemaVersion', 'contextEpochId', 'cacheAffinity', 'configuration', 'stablePrompt',
+    'toolSchemas', 'runtime', 'canonicalMessages', 'requestFragments', 'providerCalls', 'activities',
+  ], 'turnDiagnostics');
+  if (record.schemaVersion !== 1) fail('turnDiagnostics.schemaVersion', 'expected schema version 1');
+  const configuration = recordValue(record.configuration, 'turnDiagnostics.configuration');
+  exactKeys(configuration, [
+    'profileName', 'developerInstructions', 'model', 'reasoningEffort', 'tools',
+    'skills', 'plugins', 'mcpServers',
+  ], 'turnDiagnostics.configuration');
+  const stablePrompt = record.stablePrompt === null
+    ? null
+    : decodeTurnDiagnosticsStablePrompt(record.stablePrompt);
+  const runtime = recordValue(record.runtime, 'turnDiagnostics.runtime');
+  exactKeys(runtime, [
+    'provider', 'model', 'api', 'configuredBaseUrl', 'transportSelection', 'contextWindow', 'maxOutputTokens', 'thinkingLevel',
+    'timeoutMs', 'maxRetries', 'maxRetryDelayMs', 'cacheRetention', 'toolExecution',
+    'steeringMode',
+  ], 'turnDiagnostics.runtime');
+  const canonicalMessages = arrayValue(record.canonicalMessages, 'turnDiagnostics.canonicalMessages').map((entry, index) => {
+    const message = recordValue(entry, `turnDiagnostics.canonicalMessages[${index}]`);
+    exactKeys(message, ['id', 'estimatedTokens', 'value'], `turnDiagnostics.canonicalMessages[${index}]`);
+    return {
+      id: sha256(message.id, `turnDiagnostics.canonicalMessages[${index}].id`),
+      estimatedTokens: nonNegativeInteger(
+        message.estimatedTokens,
+        `turnDiagnostics.canonicalMessages[${index}].estimatedTokens`,
+      ),
+      value: jsonValue(message.value, `turnDiagnostics.canonicalMessages[${index}].value`),
+    };
+  });
+  requireUnique(
+    canonicalMessages.map((message) => message.id),
+    'turnDiagnostics.canonicalMessages',
+    'message ids',
+  );
+  const requestFragments = arrayValue(record.requestFragments, 'turnDiagnostics.requestFragments').map((entry, index) => {
+    const fragment = recordValue(entry, `turnDiagnostics.requestFragments[${index}]`);
+    exactKeys(fragment, ['id', 'value'], `turnDiagnostics.requestFragments[${index}]`);
+    return {
+      id: sha256(fragment.id, `turnDiagnostics.requestFragments[${index}].id`),
+      value: jsonValue(fragment.value, `turnDiagnostics.requestFragments[${index}].value`),
+    };
+  });
+  requireUnique(
+    requestFragments.map((fragment) => fragment.id),
+    'turnDiagnostics.requestFragments',
+    'fragment ids',
+  );
+  const toolSchemas = arrayValue(record.toolSchemas, 'turnDiagnostics.toolSchemas').map((entry, index) => {
+    const tool = recordValue(entry, `turnDiagnostics.toolSchemas[${index}]`);
+    exactKeys(tool, ['name', 'description', 'parameters'], `turnDiagnostics.toolSchemas[${index}]`);
+    return {
+      name: stringValue(tool.name, `turnDiagnostics.toolSchemas[${index}].name`),
+      description: stringValue(tool.description, `turnDiagnostics.toolSchemas[${index}].description`, true),
+      parameters: jsonValue(tool.parameters, `turnDiagnostics.toolSchemas[${index}].parameters`),
+    };
+  });
+  requireUnique(toolSchemas.map((tool) => tool.name), 'turnDiagnostics.toolSchemas', 'tool names');
+  toolSchemas.forEach((tool, index) => {
+    const previous = toolSchemas[index - 1];
+    if (previous && previous.name > tool.name) {
+      fail(`turnDiagnostics.toolSchemas[${index}].name`, 'tool schemas must use canonical name order');
+    }
+  });
+  const messagesById = new Map(canonicalMessages.map((message) => [message.id, message]));
+  const messageIds = new Set(messagesById.keys());
+  const fragmentsById = new Map(requestFragments.map((fragment) => [fragment.id, fragment.value]));
+  const fragmentIds = new Set(requestFragments.map((fragment) => fragment.id));
+  const canonicalToolNames = toolSchemas.map((tool) => tool.name);
+  const providerCalls = arrayValue(record.providerCalls, 'turnDiagnostics.providerCalls').map((entry, index) => {
+    const call = recordValue(entry, `turnDiagnostics.providerCalls[${index}]`);
+    exactKeys(call, [
+      'index', 'requestedAt', 'preparedContext', 'protectedFromMessageIndex',
+      'estimatedInputTokens', 'inputTokenLimit', 'reservedOutputTokens',
+      'commonPrefixMessageCount', 'request', 'requestFingerprint',
+      'cacheBreakpoints', 'transportResponse', 'response',
+    ], `turnDiagnostics.providerCalls[${index}]`);
+    const preparedContext = recordValue(
+      call.preparedContext,
+      `turnDiagnostics.providerCalls[${index}].preparedContext`,
+    );
+    exactKeys(
+      preparedContext,
+      ['systemPromptFragmentId', 'toolNames', 'messageIds', 'messagePartProvenance'],
+      `turnDiagnostics.providerCalls[${index}].preparedContext`,
+    );
+    const systemPromptFragmentId = sha256(
+      preparedContext.systemPromptFragmentId,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+    );
+    if (!fragmentIds.has(systemPromptFragmentId)) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+        'references an unknown request fragment',
+      );
+    }
+    if (typeof fragmentsById.get(systemPromptFragmentId) !== 'string') {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.systemPromptFragmentId`,
+        'must reference a string system prompt fragment',
+      );
+    }
+    const callToolNames = stringArray(
+      preparedContext.toolNames,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+    );
+    requireUnique(
+      callToolNames,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+      'tool names',
+    );
+    if (
+      callToolNames.length !== canonicalToolNames.length
+      || callToolNames.some((name, toolIndex) => name !== canonicalToolNames[toolIndex])
+    ) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.toolNames`,
+        'must match canonical tool schema order',
+      );
+    }
+    const callMessageIds = stringArray(
+      preparedContext.messageIds,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.messageIds`,
+    );
+    if (callMessageIds.some((id) => !messageIds.has(id))) {
+      fail(`turnDiagnostics.providerCalls[${index}].preparedContext.messageIds`, 'references an unknown message');
+    }
+    const messagePartProvenance = arrayValue(
+      preparedContext.messagePartProvenance,
+      `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance`,
+    ).map((parts, messageIndex) => {
+      const path = `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance[${messageIndex}]`;
+      return arrayValue(parts, path).map((entry, partIndex) => (
+        decodeTurnDiagnosticsPartProvenance(entry, `${path}[${partIndex}]`)
+      ));
+    });
+    if (messagePartProvenance.length !== callMessageIds.length) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance`,
+        'must align with the prepared message window',
+      );
+    }
+    messagePartProvenance.forEach((parts, messageIndex) => {
+      const message = messagesById.get(callMessageIds[messageIndex]!);
+      if (!message || parts.length !== diagnosticContentPartCount(message.value)) {
+        fail(
+          `turnDiagnostics.providerCalls[${index}].preparedContext.messagePartProvenance[${messageIndex}]`,
+          'must align with the referenced message content',
+        );
+      }
+    });
+    const request = decodeTurnDiagnosticsProviderRequest(
+      call.request,
+      fragmentsById,
+      `turnDiagnostics.providerCalls[${index}].request`,
+    );
+    const response = call.response === null
+      ? null
+      : decodeTurnDiagnosticsProviderResponse(
+          call.response,
+          `turnDiagnostics.providerCalls[${index}].response`,
+        );
+    const transportResponse = call.transportResponse === null
+      ? null
+      : decodeTurnDiagnosticsTransportResponse(
+          call.transportResponse,
+          `turnDiagnostics.providerCalls[${index}].transportResponse`,
+        );
+    const protectedFromMessageIndex = nonNegativeInteger(
+      call.protectedFromMessageIndex,
+      `turnDiagnostics.providerCalls[${index}].protectedFromMessageIndex`,
+    );
+    if (protectedFromMessageIndex > callMessageIds.length) {
+      fail(`turnDiagnostics.providerCalls[${index}].protectedFromMessageIndex`, 'exceeds the message window');
+    }
+    const commonPrefixMessageCount = nonNegativeInteger(
+      call.commonPrefixMessageCount,
+      `turnDiagnostics.providerCalls[${index}].commonPrefixMessageCount`,
+    );
+    if (commonPrefixMessageCount > callMessageIds.length) {
+      fail(`turnDiagnostics.providerCalls[${index}].commonPrefixMessageCount`, 'exceeds the message window');
+    }
+    return {
+      index: nonNegativeInteger(call.index, `turnDiagnostics.providerCalls[${index}].index`),
+      requestedAt: nonNegativeNumber(call.requestedAt, `turnDiagnostics.providerCalls[${index}].requestedAt`),
+      preparedContext: {
+        systemPromptFragmentId,
+        toolNames: callToolNames,
+        messageIds: callMessageIds,
+        messagePartProvenance,
+      },
+      protectedFromMessageIndex,
+      estimatedInputTokens: nonNegativeInteger(
+        call.estimatedInputTokens,
+        `turnDiagnostics.providerCalls[${index}].estimatedInputTokens`,
+      ),
+      inputTokenLimit: positiveInteger(call.inputTokenLimit, `turnDiagnostics.providerCalls[${index}].inputTokenLimit`),
+      reservedOutputTokens: positiveInteger(
+        call.reservedOutputTokens,
+        `turnDiagnostics.providerCalls[${index}].reservedOutputTokens`,
+      ),
+      commonPrefixMessageCount,
+      request,
+      requestFingerprint: sha256(
+        call.requestFingerprint,
+        `turnDiagnostics.providerCalls[${index}].requestFingerprint`,
+      ),
+      cacheBreakpoints: stringArray(
+        call.cacheBreakpoints,
+        `turnDiagnostics.providerCalls[${index}].cacheBreakpoints`,
+      ),
+      transportResponse,
+      response,
+    };
+  });
+  providerCalls.forEach((call, index) => {
+    if (call.index !== index) fail(`turnDiagnostics.providerCalls[${index}].index`, 'must match array order');
+    const previousIds = providerCalls[index - 1]?.preparedContext.messageIds ?? [];
+    let expectedCommonPrefix = 0;
+    const limit = Math.min(previousIds.length, call.preparedContext.messageIds.length);
+    while (
+      expectedCommonPrefix < limit
+      && previousIds[expectedCommonPrefix] === call.preparedContext.messageIds[expectedCommonPrefix]
+    ) {
+      expectedCommonPrefix += 1;
+    }
+    if (call.commonPrefixMessageCount !== expectedCommonPrefix) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].commonPrefixMessageCount`,
+        'must match the preceding prepared message window',
+      );
+    }
+    if (call.response && call.response.receivedAt < call.requestedAt) {
+      fail(`turnDiagnostics.providerCalls[${index}].response.receivedAt`, 'cannot precede the request');
+    }
+    if (call.transportResponse && call.transportResponse.headersReceivedAt < call.requestedAt) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].transportResponse.headersReceivedAt`,
+        'cannot precede the request',
+      );
+    }
+    if (
+      call.transportResponse
+      && call.response
+      && call.transportResponse.headersReceivedAt > call.response.receivedAt
+    ) {
+      fail(
+        `turnDiagnostics.providerCalls[${index}].transportResponse.headersReceivedAt`,
+        'cannot follow the completed assistant response',
+      );
+    }
+  });
+  const activities = decodeTurnDiagnosticsActivities(record.activities, providerCalls);
+  return deepFreeze({
+    schemaVersion: 1,
+    contextEpochId: stringValue(record.contextEpochId, 'turnDiagnostics.contextEpochId'),
+    cacheAffinity: sha256(record.cacheAffinity, 'turnDiagnostics.cacheAffinity'),
+    configuration: {
+      profileName: nullableString(configuration.profileName, 'turnDiagnostics.configuration.profileName'),
+      developerInstructions: stringArray(
+        configuration.developerInstructions,
+        'turnDiagnostics.configuration.developerInstructions',
+      ),
+      model: stringValue(configuration.model, 'turnDiagnostics.configuration.model'),
+      reasoningEffort: enumValue(
+        configuration.reasoningEffort,
+        REASONING_EFFORTS,
+        'turnDiagnostics.configuration.reasoningEffort',
+      ),
+      tools: stringArray(configuration.tools, 'turnDiagnostics.configuration.tools'),
+      skills: stringArray(configuration.skills, 'turnDiagnostics.configuration.skills'),
+      plugins: stringArray(configuration.plugins, 'turnDiagnostics.configuration.plugins'),
+      mcpServers: stringArray(configuration.mcpServers, 'turnDiagnostics.configuration.mcpServers'),
+    },
+    stablePrompt,
+    toolSchemas,
+    runtime: {
+      provider: stringValue(runtime.provider, 'turnDiagnostics.runtime.provider'),
+      model: stringValue(runtime.model, 'turnDiagnostics.runtime.model'),
+      api: stringValue(runtime.api, 'turnDiagnostics.runtime.api'),
+      configuredBaseUrl: stringValue(
+        runtime.configuredBaseUrl,
+        'turnDiagnostics.runtime.configuredBaseUrl',
+        true,
+      ),
+      transportSelection: enumValue(
+        runtime.transportSelection,
+        ['sse', 'websocket', 'websocket-cached', 'auto'],
+        'turnDiagnostics.runtime.transportSelection',
+      ),
+      contextWindow: positiveInteger(runtime.contextWindow, 'turnDiagnostics.runtime.contextWindow'),
+      maxOutputTokens: positiveInteger(runtime.maxOutputTokens, 'turnDiagnostics.runtime.maxOutputTokens'),
+      thinkingLevel: stringValue(runtime.thinkingLevel, 'turnDiagnostics.runtime.thinkingLevel'),
+      timeoutMs: nullableNonNegativeInteger(runtime.timeoutMs, 'turnDiagnostics.runtime.timeoutMs'),
+      maxRetries: nullableNonNegativeInteger(runtime.maxRetries, 'turnDiagnostics.runtime.maxRetries'),
+      maxRetryDelayMs: nullableNonNegativeInteger(
+        runtime.maxRetryDelayMs,
+        'turnDiagnostics.runtime.maxRetryDelayMs',
+      ),
+      cacheRetention: enumValue(
+        runtime.cacheRetention,
+        ['none', 'short', 'long'],
+        'turnDiagnostics.runtime.cacheRetention',
+      ),
+      toolExecution: enumValue(runtime.toolExecution, ['parallel'], 'turnDiagnostics.runtime.toolExecution'),
+      steeringMode: enumValue(runtime.steeringMode, ['all'], 'turnDiagnostics.runtime.steeringMode'),
+    },
+    canonicalMessages,
+    requestFragments,
+    providerCalls,
+    activities,
+  });
+}
+
+function decodeTurnDiagnosticsActivities(
+  value: unknown,
+  providerCalls: readonly TurnDiagnosticsPayload['providerCalls'][number][],
+): TurnDiagnosticsPayload['activities'] {
+  const activities = arrayValue(value, 'turnDiagnostics.activities').map((entry, index) => {
+    const path = `turnDiagnostics.activities[${index}]`;
+    const activity = recordValue(entry, path);
+    const type = enumValue(activity.type, [
+      'acceptedInput',
+      'modelCall',
+      'toolExecutionBatch',
+      'providerRetry',
+      'contextCompaction',
+    ], `${path}.type`);
+    if (type === 'acceptedInput') {
+      exactKeys(activity, ['type', 'source', 'acceptedAt', 'itemIds', 'consumedByCallIndex'], path);
+      const itemIds = stringArray(activity.itemIds, `${path}.itemIds`);
+      requireUnique(itemIds, `${path}.itemIds`, 'Item ids');
+      if (itemIds.length === 0) fail(`${path}.itemIds`, 'must not be empty');
+      return {
+        type,
+        source: enumValue(activity.source, ['initial', 'steering'], `${path}.source`),
+        acceptedAt: nonNegativeNumber(activity.acceptedAt, `${path}.acceptedAt`),
+        itemIds,
+        consumedByCallIndex: nullableDiagnosticsCallIndex(
+          activity.consumedByCallIndex,
+          `${path}.consumedByCallIndex`,
+          providerCalls.length,
+        ),
+      };
+    }
+    if (type === 'modelCall') {
+      exactKeys(activity, ['type', 'callIndex'], path);
+      return {
+        type,
+        callIndex: diagnosticsCallIndex(activity.callIndex, `${path}.callIndex`, providerCalls.length),
+      };
+    }
+    if (type === 'toolExecutionBatch') {
+      exactKeys(activity, ['type', 'sourceCallIndex', 'consumedByCallIndex', 'executions'], path);
+      const executions = arrayValue(activity.executions, `${path}.executions`).map((entry, executionIndex) => {
+        const executionPath = `${path}.executions[${executionIndex}]`;
+        const execution = recordValue(entry, executionPath);
+        exactKeys(execution, [
+          'callId', 'toolName', 'itemId', 'startedAt', 'completedAt', 'status',
+        ], executionPath);
+        const startedAt = nonNegativeNumber(execution.startedAt, `${executionPath}.startedAt`);
+        const completedAt = execution.completedAt === null
+          ? null
+          : nonNegativeNumber(execution.completedAt, `${executionPath}.completedAt`);
+        const status = itemExecutionStatus(execution.status, `${executionPath}.status`);
+        if (completedAt !== null && completedAt < startedAt) {
+          fail(`${executionPath}.completedAt`, 'cannot precede tool execution start');
+        }
+        if ((status === 'inProgress') !== (completedAt === null)) {
+          fail(`${executionPath}.status`, 'must align with tool execution completion');
+        }
+        return {
+          callId: stringValue(execution.callId, `${executionPath}.callId`),
+          toolName: stringValue(execution.toolName, `${executionPath}.toolName`),
+          itemId: nullableString(execution.itemId, `${executionPath}.itemId`),
+          startedAt,
+          completedAt,
+          status,
+        };
+      });
+      if (executions.length === 0) fail(`${path}.executions`, 'must not be empty');
+      requireUnique(executions.map((execution) => execution.callId), `${path}.executions`, 'tool call ids');
+      return {
+        type,
+        sourceCallIndex: diagnosticsCallIndex(
+          activity.sourceCallIndex,
+          `${path}.sourceCallIndex`,
+          providerCalls.length,
+        ),
+        consumedByCallIndex: nullableDiagnosticsCallIndex(
+          activity.consumedByCallIndex,
+          `${path}.consumedByCallIndex`,
+          providerCalls.length,
+        ),
+        executions,
+      };
+    }
+    if (type === 'providerRetry') {
+      exactKeys(activity, [
+        'type', 'retryKind', 'attempt', 'maxRetries', 'occurredAt', 'sourceCallIndex', 'nextCallIndex',
+      ], path);
+      const attempt = positiveInteger(activity.attempt, `${path}.attempt`);
+      const maxRetries = positiveInteger(activity.maxRetries, `${path}.maxRetries`);
+      if (attempt > maxRetries) fail(`${path}.attempt`, 'cannot exceed the retry limit');
+      return {
+        type,
+        retryKind: enumValue(activity.retryKind, ['request', 'stream'], `${path}.retryKind`),
+        attempt,
+        maxRetries,
+        occurredAt: nonNegativeNumber(activity.occurredAt, `${path}.occurredAt`),
+        sourceCallIndex: diagnosticsCallIndex(
+          activity.sourceCallIndex,
+          `${path}.sourceCallIndex`,
+          providerCalls.length,
+        ),
+        nextCallIndex: nullableDiagnosticsCallIndex(
+          activity.nextCallIndex,
+          `${path}.nextCallIndex`,
+          providerCalls.length,
+        ),
+      };
+    }
+    exactKeys(activity, [
+      'type', 'trigger', 'itemId', 'completedAt', 'sourceCallIndex', 'nextCallIndex',
+    ], path);
+    return {
+      type,
+      trigger: enumValue(
+        activity.trigger,
+        ['automaticPreflight', 'providerOverflow'],
+        `${path}.trigger`,
+      ),
+      itemId: stringValue(activity.itemId, `${path}.itemId`),
+      completedAt: nonNegativeNumber(activity.completedAt, `${path}.completedAt`),
+      sourceCallIndex: nullableDiagnosticsCallIndex(
+        activity.sourceCallIndex,
+        `${path}.sourceCallIndex`,
+        providerCalls.length,
+      ),
+      nextCallIndex: nullableDiagnosticsCallIndex(
+        activity.nextCallIndex,
+        `${path}.nextCallIndex`,
+        providerCalls.length,
+      ),
+    };
+  });
+  const initialInputs = activities.filter((activity) => (
+    activity.type === 'acceptedInput' && activity.source === 'initial'
+  ));
+  if (initialInputs.length !== 1 || activities[0] !== initialInputs[0]) {
+    fail('turnDiagnostics.activities', 'must begin with exactly one initial accepted input');
+  }
+  const modelCallIndexes = activities.flatMap((activity) => (
+    activity.type === 'modelCall' ? [activity.callIndex] : []
+  ));
+  if (
+    modelCallIndexes.length !== providerCalls.length
+    || modelCallIndexes.some((callIndex, index) => callIndex !== index)
+  ) {
+    fail('turnDiagnostics.activities', 'must contain every provider call once in canonical order');
+  }
+  const callActivityPositions = new Map<number, number>();
+  activities.forEach((activity, index) => {
+    if (activity.type === 'modelCall') callActivityPositions.set(activity.callIndex, index);
+  });
+  requireUnique(
+    activities.flatMap((activity) => (
+      activity.type === 'toolExecutionBatch'
+        ? activity.executions.flatMap((execution) => execution.itemId === null ? [] : [execution.itemId])
+        : []
+    )),
+    'turnDiagnostics.activities',
+    'tool Item ids across execution batches',
+  );
+  activities.forEach((activity, index) => {
+    const path = `turnDiagnostics.activities[${index}]`;
+    const previousCallPosition = [...callActivityPositions.values()]
+      .filter((position) => position < index)
+      .at(-1) ?? null;
+    const nextCallPosition = [...callActivityPositions.values()]
+      .find((position) => position > index) ?? null;
+    if (activity.type === 'acceptedInput') {
+      if (activity.source === 'initial' && activity.consumedByCallIndex !== (providerCalls.length > 0 ? 0 : null)) {
+        fail(`${path}.consumedByCallIndex`, 'must identify the first provider call');
+      }
+      if (
+        activity.consumedByCallIndex !== null
+        && callActivityPositions.get(activity.consumedByCallIndex) !== nextCallPosition
+      ) {
+        fail(`${path}.consumedByCallIndex`, 'must identify the next provider call activity');
+      }
+      return;
+    }
+    if (activity.type === 'modelCall') return;
+    if (activity.type === 'contextCompaction' && activity.trigger === 'providerOverflow' && activity.sourceCallIndex === null) {
+      fail(`${path}.sourceCallIndex`, 'is required for provider-overflow compaction');
+    }
+    if (
+      activity.sourceCallIndex !== null
+      && callActivityPositions.get(activity.sourceCallIndex) !== previousCallPosition
+    ) {
+      fail(`${path}.sourceCallIndex`, 'must identify the preceding provider call activity');
+    }
+    if (activity.type === 'contextCompaction' && activity.sourceCallIndex === null && previousCallPosition !== null) {
+      fail(`${path}.sourceCallIndex`, 'must identify the preceding provider call activity');
+    }
+    const targetCallIndex = activity.type === 'toolExecutionBatch'
+      ? activity.consumedByCallIndex
+      : activity.nextCallIndex;
+    const targetPath = `${path}.${activity.type === 'toolExecutionBatch' ? 'consumedByCallIndex' : 'nextCallIndex'}`;
+    if (
+      targetCallIndex !== null
+      && activity.sourceCallIndex !== null
+      && targetCallIndex <= activity.sourceCallIndex
+    ) {
+      fail(targetPath, 'must follow the source provider call');
+    }
+    if (targetCallIndex !== null && callActivityPositions.get(targetCallIndex) !== nextCallPosition) {
+      fail(targetPath, 'must identify the next provider call activity');
+    }
+    if (targetCallIndex === null && nextCallPosition !== null) {
+      fail(targetPath, 'must identify the next provider call activity');
+    }
+  });
+  return activities;
+}
+
+function diagnosticsCallIndex(value: unknown, path: string, callCount: number): number {
+  const index = nonNegativeInteger(value, path);
+  if (index >= callCount) fail(path, 'references an unknown provider call');
+  return index;
+}
+
+function nullableDiagnosticsCallIndex(value: unknown, path: string, callCount: number): number | null {
+  return value === null ? null : diagnosticsCallIndex(value, path, callCount);
+}
+
+function diagnosticContentPartCount(value: JsonValue): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
+  const record = value as Readonly<Record<string, JsonValue>>;
+  const content = record.content ?? record.parts;
+  if (Array.isArray(content)) return content.length;
+  return content === undefined || content === null ? 0 : 1;
+}
+
+function decodeTurnDiagnosticsProviderRequest(
+  value: unknown,
+  fragmentsById: ReadonlyMap<string, JsonValue>,
+  path: string,
+): TurnDiagnosticsPayload['providerCalls'][number]['request'] {
+  const record = recordValue(value, path);
+  const kind = enumValue(record.kind, ['object', 'value'], `${path}.kind`);
+  if (kind === 'value') {
+    exactKeys(record, ['kind', 'value'], path);
+    return { kind, value: jsonValue(record.value, `${path}.value`) };
+  }
+  exactKeys(record, ['kind', 'fields'], path);
+  const fields = arrayValue(record.fields, `${path}.fields`).map((entry, index) => {
+    const fieldPath = `${path}.fields[${index}]`;
+    const field = recordValue(entry, fieldPath);
+    const representation = enumValue(
+      field.representation,
+      ['inline', 'fragments'],
+      `${fieldPath}.representation`,
+    );
+    const name = stringValue(field.name, `${fieldPath}.name`);
+    if (representation === 'inline') {
+      exactKeys(field, ['name', 'representation', 'value'], fieldPath);
+      return { name, representation, value: jsonValue(field.value, `${fieldPath}.value`) };
+    }
+    exactKeys(
+      field,
+      ['name', 'representation', 'container', 'fragmentIds', 'fragmentPartProvenance'],
+      fieldPath,
+    );
+    const requestFragmentIds = stringArray(field.fragmentIds, `${fieldPath}.fragmentIds`);
+    if (requestFragmentIds.some((id) => !fragmentsById.has(id))) {
+      fail(`${fieldPath}.fragmentIds`, 'references an unknown request fragment');
+    }
+    const fragmentPartProvenance = arrayValue(
+      field.fragmentPartProvenance,
+      `${fieldPath}.fragmentPartProvenance`,
+    ).map((entry, fragmentIndex) => {
+      if (entry === null) return null;
+      const provenancePath = `${fieldPath}.fragmentPartProvenance[${fragmentIndex}]`;
+      return arrayValue(entry, provenancePath).map((part, partIndex) => (
+        decodeTurnDiagnosticsPartProvenance(part, `${provenancePath}[${partIndex}]`)
+      ));
+    });
+    if (fragmentPartProvenance.length !== requestFragmentIds.length) {
+      fail(`${fieldPath}.fragmentPartProvenance`, 'must align with fragmentIds');
+    }
+    fragmentPartProvenance.forEach((parts, fragmentIndex) => {
+      const fragment = fragmentsById.get(requestFragmentIds[fragmentIndex]!);
+      if (parts && fragment && parts.length !== diagnosticContentPartCount(fragment)) {
+        fail(
+          `${fieldPath}.fragmentPartProvenance[${fragmentIndex}]`,
+          'must align with the referenced fragment content',
+        );
+      }
+    });
+    return {
+      name,
+      representation,
+      container: enumValue(field.container, ['array', 'value'], `${fieldPath}.container`),
+      fragmentIds: requestFragmentIds,
+      fragmentPartProvenance,
+    };
+  });
+  requireUnique(fields.map((field) => field.name), `${path}.fields`, 'field names');
+  return { kind, fields };
+}
+
+function decodeTurnDiagnosticsPartProvenance(
+  value: unknown,
+  path: string,
+): TurnDiagnosticsMessagePartProvenance {
+  const provenance = recordValue(value, path);
+  const source = enumValue(provenance.source, [
+    'systemContext',
+    'userInput',
+    'assistantHistory',
+    'toolResult',
+    'unknown',
+  ], `${path}.source`);
+  if (source === 'systemContext') {
+    exactKeys(provenance, ['source', 'entries'], path);
+    const entries = arrayValue(provenance.entries, `${path}.entries`);
+    if (entries.length === 0) fail(`${path}.entries`, 'expected at least one context entry');
+    return {
+      source,
+      entries: entries.map((entry, entryIndex) => {
+        const entryPath = `${path}.entries[${entryIndex}]`;
+        const contextEntry = recordValue(entry, entryPath);
+        exactKeys(contextEntry, ['kind', 'authority', 'purpose'], entryPath);
+        return {
+          kind: enumValue(contextEntry.kind, CONTEXT_PAYLOAD_KINDS, `${entryPath}.kind`),
+          authority: enumValue(contextEntry.authority, ['application', 'untrusted'], `${entryPath}.authority`),
+          purpose: enumValue(contextEntry.purpose, ['instruction', 'observation'], `${entryPath}.purpose`),
+        };
+      }),
+    };
+  }
+  exactKeys(provenance, ['source'], path);
+  return { source };
+}
+
+export function encodeTurnDiagnosticsPayload(value: TurnDiagnosticsPayload): string {
+  return JSON.stringify(decodeTurnDiagnosticsPayload(value));
+}
+
+export function decodeTurnDiagnosticsPayloadJson(encoded: string): TurnDiagnosticsPayload {
+  return decodeTurnDiagnosticsPayload(parseJson(encoded, 'turnDiagnostics'));
+}
+
+function decodeTurnDiagnosticsStablePrompt(value: unknown): NonNullable<TurnDiagnosticsPayload['stablePrompt']> {
+  const record = recordValue(value, 'turnDiagnostics.stablePrompt');
+  exactKeys(record, ['blocks', 'fingerprints'], 'turnDiagnostics.stablePrompt');
+  const fingerprints = recordValue(record.fingerprints, 'turnDiagnostics.stablePrompt.fingerprints');
+  exactKeys(fingerprints, ['l0', 'l1', 'l2', 'complete'], 'turnDiagnostics.stablePrompt.fingerprints');
+  return {
+    blocks: arrayValue(record.blocks, 'turnDiagnostics.stablePrompt.blocks').map((entry, index) => {
+      const block = recordValue(entry, `turnDiagnostics.stablePrompt.blocks[${index}]`);
+      exactKeys(block, ['id', 'layer', 'text', 'fingerprint'], `turnDiagnostics.stablePrompt.blocks[${index}]`);
+      return {
+        id: stringValue(block.id, `turnDiagnostics.stablePrompt.blocks[${index}].id`),
+        layer: enumValue(block.layer, ['L0', 'L1', 'L2'], `turnDiagnostics.stablePrompt.blocks[${index}].layer`),
+        text: stringValue(block.text, `turnDiagnostics.stablePrompt.blocks[${index}].text`, true),
+        fingerprint: sha256(
+          block.fingerprint,
+          `turnDiagnostics.stablePrompt.blocks[${index}].fingerprint`,
+        ),
+      };
+    }),
+    fingerprints: {
+      l0: sha256(fingerprints.l0, 'turnDiagnostics.stablePrompt.fingerprints.l0'),
+      l1: sha256(fingerprints.l1, 'turnDiagnostics.stablePrompt.fingerprints.l1'),
+      l2: sha256(fingerprints.l2, 'turnDiagnostics.stablePrompt.fingerprints.l2'),
+      complete: sha256(fingerprints.complete, 'turnDiagnostics.stablePrompt.fingerprints.complete'),
+    },
+  };
+}
+
+function decodeTurnDiagnosticsProviderResponse(
+  value: unknown,
+  path: string,
+): NonNullable<TurnDiagnosticsPayload['providerCalls'][number]['response']> {
+  const record = recordValue(value, path);
+  exactKeys(record, ['receivedAt', 'stopReason', 'errorMessage', 'usage', 'value'], path);
+  return {
+    receivedAt: nonNegativeNumber(record.receivedAt, `${path}.receivedAt`),
+    stopReason: enumValue(
+      record.stopReason,
+      ['stop', 'length', 'toolUse', 'error', 'aborted'],
+      `${path}.stopReason`,
+    ),
+    errorMessage: nullableString(record.errorMessage, `${path}.errorMessage`),
+    usage: decodeTurnDiagnosticsProviderUsage(record.usage, `${path}.usage`),
+    value: jsonValue(record.value, `${path}.value`),
+  };
+}
+
+function decodeTurnDiagnosticsProviderUsage(
+  value: unknown,
+  path: string,
+): NonNullable<TurnDiagnosticsPayload['providerCalls'][number]['response']>['usage'] {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h', 'reasoning',
+    'totalTokens', 'cost',
+  ], path);
+  const cost = recordValue(record.cost, `${path}.cost`);
+  exactKeys(cost, ['input', 'output', 'cacheRead', 'cacheWrite', 'total'], `${path}.cost`);
+  return {
+    input: nonNegativeInteger(record.input, `${path}.input`),
+    output: nonNegativeInteger(record.output, `${path}.output`),
+    cacheRead: nonNegativeInteger(record.cacheRead, `${path}.cacheRead`),
+    cacheWrite: nonNegativeInteger(record.cacheWrite, `${path}.cacheWrite`),
+    cacheWrite1h: nullableNonNegativeInteger(record.cacheWrite1h, `${path}.cacheWrite1h`),
+    reasoning: nullableNonNegativeInteger(record.reasoning, `${path}.reasoning`),
+    totalTokens: nonNegativeInteger(record.totalTokens, `${path}.totalTokens`),
+    cost: {
+      input: nonNegativeNumber(cost.input, `${path}.cost.input`),
+      output: nonNegativeNumber(cost.output, `${path}.cost.output`),
+      cacheRead: nonNegativeNumber(cost.cacheRead, `${path}.cost.cacheRead`),
+      cacheWrite: nonNegativeNumber(cost.cacheWrite, `${path}.cost.cacheWrite`),
+      total: nonNegativeNumber(cost.total, `${path}.cost.total`),
+    },
+  };
+}
+
+function decodeTurnDiagnosticsTransportResponse(
+  value: unknown,
+  path: string,
+): NonNullable<TurnDiagnosticsPayload['providerCalls'][number]['transportResponse']> {
+  const record = recordValue(value, path);
+  exactKeys(record, ['headersReceivedAt', 'httpStatus', 'requestId'], path);
+  const httpStatus = positiveInteger(record.httpStatus, `${path}.httpStatus`);
+  if (httpStatus < 100 || httpStatus > 599) fail(`${path}.httpStatus`, 'must be a valid HTTP status');
+  return {
+    headersReceivedAt: nonNegativeNumber(record.headersReceivedAt, `${path}.headersReceivedAt`),
+    httpStatus,
+    requestId: nullableString(record.requestId, `${path}.requestId`),
+  };
 }
 
 function decodeTurnTokenCost(value: unknown): NonNullable<Turn['execution']['usage']['cost']> {
@@ -2543,6 +3417,10 @@ function safeInteger(value: unknown, path: string): number {
 function nonNegativeInteger(value: unknown, path: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) fail(path, 'expected a non-negative safe integer');
   return value as number;
+}
+
+function nullableNonNegativeInteger(value: unknown, path: string): number | null {
+  return value === null ? null : nonNegativeInteger(value, path);
 }
 
 function positiveInteger(value: unknown, path: string): number {

@@ -309,6 +309,7 @@ export interface SkillToolData {
   skill: string;
   invocationEvidence?: SkillInvocationContextPayload;
   status?: 'loaded' | 'isolated';
+  outcome?: Exclude<TurnStatus, 'inProgress'>;
   allowedTools?: string[];
   model?: string;
   effort?: string;
@@ -358,7 +359,10 @@ export class AgentSkillRuntime {
     const skills = (await this.registry.getModelInvocableSkills())
       .filter((skill) => this.isEnabledByConfiguration(skill) && !this.isDisabledByRuntimeSettings(skill))
       .sort((left, right) => compareStableText(left.name, right.name));
-    const descriptions = boundedSkillCatalogDescriptions(skills);
+    const descriptions = boundedSkillCatalogDescriptions(
+      skills,
+      (skill) => this.registry.isBuiltInReadOnlyIsolatedSkill(skill),
+    );
     const entries = skills.map((skill) => ({
       change: 'available' as const,
       name: skill.name,
@@ -641,6 +645,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       '- Do not invoke a skill that is already running.',
       '- Do not use this tool for built-in commands.',
       '- If the current context already contains a matching Skill invocation, follow the loaded instructions instead of calling this tool again.',
+      '- An isolated Skill runs once in one child Thread; its catalog entry states whether Subagent fan-out must stay in the parent.',
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
@@ -669,6 +674,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         skill: invocation.skill.name,
         invocationEvidence: invocation.evidence,
         status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
+        outcome: invocation.isolated?.status,
         allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
         model: invocation.skill.model,
         effort: invocation.skill.effort,
@@ -1642,14 +1648,22 @@ function formatIsolatedSkillToolResult(
   skill: SkillDefinition,
   result: SkillIsolatedExecutionResult | undefined,
 ): string {
-  if (!result) return `Skill ${skill.name} completed in an isolated child Thread.`;
+  if (!result) return `Skill ${skill.name} finished in an isolated child Thread without a recorded outcome.`;
+  const completed = result.status === 'completed';
   return [
-    `Skill ${skill.name} completed in an isolated child Thread.`,
+    `Skill ${skill.name} finished in an isolated child Thread.`,
+    `outcome: ${result.status}`,
     `threadId: ${result.threadId}`,
     `agentRole: ${result.agentRole}`,
     result.error ? `error: ${result.error}` : '',
     '',
-    result.result || 'Skill execution completed without a text result.',
+    completed
+      ? 'The child already executed this Skill. Synthesize the completed result below; do not repeat covered work unless it reports a gap or independent verification is explicitly required.'
+      : 'Treat the text below as partial evidence only; the isolated Skill did not complete successfully.',
+    '',
+    '<skill-result>',
+    result.result || 'Skill execution produced no text result.',
+    '</skill-result>',
   ].filter(Boolean).join('\n');
 }
 
@@ -1657,24 +1671,67 @@ function skillListingIdentity(skill: SkillDefinition): string {
   return skill.identity ?? skillPathForPrompt(skill);
 }
 
-function formatSkillDescription(skill: SkillDefinition): string {
-  const description = skill.whenToUse
-    ? `${skill.description} - ${skill.whenToUse}`
-    : skill.description;
-  return truncate(description, MAX_LISTING_DESCRIPTION_CHARS);
+function formatSkillDescription(
+  skill: SkillDefinition,
+  maxChars = MAX_LISTING_DESCRIPTION_CHARS,
+  readOnlyIsolated = false,
+): string {
+  const budget = Math.max(0, Math.min(maxChars, MAX_LISTING_DESCRIPTION_CHARS));
+  if (budget === 0) return '';
+  const authored = authoredSkillDescription(skill);
+  if (skill.execution !== 'isolated') return truncate(authored, budget);
+  const constraint = isolatedSkillExecutionContract(skill, readOnlyIsolated);
+  if (budget <= constraint.length) return truncate(constraint, budget);
+  const authoredBudget = budget - constraint.length - 1;
+  return `${truncate(authored, authoredBudget)} ${constraint}`.trim();
 }
 
-function boundedSkillCatalogDescriptions(skills: readonly SkillDefinition[]): ReadonlyMap<string, string> {
+function boundedSkillCatalogDescriptions(
+  skills: readonly SkillDefinition[],
+  isReadOnlyIsolated: (skill: SkillDefinition) => boolean,
+): ReadonlyMap<string, string> {
   if (skills.length === 0) return new Map();
-  const full = skills.map((skill) => [skill.name, formatSkillDescription(skill)] as const);
+  const full = skills.map((skill) => [
+    skill.name,
+    formatSkillDescription(skill, MAX_LISTING_DESCRIPTION_CHARS, isReadOnlyIsolated(skill)),
+  ] as const);
   const fullLength = full.reduce((total, [name, description]) => total + name.length + description.length + 4, 0);
   if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
   const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
-  const perDescription = Math.floor((DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead) / skills.length);
-  return new Map(full.map(([name, description]) => [
-    name,
-    perDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? '' : truncate(description, perDescription),
+  const contractOverhead = skills.reduce((total, skill) => (
+    total + (skill.execution === 'isolated'
+      ? isolatedSkillExecutionContract(skill, isReadOnlyIsolated(skill)).length + 1
+      : 0)
+  ), 0);
+  const authoredBudget = Math.max(0, DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead - contractOverhead);
+  const perAuthoredDescription = Math.floor(authoredBudget / skills.length);
+  return new Map(skills.map((skill) => [
+    skill.name,
+    skill.execution === 'isolated'
+      ? formatSkillDescription(
+          skill,
+          isolatedSkillExecutionContract(skill, isReadOnlyIsolated(skill)).length + 1 + perAuthoredDescription,
+          isReadOnlyIsolated(skill),
+        )
+      : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
+        ? ''
+        : truncate(authoredSkillDescription(skill), Math.min(perAuthoredDescription, MAX_LISTING_DESCRIPTION_CHARS)),
   ]));
+}
+
+function authoredSkillDescription(skill: SkillDefinition): string {
+  return skill.whenToUse
+    ? `${skill.description} - ${skill.whenToUse}`
+    : skill.description;
+}
+
+function isolatedSkillExecutionContract(skill: SkillDefinition, readOnlyIsolated: boolean): string {
+  if (readOnlyIsolated) {
+    return 'Read-only isolated child; cannot spawn Subagents; parent handles fan-out.';
+  }
+  return skill.allowedTools.includes('collaboration.spawn_agent')
+    ? 'Isolated child; Subagent spawn declared; parent ceiling applies.'
+    : 'Isolated child; no Subagents; parent handles fan-out.';
 }
 
 function codeRegisteredSkillContentHash(skill: SkillDefinition): string {

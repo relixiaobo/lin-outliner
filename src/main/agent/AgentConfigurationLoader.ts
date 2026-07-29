@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -9,6 +10,7 @@ import {
   type ReasoningEffort,
 } from '../../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
+import type { RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
 
 interface ConfigurationLayer {
   readonly defaultProfile: string | null;
@@ -74,6 +76,31 @@ export class AgentConfigurationLoader {
     return role;
   }
 
+  buildRoleCatalogSnapshot(cwd: string): RoleCatalogContextPayload {
+    const merged = this.loadMerged(cwd);
+    const roles = new Map<string, AgentRole>(Object.entries(BUILT_IN_AGENT_ROLE_DEFINITIONS));
+    for (const [name, role] of merged.roles) roles.set(name, role);
+    const entries = [...roles.values()]
+      .sort((left, right) => compareStableText(left.name, right.name))
+      .map(roleCatalogEntry);
+    const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
+      name: entry.name,
+      displayName: entry.displayName,
+      source: entry.source,
+      identity: entry.identity,
+      contentHash: entry.contentHash,
+      description: entry.description,
+    })))).digest('hex');
+    return {
+      schemaVersion: 1,
+      kind: 'roleCatalog',
+      mode: 'baseline',
+      previousCatalogHash: null,
+      catalogHash,
+      entries,
+    };
+  }
+
   private loadMerged(cwd: string): ConfigurationLayer {
     const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
     const project = readLayer(projectConfigurationPath(cwd), 'project');
@@ -83,6 +110,27 @@ export class AgentConfigurationLoader {
       roles: new Map([...user.roles, ...project.roles]),
     };
   }
+}
+
+function roleCatalogEntry(role: AgentRole): RoleCatalogEntry {
+  const source = role.source === 'builtIn' ? 'built-in' : role.source;
+  const contentHash = createHash('sha256').update(JSON.stringify({
+    name: role.name,
+    source,
+    description: role.description,
+    developerInstructions: role.developerInstructions,
+    nicknameCandidates: role.nicknameCandidates ?? [],
+    overrides: role.overrides ?? null,
+  })).digest('hex');
+  return {
+    change: 'available',
+    name: role.name,
+    displayName: role.name,
+    source,
+    identity: `${source}:${role.name}`,
+    contentHash,
+    description: role.description,
+  };
 }
 
 export function userConfigurationPath(userDataPath: string): string {
@@ -305,4 +353,8 @@ function validateNickname(value: string, path: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function compareStableText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
