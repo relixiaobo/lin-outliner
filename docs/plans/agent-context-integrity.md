@@ -806,19 +806,23 @@ reachable Turn references them. Publication is best-effort and never changes the
 Turn status, response, or usage when payload validation, quota, or storage fails. One
 `thread/turn/details/read` call is the read
 authority and fails closed on missing, corrupt, or mismatched bytes. Turn Diagnostics
-renders Summary, a typed ordered Timeline, and Recorded Evidence. Timeline activities are
-accepted initial/steering input, Model Calls, tool-execution batches, request/stream retries,
-and automatic-preflight/provider-overflow compaction. A Model Call alone owns Request and
-Response; tool batches remain sibling activities linked to their source and consuming Calls.
-Request renders the recorded
-pre-adapter context in semantic order (`system instructions -> tool definitions ->
-messages`) before the provider payload and request metadata. Provider payload object-key
-order is never numbered or used to imply model precedence. There is no separate context
+renders a user-facing Model Interactions surface: Summary, an ordered Interaction Timeline,
+and one collapsed Internal diagnostics disclosure. The main timeline contains Model Calls and
+the tool-execution, request/stream-retry, and automatic-preflight/provider-overflow-compaction
+activities that bridge them. Accepted initial/steering input is retained as Internal
+diagnostics rather than presented as provider interaction. A Model Call alone owns Request
+and Response; tool batches remain sibling activities linked to their source and consuming
+Calls. Request renders the final post-adapter Provider Request first. Its object-key order is
+never numbered or used to imply model precedence. The pre-adapter context remains available
+through a secondary disclosure in semantic order (`system instructions -> tool definitions ->
+messages`) and is explicitly labeled as Tenon's adapter input. There is no separate context
 construction account. Each Model Call header keeps ordinal and status visible, exposes its
 model/provider/timing/usage/cost facts through a hover/focus control, and copies the
 typed request-diagnostics export, including Model Context, ordered image-sanitized Provider
 Payload, runtime selection, and Request Facts, by materializing the fragment pool only when
-requested. Context payloads remain exact-tuple lazy reads. It does not restore the retired event ledger,
+requested. Canonical Items, prompt source blocks, configuration, and provenance mount only
+after opening Internal diagnostics. Context payloads remain exact-tuple lazy reads. It does
+not restore the retired event ledger,
 run/round vocabulary, renderer-side history scans, inferred epochs, or compatibility
 readers.
 

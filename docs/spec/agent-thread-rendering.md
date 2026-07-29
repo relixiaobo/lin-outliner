@@ -155,13 +155,19 @@ and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
 Details from the native message menu, opens Turn Diagnostics in the active workspace
 pane.
 
-Turn Diagnostics is the complete diagnostic view for one canonical Turn. Its sections
-are Summary, Timeline, and Recorded Evidence. There is no independent Context Construction
-section: user input, attachments, stable instructions, system reminders, Skill/Role/view/
-compaction evidence, tool definitions, and provider options appear at their recorded
-boundary in each outbound Request.
-Summary reads model, timing, status, Item count, input/output/cache token usage,
-cost, and any terminal error code/message/detail from the immutable Turn. `Input tokens`
+Turn Diagnostics is the technical workspace view for one canonical Turn; its user-facing
+title is **Model Interactions**. The default surface is Summary plus an Interaction Timeline
+grounded on the provider boundary. Tenon's accepted-input records, canonical Items,
+configuration, projection evidence, and provenance live behind one collapsed Internal
+diagnostics disclosure and mount only on demand. They never appear as peers of an outbound
+Request or masquerade as provider `user` messages. There is no independent Context
+Construction section: attachments, stable instructions, system reminders, Skill/Role/view/
+compaction evidence, tool definitions, and provider options are visible in the Request that
+actually carried them, while their Tenon source records remain available in Internal
+diagnostics.
+Summary reads model, timing, status, Model Call count, tool-execution count,
+input/output/cache token usage, cost, and any terminal error code/message/detail from the
+immutable Turn and diagnostics. Canonical Item counts remain internal. `Input tokens`
 means `usage.input`; cache reads and writes remain separate facts and are never relabeled
 as input context.
 
@@ -173,25 +179,27 @@ facts. A Turn without a diagnostics reference explicitly reports that request
 diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
 not match the Turn fails closed instead of appearing absent.
 
-Timeline renders the recorded runtime activity union in order; the renderer never derives
-the sequence by scanning canonical Items. Accepted initial and steering input, Model Calls,
-tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow
-compaction are separate timeline activities. A Model Call owns exactly one Request and its
-corresponding Response. Tool execution is a sibling activity after its source Call and before
-the Call that consumes its results, not a child of either Response or Request. Parallel tools
-from one model response form one batch; a transient tool with no canonical Item remains an
-explicit execution fact. Wrapper-level retries create another Call and a typed retry activity;
-retries hidden inside a provider SDK remain part of that SDK invocation.
+Interaction Timeline renders every Model Call plus the tool-execution, retry, and compaction
+activities that bridge Calls in their recorded order; the renderer never derives the sequence
+by scanning canonical Items. Accepted initial and steering input remain recorded, but are
+input-admission evidence rather than model interaction and therefore appear only in Internal
+diagnostics. A Model Call owns exactly one Request and its corresponding Response. Tool
+execution is a sibling activity after its source Call and before the Call that consumes its
+results, not a child of either Response or Request. Parallel tools from one model response form
+one batch; a transient tool with no canonical Item remains an explicit execution fact.
+Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
+provider SDK remain part of that SDK invocation.
 
-Request first renders the recorded Model Context in its semantic
-order: System Instructions, Tool Definitions, then Messages. It then renders the
-post-adapter Provider Payload. Payload fields preserve top-level insertion order only as
-a serialization fact; they receive no synthetic numeric context order. `messages`,
+Request first renders the final post-adapter **Provider Request** observed immediately before
+transport. Its fields preserve top-level insertion order only as a serialization fact; they
+receive no synthetic numeric context order. `messages`,
 `input`, `contents`, and equivalent sequence fields preserve element order and every
 message's content-part order. The renderer may add presentation labels such as attachment
 or system reminder, but never derives authority, reorders, merges, or substitutes the
-recorded value. The complete image-sanitized provider payload is available as JSON from
-the same call.
+recorded value. The complete image-sanitized provider request is available as JSON from
+the same call. The recorded pre-adapter Model Context remains available through a secondary
+disclosure in semantic order: System Instructions, Tool Definitions, then Messages. It is
+explicitly labeled as Tenon's projection passed to the adapter, not as the transport payload.
 
 Each call distinguishes request time,
 HTTP-headers time and latency,
@@ -215,12 +223,13 @@ Repetition-heavy request fields use the diagnostics fragment pool without losing
 or its position. Image bytes are never returned to the renderer: binary/base64/data-URL
 content is represented by an omission marker containing its byte length and SHA-256.
 
-Recorded Evidence exposes accepted user records, canonical Thread/Turn/Session and provenance
-identities, context epoch, cache affinity, effective configuration, L0/L1/L2 prompt
-blocks and fingerprints, canonical tool schemas, the resolved runtime, the prepared
-message pool, and exhaustive Canonical Items including context evidence, reset,
-and compaction Items. These facts explain or verify a request; they do not compete with
-the post-adapter Request as a second account of what was sent. Large prompt blocks,
+Internal diagnostics exposes accepted-input admission records, accepted user records,
+canonical Thread/Turn/Session and provenance identities, context epoch, cache affinity,
+effective configuration, L0/L1/L2 prompt blocks and fingerprints, canonical tool schemas,
+the resolved runtime, the prepared message pool, and exhaustive Canonical Items including
+context evidence, reset, and compaction Items. These facts explain or verify a request; they
+do not compete with the post-adapter Request as a second account of what was sent. The whole
+section is collapsed and lazy by default. Large prompt blocks,
 schemas, provider messages, responses, and Item JSON mount
 only while their disclosure is open. Expanding an evidence Item issues one exact
 `(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic

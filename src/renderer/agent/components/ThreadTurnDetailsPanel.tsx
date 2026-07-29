@@ -145,11 +145,13 @@ function useThreadTurnDetails(threadId: string, turnId: string) {
 
 function ThreadTurnDetailsView({ detail }: { readonly detail: ThreadTurnDetailsReadResponse }) {
   const t = useT();
-  const activityCount = detail.diagnostics?.payload.activities.length ?? 0;
+  const activityCount = detail.diagnostics
+    ? interactionActivities(detail.diagnostics.payload).length
+    : 0;
   return (
     <div className="thread-turn-details-body">
       <TurnDetailsSection title={t.agent.turnDetails.summary}>
-        <TurnOverview turn={detail.turn} />
+        <TurnOverview diagnostics={detail.diagnostics?.payload ?? null} turn={detail.turn} />
       </TurnDetailsSection>
       <TurnDetailsSection title={t.agent.turnDetails.timeline({ count: activityCount })}>
         {detail.diagnostics ? (
@@ -162,19 +164,35 @@ function ThreadTurnDetailsView({ detail }: { readonly detail: ThreadTurnDetailsR
           <p className="thread-turn-details-notice">{t.agent.turnDetails.diagnosticsUnavailable}</p>
         )}
       </TurnDetailsSection>
-      <TurnDetailsSection title={t.agent.turnDetails.recordedEvidence}>
-        <TurnRecord detail={detail} />
-      </TurnDetailsSection>
+      <section className="thread-turn-details-internal-section">
+        <LazyDisclosure
+          metadata={t.agent.turnDetails.internalDiagnosticsHint}
+          render={() => <TurnRecord detail={detail} />}
+          resetKey={detail.turn.id}
+          title={t.agent.turnDetails.internalDiagnostics}
+        />
+      </section>
     </div>
   );
 }
 
-function TurnOverview({ turn }: { readonly turn: Turn }) {
+function TurnOverview({
+  diagnostics,
+  turn,
+}: {
+  readonly diagnostics: TurnDiagnosticsPayload | null;
+  readonly turn: Turn;
+}) {
   const t = useT();
   const { locale } = useI18n();
   const usage = turn.execution.usage;
   const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
-  const toolCount = turn.items.filter(isToolItem).length;
+  const modelCallCount = diagnostics?.providerCalls.length ?? null;
+  const toolExecutionCount = diagnostics
+    ? diagnostics.activities.reduce((count, activity) => (
+        activity.type === 'toolExecutionBatch' ? count + activity.executions.length : count
+      ), 0)
+    : null;
   const timeRange = turn.completedAt
     ? `${formatTimestamp(turn.startedAt, locale)} - ${formatTimestamp(turn.completedAt, locale)}`
     : formatTimestamp(turn.startedAt, locale);
@@ -194,9 +212,11 @@ function TurnOverview({ turn }: { readonly turn: Turn }) {
           <small>{timeRange}</small>
         </div>
         <div>
-          <dt>{t.agent.turnDetails.itemCount}</dt>
-          <dd>{formatNumber(turn.items.length)}</dd>
-          <small>{t.agent.turnDetails.toolCount}: {formatNumber(toolCount)}</small>
+          <dt>{t.agent.turnDetails.modelCalls}</dt>
+          <dd>{modelCallCount === null ? '-' : formatNumber(modelCallCount)}</dd>
+          <small>
+            {t.agent.turnDetails.toolExecutions}: {toolExecutionCount === null ? '-' : formatNumber(toolExecutionCount)}
+          </small>
         </div>
         <div>
           <dt>{t.agent.turnDetails.inputTokens}</dt>
@@ -279,23 +299,13 @@ function TurnTimeline({
     () => new Map(turn.items.map((item) => [item.id, item])),
     [turn.items],
   );
-  const callActivities = payload.activities.filter((activity) => activity.type === 'modelCall');
+  const activities = interactionActivities(payload);
+  const callActivities = activities.filter((activity) => activity.type === 'modelCall');
   const defaultOpenCallIndex = defaultTimelineCallIndex(payload);
   return (
     <div className="thread-turn-details-timeline">
-      {payload.activities.map((activity, index) => {
+      {activities.map((activity, index) => {
         const key = timelineActivityKey(activity, index);
-        if (activity.type === 'acceptedInput') {
-          return (
-            <AcceptedInputActivity
-              activity={activity}
-              itemsById={itemsById}
-              key={key}
-              threadId={threadId}
-              turnId={turn.id}
-            />
-          );
-        }
         if (activity.type === 'modelCall') {
           const call = payload.providerCalls[activity.callIndex];
           return call ? (
@@ -338,43 +348,6 @@ function TurnTimeline({
         <p className="thread-turn-details-notice">{t.agent.turnDetails.noProviderCalls}</p>
       ) : null}
     </div>
-  );
-}
-
-function AcceptedInputActivity({
-  activity,
-  itemsById,
-  threadId,
-  turnId,
-}: {
-  readonly activity: Extract<TurnDiagnosticsActivity, { type: 'acceptedInput' }>;
-  readonly itemsById: ReadonlyMap<string, ThreadItem>;
-  readonly threadId: string;
-  readonly turnId: string;
-}) {
-  const t = useT();
-  const items = activity.itemIds.flatMap((id) => {
-    const item = itemsById.get(id);
-    return item ? [item] : [];
-  });
-  return (
-    <TimelineActivityDisclosure
-      defaultOpen={false}
-      metadata={activity.consumedByCallIndex === null
-        ? t.agent.turnDetails.notConsumed
-        : t.agent.turnDetails.consumedByCall({ index: activity.consumedByCallIndex + 1 })}
-      resetKey={`${activity.source}:${activity.acceptedAt}`}
-      title={activity.source === 'initial'
-        ? t.agent.turnDetails.acceptedInputActivity
-        : t.agent.turnDetails.steeringActivity}
-      render={() => (
-        <div className="thread-turn-details-item-list">
-          {items.map((item) => (
-            <CanonicalItemRow item={item} key={item.id} threadId={threadId} turnId={turnId} />
-          ))}
-        </div>
-      )}
-    />
   );
 }
 
@@ -731,23 +704,30 @@ function ProviderRequestView({
   const t = useT();
   return (
     <div className="thread-turn-details-request">
-      <PreparedContextView
-        call={call}
-        fragmentsById={fragmentsById}
-        messagesById={messagesById}
-        toolSchemasByName={toolSchemasByName}
-      />
-      <FlowGroup title={t.agent.turnDetails.providerPayload}>
+      <FlowGroup title={t.agent.turnDetails.providerRequest}>
         <ProviderPayloadView fragmentsById={fragmentsById} request={call.request} />
         <LazyDisclosure
           resetKey={String(call.index)}
-          title={t.agent.turnDetails.rawProviderPayload}
+          title={t.agent.turnDetails.providerRequestJson}
           render={() => <JsonCode value={materializeProviderRequest(call.request, fragmentsById)} />}
         />
       </FlowGroup>
       <LazyDisclosure
+        metadata={t.agent.turnDetails.preAdapterContextHint}
+        resetKey={`${call.index}:prepared-context`}
+        title={t.agent.turnDetails.preAdapterContext}
+        render={() => (
+          <PreparedContextView
+            call={call}
+            fragmentsById={fragmentsById}
+            messagesById={messagesById}
+            toolSchemasByName={toolSchemasByName}
+          />
+        )}
+      />
+      <LazyDisclosure
         resetKey={String(call.index)}
-        title={t.agent.turnDetails.requestFacts}
+        title={t.agent.turnDetails.requestMetadata}
         render={() => (
           <>
             <dl className="thread-turn-details-fact-grid is-compact">
@@ -796,7 +776,7 @@ function PreparedContextView({
     }] : [];
   });
   return (
-    <FlowGroup title={t.agent.turnDetails.modelContext}>
+    <div className="thread-turn-details-flow-fields">
       {systemPrompt && typeof systemPrompt.value === 'string' ? (
         <TextDisclosure
           metadata={systemPrompt.id}
@@ -843,7 +823,7 @@ function PreparedContextView({
           </div>
         )}
       />
-    </FlowGroup>
+    </div>
   );
 }
 
@@ -975,7 +955,7 @@ function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProvider
   if (!call.response) {
     return (
       <div className="thread-turn-details-result">
-        <FlowGroup title={t.agent.turnDetails.modelOutput}>
+        <FlowGroup title={t.agent.turnDetails.modelResponse}>
           <p className="thread-turn-details-notice">{t.agent.turnDetails.noAssistantResponse}</p>
         </FlowGroup>
         <ResponseDiagnostics call={call} locale={locale} />
@@ -984,11 +964,11 @@ function ProviderResponseView({ call }: { readonly call: TurnDiagnosticsProvider
   }
   return (
     <div className="thread-turn-details-result">
-      <FlowGroup title={t.agent.turnDetails.modelOutput}>
+      <FlowGroup title={t.agent.turnDetails.modelResponse}>
         <SemanticValue value={call.response.value} />
         <JsonDisclosure
           resetKey={`${call.index}:response`}
-          title={t.agent.turnDetails.rawProviderResponse}
+          title={t.agent.turnDetails.normalizedModelResponseJson}
           value={call.response.value}
         />
       </FlowGroup>
@@ -1002,7 +982,7 @@ function ResponseDiagnostics({ call, locale }: { readonly call: TurnDiagnosticsP
   return (
     <LazyDisclosure
       resetKey={`${call.index}:response-diagnostics`}
-      title={t.agent.turnDetails.responseFacts}
+      title={t.agent.turnDetails.responseMetadata}
       render={() => (
         <>
           <dl className="thread-turn-details-fact-grid is-compact">
@@ -1140,8 +1120,15 @@ function TurnRecord({ detail }: { readonly detail: ThreadTurnDetailsReadResponse
 
 function DiagnosticsRecord({ payload, resetKey }: { readonly payload: TurnDiagnosticsPayload; readonly resetKey: string }) {
   const t = useT();
+  const admissions = payload.activities.filter((activity) => activity.type === 'acceptedInput');
   return (
     <>
+      <JsonDisclosure
+        metadata={formatNumber(admissions.length)}
+        resetKey={resetKey}
+        title={t.agent.turnDetails.inputAdmissions}
+        value={admissions}
+      />
       <JsonDisclosure
         resetKey={resetKey}
         title={t.agent.turnDetails.effectiveConfiguration}
@@ -1521,6 +1508,10 @@ function defaultTimelineCallIndex(payload: TurnDiagnosticsPayload): number | nul
   return exceptional?.index ?? payload.providerCalls.at(-1)!.index;
 }
 
+function interactionActivities(payload: TurnDiagnosticsPayload) {
+  return payload.activities.filter((activity) => activity.type !== 'acceptedInput');
+}
+
 function timelineActivityKey(activity: TurnDiagnosticsActivity, index: number): string {
   switch (activity.type) {
     case 'acceptedInput': return `input:${activity.source}:${activity.acceptedAt}`;
@@ -1653,15 +1644,6 @@ function Fact({ label, value }: { readonly label: string; readonly value: string
 
 function itemOutputReference(item: ThreadItem): ThreadItemOutputReference | null {
   return 'outputRef' in item ? item.outputRef : null;
-}
-
-function isToolItem(item: ThreadItem): boolean {
-  return item.type === 'commandExecution'
-    || item.type === 'fileChange'
-    || item.type === 'mcpToolCall'
-    || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
-    || item.type === 'webSearch';
 }
 
 function itemSummary(item: ThreadItem): string {

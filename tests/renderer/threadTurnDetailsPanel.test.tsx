@@ -55,21 +55,19 @@ describe('ThreadTurnDetailsPanel', () => {
 
     expect(requests.map((request) => request.method)).toEqual(['thread/turn/details/read']);
     const initialText = rendered.document.body.textContent;
-    expect(initialText).toContain('Turn Diagnostics');
+    expect(initialText).toContain('Model Interactions');
     expect(initialText).toContain('Summary');
-    expect(initialText).toContain('Timeline (4)');
-    expect(initialText).toContain('Recorded Evidence');
-    expect(initialText).toContain('Canonical Items (3)');
+    expect(initialText).toContain('Interaction Timeline (3)');
+    expect(initialText).toContain('Internal diagnostics');
+    expect(initialText).not.toContain('Canonical Items (3)');
     expect(initialText).toContain('Input tokens');
-    expect(initialText).toContain('Accepted user input');
-    expect(initialText).toContain('Effective configuration');
-    expect(initialText).toContain('Stable prompt source blocks');
-    expect(initialText).toContain('Canonical tool schemas (1)');
-    expect(initialText).toContain('Resolved runtime configuration');
+    expect(initialText).toContain('Model calls2');
+    expect(initialText).toContain('Tool executions: 1');
+    expect(initialText).not.toContain('Accepted user input');
+    expect(initialText).not.toContain('Effective configuration');
     expect([...rendered.document.querySelectorAll(
       '.thread-turn-details-timeline > .thread-turn-details-timeline-activity > summary',
     )].map((summary) => summary.querySelector('strong')?.textContent)).toEqual([
-      'Accepted Input',
       'Model Call 1',
       'Tool Execution (1)',
       'Model Call 2',
@@ -80,15 +78,26 @@ describe('ThreadTurnDetailsPanel', () => {
       '.thread-turn-details-timeline-activity',
     )].find((details) => details.querySelector(':scope > summary')?.textContent?.includes('Model Call 1'));
     if (!firstCall) throw new Error('Missing first Model Call');
-    const callText = firstCall.textContent ?? '';
+    let callText = firstCall.textContent ?? '';
     expect(callText).toContain('Request');
     expect(callText).toContain('Response');
-    expect(callText).toContain('Model Context');
+    expect(callText).toContain('Provider Request');
+    expect(callText).toContain('Pre-adapter context');
+    expect(callText).not.toContain('System instructions');
+    expect(callText).toContain('Model Response');
+    await openDetailsContaining(rendered.document, 'input');
+    callText = firstCall.textContent ?? '';
+    expect(callText).toContain('[0] Text part');
+    expect(callText).toContain('[1] Text part');
+    expect(callText).toContain('[2] Text part');
+    expect(callText).toContain('[3] Text part');
+    expect(callText).toContain('/workspace/report.pdf');
+
+    await openDetailsContaining(rendered.document, 'Pre-adapter context');
+    callText = firstCall.textContent ?? '';
     expect(callText).toContain('System instructions');
     expect(callText).toContain('Tool definitions (1)');
     expect(callText).toContain('Messages (1)');
-    expect(callText).toContain('Provider Payload');
-    expect(callText).toContain('Model Output');
     expect(callText).toContain('[0] Text part');
     expect(callText).toContain('[1] Context evidence · referencedResources');
     expect(callText).toContain('[2] Attachment');
@@ -162,11 +171,10 @@ describe('ThreadTurnDetailsPanel', () => {
 
     const flowGroups = [...firstCall.querySelectorAll('.thread-turn-details-flow-group')];
     expect(flowGroups.map((group) => group.querySelector(':scope > h5')?.textContent)).toEqual([
-      'Model Context',
-      'Provider Payload',
-      'Model Output',
+      'Provider Request',
+      'Model Response',
     ]);
-    const providerFieldList = flowGroups[1]!.querySelector(
+    const providerFieldList = flowGroups[0]!.querySelector(
       ':scope > .thread-turn-details-flow-fields > .thread-turn-details-flow-fields',
     );
     expect(providerFieldList).not.toBeNull();
@@ -177,12 +185,12 @@ describe('ThreadTurnDetailsPanel', () => {
       expect.stringContaining('input'),
       expect.stringContaining('tools'),
     ]);
+    expect(callText.indexOf('Provider Request')).toBeLessThan(callText.indexOf('Pre-adapter context'));
     expect(callText.indexOf('System instructions')).toBeLessThan(callText.indexOf('Tool definitions (1)'));
     expect(callText.indexOf('Tool definitions (1)')).toBeLessThan(callText.indexOf('Messages (1)'));
-    expect(callText.indexOf('Messages (1)')).toBeLessThan(callText.indexOf('Provider Payload'));
     expect(callText).not.toContain('0. model');
 
-    await openDetailsContaining(rendered.document, 'Response Facts');
+    await openDetailsContaining(rendered.document, 'Response metadata');
     const responseText = rendered.document.body.textContent;
     expect(responseText).toContain('HTTP headers received at');
     expect(responseText).toContain('Time to HTTP headers');
@@ -205,6 +213,13 @@ describe('ThreadTurnDetailsPanel', () => {
     });
     expect(rendered.document.body.textContent).toContain(FULL_TOOL_OUTPUT);
 
+    await openDetailsContaining(rendered.document, 'Internal diagnostics');
+    expect(rendered.document.body.textContent).toContain('Canonical Items (3)');
+    expect(rendered.document.body.textContent).toContain('Input admission records');
+    expect(rendered.document.body.textContent).toContain('Effective configuration');
+    expect(rendered.document.body.textContent).toContain('Stable prompt source blocks');
+    expect(rendered.document.body.textContent).toContain('Canonical tool schemas (1)');
+    expect(rendered.document.body.textContent).toContain('Resolved runtime configuration');
     await openDetailsContaining(rendered.document, 'Turn identity');
     expect(rendered.document.body.textContent).toContain('Context epochinitial');
     expect(rendered.document.body.textContent).toContain(`Cache affinity${'a'.repeat(64)}`);
@@ -213,7 +228,7 @@ describe('ThreadTurnDetailsPanel', () => {
     await openDetailsContaining(rendered.document, 'L0 · framework');
     expect(rendered.document.body.textContent).toContain('Canonical stable prompt');
     expect(rendered.document.body.textContent).toContain('Stable prompt fingerprints');
-    await openDetailsContaining(rendered.document, 'Provider payload JSON');
+    await openDetailsContaining(rendered.document, 'Provider request JSON');
     expect(rendered.document.body.textContent).toContain('<system-reminder>');
     expect(rendered.document.body.textContent).toContain('/workspace/report.pdf');
 
@@ -238,6 +253,7 @@ describe('ThreadTurnDetailsPanel', () => {
     await flush();
     rendered.render('thread-b', 'turn-b');
     await flush();
+    await openDetailsContaining(rendered.document, 'input');
     expect(rendered.document.body.textContent).toContain('fresh-b');
 
     stale.resolve(detailsResponse('thread-a', 'turn-a', 'stale-a'));
@@ -300,7 +316,6 @@ describe('ThreadTurnDetailsPanel', () => {
       'Model Call 1',
       'Stream Retry',
       'Preflight Context Compaction',
-      'Steering Input',
       'Tool Execution (1)',
       'Model Call 2',
     ];
@@ -308,6 +323,10 @@ describe('ThreadTurnDetailsPanel', () => {
       expect(timeline).toContain(label);
       if (index > 0) expect(timeline.indexOf(labels[index - 1]!)).toBeLessThan(timeline.indexOf(label));
     });
+    expect(timeline).not.toContain('Steering Input');
+    await openDetailsContaining(rendered.document, 'Internal diagnostics');
+    await openDetailsContaining(rendered.document, 'Input admission records');
+    expect(rendered.document.body.textContent).toContain('"source": "steering"');
   });
 
   test('cannot apply an old context response after switching Turn targets', async () => {
@@ -442,6 +461,7 @@ async function openDetailsContaining(document: Document, text: string): Promise<
 }
 
 async function openCanonicalContextItem(document: Document): Promise<void> {
+  await openDetailsContaining(document, 'Internal diagnostics');
   await openDetailsContaining(document, 'Canonical Items');
   const row = [...document.querySelectorAll<HTMLDetailsElement>('.thread-turn-details-item')]
     .find((candidate) => candidate.textContent?.includes('contextEvidence'));

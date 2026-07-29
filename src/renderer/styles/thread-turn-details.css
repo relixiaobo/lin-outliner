@@ -35,6 +35,22 @@
   gap: var(--space-5);
 }
 
+.thread-turn-details-internal-section {
+  min-width: 0;
+  border-top: 1px solid var(--separator);
+  padding-top: var(--space-1);
+}
+
+.thread-turn-details-internal-section > .thread-turn-details-disclosure > summary {
+  padding: var(--space-3) 0;
+}
+
+.thread-turn-details-internal-section > .thread-turn-details-disclosure > summary > span {
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
 .thread-turn-details-section {
   gap: var(--space-2);
 }
