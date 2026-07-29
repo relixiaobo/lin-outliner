@@ -303,6 +303,16 @@ before any directional/security-sensitive build.
   Subagent inheritance and provider/cache controls follow as independently
   complete units. See
   `docs/plans/agent-context-integrity.md`.
+- **native-turn-kernel** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan, ready for a
+  dev agent to claim and execute as written**) — absorb `@earendil-works/pi-agent-core` (954 dist
+  lines) into a Tenon-owned turn kernel structured as koma-style ports (`ModelGateway` /
+  `retryPolicy` / kernel loop / `NativeAgentRuntime` behind the existing `PiAgentRuntime` seam,
+  `PiTurnExecutor.ts:125-131`); `pi-ai` stays as pure transport. One retry owner (removes the
+  `maxRetries: 0` suppression), typed `ModelError` classification at the gateway boundary,
+  diagnostics capture as first-class call sites, `agentStreamAbort.ts` absorbed. Motivated by the
+  2026-07-29 incident + PR #444 review (F3 stacked retries, R2 regex-layer classification).
+  **Prerequisite: PR #444 merged; rebase plan references onto main.** One complete PR; golden
+  Item-stream parity fixture is the load-bearing gate. See `docs/plans/native-turn-kernel.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
