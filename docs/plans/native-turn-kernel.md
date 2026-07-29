@@ -294,6 +294,17 @@ remain the transport vocabulary.
   `KernelAgentOptions` — the explicit constructor options of
   `NativeAgentRuntime` replacing pi's `AgentOptions` (see §5). The dependency
   cannot be deleted while any of these lack a home.
+- Vocabulary fronting (containment, not replacement): re-export the `pi-ai`
+  types the runtime/context layers speak — `Message`, `AssistantMessage`,
+  `AssistantMessageEvent`, `Model<Api>`, `Context`, usage — so
+  `kernel/types.ts` is the single import chokepoint for the transport
+  vocabulary. Type aliases only; defining Tenon copies with an
+  identity-mapping gateway is explicitly rejected until an actual `pi-ai`
+  swap is on the table (ceremony, not cleanliness). Routing EXISTING
+  context/runtime imports through the chokepoint is a separate mechanical
+  fast-track sweep after this PR merges (A11 queue from
+  `rg "from '@earendil-works/pi-ai'" src/main/agent/`), NOT part of this PR's
+  tripwire surface.
 
 ### 2. `kernel/ModelGateway.ts`
 

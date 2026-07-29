@@ -320,7 +320,9 @@ before any directional/security-sensitive build.
   diagnostics capture as first-class call sites, `agentStreamAbort.ts` absorbed. Motivated by the
   2026-07-29 incident + PR #444 review (F3 stacked retries, R2 regex-layer classification).
   **Prerequisite met 2026-07-29 (#444 merged) — claimable now; rebase plan line references if
-  main moves.** One complete PR; golden
+  main moves.** Follow-up once merged (fast-track, mechanical, A11 queue): route existing
+  `pi-ai` type imports in the context/runtime layers through the `kernel/types` chokepoint so
+  only gateway/transport files import `pi-ai` directly. One complete PR; golden
   Item-stream parity fixture is the load-bearing gate. See `docs/plans/native-turn-kernel.md`.
 - **subagent-budget-propagation** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan,
   shape (b): two complete PRs**) — connect the existing Goal budget mechanism
