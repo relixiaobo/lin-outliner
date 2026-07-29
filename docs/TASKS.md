@@ -305,7 +305,7 @@ before any directional/security-sensitive build.
   `docs/plans/agent-context-integrity.md`.
 - **native-turn-kernel** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan, ready for a
   dev agent to claim and execute as written**) — absorb `@earendil-works/pi-agent-core` (954 dist
-  lines) into a Tenon-owned turn kernel structured as koma-style ports (`ModelGateway` /
+  lines) into a Tenon-owned turn kernel structured as four ports around a pure loop (`ModelGateway` /
   `retryPolicy` / kernel loop / `NativeAgentRuntime` behind the existing `PiAgentRuntime` seam,
   `PiTurnExecutor.ts:125-131`); `pi-ai` stays as pure transport. One retry owner (removes the
   `maxRetries: 0` suppression), typed `ModelError` classification at the gateway boundary,

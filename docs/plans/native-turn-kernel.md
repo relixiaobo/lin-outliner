@@ -14,9 +14,9 @@ Behavioral Contract below is extracted from it and is normative.
 
 Replace the `@earendil-works/pi-agent-core` dependency (954 dist lines:
 `agent.js` 410 + `agent-loop.js` 544) with a Tenon-owned turn kernel, structured
-as small ports in the style of koma's kernel (`~/Coding/koma/packages/core`):
-a pure loop that projects context, streams one model call, runs one tool batch,
-and repeats — with **one** retry owner and typed error classification.
+as four small ports around one pure loop: project context, stream one model
+call, run one tool batch, repeat — with **one** retry owner and typed error
+classification, and no business logic inside the loop.
 
 `@earendil-works/pi-ai` stays, demoted to pure transport behind a
 `ModelGateway` port. The canonical protocol (`src/core/`), Items, rollouts,
@@ -50,15 +50,16 @@ Why now (evidence from the 2026-07-29 incident + PR #444 review):
   catalog, usage/cost, `validateToolArguments` via `@earendil-works/pi-ai/compat`).
   The thread-name path (`completeThreadName` → `piCompleteSimple`) is
   transport-only and stays as-is.
-- No koma code dependency. We take the port shapes, not the packages.
+- No new dependencies. The kernel and its ports are hand-written in-repo;
+  nothing is vendored or imported from outside `pi-ai`.
 - No change to steering semantics, event ordering, canonical Item shapes,
   diagnostics payload schema (`codec.ts` untouched), renderer protocol, or the
   tool authoring surface beyond an import-specifier swap.
 - No behavior improvements smuggled in. Where pi's behavior is odd but Tenon
   depends on it (see BC rules), the kernel reproduces it bug-for-bug. File
   follow-ups instead.
-- No permission-model change; koma's per-call approval middleware is NOT
-  adopted (Tenon's model: `docs/spec/agent-tool-permissions.md`).
+- No permission-model change; no per-tool-call approval gate is introduced
+  (Tenon's model: `docs/spec/agent-tool-permissions.md`).
 - No renames of `PiTurnExecutor` / `PiEventNormalizer` / `PiAgentRuntime` in
   this PR (churn control; later mechanical rename PR).
 
@@ -407,7 +408,7 @@ The PR reviewer (main agent) enforces these with commands, not judgment:
 
 None blocking. Deferred by design: (a) `Pi*` renames (later mechanical PR);
 (b) gateway middleware chain (redaction / payload profiles as composable
-wrappers, koma `wrap-gateway` style) once the port exists.
+wrappers) once the port exists.
 
 ## Checklist
 
