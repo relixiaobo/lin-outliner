@@ -322,6 +322,17 @@ before any directional/security-sensitive build.
   **Prerequisite met 2026-07-29 (#444 merged) — claimable now; rebase plan line references if
   main moves.** One complete PR; golden
   Item-stream parity fixture is the load-bearing gate. See `docs/plans/native-turn-kernel.md`.
+- **subagent-budget-propagation** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan,
+  shape (b): two complete PRs**) — connect the existing Goal budget mechanism
+  (`ThreadGoal.tokenBudget` → `budgetLimited`, `GoalStore.ts:123-132`) to the existing fan-out
+  mechanism (`spawn_agent`), introducing no new concepts. PR A (claimable now): optional
+  `max_total_tokens` on spawn → child Goal; `budgetLimited` children refuse non-user Turn
+  admission with a typed error; `tokensUsed`/`tokenBudget` join `CollaborationAgentView` so
+  `list_agents`/`wait_agent` report them; user-triggered Turns are never gated (bright line).
+  PR B (ordered behind `native-turn-kernel`): the kernel consults a `remainingTokenBudget` port
+  before each model call and settles an in-flight Turn when exhausted — the 2026-07-29 incident's
+  actual failure mode (586k tokens in one child Turn). See
+  `docs/plans/subagent-budget-propagation.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient

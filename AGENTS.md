@@ -85,6 +85,16 @@ every change MUST follow them. Full detail lives in `docs/spec/` (see
   agent's memory or a hand-maintained checklist. Re-running the driver after an
   interruption must resume correctly for free, and "done" is a command's empty
   output, not a claim.
+- **A12 — Invariants by blast radius.** Fail-closed `throw` is reserved for
+  write/decode boundaries (persistence, codecs, admission), where corrupt data
+  must not enter the store. Runtime invariants on the user path — projection,
+  rendering, turn execution, inspection-only data — must degrade (record, heal,
+  or skip) rather than kill the user's action; state the invariant stronger
+  than reality and a late notification or a provider quirk becomes a dead turn.
+  (Lesson of the 2026-07-29 incident: the trailing-user-message assertion,
+  fork's hard dependency on inspection-only diagnostics, and cross-batch
+  tool-call-id uniqueness were all correct-sounding invariants enforced at the
+  wrong boundary.)
 
 ### Visual / design system
 
