@@ -18,6 +18,7 @@ import type {
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type {
+  ContextCompactionThreadItem,
   ContextCursor,
   DynamicToolOutputContent,
   JsonValue,
@@ -373,10 +374,16 @@ async function projectCanonicalProviderContext(
     readonly compacted?: (item: Extract<ThreadItem, { type: 'contextCompaction' }>) => void;
   },
 ): Promise<Message[]> {
-  const build = async () => {
+  const build = async (stagedCompaction?: ContextCompactionThreadItem) => {
     const sourceTurns = [
       ...context.historyBeforeTurn,
-      { ...context.turn, items: currentTurnItems(context) },
+      {
+        ...context.turn,
+        items: [
+          ...currentTurnItems(context),
+          ...(stagedCompaction ? [stagedCompaction] : []),
+        ],
+      },
     ];
     const projector = new CanonicalContextProjector(model, context);
     const projection = await projector.projectTurnsWithBoundaries(sourceTurns);
@@ -398,15 +405,15 @@ async function projectCanonicalProviderContext(
         return {
           ...boundary,
           preserveFrom: boundary.turnId === context.turn.id
-            ? activeAdmissionCursor(turn)
+            ? activeAdmissionCursor(context.turn)
             : cursorFor(turn, turn.items[0]),
         };
       }),
       protectedFromMessageIndex: protectedBoundary.messageIndex,
     };
   };
-  const plan = async () => {
-    const projection = await build();
+  const plan = async (stagedCompaction?: ContextCompactionThreadItem) => {
+    const projection = await build(stagedCompaction);
     const budget = planContextBudget({
       model,
       systemPrompt,
@@ -429,35 +436,40 @@ async function projectCanonicalProviderContext(
     });
     return [...prepared.budget.messages];
   };
+  let initialError: ContextCompactionRequiredError;
   try {
     return preparedMessages(await plan());
   } catch (error) {
     if (!(error instanceof ContextCompactionRequiredError)) throw error;
-    const projection = await build();
-    const preserveBoundary = projection.turnBoundaries.find((boundary) => (
-      boundary.messageIndex >= error.retainFromMessageIndex
-    ));
-    const preserveFrom = preserveBoundary?.preserveFrom ?? activeAdmissionCursor(context.turn);
-    const compacted = await context.compactContext('automaticPreflight', preserveFrom);
-    if (!compacted) {
-      throw new ContextCapacityError(
-        'Canonical history exceeds the model input capacity and has no eligible compaction range.',
-        error.estimatedTokens,
-        error.availableTokens,
-      );
-    }
-    observer?.compacted?.(compacted);
+    initialError = error;
+  }
+  const projection = await build();
+  const candidates = uniqueContextCursors([
+    ...projection.turnBoundaries
+      .filter((boundary) => boundary.messageIndex >= initialError.retainFromMessageIndex)
+      .map((boundary) => boundary.preserveFrom),
+    activeAdmissionCursor(context.turn),
+  ]);
+  let lastError = initialError;
+  for (const preserveFrom of candidates) {
+    const staged = await context.stageContextCompaction('automaticPreflight', preserveFrom);
+    if (!staged) continue;
     try {
-      return preparedMessages(await plan());
-    } catch (retryError) {
-      if (!(retryError instanceof ContextCompactionRequiredError)) throw retryError;
-      throw new ContextCapacityError(
-        'Canonical history still exceeds the model input capacity after automatic compaction.',
-        retryError.estimatedTokens,
-        retryError.availableTokens,
-      );
+      const prepared = await plan(staged.item);
+      const compacted = await staged.commit();
+      observer?.compacted?.(compacted);
+      return preparedMessages(prepared);
+    } catch (error) {
+      await staged.discard();
+      if (!(error instanceof ContextCompactionRequiredError)) throw error;
+      lastError = error;
     }
   }
+  throw new ContextCapacityError(
+    'Canonical history still exceeds the model input capacity after exhausting automatic compaction boundaries.',
+    lastError.estimatedTokens,
+    lastError.availableTokens,
+  );
 }
 
 function activeAdmissionCursor(turn: Turn): ContextCursor {
@@ -466,6 +478,14 @@ function activeAdmissionCursor(turn: Turn): ContextCursor {
   )) ?? turn.items[0];
   if (!item) throw new Error(`Active Turn has no canonical admission boundary: ${turn.id}`);
   return cursorFor(turn, item);
+}
+
+function contextCursorKey(cursor: ContextCursor): string {
+  return `${cursor.turnId}\0${cursor.itemId}`;
+}
+
+function uniqueContextCursors(cursors: readonly ContextCursor[]): ContextCursor[] {
+  return [...new Map(cursors.map((cursor) => [contextCursorKey(cursor), cursor])).values()];
 }
 
 function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] {

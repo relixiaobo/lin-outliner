@@ -90,6 +90,47 @@ describe('context compaction reducer', () => {
     }]);
   });
 
+  test('retains complete typed output identities for active observation checkpoints', async () => {
+    const store = createPayloadStore();
+    const digest = createHash('sha256').update('shared-output').digest('hex');
+    const plainRef: ThreadItemOutputReference = {
+      id: digest,
+      mimeType: 'text/plain',
+      byteLength: 12,
+      summary: 'Plain identity',
+    };
+    const jsonRef: ThreadItemOutputReference = {
+      id: digest,
+      mimeType: 'application/json',
+      byteLength: 12,
+      summary: 'JSON identity',
+    };
+    const plain = observation(
+      store,
+      'plain-observation',
+      'file_read',
+      { file_path: '/workspace/plain.txt' },
+      'shared bytes',
+      plainRef,
+    );
+    const json = observation(
+      store,
+      'json-observation',
+      'file_read',
+      { file_path: '/workspace/data.json' },
+      'shared bytes',
+      jsonRef,
+    );
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [...plain.items, ...json.items])],
+      readContext: store.read,
+    });
+
+    expect(plan?.outputRefs).toHaveLength(2);
+    expect(plan?.outputRefs).toEqual(expect.arrayContaining([plainRef, jsonRef]));
+  });
+
   test('restores the latest active Skill from the effective preserved tail', async () => {
     const store = createPayloadStore();
     const catalog = {
@@ -443,12 +484,13 @@ function observation(
   tool: 'file_read' | 'node_read',
   args: JsonValue,
   text: string,
+  outputRefOverride?: ThreadItemOutputReference,
 ): {
   items: readonly ThreadItem[];
   outputRef: ThreadItemOutputReference;
   projectionRef: ThreadContextPayloadReference;
 } {
-  const outputRef = outputReference(id, text);
+  const outputRef = outputRefOverride ?? outputReference(id, text);
   const projectionRef = store.put({
     schemaVersion: 1,
     kind: 'toolOutputProjection',

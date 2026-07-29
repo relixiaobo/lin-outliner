@@ -35,7 +35,7 @@ import {
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
 } from '../../../core/referenceMarkup';
-import { assertContextPayloadDependencies } from './contextDependencies';
+import { assertContextPayloadDependencies, outputReferenceKey } from './contextDependencies';
 import { selectEffectiveContext } from './ContextEpoch';
 import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
 import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
@@ -123,11 +123,12 @@ export class CanonicalContextProjector {
         if (payload.kind !== 'toolOutputProjection') {
           throw new Error(`Context evidence kind mismatch: ${item.kind}/${item.payloadRef.id}`);
         }
-        const existing = this.toolOutputProjections.get(payload.outputRef.id);
+        const key = outputReferenceKey(payload.outputRef);
+        const existing = this.toolOutputProjections.get(key);
         if (existing && JSON.stringify(existing) !== JSON.stringify(payload)) {
           throw new Error(`Tool output has conflicting frozen projections: ${payload.outputRef.id}`);
         }
-        this.toolOutputProjections.set(payload.outputRef.id, payload);
+        this.toolOutputProjections.set(key, payload);
       }
     }
   }
@@ -273,7 +274,9 @@ export class CanonicalContextProjector {
       }
       if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
-        const projection = item.outputRef ? this.toolOutputProjections.get(item.outputRef.id) ?? null : null;
+        const projection = item.outputRef
+          ? this.toolOutputProjections.get(outputReferenceKey(item.outputRef)) ?? null
+          : null;
         const tool = await historyTool(item, turn.startedAt, this.resources, projection);
         assistantContent.push(tool.call);
         toolResults.push(tool.result);
@@ -870,10 +873,7 @@ function outputReferencesEqual(
   left: ToolOutputProjectionContextPayload['outputRef'],
   right: ToolOutputProjectionContextPayload['outputRef'],
 ): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.summary === right.summary;
+  return outputReferenceKey(left) === outputReferenceKey(right);
 }
 
 function sameJson(left: unknown, right: unknown): boolean {

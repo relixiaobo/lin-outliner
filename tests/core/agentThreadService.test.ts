@@ -2341,7 +2341,7 @@ describe('ThreadService', () => {
     });
     await fixture.service.waitForIdle(source.id);
 
-    await expect(fixture.service.readTurnDetails({
+    await expect(fixture.service.request('thread/turn/details/read', {
       threadId: source.id,
       turnId: accepted.turn.id,
     })).resolves.toMatchObject({ diagnostics: { ref, payload } });
@@ -2351,14 +2351,32 @@ describe('ThreadService', () => {
       boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
     })).thread;
     const copiedTurn = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
+    const copiedUser = copiedTurn.items.find((item) => item.type === 'userMessage');
+    if (!copiedUser || !copiedTurn.execution.diagnosticsRef) {
+      throw new Error('Forked Turn diagnostics are missing.');
+    }
+    expect(copiedTurn.execution.diagnosticsRef).not.toEqual(ref);
     await fixture.service.deleteThread(source.id);
-    await expect(fixture.service.readTurnDetails({
+    const copiedDetails = await fixture.service.request('thread/turn/details/read', {
       threadId: fork.id,
       turnId: copiedTurn.id,
-    })).resolves.toMatchObject({ diagnostics: { ref, payload } });
+    });
+    expect(copiedDetails.diagnostics).toMatchObject({
+      ref: copiedTurn.execution.diagnosticsRef,
+      payload: {
+        activities: [{
+          type: 'acceptedInput',
+          source: 'initial',
+          itemIds: [copiedUser.id],
+        }],
+      },
+    });
 
     await fixture.service.rollbackThread({ threadId: fork.id, numTurns: 1 });
-    expect(await fixture.stores.payloads.readTurnDiagnostics(fork.id, ref)).toBeNull();
+    expect(await fixture.stores.payloads.readTurnDiagnostics(
+      fork.id,
+      copiedTurn.execution.diagnosticsRef,
+    )).toBeNull();
     await fixture.service.close();
   });
 
@@ -3716,6 +3734,38 @@ describe('ThreadService', () => {
       Buffer.from('inherited-managed-image').toString('base64'),
       'image/png',
     );
+    const sharedResourceBytes = Buffer.from('same resource bytes');
+    const typedImageRef = await fixture.stores.payloads.writeResource(
+      root.id,
+      sharedResourceBytes,
+      'image/png',
+      'same-resource.bin',
+    );
+    const typedBinaryRef = await fixture.stores.payloads.writeResource(
+      root.id,
+      sharedResourceBytes,
+      'application/octet-stream',
+      'same-resource.bin',
+    );
+    const sharedOutputText = '{"same":true}';
+    const plainOutputRef = await parentContext.persistOutputText(
+      'same-output-plain',
+      sharedOutputText,
+      'text/plain',
+      'Plain output identity',
+    );
+    const jsonOutputRef = await parentContext.persistOutputText(
+      'same-output-json',
+      sharedOutputText,
+      'application/json',
+      'JSON output identity',
+    );
+    const alternateSummaryOutputRef = await parentContext.persistOutputText(
+      'same-output-json-summary',
+      sharedOutputText,
+      'application/json',
+      'Alternate JSON output identity',
+    );
     await parentContext.recorder.completedImmediately({
       type: 'dynamicToolCall',
       id: toolId,
@@ -3735,6 +3785,23 @@ describe('ThreadService', () => {
       outputRef,
       projection: { type: 'full' },
     }, 'Frozen inherited tool output');
+    const typedDependenciesRef = await fixture.stores.payloads.writeContext(root.id, {
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [],
+      threadState: [],
+    });
+    await parentContext.recorder.completedImmediately({
+      type: 'contextEvidence',
+      id: 'typed-dependencies',
+      provenance: parentContext.recorder.localProvenance('typed-dependencies'),
+      kind: 'additionalContext',
+      payloadRef: typedDependenciesRef,
+      summary: 'Typed dependency identity coverage',
+      contextRefs: [],
+      resourceRefs: [typedImageRef, typedBinaryRef],
+      outputRefs: [plainOutputRef, jsonOutputRef, alternateSummaryOutputRef],
+    });
 
     await recordCollaborationSpawnBoundary(parentContext, 'spawn-all');
     await parentContext.recorder.completedImmediately({
@@ -3789,8 +3856,8 @@ describe('ThreadService', () => {
     expect(allEvidence).toMatchObject({
       type: 'contextEvidence',
       kind: 'inheritedContext',
-      resourceRefs: [imageRef],
-      outputRefs: [outputRef],
+      resourceRefs: [imageRef, typedImageRef, typedBinaryRef],
+      outputRefs: [outputRef, plainOutputRef, jsonOutputRef, alternateSummaryOutputRef],
     });
     expect(oneEvidence).toMatchObject({ type: 'contextEvidence', kind: 'inheritedContext' });
     expect(inheritedNone.turn.items.some((item) => (
@@ -3818,6 +3885,16 @@ describe('ThreadService', () => {
       .toBe('COMPLETE INHERITED TOOL OUTPUT');
     expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, imageRef))
       .toEqual(Buffer.from('inherited-managed-image'));
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedImageRef))
+      .toEqual(sharedResourceBytes);
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedBinaryRef))
+      .toEqual(sharedResourceBytes);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, plainOutputRef))
+      .toBe(sharedOutputText);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, jsonOutputRef))
+      .toBe(sharedOutputText);
+    expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, alternateSummaryOutputRef))
+      .toBe(sharedOutputText);
     const childContext = fixture.executor.contexts[2]!;
     const projected = await new CanonicalContextProjector({
       id: 'inheritance-test',

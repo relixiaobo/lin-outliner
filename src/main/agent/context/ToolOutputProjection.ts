@@ -13,6 +13,7 @@ import {
 } from './ContextProjector';
 import { estimateTextTokens } from './ContextBudgetPlanner';
 import { selectEffectiveContext } from './ContextEpoch';
+import { outputReferenceKey } from './contextDependencies';
 
 const MAX_FULL_OUTPUT_SHARE = 0.25;
 const MAX_SINGLE_FULL_OUTPUT_TOKENS = 8_192;
@@ -35,11 +36,12 @@ export async function freezePendingToolOutputProjections(input: {
         if (!payload || payload.kind !== 'toolOutputProjection') {
           throw new Error(`Tool-output projection is unavailable or corrupt: ${item.payloadRef.id}`);
         }
-        const prior = existing.get(payload.outputRef.id);
+        const key = outputReferenceKey(payload.outputRef);
+        const prior = existing.get(key);
         if (prior && JSON.stringify(prior) !== JSON.stringify(payload)) {
           throw new Error(`Tool output has conflicting frozen projections: ${payload.outputRef.id}`);
         }
-        existing.set(payload.outputRef.id, payload);
+        existing.set(key, payload);
       } else if (isCompletedToolWithOutput(item)) {
         tools.push(item);
       }
@@ -60,7 +62,7 @@ export async function freezePendingToolOutputProjections(input: {
   const published: ContextEvidenceThreadItem[] = [];
   for (const item of tools) {
     const outputRef = item.outputRef;
-    if (!outputRef || existing.has(outputRef.id)) continue;
+    if (!outputRef || existing.has(outputReferenceKey(outputRef))) continue;
     const fullTokens = estimateOutputReferenceTokens(outputRef.byteLength);
     const visible = toolItemVisibleOutputText(item);
     const projection: ToolOutputProjection = fullTokens <= MAX_SINGLE_FULL_OUTPUT_TOKENS
@@ -83,7 +85,7 @@ export async function freezePendingToolOutputProjections(input: {
       payload,
       `Frozen tool output (${projection.type}, ${outputRef.byteLength} bytes)`,
     );
-    existing.set(outputRef.id, payload);
+    existing.set(outputReferenceKey(outputRef), payload);
     published.push(evidence);
     if (projection.type === 'full') remainingFullTokens -= fullTokens;
   }

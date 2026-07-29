@@ -255,7 +255,11 @@ Thread-owned content-addressed payload store. The Item keeps only a bounded
 renderer/history projection plus an immutable `outputRef` containing digest,
 MIME type, byte length, and summary. `thread/item/output/read` validates the
 requested Thread/Turn/Item/ref tuple, MIME-selected file, byte length, and SHA-256
-digest before returning text.
+digest before returning text. Dependency equality and collection deduplication use the
+complete typed reference: context payloads include digest/MIME/length/schema/kind,
+resources include digest/MIME/length/file name, and outputs include
+digest/MIME/length/summary. A shared digest never aliases references whose remaining
+identity fields differ.
 Forked Items retain origin provenance while copying referenced payloads under
 the fork's own Thread directory. Managed resource copies use copy-on-write when
 available but always receive a distinct inode. Payload reads resolve through the
@@ -331,12 +335,15 @@ stored before the task in that same Turn. Its protected boundary begins at the f
 following current-admission Item. Budget recovery may compact the inherited Item with an
 exact item cursor, but it cannot compact the current admission evidence or task.
 
-When older history prevents the protected tail from fitting, preflight records one
-`automaticPreflight` compaction and replans. Runtime compaction covers prior canonical
-history only. The planner aligns its retained provider-message suffix to the next
-canonical Turn boundary, so it preserves the newest complete prior Turns that fit plus
-the active Turn, never a partial prior Turn. Provider-overflow recovery may compact all
-prior Turns and preserve only the active Turn. Manual `/compact
+When older history prevents the protected tail from fitting, preflight aligns its
+retained provider-message suffix to the next canonical Turn boundary. It stages that
+compaction, reprojects the exact summary/restored state and protected tail, and commits it
+only if the resulting request fits. Otherwise it discards the staged payloads and advances
+monotonically through later complete Turn boundaries, ending at the active admission.
+Only the first fitting candidate becomes one canonical `automaticPreflight` Item; failed
+candidates are neither history nor diagnostics. The active Turn is never a compaction
+candidate. Provider-overflow recovery may compact all prior Turns and preserve only the
+active Turn. Manual `/compact
 [instructions]` may compact the current epoch while the Thread is idle. Both forms store
 exact covered/preserved cursors, a `source=deterministic` bounded lossy summary, and a reducer
 checkpoint for the Skill and Role catalog journals, active inline Skill invocations,
@@ -459,6 +466,10 @@ Canonical message and request-fragment IDs are SHA-256 digests of their stable J
 values. The main-process payload store verifies those content addresses on write, read,
 and fork copy; structural codecs reject unknown fragment/message references and duplicate
 activity or execution identities before the payload can reach the renderer.
+Because a history fork creates new Turn and Item IDs, it also rewrites every diagnostics
+accepted-input, tool-execution, and compaction Item reference through the source-to-fork
+map, republishes the payload under the fork, and installs the resulting new digest/ref on
+the copied Turn. A fork never retains a diagnostics payload that names source-owned Items.
 
 The transport `onResponse` boundary records when HTTP headers arrive, the status code,
 and the first non-empty provider request ID from a fixed allowlist. Arbitrary response

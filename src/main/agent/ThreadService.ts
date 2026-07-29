@@ -96,6 +96,7 @@ import type {
   SkillInvocationContextPayload,
   JsonValue,
   Turn,
+  TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
   TurnId,
   TurnInputRequest,
@@ -143,14 +144,18 @@ import { cursorFor, selectEffectiveContext } from './context/ContextEpoch';
 import { assertCanonicalUserContent } from './context/userContentIntegrity';
 import {
   assertContextPayloadDependencies,
+  contextPayloadReferenceKey,
   itemContextPayloadReferences,
   itemOutputReferences,
   itemResourceReferences,
+  outputReferenceKey,
+  resourceReferenceKey,
 } from './context/contextDependencies';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
   SteeredTurnInput,
+  StagedContextCompaction,
   ThreadNameGenerator,
   TurnExecutionResult,
   TurnExecutor,
@@ -958,7 +963,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ref: ThreadResourceReference,
   ): Promise<Buffer | null> {
     this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+    if (!this.threadResourceReferences(threadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) {
       return null;
     }
     return this.payloads.readResource(threadId, ref);
@@ -1036,7 +1043,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ref: ThreadResourceReference,
   ): Promise<ResolvedThreadResourceFile | null> {
     this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => resourceReferencesEqual(candidate, ref))) {
+    if (!this.threadResourceReferences(threadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) {
       return null;
     }
     const identity = `resource:${ref.id}:${ref.fileName}`;
@@ -1348,6 +1357,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           copiedTurns[index] = await this.copyForkedTurnPayloads(
             source.id,
             thread.id,
+            inherited[index]!,
             copiedTurns[index]!,
           );
         }
@@ -1370,17 +1380,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private async copyForkedTurnPayloads(
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
+    sourceTurn: Turn,
     copiedTurn: Turn,
   ): Promise<Turn> {
-    if (copiedTurn.execution.diagnosticsRef) {
-      const copied = await this.payloads.copyTurnDiagnosticsToThread(
-        sourceThreadId,
+    let diagnosticsRef = copiedTurn.execution.diagnosticsRef;
+    if (diagnosticsRef) {
+      const payload = await this.payloads.readTurnDiagnostics(sourceThreadId, diagnosticsRef);
+      if (!payload) throw new Error(`Missing Turn diagnostics payload: ${diagnosticsRef.id}`);
+      const itemIds = new Map(sourceTurn.items.map((item, index) => [item.id, copiedTurn.items[index]!.id]));
+      diagnosticsRef = await this.payloads.writeTurnDiagnostics(
         targetThreadId,
-        copiedTurn.execution.diagnosticsRef,
+        rewriteForkedTurnDiagnostics(payload, itemIds),
       );
-      if (!copied) {
-        throw new Error(`Missing Turn diagnostics payload: ${copiedTurn.execution.diagnosticsRef.id}`);
-      }
     }
     for (const item of copiedTurn.items) {
       for (const ref of itemResourceReferences(item)) {
@@ -1414,7 +1425,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
       }
     }
-    return copiedTurn;
+    return diagnosticsRef === copiedTurn.execution.diagnosticsRef
+      ? copiedTurn
+      : decodeTurn({ ...copiedTurn, execution: { ...copiedTurn.execution, diagnosticsRef } });
   }
 
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
@@ -2673,9 +2686,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
             `Available Skills (${catalog.entries.length})`,
           );
         }),
-        compactContext: (trigger, preserveFromTurnId) => this.persistRuntimeContextCompaction(
+        compactContext: async (trigger, preserveFromTurnId) => {
+          const staged = await this.stageRuntimeContextCompaction(active, trigger, preserveFromTurnId);
+          return staged ? await staged.commit() : null;
+        },
+        stageContextCompaction: (trigger, preserveFromTurnId) => this.stageRuntimeContextCompaction(
           active,
-          thread,
           trigger,
           preserveFromTurnId,
         ),
@@ -2782,12 +2798,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ));
   }
 
-  private persistRuntimeContextCompaction(
+  private stageRuntimeContextCompaction(
     active: ActiveTurn,
-    thread: Thread,
     trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
     preserveFrom?: ContextCursor,
-  ): Promise<ContextCompactionThreadItem | null> {
+  ): Promise<StagedContextCompaction | null> {
     return this.threadMutex.run(active.threadId, async () => {
       const turns = this.allTurns(active.threadId).map((turn) => turn.id === active.turnId
         ? { ...turn, items: active.recorder.orderedItems() }
@@ -2798,9 +2813,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
         readContext: (ref) => this.payloads.readContext(active.threadId, ref),
       });
       if (!plan) return null;
-      const summaryRef = await this.payloads.writeContext(active.threadId, plan.summary);
-      const restoredStateRef = await this.payloads.writeContext(active.threadId, plan.restoredState);
+      const cleanup = () => this.payloads.pruneUnreferencedContexts(
+        active.threadId,
+        this.threadContextPayloadReferences(active.threadId),
+      ).catch(() => undefined);
       try {
+        const summaryRef = await this.payloads.writeContext(active.threadId, plan.summary);
+        const restoredStateRef = await this.payloads.writeContext(active.threadId, plan.restoredState);
         const id = active.recorder.createItemId();
         const item: ContextCompactionThreadItem = {
           type: 'contextCompaction',
@@ -2819,12 +2838,38 @@ export class ThreadService implements ThreadServiceExtensionHost {
         };
         assertContextPayloadDependencies(item, plan.summary);
         assertContextPayloadDependencies(item, plan.restoredState);
-        return await active.recorder.completedImmediately(item, this.now()) as ContextCompactionThreadItem;
+        let state: 'staged' | 'committing' | 'committed' | 'discarded' = 'staged';
+        return {
+          item,
+          commit: async () => {
+            if (state !== 'staged') throw new Error('Context compaction is no longer staged.');
+            state = 'committing';
+            try {
+              const committed = await this.threadMutex.run(active.threadId, async () => {
+                if (this.activeTurns.get(active.threadId) !== active) {
+                  throw new Error('Context compaction active Turn changed before commit.');
+                }
+                return await active.recorder.completedImmediately(
+                  item,
+                  this.now(),
+                ) as ContextCompactionThreadItem;
+              });
+              state = 'committed';
+              return committed;
+            } catch (error) {
+              state = 'discarded';
+              await cleanup();
+              throw error;
+            }
+          },
+          discard: async () => {
+            if (state !== 'staged') return;
+            state = 'discarded';
+            await cleanup();
+          },
+        };
       } catch (error) {
-        await this.payloads.pruneUnreferencedContexts(
-          active.threadId,
-          this.threadContextPayloadReferences(active.threadId),
-        ).catch(() => undefined);
+        await cleanup();
         throw error;
       }
     });
@@ -3905,15 +3950,15 @@ function expandForCompactionCursors(turns: readonly Turn[], initialStart: number
 function uniqueContextReferences(
   refs: readonly ThreadContextPayloadReference[],
 ): ThreadContextPayloadReference[] {
-  return [...new Map(refs.map((ref) => [ref.id, ref])).values()];
+  return [...new Map(refs.map((ref) => [contextPayloadReferenceKey(ref), ref])).values()];
 }
 
 function uniqueResourceReferences(refs: readonly ThreadResourceReference[]): ThreadResourceReference[] {
-  return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];
+  return [...new Map(refs.map((ref) => [resourceReferenceKey(ref), ref])).values()];
 }
 
 function uniqueOutputReferences(refs: readonly ThreadItemOutputReference[]): ThreadItemOutputReference[] {
-  return [...new Map(refs.map((ref) => [ref.id, ref])).values()];
+  return [...new Map(refs.map((ref) => [outputReferenceKey(ref), ref])).values()];
 }
 
 function pageEphemeralTurns(
@@ -4003,22 +4048,12 @@ function attachmentSourcesEqual(
   if (left.source.kind === 'localFile' && right.source.kind === 'localFile') {
     if (left.source.path !== right.source.path) return false;
   } else if (left.source.kind === 'threadPayload' && right.source.kind === 'threadPayload') {
-    if (!resourceReferencesEqual(left.source.ref, right.source.ref)) return false;
+    if (resourceReferenceKey(left.source.ref) !== resourceReferenceKey(right.source.ref)) return false;
   } else {
     return false;
   }
   if (!left.promptImage || !right.promptImage) return left.promptImage === right.promptImage;
-  return resourceReferencesEqual(left.promptImage, right.promptImage);
-}
-
-function resourceReferencesEqual(
-  left: ThreadResourceReference,
-  right: ThreadResourceReference,
-): boolean {
-  return left.id === right.id
-    && left.mimeType === right.mimeType
-    && left.byteLength === right.byteLength
-    && left.fileName === right.fileName;
+  return resourceReferenceKey(left.promptImage) === resourceReferenceKey(right.promptImage);
 }
 
 function userMessage(
@@ -4067,6 +4102,38 @@ function copyTurn(source: Turn, now: number): Turn {
     items: source.items.map((item) => copyItem(item, now)),
     itemsView: 'full',
   });
+}
+
+function rewriteForkedTurnDiagnostics(
+  payload: TurnDiagnosticsPayload,
+  itemIds: ReadonlyMap<string, string>,
+): TurnDiagnosticsPayload {
+  const rewriteItemId = (itemId: string): string => {
+    const copied = itemIds.get(itemId);
+    if (!copied) throw new Error(`Turn diagnostics Item is outside the forked Turn: ${itemId}`);
+    return copied;
+  };
+  return {
+    ...payload,
+    activities: payload.activities.map((activity) => {
+      if (activity.type === 'acceptedInput') {
+        return { ...activity, itemIds: activity.itemIds.map(rewriteItemId) };
+      }
+      if (activity.type === 'toolExecutionBatch') {
+        return {
+          ...activity,
+          executions: activity.executions.map((execution) => ({
+            ...execution,
+            itemId: execution.itemId === null ? null : rewriteItemId(execution.itemId),
+          })),
+        };
+      }
+      if (activity.type === 'contextCompaction') {
+        return { ...activity, itemId: rewriteItemId(activity.itemId) };
+      }
+      return activity;
+    }),
+  };
 }
 
 function forkedCursorMap(sourceTurns: readonly Turn[], copiedTurns: readonly Turn[]): Map<string, ContextCursor> {

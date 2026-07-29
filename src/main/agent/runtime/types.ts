@@ -26,6 +26,12 @@ export interface SteeredTurnInput {
   readonly acceptedAt: number;
 }
 
+export interface StagedContextCompaction {
+  readonly item: ContextCompactionThreadItem;
+  commit(): Promise<ContextCompactionThreadItem>;
+  discard(): Promise<void>;
+}
+
 export interface TurnExecutionContext {
   readonly thread: Thread;
   readonly turn: Turn;
@@ -62,6 +68,10 @@ export interface TurnExecutionContext {
     trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
     preserveFrom?: ContextCursor,
   ): Promise<ContextCompactionThreadItem | null>;
+  stageContextCompaction(
+    trigger: Extract<ContextCompactionThreadItem['trigger'], 'automaticPreflight' | 'providerOverflow'>,
+    preserveFrom?: ContextCursor,
+  ): Promise<StagedContextCompaction | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }

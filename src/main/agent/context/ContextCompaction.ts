@@ -17,7 +17,11 @@ import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
 import { toolItemVisibleOutputText, type HistoryToolItem } from './ContextProjector';
 import { readInheritedContextPayload } from './InheritedContext';
-import { assertContextPayloadDependencies } from './contextDependencies';
+import {
+  assertContextPayloadDependencies,
+  contextPayloadReferenceKey,
+  outputReferenceKey,
+} from './contextDependencies';
 
 const MAX_DETERMINISTIC_SUMMARY_CHARS = 24_000;
 const DETERMINISTIC_SUMMARY_PREAMBLE = 'This is a deterministic lossy summary of earlier canonical context.';
@@ -216,7 +220,7 @@ async function reduceActiveObservations(
         }
       }
       if (!isHistoryTool(item) || !item.outputRef) continue;
-      const projectionRef = projections.get(item.outputRef.id);
+      const projectionRef = projections.get(outputReferenceKey(item.outputRef));
       if (!projectionRef) continue;
       for (const identity of observationIdentities(item)) {
         active.set(identity.key, {
@@ -245,13 +249,13 @@ async function collectToolOutputProjectionRefs(
           selectEffectiveContext(inherited.turns).turns,
           readContext,
         );
-        for (const [outputId, ref] of nested) setProjectionRef(projections, outputId, ref);
+        for (const [outputKey, ref] of nested) setProjectionRef(projections, outputKey, ref);
         continue;
       }
       if (item.type === 'contextCompaction') {
         const restored = await readRestoredState(item, readContext);
         for (const observation of restored.activeObservations) {
-          setProjectionRef(projections, observation.outputRef.id, observation.projectionRef);
+          setProjectionRef(projections, outputReferenceKey(observation.outputRef), observation.projectionRef);
         }
         continue;
       }
@@ -260,7 +264,7 @@ async function collectToolOutputProjectionRefs(
       if (!payload || payload.kind !== 'toolOutputProjection') {
         throw new Error(`Tool-output projection is unavailable: ${item.payloadRef.id}`);
       }
-      setProjectionRef(projections, payload.outputRef.id, item.payloadRef);
+      setProjectionRef(projections, outputReferenceKey(payload.outputRef), item.payloadRef);
     }
   }
   return projections;
@@ -346,14 +350,14 @@ async function readRestoredState(
 
 function setProjectionRef(
   projections: Map<string, ThreadContextPayloadReference>,
-  outputId: string,
+  outputKey: string,
   ref: ThreadContextPayloadReference,
 ): void {
-  const previous = projections.get(outputId);
+  const previous = projections.get(outputKey);
   if (previous && previous.id !== ref.id) {
-    throw new Error(`Tool output has conflicting frozen projections: ${outputId}`);
+    throw new Error(`Tool output has conflicting frozen projections: ${outputKey}`);
   }
-  projections.set(outputId, ref);
+  projections.set(outputKey, ref);
 }
 
 function replaceMap<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void {
@@ -538,11 +542,11 @@ function catalogCheckpoint(
 }
 
 function uniqueContextRefs(refs: readonly ThreadContextPayloadReference[]): ThreadContextPayloadReference[] {
-  return [...new Map(refs.map((ref) => [ref.id, ref])).values()];
+  return [...new Map(refs.map((ref) => [contextPayloadReferenceKey(ref), ref])).values()];
 }
 
 function uniqueOutputRefs(refs: readonly ThreadItemOutputReference[]): ThreadItemOutputReference[] {
-  return [...new Map(refs.map((ref) => [ref.id, ref])).values()];
+  return [...new Map(refs.map((ref) => [outputReferenceKey(ref), ref])).values()];
 }
 
 function stringArgument(record: Record<string, unknown>, keys: readonly string[]): string | null {

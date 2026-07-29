@@ -1147,7 +1147,7 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context,
       historyBeforeTurn: [priorTurn, recentTurn],
       readContext: async (ref) => payloads.get(ref.id) ?? null,
-      compactContext: async (trigger, requestedPreserveFrom) => {
+      stageContextCompaction: async (trigger, requestedPreserveFrom) => {
         compactions += 1;
         preservedFrom = requestedPreserveFrom ?? null;
         const summaryRef = writePayload({
@@ -1169,7 +1169,7 @@ describe('PiTurnExecutor event normalization', () => {
           activeObservations: [],
         });
         const id = fixture.recorder.createItemId();
-        return await fixture.recorder.completedImmediately({
+        const item = {
           type: 'contextCompaction',
           id,
           provenance: fixture.recorder.localProvenance(id),
@@ -1183,7 +1183,8 @@ describe('PiTurnExecutor event normalization', () => {
           contextRefs: [],
           resourceRefs: [],
           outputRefs: [],
-        }) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+        } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+        return stagedTestCompaction(fixture.recorder, item);
       },
     };
     const smallModel = { ...testModel, contextWindow: 2_020, maxTokens: 200 };
@@ -1218,6 +1219,148 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'contextCompaction',
       trigger: 'automaticPreflight',
     });
+  });
+
+  test('advances automatic compaction boundaries until the bounded summary and active input fit', async () => {
+    const fixture = createContext();
+    const history = Array.from({ length: 8 }, (_, index) => {
+      const startedAt = 1_719_990_000_000 + index * 1_000;
+      const turnId = uuidV7(startedAt);
+      const userId = uuidV7(startedAt + 1);
+      const agentId = uuidV7(startedAt + 2);
+      return completedTurn(fixture.context.turn, turnId, [
+        {
+          type: 'userMessage',
+          id: userId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: turnId,
+            originItemId: userId,
+          },
+          clientId: null,
+          acceptedAt: startedAt,
+          content: [{ type: 'text', text: `HISTORY-${index}:${'x'.repeat(6_000)}` }],
+        },
+        {
+          type: 'agentMessage',
+          id: agentId,
+          provenance: {
+            originThreadId: fixture.context.thread.id,
+            originTurnId: turnId,
+            originItemId: agentId,
+          },
+          text: `ANSWER-${index}`,
+          phase: 'final_answer',
+          memoryCitation: null,
+        },
+      ], startedAt);
+    });
+    const payloads = new Map<string, ThreadContextPayload>();
+    const put = (payload: ThreadContextPayload): ThreadContextPayloadReference => {
+      const serialized = JSON.stringify(payload);
+      const ref: ThreadContextPayloadReference = {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json',
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1,
+        kind: payload.kind,
+      };
+      payloads.set(ref.id, payload);
+      return ref;
+    };
+    const preservePositions: number[] = [];
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      historyBeforeTurn: history,
+      readContext: async (ref) => payloads.get(ref.id) ?? null,
+      stageContextCompaction: async (trigger, preserveFrom) => {
+        const historyIndex = history.findIndex((turn) => turn.id === preserveFrom?.turnId);
+        const position = historyIndex >= 0
+          ? historyIndex
+          : preserveFrom?.turnId === fixture.context.turn.id
+            ? history.length
+            : -1;
+        if (position < 0) throw new Error('Automatic compaction selected an unknown preserve boundary.');
+        preservePositions.push(position);
+        const plan = await planContextCompaction({
+          turns: [
+            ...history,
+            {
+              ...fixture.context.turn,
+              items: [...fixture.context.turn.items, ...fixture.recorder.orderedItems()],
+            },
+          ],
+          preserveFrom,
+          readContext: async (ref) => payloads.get(ref.id) ?? null,
+        });
+        if (!plan) return null;
+        const summaryRef = put(plan.summary);
+        const restoredStateRef = put(plan.restoredState);
+        const id = fixture.recorder.createItemId();
+        const item = {
+          type: 'contextCompaction',
+          id,
+          provenance: fixture.recorder.localProvenance(id),
+          trigger,
+          coveredFrom: plan.coveredFrom,
+          coveredThrough: plan.coveredThrough,
+          preservedFrom: plan.preservedFrom,
+          summaryRef,
+          restoredStateRef,
+          instructionsRef: null,
+          contextRefs: plan.contextRefs,
+          resourceRefs: [],
+          outputRefs: plan.outputRefs,
+        } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+        let staged = true;
+        return {
+          item,
+          commit: async () => {
+            if (!staged) throw new Error('Test compaction is no longer staged.');
+            staged = false;
+            return await fixture.recorder.completedImmediately(
+              item,
+            ) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+          },
+          discard: async () => {
+            staged = false;
+          },
+        };
+      },
+    };
+    const providerContexts: Message[][] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => ({
+        model: { ...testModel, contextWindow: 12_000, maxTokens: 3_000 },
+        thinkingLevel: 'medium',
+        getApiKey: async () => undefined,
+      }),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!([]));
+        },
+      }),
+    });
+
+    const result = await executor.execute(context);
+    expect(result).toMatchObject({ status: 'completed' });
+    expect(preservePositions.length).toBeGreaterThan(1);
+    expect(new Set(preservePositions).size).toBe(preservePositions.length);
+    for (let index = 1; index < preservePositions.length; index += 1) {
+      expect(preservePositions[index]).toBeGreaterThan(preservePositions[index - 1]!);
+    }
+    expect(JSON.stringify(providerContexts)).toContain('Test request');
+    expect(JSON.stringify(providerContexts)).not.toContain('HISTORY-0');
+    const compactionActivities = fixture.diagnosticsPayloads[0]?.activities.filter((activity) => (
+      activity.type === 'contextCompaction' && activity.trigger === 'automaticPreflight'
+    ));
+    expect(compactionActivities).toHaveLength(1);
+    expect(fixture.recorder.orderedItems().filter((item) => item.type === 'contextCompaction')).toHaveLength(1);
   });
 
   test('compacts an oversized inherited prefix without dropping current admission evidence', async () => {
@@ -1344,7 +1487,7 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context,
       turn: currentTurn,
       readContext: async (ref) => payloads.get(ref.id) ?? null,
-      compactContext: async (trigger, requestedPreserveFrom) => {
+      stageContextCompaction: async (trigger, requestedPreserveFrom) => {
         compactions += 1;
         preserveFrom = requestedPreserveFrom ?? null;
         const plan = await planContextCompaction({
@@ -1359,7 +1502,7 @@ describe('PiTurnExecutor event normalization', () => {
         const summaryRef = put(plan.summary);
         const restoredStateRef = put(plan.restoredState);
         const id = fixture.recorder.createItemId();
-        return await fixture.recorder.completedImmediately({
+        const item = {
           type: 'contextCompaction',
           id,
           provenance: fixture.recorder.localProvenance(id),
@@ -1373,7 +1516,8 @@ describe('PiTurnExecutor event normalization', () => {
           contextRefs: plan.contextRefs,
           resourceRefs: [],
           outputRefs: plan.outputRefs,
-        }) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+        } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+        return stagedTestCompaction(fixture.recorder, item);
       },
     };
     const providerContexts: Message[][] = [];
@@ -2181,6 +2325,7 @@ function createContext(): {
     onTurnDiagnosticsError: (error) => diagnosticsErrors.push(error),
     persistSkillCatalog: async () => null,
     compactContext: async () => null,
+    stageContextCompaction: async () => null,
     onProviderRetry: () => undefined,
     onSteer: () => undefined,
   };
@@ -2202,6 +2347,26 @@ function completedTurn(base: Turn, id: string, items: readonly ThreadItem[], sta
     completedAt: startedAt + 100,
     durationMs: 100,
     startedAt,
+  };
+}
+
+function stagedTestCompaction(
+  recorder: ItemRecorder,
+  item: import('../../src/core/agent/protocol').ContextCompactionThreadItem,
+) {
+  let staged = true;
+  return {
+    item,
+    commit: async () => {
+      if (!staged) throw new Error('Test compaction is no longer staged.');
+      staged = false;
+      return await recorder.completedImmediately(
+        item,
+      ) as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+    },
+    discard: async () => {
+      staged = false;
+    },
   };
 }
 
