@@ -414,14 +414,25 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1, design updated #443, implementation pending) —
+- **agent-browser-control** (P1, design updated #443; **implementation resequenced
+  behind `native-turn-kernel` — PM 2026-07-29**) —
   Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
   its classified `bash` path rather than reimplementing browser automation or
   exposing a Tenon-native tool family. One complete feature PR first establishes
   prepared execution and durable projection, then adds deterministic distribution,
   the direct command provider, Thread identity, Turn files, conservative Browser
   capabilities, transient stdin, lifecycle cleanup, and per-Turn Skill availability.
-  URL Preview remains wholly independent. See `docs/plans/agent-browser-control.md`.
+  **Before implementation, the claiming dev revises the plan's Prepared Tool
+  Execution section**: it predates #441/#444 (no awareness of Turn diagnostics —
+  `PiEventNormalizer`'s executionObserver now feeds
+  `captureToolExecutionStarted/Completed` and the Model Interactions batch
+  activities) and its move of tool-Item ownership out of the normalizer collides
+  head-on with `native-turn-kernel`'s behavioral contract and tripwires. Rebuild
+  that section on the kernel's `ToolRunner` port (`ToolExecutionContract` as a
+  port extension) and refresh stale runtime facts; the ownership-boundary,
+  command-grammar, provider, distribution, skill, and capability sections stand
+  as ratified. URL Preview remains wholly independent. See
+  `docs/plans/agent-browser-control.md`.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
