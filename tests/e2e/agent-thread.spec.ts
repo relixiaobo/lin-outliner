@@ -622,6 +622,10 @@ test.describe('canonical agent Thread surface', () => {
       { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
       { type: 'text', text: ' after' },
     ]);
+    const userMessage = page.locator('.thread-user-message').last();
+    await userMessage.hover();
+    await userMessage.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe('Before Alpha after');
   });
 
   test('keeps same-named files from distinct sources and accepts a regular file above the former shared limit', async ({ page }) => {
@@ -864,6 +868,11 @@ test.describe('canonical agent Thread surface', () => {
       { className: 'inline-ref thread-message-file-ref', text: 'reference-6.png' },
       { className: '', text: 'After' },
     ]);
+    await message.hover();
+    await message.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe(
+      'Beforeagenda.pdfmiddlereference-1.pngreference-2.pngreference-3.pngreference-4.pngreference-5.pngreference-6.pngAfter',
+    );
 
     await showAll.click();
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(6);

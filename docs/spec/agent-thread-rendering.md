@@ -136,6 +136,13 @@ content editor can represent each text boundary without flattening the sequence.
 The single narrative bubble keeps the five-line measured disclosure, so the
 collapse mask never crops gallery content.
 
+Copy on a user message serializes that complete visible narrative in canonical
+order: authored text remains unchanged, attachments contribute their stable file
+names, and Node references contribute their current display names. It does not
+copy the presentation-only gallery or claim to reproduce the provider request.
+Execution-lifetime managed-resource paths are never invented in renderer copy;
+the Model Call export remains the authority for the recorded provider payload.
+
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Details as
 applicable. Continue in new chat is the only user-visible history fork action

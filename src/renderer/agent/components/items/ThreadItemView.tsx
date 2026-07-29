@@ -281,7 +281,7 @@ function UserMessageItem({
   const t = useT();
   const textEditable = canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
-  const originalText = textParts.join('\n');
+  const copyText = userMessageCopyText(item.content, index);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(textParts[0] ?? '');
   const [saving, setSaving] = useState(false);
@@ -347,7 +347,7 @@ function UserMessageItem({
               <ThreadMessageCopyButton
                 iconSize={ICON_SIZE.menu}
                 label={t.agent.message.copyMessage}
-                text={originalText}
+                text={copyText}
               />
             </div>
           ) : null}
@@ -355,6 +355,17 @@ function UserMessageItem({
       )}
     </article>
   );
+}
+
+function userMessageCopyText(
+  content: readonly ThreadUserContent[],
+  index: DocumentIndex,
+): string {
+  return content.map((part) => {
+    if (part.type === 'text') return part.text;
+    if (part.type === 'attachment') return part.name;
+    return threadNodeReferenceDisplayLabel(part.note ?? '', part.nodeId, index, part.nodeId);
+  }).join('');
 }
 
 function renderUserContent(
