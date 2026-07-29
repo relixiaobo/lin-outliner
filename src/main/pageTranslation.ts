@@ -32,7 +32,7 @@ import {
   type TranslationLanguage,
 } from '../core/translationLanguage';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agent/capabilities/agentAwaitWithAbort';
-import { isRetryableResponsesRequestError } from './agent/capabilities/agentStreamAbort';
+import { isRetryableResponsesRequestError } from './agent/runtime/kernel/ModelGateway';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,

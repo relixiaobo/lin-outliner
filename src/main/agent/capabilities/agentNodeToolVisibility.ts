@@ -1,4 +1,4 @@
-import type { AgentToolResult } from '@earendil-works/pi-agent-core';
+import type { AgentToolResult } from '../runtime/kernel/types';
 import { projectFieldConfig, projectTagConfig } from '../../../core/configProjection';
 import { agentToolResult, dropUndefinedFields, modelVisibleEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import { normalChildIds } from './agentNodeToolProjection';

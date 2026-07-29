@@ -7,7 +7,7 @@ import {
   type WebContentsWillNavigateEventParams,
   type WebContentsWillRedirectEventParams,
 } from 'electron';
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool } from '../runtime/kernel/types';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';

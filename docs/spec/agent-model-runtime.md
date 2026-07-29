@@ -50,13 +50,15 @@ state, and services. Tool-owned syntax such as generated-image placement remains
 the owning tool description/result rather than being duplicated in the prompt.
 
 Every provider request, including requests after tools and steering, passes
-through `CanonicalContextProjector` at the pi `transformContext` boundary. The
-projector ignores the pi transcript as history input and rebuilds provider
+through `CanonicalContextProjector` at the native kernel's projection port. The
+projector ignores the kernel transcript as history input and rebuilds provider
 messages from prior canonical Turns plus the active `ItemRecorder`. The awaited
 event subscriber makes completed assistant and tool Items durable before the
 next provider request can begin. Tool calls and results remain paired, and
 provider-visible timestamps come from persisted `acceptedAt`/`Turn.startedAt`
-rather than terminalization time or the current clock.
+rather than terminalization time or the current clock. Internal Memory Turns do
+not install that projection port or overflow recovery; they send a top-level
+snapshot of their raw in-memory transcript.
 
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all
@@ -398,10 +400,17 @@ Provider-specific names, message shapes, cache behavior, and stop reasons are
 normalized at this boundary. Core codecs, persistence, and renderer components
 never depend on a provider SDK DTO.
 
+Tenon owns the turn loop, runtime state reduction, tool batching, retry policy,
+and model-error taxonomy under `src/main/agent/runtime/kernel/`.
+`@earendil-works/pi-ai` is transport-only behind `ModelGateway`; provider
+failures cross that port as complete terminal assistant messages, while
+`ModelError` is only a derived classification used for policy decisions.
+
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.
-The abort-settled stream wrapper is the sole retry owner; the underlying provider SDK is
-called with its request retry count disabled, so configured attempts cannot multiply. The
+The kernel retry policy is the sole retry owner for transient failures and context
+overflow recovery. `PiModelGateway` calls the transport with its request retry count
+disabled, so configured attempts cannot multiply. The
 executor emits `turn/providerRetry/changed` only as transient notification state
 and clears it on recovery or terminalization; reconnect attempts do not create
 Items or persist as transcript history.

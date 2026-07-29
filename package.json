@@ -34,7 +34,6 @@
     "probe:preview-translation-cache": "bun scripts/probe-preview-translation-cache.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.80.6",
     "@earendil-works/pi-ai": "0.80.6",
     "defuddle": "0.18.1",
     "foliate-js": "^1.0.1",

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import type { AgentEvent } from '@earendil-works/pi-agent-core';
+import type { AgentEvent } from '../../src/main/agent/runtime/kernel/types';
 import type { Api, AssistantMessage, Message, Model, Tool, UserMessage } from '@earendil-works/pi-ai';
 import type { ThreadItem } from '../../src/core/agent/protocol';
 import {

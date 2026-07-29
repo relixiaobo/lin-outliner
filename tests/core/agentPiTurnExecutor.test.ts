@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import type { AgentEvent, AgentOptions, AgentTool } from '@earendil-works/pi-agent-core';
+import type {
+  AgentEvent,
+  AgentTool,
+  KernelAgentOptions,
+} from '../../src/main/agent/runtime/kernel/types';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
@@ -36,6 +41,13 @@ import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
+import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+
+const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
+  new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
+  'utf8',
+)) as { itemDiagnostics: unknown };
 
 describe('PiTurnExecutor event normalization', () => {
   test('serializes stream events and records authoritative message and command Items', async () => {
@@ -750,7 +762,7 @@ describe('PiTurnExecutor event normalization', () => {
       },
     };
     let receivedPrompt: UserMessage | null = null;
-    let transformContext: AgentOptions['transformContext'];
+    let transformContext: KernelAgentOptions['transformContext'];
     let providerPreparations = 0;
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
@@ -1872,42 +1884,38 @@ describe('PiTurnExecutor event normalization', () => {
       beforeProviderContext: async () => {
         capabilityCallbacks.push('prepare');
       },
-      streamSimple: (model, _providerContext, options = {}) => {
-        const stream = createAssistantMessageEventStream();
-        const response = assistantMessage([]);
-        queueMicrotask(async () => {
-          await options.onPayload?.({
-            model: 'test-model',
-            input: _providerContext.messages,
-            response_format: { type: 'json_object' },
-          }, model);
-          await options.onResponse?.({
-            status: 200,
-            headers: { 'request-id': 'memory-request-1', 'set-cookie': 'private-cookie' },
-          }, model);
-          stream.push({ type: 'done', reason: 'stop', message: response });
-          stream.end(response);
-        });
-        return stream;
-      },
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          const stream = createAssistantMessageEventStream();
+          const response = assistantMessage([]);
+          queueMicrotask(async () => {
+            await options.onPayload?.({
+              model: 'test-model',
+              input: providerContext.messages,
+              response_format: { type: 'json_object' },
+            }, model);
+            await options.onResponse?.({
+              status: 200,
+              headers: { 'request-id': 'memory-request-1', 'set-cookie': 'private-cookie' },
+            }, model);
+            stream.push({ type: 'done', reason: 'stop', message: response });
+            stream.end(response);
+          });
+          return stream;
+        },
+      }),
       createAgent: (options) => {
         initialState = options.initialState;
+        const runtime = new NativeAgentRuntime(options);
         return {
-          state: { errorMessage: undefined },
-          subscribe: () => () => undefined,
-          abort: () => undefined,
-          steer: () => undefined,
+          state: runtime.state,
+          subscribe: (listener) => runtime.subscribe(listener),
+          abort: () => runtime.abort(),
+          steer: (message) => runtime.steer(message),
           prompt: async (message) => {
             receivedPrompt = message as UserMessage;
-            const stream = options.streamFn!(testModel, {
-              systemPrompt: 'Return exact Memory JSON.',
-              tools: [],
-              messages: [message as UserMessage],
-            }, {
-              onPayload: options.onPayload,
-              onResponse: options.onResponse,
-            });
-            for await (const _event of stream) { /* drain */ }
+            await runtime.prompt(message);
           },
         };
       },
@@ -2214,7 +2222,6 @@ describe('PiTurnExecutor provider payload', () => {
       compactionTriggers.push(trigger);
       return {} as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
     };
-    const state: { errorMessage?: string } = {};
     const executor = new PiTurnExecutor({
       resolveRuntime: async () => runtimeSelection(),
       resolveRuntimeSettings: async () => ({
@@ -2224,41 +2231,31 @@ describe('PiTurnExecutor provider payload', () => {
         providerMaxRetryDelayMs: 75,
         providerCacheRetention: 'short',
       }),
-      streamSimple: (model, _providerContext, options = {}) => {
-        providerCalls += 1;
-        seenOptions.push(options);
-        const stream = createAssistantMessageEventStream();
-        const message: AssistantMessage = {
-          ...assistantMessage(providerCalls === 1 ? [] : [{ type: 'text', text: 'Recovered' }]),
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
-          stopReason: providerCalls === 1 ? 'error' : 'stop',
-          ...(providerCalls === 1
-            ? { errorMessage: 'context_length_exceeded: maximum context length reached' }
-            : {}),
-        };
-        queueMicrotask(() => {
-          if (message.stopReason === 'error') {
-            stream.push({ type: 'error', reason: 'error', error: message });
-          } else {
-            stream.push({ type: 'done', reason: 'stop', message });
-          }
-          stream.end(message);
-        });
-        return stream;
-      },
-      createAgent: (options) => ({
-        state,
-        subscribe: () => () => undefined,
-        abort: () => undefined,
-        steer: () => undefined,
-        prompt: async () => {
-          const messages = await options.transformContext!([]) as Message[];
-          const stream = options.streamFn!(testModel, { messages, tools: [] });
-          for await (const _event of stream) { /* drain */ }
-          const result = await stream.result();
-          state.errorMessage = result.errorMessage;
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, _providerContext, options = {}) => {
+          providerCalls += 1;
+          seenOptions.push(options);
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = {
+            ...assistantMessage(providerCalls === 1 ? [] : [{ type: 'text', text: 'Recovered' }]),
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            stopReason: providerCalls === 1 ? 'error' : 'stop',
+            ...(providerCalls === 1
+              ? { errorMessage: 'context_length_exceeded: maximum context length reached' }
+              : {}),
+          };
+          queueMicrotask(() => {
+            if (message.stopReason === 'error') {
+              stream.push({ type: 'error', reason: 'error', error: message });
+            } else {
+              stream.push({ type: 'done', reason: 'stop', message });
+            }
+            stream.end(message);
+          });
+          return stream;
         },
       }),
     });
@@ -2276,6 +2273,90 @@ describe('PiTurnExecutor provider payload', () => {
       { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
       { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
     ]);
+  });
+
+  test('matches the native kernel Item and diagnostics golden', async () => {
+    const fixture = createContext();
+    let callCount = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('golden_tool', 'Golden parity tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          callCount += 1;
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = callCount === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'golden-call',
+                  name: 'golden_tool',
+                  arguments: {},
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(async () => {
+            await options.onPayload?.({
+              model: model.id,
+              input: providerContext.messages,
+            }, model);
+            await options.onResponse?.({
+              status: 200,
+              headers: { 'request-id': `golden-${callCount}` },
+            }, model);
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+    const diagnostics = fixture.diagnosticsPayloads[0];
+    if (!diagnostics) throw new Error('Missing native kernel diagnostics fixture.');
+    const actual = {
+      items: fixture.recorder.orderedItems().map((item) => {
+        if (item.type === 'dynamicToolCall') {
+          return {
+            type: item.type,
+            tool: item.tool,
+            status: item.status,
+            success: item.success,
+          };
+        }
+        if (item.type === 'contextEvidence') return { type: item.type, kind: item.kind };
+        if (item.type === 'agentMessage') {
+          return { type: item.type, text: item.text, phase: item.phase };
+        }
+        return { type: item.type };
+      }),
+      activities: diagnostics.activities.map((activity) => {
+        if (activity.type === 'acceptedInput') {
+          return { type: activity.type, source: activity.source };
+        }
+        if (activity.type === 'modelCall') {
+          return { type: activity.type, callIndex: activity.callIndex };
+        }
+        if (activity.type === 'toolExecutionBatch') {
+          return {
+            type: activity.type,
+            sourceCallIndex: activity.sourceCallIndex,
+            executions: activity.executions.map((execution) => ({
+              toolName: execution.toolName,
+              status: execution.status,
+            })),
+          };
+        }
+        return { type: activity.type };
+      }),
+      providerStops: diagnostics.providerCalls.map((call) => call.response?.stopReason ?? null),
+    };
+
+    expect(actual).toEqual(NATIVE_KERNEL_GOLDEN.itemDiagnostics);
   });
 });
 

@@ -2,13 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   agentToolResult,
   errorEnvelope,
-  isToolEnvelope,
   successEnvelope,
-  toolEnvelopeAfterToolCall,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 
 describe('agent tool envelope', () => {
-  test('builds pi-agent-core compatible tool results with model-visible content', () => {
+  test('builds kernel-compatible tool results with model-visible content', () => {
     const envelope = successEnvelope('example_tool', { secret: 'full', visible: 'yes' });
     const result = agentToolResult(envelope, { visible: 'yes' });
 
@@ -45,16 +43,4 @@ describe('agent tool envelope', () => {
     });
   });
 
-  test('maps Lin error envelopes to pi-agent-core tool errors after execution', () => {
-    const envelope = errorEnvelope('example_tool', 'bad_input', 'Bad input');
-
-    expect(isToolEnvelope(envelope)).toBe(true);
-    expect(toolEnvelopeAfterToolCall(envelope, false)).toEqual({ isError: true });
-  });
-
-  test('does not override successful or already-error tool results', () => {
-    expect(toolEnvelopeAfterToolCall(successEnvelope('example_tool', {}), false)).toBeUndefined();
-    expect(toolEnvelopeAfterToolCall(errorEnvelope('example_tool', 'bad_input', 'Bad input'), true)).toBeUndefined();
-    expect(toolEnvelopeAfterToolCall({ ok: false }, false)).toBeUndefined();
-  });
 });

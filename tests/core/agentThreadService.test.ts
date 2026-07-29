@@ -5520,7 +5520,7 @@ class ToolContributionProbe implements AgentCoreExtension {
   }
 }
 
-function runtimeSchemaTools(): import('@earendil-works/pi-agent-core').AgentTool[] {
+function runtimeSchemaTools(): import('../../src/main/agent/runtime/kernel/types').AgentTool[] {
   return MODEL_TOOL_CATALOG.flatMap((contract) => contract.inputSchema === null
     ? [{
         name: canonicalModelToolKey(contract.identity),
@@ -5668,7 +5668,7 @@ async function storageFiles(root: string, prefix = ''): Promise<string[]> {
 }
 
 async function executeTool(
-  tools: readonly import('@earendil-works/pi-agent-core').AgentTool[],
+  tools: readonly import('../../src/main/agent/runtime/kernel/types').AgentTool[],
   name: string,
   itemId: string,
   params: Record<string, unknown>,

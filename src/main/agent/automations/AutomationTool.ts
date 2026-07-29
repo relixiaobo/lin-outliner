@@ -1,4 +1,4 @@
-import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '../runtime/kernel/types';
 import type { TSchema } from 'typebox';
 import type { JsonValue } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
