@@ -130,6 +130,16 @@ BC15 — parity over minimalism).
 provider messages from canonical state via `projectCanonicalProviderContext`
 (`PiTurnExecutor.ts:369`), returning the projected `Message[]`.
 
+**Internal-memory Turns run WITHOUT projection.** The memory-consolidation
+path (`threadSource === 'memory_consolidation'`) sets
+`transformContext = undefined` and installs no overflow recovery
+(`PiTurnExecutor.ts:217-219`, `:277` conditional): it speaks the raw in-memory
+transcript (`initialState.messages` + accumulated turn messages) and canonical
+overflow compaction is not executable there. The kernel MUST support this
+mode: both ports are optional (§5), and with `transformContext` absent the
+kernel streams its internal transcript as-is (pi `agent-loop.js:179-184`
+semantics; the transcript only ever contains provider-legal roles).
+
 **agentStreamAbort semantics to absorb** (`agentStreamAbort.ts`): request vs
 stream retry budgets (`canRetryResponses = retrySource &&
 isOpenAIResponsesModel(model)`; defaults 4 request / 1 stream, `:41-42`;
@@ -157,8 +167,9 @@ BC rule; deviations are plan changes and go back to the PM.
   `message_start` + `message_end` for each prompt message
   (`agent-loop.js:48-53`). The normalizer ignores non-assistant messages, but
   diagnostics `captureEvent` receives everything — cadence is observable.
-- BC3 ★ If the loop body throws (e.g. `transformContext` throws, non-retryable
-  gateway error escapes), the run does NOT reject: a failure assistant message
+- BC3 ★ If the loop body throws — a genuine exception such as
+  `transformContext` throwing or a kernel bug, NEVER a provider failure (those
+  are data, BC20) — the run does NOT reject: a failure assistant message
   is synthesized — `stopReason: aborted-if-signal-aborted-else-error`,
   `errorMessage`, empty usage, empty text content — and emitted as the full
   cascade `message_start`, `message_end`, `turn_end(message, [])`,
@@ -218,6 +229,11 @@ BC rule; deviations are plan changes and go back to the PM.
   proceeds to execute the batch instead of failing
   (`agentStreamAbort.ts` `salvageTerminatedCustomResponsesToolUse`; dedicated
   test at `tests/core/agentStreamAbort.test.ts:625`).
+- BC22 ★ Overflow-recovery failure prefixes: when overflow recovery is
+  exhausted or nothing was eligible to compact, the terminal message keeps its
+  provider facts but its `errorMessage` is prefixed with the exact existing
+  wording (`agentStreamAbort.ts:499-508` `contextOverflowFailure`), and
+  `stopReason` is forced to `'error'`.
 
 **Tool batches**
 
@@ -332,31 +348,64 @@ classifyModelFailure(message: AssistantMessage): ModelError | null;
 ```
 
 `PiModelGateway` wraps `piStreamSimple` with `maxRetries: 0` pinned (retry is
-the kernel's, permanently), and hosts the two capture hooks (`onPayload`
-payload-profile transform + provider-request capture; `onResponse` transport
-capture) as constructor options.
+the kernel's, permanently), and hosts THREE capture hooks as constructor
+options, in this fixed per-attempt order:
+
+1. `onProviderContext(context)` — fires once per attempt BEFORE the transport
+   call, feeding `diagnostics.captureProviderContext` (today:
+   `configuredStream`, `PiTurnExecutor.ts:246-249`). This ordering is
+   load-bearing: `captureProviderRequest` hard-asserts a captured provider
+   context and prepared plan (`TurnDiagnostics.ts:128-129`) — a gateway
+   without this hook fails every turn at the first payload capture.
+2. `onPayload(payload, model)` — payload-profile transform +
+   `captureProviderRequest`.
+3. `onResponse(response)` — `captureTransportResponse`.
 
 ### 3. `kernel/retryPolicy.ts`
 
-Absorbs `agentStreamAbort.ts` verbatim: budgets/defaults (4 request, 1 stream;
+Absorbs `agentStreamAbort.ts` verbatim and is the SOLE owner of attempt
+hiding — transient retries AND overflow recovery both live here; the kernel
+never compacts, re-projects, or retries on its own (it merely threads the
+`recoverContextOverflow` port through). One settled stream goes in front of
+the normalizer per model call, exactly as the wrapper provides today.
+
+```ts
+function streamWithPolicy(input: {
+  attempt: (messages: Message[] | null) => AssistantMessageEventStream;
+    // null → current projection; non-null → refreshed messages after recovery
+  recoverContextOverflow?: () => Promise<Message[] | null>;
+    // absent (internal memory) → overflow is terminal immediately
+  maxRequestRetries?; maxStreamRetries?; maxRetryDelayMs?; onProviderRetry;
+  signal;
+}): AssistantMessageEventStream  // settled; attempts hidden; terminal
+                                 // message per BC20/BC21/BC22
+```
+
+Semantics preserved verbatim: budgets/defaults (4 request, 1 stream;
 `providerMaxRetries` overrides both), delay schedule + jitter + cap,
-buffer-before-retry, abort settling, the completed-tool-call salvage (BC21),
+buffer-before-retry, abort settling, completed-tool-call salvage (BC21),
 `onProviderRetry` observation. Decisions run on `classifyModelFailure` of the
-terminal message: `contextOverflow` is NOT retried here — surfaced to the loop
-for the recovery path; retry exhaustion settles with the LAST terminal
-AssistantMessage intact, never a synthesized one.
+terminal message. On `contextOverflow`: call `recoverContextOverflow` once,
+retry the attempt with the refreshed messages on success; on failure or a
+second overflow, settle with the last terminal message whose `errorMessage`
+carries the EXACT existing prefix — exhausted:
+"Provider context overflow persisted after one canonical compaction retry.",
+no-eligible: "Provider rejected the canonical context as too large, but no
+eligible context could be compacted." (`agentStreamAbort.ts:499-508`; BC22).
+Transient-retry exhaustion settles with the last terminal message unmodified.
 `tests/core/agentStreamAbort.test.ts` → `tests/core/kernelRetryPolicy.test.ts`,
 assertions unchanged (the suite IS the semantics spec).
 
 ### 4. `kernel/kernel.ts` (~250 lines, zero business logic)
 
-Implements BC1-BC18 as the loop. Per iteration: drain steering (BC5/BC6) →
-project (`transformContext`; BC10) → stream via `retryPolicy(gateway)`
-(BC11) → on `contextOverflow`: `compactContext('providerOverflow',
-activeAdmissionCursor(turn))`, on success re-project and retry the call, else
-fail the turn (BC3/BC8) → tool batch (BC12-BC18) → `turn_end` → repeat or
-`agent_end` (BC9). Abort at any await settles per BC3/BC8 with
-`stopReason: 'aborted'`.
+Implements BC1-BC22 as the loop. Per iteration: drain steering (BC5/BC6) →
+project (`transformContext` when present, else the internal transcript;
+BC10) → `streamWithPolicy` (which hides all retry AND overflow-recovery
+attempts and settles one terminal message; BC11/BC20/BC21/BC22) → terminal
+`stopReason 'error' | 'aborted'` short-circuits (BC8) → tool batch
+(BC12-BC18) → `turn_end` → repeat or `agent_end` (BC9). The kernel contains
+NO compaction or retry logic of its own. Abort at any await settles per
+BC3/BC8 with `stopReason: 'aborted'`.
 
 ### 5. `kernel/NativeAgentRuntime.ts`
 
@@ -378,11 +427,13 @@ interface KernelAgentOptions {
                                             // its tests re-target the gateway)
   retryOptions: { maxRequestRetries?; maxStreamRetries?; maxRetryDelayMs?;
                   onProviderRetry };
-  transformContext: () => Promise<Message[]>;         // per-call re-projection
-  recoverContextOverflow: () => Promise<Message[] | null>;
+  transformContext?: () => Promise<Message[]>;   // per-call re-projection;
+    // ABSENT for internal-memory Turns, which stream the raw transcript
+  recoverContextOverflow?: () => Promise<Message[] | null>;
     // wraps context.compactContext('providerOverflow',
     // activeAdmissionCursor(turn)) + re-projection — the closure that today
-    // lives inline in the executor's onContextOverflow (PiTurnExecutor.ts:278)
+    // lives inline in the executor's onContextOverflow (PiTurnExecutor.ts:278);
+    // ABSENT for internal-memory Turns (overflow is terminal there)
   getApiKey; onPayload; onResponse; sessionId; providerOptions;
   steeringMode: 'all'; toolExecution: 'parallel';
 }
@@ -445,7 +496,9 @@ The PR reviewer (main agent) enforces these with commands, not judgment:
    (BC5/BC6); abort mid-stream and mid-batch; loop-body throw (BC3); a
    provider failure settling as a terminal message with partial content and
    usage preserved (BC20); completed-tool-call salvage on a custom-Responses
-   termination error (BC21).
+   termination error (BC21); overflow exhaustion and no-eligible-compaction
+   prefixes (BC22); an internal-memory turn (no transformContext, no overflow
+   recovery, raw transcript).
    Recorded against `pi-agent-core` BEFORE the swap (committed JSON), asserted
    deep-equal on: emitted `KernelEvent` sequence, normalized `ThreadItem`
    stream, `TurnDiagnosticsCollector` activity list.
