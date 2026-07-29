@@ -12,6 +12,30 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent context runtime completion + Model Interactions (PR #444, codex-3)** —
+  completed and closed the `agent-context-integrity` plan (PR 3 of 3): deterministic
+  per-request context budgeting with indivisible tool exchanges; automatic
+  preflight, provider-overflow, and manual compaction plus durable `/clear`
+  epochs; recursive Skill/Role/view/observation checkpoint restoration across
+  restart, compaction, fork, and inheritance; exact Subagent parent boundaries
+  with dependency-complete child-owned copies; Turn-stable provider
+  timeout/retry/cache policy; typed, versioned, Thread-owned Turn diagnostics
+  (pre-adapter Model Context, post-adapter Provider Request, typed runtime
+  activities) behind a rebuilt disclosure-only Model Interactions inspector.
+  Includes two review-fix rounds (10 verified findings from the high-effort
+  multi-agent gate review — among them inherited-context compaction loss, an
+  unserialized prune race, stacked provider retries, and a custom-endpoint
+  prompt-cache regression) and the live-incident fixes (pending subagent
+  activities no longer poison the next user turn; 429 is retried; prompt cache
+  verified live against cc-switch), plus subagent orchestration contracts:
+  `wait_agent` is terminal-state-driven with batched terminal outcomes carrying
+  child results, isolated Skills advertise their capability contract in the
+  catalog and return `outcome`-tagged results with explicit
+  synthesize-don't-repeat guidance, and Skill children use the `agent.skill`
+  source. **Gate (main):** high-effort multi-agent review + live forensic
+  report (PR comments), typecheck, 1521 core / 781 renderer tests, docs:check,
+  real cc-switch runs with cache-hit evidence.
+
 - **Unified Agent context composer (PR #441, codex-3)** — replaced parallel
   provider-message builders with one stable L0/L1/L2 composer, canonical replay,
   and atomic evidence admission for environment, bounded user view, resources,
