@@ -32,9 +32,14 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-30).** Open PR queue: #455 (draft,
-`subagent-budget-propagation` PR C), #457 (draft, plan-only), #458 (ready,
-`agent-thread-scroll-follow`), #460 (draft, `subagent-transcript-artifact`),
-#461 (ready, `agent-run-presentation-consistency` PR A). Recently merged: #459
+`subagent-budget-propagation` PR C), #457 (draft, plan-only), #460 (draft,
+`subagent-transcript-artifact`), #461 (ready,
+`agent-run-presentation-consistency` PR A). Recently merged: #458
+(`codex-2/agent-thread-scroll-follow`) after a medium review gate (8 confirmed
+findings, all addressed same-day in `bfa5e518`; the one e2e failure at the gate
+reproduces identically on the merge base and is filed as
+`flaky-thread-model-menu-focus-e2e`) — send anchoring, explicit follow state,
+and the Jump-to-latest pill are live; see *Recently completed*. #459
 (`codex-3/agent-browser-control-plan-refresh`, plan-track design update) after
 a medium review gate (7 confirmed findings, all addressed same-day; PM ruled
 the non-user-configurable safety floor into implementation scope) — the
@@ -658,11 +663,6 @@ archived `done` (see Recently completed). Remaining active work:
   B1/B11), PR B process-state truthfulness (no lying "Working" labels/timers/flash states,
   blocked-on-user surfacing for the PARENT), PR C centered plan-progress pill + the
   `update_plan` Turn-diagnostics leak fix. See `docs/plans/agent-run-presentation-consistency.md`.
-- **agent-thread-scroll-follow** (P3, `draft` — cc-2, plan merged #454; shape (a): one PR) —
-  send anchors the user message at viewport top, follow-mode becomes visible state with a
-  jump-to-latest affordance, every content-height source participates in pin logic; A7-justified
-  single state machine. See `docs/plans/agent-thread-scroll-follow.md`.
-
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
@@ -743,6 +743,15 @@ anything.
   full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
   test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
   setup). See `[[core-test-subset-ordering-artifact]]` for the real baseline.
+- **flaky-thread-model-menu-focus-e2e** (P3, *fast-track, no plan file*, filed 2026-07-30 at the
+  #458 gate) — `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
+  the composer"*: the closing Escape `toBeFocused` assertion fails on full-file runs (~5/6 on the
+  #458 merge base `3d44f0f1`, same on the branch) but passes in isolation (1 fail in ~105 solo
+  runs) — order/state-dependent and pre-dates #458 (verified on both sides of the merge base).
+  Signature: after Escape closes the model menu, focus is not on the trigger button; suspects are
+  the `refocusComposerFromClick` rAF racing the menu focus-in/restore effects in
+  `useMenuKeyboard`. Reproduce the focus loss outside the harness before touching product code —
+  it may be test-only state leakage.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
@@ -753,6 +762,30 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-thread-scroll-follow**
+  (`codex-2/agent-thread-scroll-follow`, PR #458, codex-2, merged 2026-07-30,
+  plan-track, archived at `docs/plans/archive/agent-thread-scroll-follow.md`) —
+  sending anchors the user message at the viewport top with a temporary runway
+  spacer that shrinks as the response streams in, bottom-follow is explicit
+  state with a "Jump to latest" pill (spacer-only runway never counts as unread
+  content), and every content-height source participates in the pin logic —
+  virtualized rows apply above-viewport height deltas only after the virtual
+  container commits the matching total height, so browser clamping cannot eat
+  the compensation. Reading positions survive thread switches (nearest
+  reachable offset when the saved one no longer exists), failed sends (full
+  viewport + follow restore), and tool-output disclosure loads (one anchor hold
+  per read, rejection-safe). **Gate (main):** medium review confirmed 8
+  findings — frozen send spacer, clamped virtual scroll compensation,
+  unreachable-offset restore bail-out, failed-send position loss, shared
+  disclosure anchor hold across read restarts, per-token-flush re-renders from
+  `scrollHeight` state, a silently type-broken renderer test literal, and a
+  hardcoded 28px pill height — all addressed same-day in `bfa5e518` and
+  verified item-by-item at the gate; typecheck + core 1549/0 + renderer 805/0 +
+  `docs:check` green; agent-thread e2e 48/49 — the one failure (model-menu
+  Escape focus restore) reproduces identically on the merge base under
+  full-file runs and is filed as `flaky-thread-model-menu-focus-e2e` under
+  *Deferred follow-ups*, not a #458 regression.
 
 - **browser-control-plan-refresh**
   (`codex-3/agent-browser-control-plan-refresh`, PR #459, codex-3, merged

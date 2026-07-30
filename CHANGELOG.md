@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent thread scroll follow (PR #458, codex-2)** — sending a message anchors
+  it at the top of the transcript with runway below for the response to stream
+  into; the transcript auto-follows only while the reader is at the bottom,
+  scrolling up hands over control, and a "Jump to latest" pill returns to the
+  newest content. Reading positions survive thread switches, window resizes,
+  failed sends, tool-output disclosure loads, and long-thread virtualization
+  without visible jumps.
+
 - **Terminal-style path links in agent tool output (PR #453, codex-4)** — file
   paths inside tool arguments and results now behave like paths in a modern
   terminal: the block keeps its plain code styling, holding ⌘ (Ctrl) while
