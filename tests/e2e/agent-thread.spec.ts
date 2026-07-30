@@ -466,7 +466,37 @@ test.describe('canonical agent Thread surface', () => {
     await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
     await expect(liveTurn.getByText('Initiating web search.')).toBeVisible();
-    await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
+    const liveIndicator = liveTurn.getByLabel('Assistant is responding');
+    await expect(liveIndicator).toBeVisible();
+    const indicatorAlignment = await liveIndicator.evaluate((element) => {
+      const footer = element.closest('.thread-response-footer');
+      if (!(footer instanceof HTMLElement)) throw new Error('Expected response footer');
+      const footerRect = footer.getBoundingClientRect();
+      const indicatorRect = element.getBoundingClientRect();
+      return Math.abs(
+        (footerRect.top + footerRect.height / 2) - (indicatorRect.top + indicatorRect.height / 2),
+      );
+    });
+    expect(indicatorAlignment).toBeLessThan(1);
+    await page.evaluate(() => {
+      const target = window as Window & {
+        lin?: object;
+        __threadMessageContextMenuCalls?: number;
+      };
+      if (!target.lin) throw new Error('Expected renderer bridge');
+      target.__threadMessageContextMenuCalls = 0;
+      const lin = target.lin as {
+        showThreadMessageContextMenu?: () => Promise<null>;
+      };
+      lin.showThreadMessageContextMenu = async () => {
+        target.__threadMessageContextMenuCalls = (target.__threadMessageContextMenuCalls ?? 0) + 1;
+        return null;
+      };
+    });
+    await liveIndicator.click({ button: 'right' });
+    expect(await page.evaluate(() => (
+      (window as Window & { __threadMessageContextMenuCalls?: number }).__threadMessageContextMenuCalls
+    ))).toBe(0);
     const liveProcessGaps = await liveTurn.locator('.thread-process-block').evaluate((element) => {
       const title = element.querySelector<HTMLElement>('.thread-process-title');
       const rule = element.querySelector<HTMLElement>('.thread-process-rule');

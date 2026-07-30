@@ -1118,7 +1118,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       {responseItem === null && responseTail ? (
         <article
           className="thread-item thread-agent-message thread-agent-message-response"
-          onContextMenu={handleResponseContextMenu}
+          onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
         >
           {responseTail}
         </article>

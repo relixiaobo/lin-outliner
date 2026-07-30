@@ -107,11 +107,12 @@ highlighter. Stable completed blocks are memoized; only the final streaming
 block is repaired and rendered live, with text commits throttled so token deltas
 do not rerender the complete response. Every block keeps the same memoized React
 component identity as the final streaming block seals. Node and local-file
-reference markers render through the same inline reference and preview surfaces as the outliner;
-Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use the app preview
-route. User messages retain Copy and, for the latest terminal Turn only, Edit;
-final agent messages retain Copy, Continue in new chat, and Details. User messages that exceed five reading lines
-retain the established measured Show more / Show less disclosure instead of
+reference markers render through the same inline reference and preview surfaces
+as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
+the app preview route. User messages retain Copy and, for the latest terminal
+Turn only, Edit; final agent messages retain Copy, Continue in new chat, and
+Details. User messages that exceed five reading lines retain the established
+measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
 User-message rendering is a presentation projection over canonical

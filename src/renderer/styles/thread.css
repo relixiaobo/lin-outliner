@@ -478,7 +478,6 @@
 .thread-streaming-indicator {
   display: flex;
   width: 14px;
-  align-self: flex-start;
   align-items: center;
   justify-content: center;
   padding: var(--space-1) 0;
