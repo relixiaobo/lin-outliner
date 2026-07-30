@@ -381,6 +381,18 @@ before any directional/security-sensitive build.
   projection for debugging agents and humans (A11: forensics as a command). Touches
   package.json (infrastructure — the PR is the coordinated change). See
   `docs/plans/subagent-transcript-artifact.md`.
+- **agent-subagent-interaction** (P2, `draft` — cc-2, plan merged #454 after gate review;
+  shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
+  presentation row per child over append-only Items, `agentsStates` widened to
+  `{status, taskPath, nickname, role}`, product language, failure tinting), PR 2 navigation +
+  Thread-list hygiene (**children leave the history list entirely** — root conversations only,
+  background-activity indicator, Thread Details children section, back-to-parent), PR 3 live
+  delegation card + user interrupt with **parent Stop cascading to live descendants**; no
+  dock-level agents panel (the #160 panel lived and was dissolved — reconsider only on
+  demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
+  the standing "task contract meta doc" idea is folded here rather than written separately.
+  PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 1/2
+  independent and claimable now; PR 3 after PR 1. See `docs/plans/agent-subagent-interaction.md`.
 - **toolruntime-handler-contribution** (P2, `draft` — **plan complete 2026-07-30,
   main-authored, claimable now**) — collaboration tool handler bodies move verbatim from
   `runtime/ToolRuntime.ts` into `thread/SubagentCollaboration.ts` via the SAME contribution
@@ -617,6 +629,17 @@ archived `done` (see Recently completed). Remaining active work:
   a named return type instead of `unknown`. None affect behavior.
 
 ### UI quality (design-system consistency)
+
+- **agent-run-presentation-consistency** (P3, `draft` — cc-2, plan merged #454; shape (b):
+  three complete PRs, independently claimable) — PR A tool-row status visuals (failed rows keep
+  the tool's own glyph, status by `--status-danger` tint incl. a dark-mode token-layer fix per
+  B1/B11), PR B process-state truthfulness (no lying "Working" labels/timers/flash states,
+  blocked-on-user surfacing for the PARENT), PR C centered plan-progress pill + the
+  `update_plan` Turn-diagnostics leak fix. See `docs/plans/agent-run-presentation-consistency.md`.
+- **agent-thread-scroll-follow** (P3, `draft` — cc-2, plan merged #454; shape (a): one PR) —
+  send anchors the user message at viewport top, follow-mode becomes visible state with a
+  jump-to-latest affordance, every content-height source participates in pin logic; A7-justified
+  single state machine. See `docs/plans/agent-thread-scroll-follow.md`.
 
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +

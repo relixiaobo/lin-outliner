@@ -25,6 +25,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent thread UX plans (PR #454, cc-2, plan-only)** — three gate-reviewed
+  plans landed: `agent-subagent-interaction` (status truth for delegated work,
+  children leave the Thread list, live delegation card, cascading user Stop —
+  the task-contract Layer 1 opening), `agent-run-presentation-consistency`
+  (truthful tool-row/process states, plan-progress pill), and
+  `agent-thread-scroll-follow` (send anchoring + visible follow state). Gate
+  review contributed three corrections (bright-line-as-admission-invariant
+  ruling, collision refresh, #160 panel lineage citation); board entries carry
+  status.
+
 - **ThreadService decomposition (PR #451, codex-2)** — the 4,502-line god
   object split into four owned modules over one shared coordination core:
   `ThreadCore` (single `KeyedMutex` by construction, notification bus, stores,
