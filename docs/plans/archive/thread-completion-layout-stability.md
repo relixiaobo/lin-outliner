@@ -46,10 +46,18 @@ disclosure behavior.
 ### Stable Markdown block
 
 Render every Markdown block through one memoized component. The live tail passes
-`streaming` as data instead of changing from a direct `Markdown` element to a
-different component type at completion. Stable completed blocks remain memoized,
-while the live tail still rerenders for throttled text updates and uses repaired
-streaming Markdown.
+repaired, throttled text through that component instead of changing from a
+direct `Markdown` element to a different component type at completion. Stable
+completed blocks remain memoized, while the live tail still rerenders whenever
+its repaired Markdown changes.
+
+### Stable containment
+
+Apply the existing `content-visibility` and intrinsic-size containment to every
+Turn from its first render rather than adding it only after completion. Visible
+Turns continue using their measured height and offscreen Turns retain the
+existing rendering optimization, but terminalization no longer changes the
+layout mechanism or temporarily substitutes the intrinsic fallback height.
 
 ### Verification
 

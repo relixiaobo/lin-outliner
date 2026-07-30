@@ -55,23 +55,10 @@ export function ThreadMarkdown({
   const visibleText = useStreamingMarkdownText(text, streaming);
   const repairedText = useMemo(() => streaming ? remend(visibleText) : visibleText, [streaming, visibleText]);
   const blocks = useMemo(() => splitMarkdownBlocks(repairedText), [repairedText]);
-  const components = useMarkdownComponents(index, onNodeReferenceOpen);
   return (
     <div className={`thread-markdown${streaming ? ' is-streaming' : ''}`}>
       {blocks.map((block, indexValue) => {
         const key = `markdown-block-${indexValue}`;
-        if (streaming && indexValue === blocks.length - 1) {
-          return (
-            <Markdown
-              components={components}
-              key={key}
-              remarkPlugins={REMARK_PLUGINS}
-              urlTransform={threadMarkdownUrlTransform}
-            >
-              {block}
-            </Markdown>
-          );
-        }
         return (
           <MemoizedMarkdownBlock
             index={index}

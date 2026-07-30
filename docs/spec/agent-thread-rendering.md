@@ -83,14 +83,20 @@ tool Item. That block is placed before the first final response regardless of
 the Items' persisted arrival order, so a late reasoning Item cannot appear
 below the answer. The process disclosure contains the independent reasoning,
 activity-group, and tool detail disclosures rather than replacing them.
+An empty process does not render an empty timeline container. The status line,
+separator, visible timeline, and following answer use the same tokenized
+vertical interval on either side of the separator.
 
 An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both
 empty and streaming responses; Markdown does not add a second caret. The
-indicator disappears only when the Turn becomes terminal and stops animating
-under reduced-motion preferences. A failed or interrupted Turn with partial
-response prose keeps its process presentation neutral because the response tail
-already owns the terminal error or stopped state.
+indicator occupies the same persistent response-footer slot as the terminal
+Copy, Continue in new chat, and Details controls, and swaps to those controls
+without moving the response. User-message actions likewise fill a persistent
+slot that remains empty and non-interactive while the Turn is live. The indicator
+stops animating under reduced-motion preferences. A failed or interrupted Turn
+with partial response prose keeps its process presentation neutral because the
+response tail already owns the terminal error or stopped state.
 
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
@@ -99,8 +105,9 @@ events.
 Agent Markdown reuses the shared read-only code surface and dual-theme Shiki
 highlighter. Stable completed blocks are memoized; only the final streaming
 block is repaired and rendered live, with text commits throttled so token deltas
-do not rerender the complete response. Node and local-file reference markers
-render through the same inline reference and preview surfaces as the outliner;
+do not rerender the complete response. Every block keeps the same memoized React
+component identity as the final streaming block seals. Node and local-file
+reference markers render through the same inline reference and preview surfaces as the outliner;
 Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use the app preview
 route. User messages retain Copy and, for the latest terminal Turn only, Edit;
 final agent messages retain Copy, Continue in new chat, and Details. User messages that exceed five reading lines
@@ -423,7 +430,9 @@ to a Thread restores its prior position, or continues following the bottom when
 the snapshot was bottom-locked. Threads above forty Turns reuse the established
 measured-row virtual transcript with viewport overscan; terminal offscreen Turns
 do not remain mounted, while the active viewport and disclosure scroll anchors
-remain stable as measured heights replace estimates.
+remain stable as measured heights replace estimates. The same content-visibility
+containment applies from a Turn's first render through its terminal state, so
+completion never swaps a measured live height for an intrinsic fallback.
 
 Provider request and stream retries are transient execution state, not Items.
 The selected Thread shows the established live reconnecting row while retrying

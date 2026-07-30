@@ -413,20 +413,30 @@ test.describe('canonical agent Thread surface', () => {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
       };
       const userId = '01910000-0000-7000-8000-00000000c202';
+      const reasoningId = '01910000-0000-7000-8000-00000000c204';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId,
         turnId: liveTurnId,
         turn: {
           id: liveTurnId,
-          items: [{
-            id: userId,
-            type: 'userMessage',
-            provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
-            clientId: null,
-            acceptedAt: 1,
-            content: [{ type: 'text', text: 'Show the live state.' }],
-          }],
+          items: [
+            {
+              id: userId,
+              type: 'userMessage',
+              provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
+              clientId: null,
+              acceptedAt: 1,
+              content: [{ type: 'text', text: 'Show the live state.' }],
+            },
+            {
+              id: reasoningId,
+              type: 'reasoning',
+              provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: reasoningId },
+              summary: ['Initiating web search.'],
+              content: [],
+            },
+          ],
           itemsView: 'full',
           provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
           status: 'inProgress',
@@ -455,7 +465,22 @@ test.describe('canonical agent Thread surface', () => {
     const liveTurn = page.locator(`[data-thread-turn-row="${ids.liveTurnId}"]`);
     await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
+    await expect(liveTurn.getByText('Initiating web search.')).toBeVisible();
     await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
+    const liveProcessGaps = await liveTurn.locator('.thread-process-block').evaluate((element) => {
+      const title = element.querySelector<HTMLElement>('.thread-process-title');
+      const rule = element.querySelector<HTMLElement>('.thread-process-rule');
+      const timeline = element.querySelector<HTMLElement>('.thread-process-timeline');
+      if (!title || !rule || !timeline) throw new Error('Expected live process geometry elements');
+      const titleRect = title.getBoundingClientRect();
+      const ruleRect = rule.getBoundingClientRect();
+      const timelineRect = timeline.getBoundingClientRect();
+      return {
+        below: timelineRect.top - ruleRect.bottom,
+        above: ruleRect.top - titleRect.bottom,
+      };
+    });
+    expect(Math.abs(liveProcessGaps.above - liveProcessGaps.below)).toBeLessThan(1);
 
     await page.evaluate(({ liveTurnId, threadId }) => {
       const target = window as Window & {
@@ -463,6 +488,7 @@ test.describe('canonical agent Thread surface', () => {
       };
       const userId = '01910000-0000-7000-8000-00000000c202';
       const answerId = '01910000-0000-7000-8000-00000000c203';
+      const reasoningId = '01910000-0000-7000-8000-00000000c204';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/completed',
         threadId,
@@ -477,6 +503,13 @@ test.describe('canonical agent Thread surface', () => {
               clientId: null,
               acceptedAt: 1,
               content: [{ type: 'text', text: 'Show the live state.' }],
+            },
+            {
+              id: reasoningId,
+              type: 'reasoning',
+              provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: reasoningId },
+              summary: ['Initiating web search.'],
+              content: [],
             },
             {
               id: answerId,
@@ -514,6 +547,150 @@ test.describe('canonical agent Thread surface', () => {
 
     await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Worked for 1s');
+  });
+
+  test('keeps a process-free response stable when the Turn completes', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 340 });
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c301';
+      const userId = '01910000-0000-7000-8000-00000000c302';
+      const answerId = '01910000-0000-7000-8000-00000000c303';
+      const startedAt = Date.now() - 3_000;
+      const provenance = { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } };
+      const itemProvenance = (itemId: string) => ({
+        originThreadId: threadId,
+        originTurnId: turnId,
+        originItemId: itemId,
+      });
+      const items = [
+        {
+          id: userId,
+          type: 'userMessage',
+          provenance: itemProvenance(userId),
+          clientId: null,
+          acceptedAt: startedAt,
+          content: [{ type: 'text', text: 'Hello again.' }],
+        },
+        {
+          id: answerId,
+          type: 'agentMessage',
+          provenance: itemProvenance(answerId),
+          text: 'Hello, I am here. What would you like to work through?',
+          phase: 'final_answer',
+          memoryCitation: null,
+        },
+      ];
+      const execution = {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.4',
+        reasoningEffort: 'medium',
+        diagnosticsRef: null,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items,
+          itemsView: 'full',
+          provenance,
+          status: 'inProgress',
+          error: null,
+          execution,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { execution, items, provenance, startedAt, threadId, turnId };
+    });
+
+    const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
+    const answer = turn.locator('.thread-agent-message-body');
+    const transcript = page.locator('.thread-transcript');
+    await expect(turn.getByLabel('Assistant is responding')).toBeVisible();
+    await expect(answer).toContainText('Hello, I am here.');
+    await expect(turn.locator('.thread-process-timeline')).toHaveCount(0);
+    await expect(turn.locator('.thread-user-message .thread-message-actions')).toHaveCount(0);
+    await transcript.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await answer.locator('p').evaluate((element) => { element.dataset.identityProbe = 'stable'; });
+
+    const measure = () => turn.evaluate((element) => {
+      const answerBody = element.querySelector<HTMLElement>('.thread-agent-message-body');
+      const footer = element.querySelector<HTMLElement>('.thread-response-footer');
+      const processTitle = element.querySelector<HTMLElement>('.thread-process-title');
+      const processRule = element.querySelector<HTMLElement>('.thread-process-rule');
+      const scroller = element.closest('.thread-transcript');
+      if (!answerBody || !footer || !processTitle || !processRule || !(scroller instanceof HTMLElement)) {
+        throw new Error('Expected stable Turn geometry elements');
+      }
+      const turnRect = element.getBoundingClientRect();
+      const answerRect = answerBody.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
+      const titleRect = processTitle.getBoundingClientRect();
+      const ruleRect = processRule.getBoundingClientRect();
+      return {
+        answerOffset: answerRect.top - turnRect.top,
+        answerTop: answerRect.top,
+        bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+        footerHeight: footerRect.height,
+        ruleToAnswer: answerRect.top - ruleRect.bottom,
+        titleToRule: ruleRect.top - titleRect.bottom,
+      };
+    });
+    const before = await measure();
+
+    await page.evaluate((value) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const completedAt = Date.now();
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: value.threadId,
+        turnId: value.turnId,
+        turn: {
+          id: value.turnId,
+          items: value.items,
+          itemsView: 'full',
+          provenance: value.provenance,
+          status: 'completed',
+          error: null,
+          execution: value.execution,
+          startedAt: value.startedAt,
+          completedAt,
+          durationMs: completedAt - value.startedAt,
+        },
+      });
+    }, fixture);
+
+    await expect(turn.getByLabel('Assistant is responding')).toHaveCount(0);
+    await expect(turn.locator('.thread-process-title')).toHaveText('Worked for 3s');
+    await expect(turn.locator('.thread-user-message .thread-message-actions').getByRole('button')).toHaveCount(2);
+    await expect(turn.locator('.thread-response-actions').getByRole('button')).toHaveCount(3);
+    await expect(answer.locator('p')).toHaveAttribute('data-identity-probe', 'stable');
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => (
+      requestAnimationFrame(() => resolve())
+    ))));
+    const after = await measure();
+
+    expect(Math.abs(before.answerOffset - after.answerOffset)).toBeLessThan(1);
+    expect(Math.abs(before.answerTop - after.answerTop)).toBeLessThan(1);
+    expect(Math.abs(before.footerHeight - after.footerHeight)).toBeLessThan(1);
+    expect(before.bottomGap).toBeLessThan(1);
+    expect(after.bottomGap).toBeLessThan(1);
+    expect(Math.abs(after.titleToRule - after.ruleToAnswer)).toBeLessThan(1);
   });
 
   test('forks history without changing the source Thread', async ({ page }) => {
