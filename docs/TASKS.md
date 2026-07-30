@@ -393,15 +393,14 @@ before any directional/security-sensitive build.
   the standing "task contract meta doc" idea is folded here rather than written separately.
   PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 1/2
   independent and claimable now; PR 3 after PR 1. See `docs/plans/agent-subagent-interaction.md`.
-- **toolruntime-handler-contribution** (P2, `draft` — **plan complete 2026-07-30,
-  main-authored, claimable now**) — collaboration tool handler bodies move verbatim from
-  `runtime/ToolRuntime.ts` into `thread/SubagentCollaboration.ts` via the SAME contribution
-  seam extensions already use; ToolRuntime becomes pure dispatch/assembly and the budget plan's
-  spawn-handler carve-out retires ("runtime/ has no domain logic" becomes structural). The
-  load-bearing deliverable is the catalog byte-stability guard (tool order/content feeds the
-  stable provider prefix — snapshot recorded on main first, judge validated by deliberate
-  mutation), making catalog drift impossible for this and every future contribution migration
-  (the browser-control landing zone). See `docs/plans/toolruntime-handler-contribution.md`.
+- **toolruntime-handler-contribution** (P2, `done` 2026-07-30; PR #456, codex-2) —
+  collaboration handlers moved verbatim into `thread/SubagentCollaboration.ts` via the
+  extension contribution seam; `ToolRuntime` is dispatch/assembly only (572→488 lines) and the
+  budget plan's spawn-handler carve-out is retired. The catalog byte-stability judge landed
+  FIRST (judge-before-change; env-driven reorder/description mutations exit 1; snapshot
+  byte-unchanged through the move — R100 relocation only) and now guards every future
+  contribution migration, incl. the browser-control landing zone. Plan archived at
+  `docs/plans/archive/toolruntime-handler-contribution.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
