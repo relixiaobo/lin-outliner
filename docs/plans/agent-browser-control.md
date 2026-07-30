@@ -63,29 +63,33 @@ unrelated user tabs.
   Tenon-owned kernel and `ModelGateway`, #451's `thread/` ownership split, and
   #456's domain-handler contribution seam plus canonical tool-catalog
   byte-stability judge. Those changes are the implementation baseline, not
-  outstanding collisions.
-- Ready PR #455 overlaps the future implementation in
+  outstanding collisions. Current `main` also records the revised gate-return
+  plan baselines for #455 and #460; neither implementation PR has landed.
+- Draft PR #455 overlaps the future implementation in
   `src/core/agent/tools.ts`, `ThreadService`, `TurnLifecycle`, and Agent specs,
   and deliberately changes collaboration tool descriptions. It must land or
   close before Browser Control implementation starts; the claiming dev then
   rebases and records the post-#455 catalog bytes before making any intentional
   Browser Control catalog delta.
-- Ready PR #460 now claims `subagent-transcript-artifact`. It overlaps the
+- Draft PR #460 claims `subagent-transcript-artifact`. It overlaps the
   future implementation in `src/core/agent/tools.ts`, `ThreadService`,
-  `SubagentCollaboration`, `ThreadCatalogOps`, Agent specs, and the catalog
-  snapshot. It must land or close before Browser Control implementation starts;
-  the later branch rebases and treats #460's snapshot as part of its catalog
-  baseline.
-- The three active UX plans have mixed claim state. Draft PR #458 claims
+  `SubagentCollaboration`, `ThreadCatalogOps`, `agentSkills.ts`, Agent specs, and
+  the catalog snapshot. It must land or close before Browser Control
+  implementation starts; the later branch rebases and treats #460's snapshot
+  as part of its catalog baseline.
+- The three active UX plans have mixed claim state. Ready PR #458 claims
   `agent-thread-scroll-follow`; its renderer-only scope does not overlap this
-  revision or the Browser Control backend. `agent-run-presentation-consistency`
-  and `agent-subagent-interaction` remain unclaimed. The latter's future
+  revision or the Browser Control backend. Ready PR #461 claims
+  `agent-run-presentation-consistency` PR A and changes one disjoint
+  `PiTurnExecutor.ts` result-detail line; it is a rebase note for the future
+  Browser branch, not an implementation conflict or ordering gate.
+  `agent-subagent-interaction` remains unclaimed. Its future
   `SubagentCollaboration`, `TurnLifecycle`, and `ThreadCatalogOps` work overlaps
   Browser lifecycle wiring, so implementation must repeat the open-PR scope
   check before claiming code.
 - Draft PR #457 is plan-only in a different file and does not overlap this
   revision.
-- Draft PR #459 owns this plan-only refresh. It changes only this file; it does
+- Ready PR #459 owns this plan-only refresh. It changes only this file; it does
   not claim or modify runtime, protocol, tests, `docs/TASKS.md`, or
   `CHANGELOG.md`.
 - `docs/plans/browser-extension-integration.md` remains limited to future
@@ -130,11 +134,11 @@ Prepared execution extends the domain-handler contribution seam established by
 #456. The collaboration handlers now live in `SubagentCollaboration` and are
 exposed through `collaborationToolContributions(...)`; that is the reference
 shape. An owning domain or command-family module binds its handlers to the Turn
-context and contributes them, while `ToolRuntime` only aggregates the
-contributions, matches them to the canonical registry, applies configuration
-and scope filters, and rejects identity or schema collisions. Browser
-preparation, execution, and projection logic never branches inside
-`ToolRuntime`.
+context and contributes them. The target `ToolRuntime` only aggregates those
+contributions, matches them to the canonical registry, applies configuration and
+scope filters, and rejects identity or schema collisions. Browser preparation,
+execution, projection, capability evaluation, and lifecycle hooks never branch
+inside `ToolRuntime`.
 
 The Tenon-owned kernel remains the tool runner. A contributed `AgentTool` may
 attach a `ToolExecutionContract`; a generic default contract adapts existing
@@ -151,28 +155,43 @@ domain/command module contributes AgentTool handler
   -> ToolExecutionContract.prepare
        -> transient execution state
        -> durable arguments
-       -> capability intent and execution policy
-  -> decide(effect): enforce the safety floor, then explicit user blocks
-  -> emit existing tool_execution_start with durable arguments
+       -> durable capability intent
+       -> transient safety effects and execution policy
+  -> ToolExecutionAdapter decides effects
+       -> enforce the non-user-configurable safety floor
+       -> evaluate explicit user blocks
+  -> emit tool_execution_start with durable arguments, intent, and decision
        -> PiEventNormalizer records the existing Item kind
        -> executionObserver records the diagnostic execution start
+  -> ToolExecutionAdapter emits extension onToolStarted from durable arguments
   -> execute transient input
+       -> project every raw update before forwarding it
+       -> keep transient updates in memory; emit only durable updates
   -> project model result and durable result independently
-  -> emit existing tool_execution_end with the durable result
+  -> ToolExecutionAdapter emits extension onToolCompleted from durable arguments/result
+  -> emit tool_execution_end with the durable result
        -> PiEventNormalizer completes the Item
        -> executionObserver records the diagnostic execution completion
   -> append the model result only to the active kernel transcript
 ```
 
-Extend the internal tool-runner port with three operations:
+Extend the internal tool-runner port with four operations:
 
 ```ts
-interface ToolExecutionContract<TPrepared> {
+interface ToolExecutionContract<TPrepared, TUpdate = unknown> {
   prepare(
     args: unknown,
     context: ToolPreparationContext,
   ): PreparedToolExecution<TPrepared>;
-  execute(prepared: TPrepared, signal?: AbortSignal): Promise<unknown>;
+  execute(
+    prepared: TPrepared,
+    signal: AbortSignal | undefined,
+    onUpdate: (update: TUpdate) => void,
+  ): Promise<unknown>;
+  projectUpdate(
+    call: PreparedToolExecution<TPrepared>,
+    update: TUpdate,
+  ): { transientUpdate: AgentToolResult | null; durableUpdate: JsonValue | null };
   projectOutcome(
     call: PreparedToolExecution<TPrepared>,
     outcome: ToolExecutionOutcome,
@@ -184,21 +203,56 @@ Every prepared call carries immutable, separately typed fields. `execution` is
 raw in-memory state used only by the contributed handler.
 `durableArguments` is the sole argument source for kernel events, Items,
 extension hooks, audit, history, Memory, diagnostics, payloads, and logs.
-`capabilityIntent` contains the normalized descriptors evaluated by the normal
-`decide(effect)` path: the safety floor first, then explicit user blocks.
-Optional execution policy remains owned by the concrete handler: process-backed
-calls use `ProcessExecutionPolicy`; other tools do not carry process fields.
+`capabilityIntent` is the sanitized durable descriptor/marker projection used by
+audit and Items. `safetyEffects` carries transient host evidence, including
+canonical output paths, used by the new `decide(effect)` path but never
+persisted. Optional execution policy remains owned by the concrete handler:
+process-backed calls use `ProcessExecutionPolicy`; other tools do not carry
+process fields.
+
+The durable intent contains precomputed `commandActions`, classification state,
+and explanation copy. For an unclassified Browser call, its Item projection
+adds a `CommandAction` whose `kind` is
+`unclassified, worst-case classified` and whose `command` is the sanitized
+durable command, alongside the action entries. The capability audit stores the
+same classification plus the plain-language worst-case explanation. This uses
+the existing `CommandAction` shape and requires no new Thread Item field.
+
+`ToolExecutionAdapter` becomes the sole owner of the prepared lifecycle around a
+contributed handler. Today `ToolRuntime.instrumentTool` wraps every `execute` to
+evaluate capability blocks, establish mutation causation, attach capability
+audit, and fire extension hooks. The implementation deletes that wrapper and
+moves those duties into the generic adapter invoked by the kernel; it does not
+leave a compatibility wrapper behind. The adapter receives capability policy,
+mutation causation, and extension callbacks through `ToolPreparationContext`.
+`onToolStarted` receives only `durableArguments`; `onToolCompleted` receives the
+same durable arguments plus `durableResult` or a stable safe error. Allowed,
+blocked, thrown, cancelled, and projection-failure paths each fire exactly one
+start/completion pair, so hooks neither duplicate nor observe raw Browser argv,
+credentials, partial output, or model-only results.
 
 `PiEventNormalizer` remains the sole translator from the existing kernel event
 stream into canonical tool Items, including the explicit no-Item policy for
 controller calls such as `update_plan`. Its `executionObserver` continues to
 feed `TurnDiagnosticsCollector.captureToolExecutionStarted/Completed`, so Model
 Interactions retains the same tool-execution batches, Item IDs, timing, status,
-and adjacent Provider Call links established by #444. The change is that the
-kernel emits the contract's durable arguments and durable result on
-`tool_execution_start`, `tool_execution_update`, and `tool_execution_end`; raw
-transient values never reach the normalizer or diagnostics. Sensitive contracts
-must project or suppress partial updates by the same rule.
+and adjacent Provider Call links established by #444. The start event carries a
+durable execution envelope containing `durableArguments`, `capabilityIntent`,
+and the normalized allow/deny decision. `PiEventNormalizer` uses that envelope
+to create the Item and populate `commandActions`, including the unclassified
+marker, while the final structured result carries the same decision in
+`capabilityAudit`. Update events carry only `durableUpdate`; end events carry
+only `durableResult` and stable error state. The normalizer retains the start
+envelope by call ID until completion, so intent reaches history without being
+reparsed from a result.
+
+Raw updates stay inside the contract callback until `projectUpdate` returns.
+The kernel routes `transientUpdate` only to the active in-memory consumer and
+emits `durableUpdate` only when it is non-null. The default adapter preserves
+existing non-sensitive streaming behavior; Browser contracts redact or suppress
+updates. A projection failure discards the raw update and emits at most one
+constant safe update. Raw transient values never reach the normalizer,
+diagnostics, hooks, or event stream.
 
 This is not a second diagnostics pipeline. `PiTurnExecutor` still creates the
 collector, subscribes it and the normalizer to `NativeAgentRuntime`, and wires
@@ -208,9 +262,11 @@ persisting and late-refreshing the inspection-only diagnostics payload, and
 installing its reference on the terminal Turn. `ModelGateway` remains a
 provider-transport port and receives no Browser tool-execution responsibility.
 
-Preparation must finish before Item creation, capability hooks, or process
-spawn. A preparation failure emits a start/end pair containing only a constant
-safe rejection projection and never invokes the executor.
+Preparation and the complete safety-floor/user-block decision must finish before
+Item creation, extension hooks, or process spawn. A grammar, preparation, or
+decision failure emits a start/end pair and matching extension lifecycle pair
+containing only a constant safe rejection projection; it never invokes the
+executor.
 `ToolExecutionOutcome` represents both returned results and thrown errors, so
 one projector governs every completion path.
 Outcome projection must finish before a result is returned to the model or
@@ -274,6 +330,8 @@ It rejects before process spawn:
   multiple commands, or unquoted newlines;
 - alternate executable paths and aliases;
 - caller-supplied `--client-key` or `--human`;
+- on an unclassified command, any output-like flag that the pinned destination
+  rules cannot recognize and canonicalize; and
 - `run_in_background: true`.
 
 Quoted arguments are literal argv, not shell source. They may contain dollar
@@ -294,12 +352,23 @@ shell. The Browser Pilot host note and `bash` description teach this exact
 Tenon transport. A pipeline attempt reaches the non-forwarding facade and
 returns the same corrective guidance.
 
-The parser does not validate Browser Pilot's command-specific flags, values, or
-catalog membership; the CLI remains authoritative for those. It extracts only
-global structural options, command/subcommand identity, and file destinations
-that Tenon must constrain. A structurally valid direct `bp` command is eligible
-for the Browser provider even when its command or `net` subcommand has no pinned
-classification entry.
+The parser does not generally validate Browser Pilot's command-specific flags,
+values, or catalog membership; the CLI remains authoritative for those. It
+extracts only global structural options, command/subcommand identity, and file
+destinations that Tenon must constrain. A structurally valid direct `bp` command
+is eligible for the Browser provider even when its command or `net` subcommand
+has no pinned classification entry.
+
+Output containment is the one command-flag admission exception. The grammar
+splits long-option names into normalized segments and treats `out`, `output`,
+`save`, `download`, `export`, `destination`, `dest`, `path`, `file`,
+`directory`, and `dir` as output-like segments. Known destination flags use the
+pinned command rules below. On an unclassified command, an output-like flag not
+covered by those rules returns a stable `unrecognized_output_path` rejection
+before capability evaluation or spawn. This conservative structural predicate
+is not a command-catalog allowlist: unclassified commands without such a flag
+continue to the worst-case effect decision, and unsupported commands still use
+the pinned CLI as the authoritative error source.
 
 The Agent `PATH` contains a Tenon-owned non-forwarding `bp` facade so
 `command -v bp` works as the upstream skill expects. Structurally valid direct
@@ -322,6 +391,7 @@ The provider prepares one immutable `BrowserPilotCall` containing:
 - the resolved verified executable;
 - a host-generated Thread client key and Turn output directory;
 - normalized Browser capability descriptors;
+- host safety effects with transient output-containment evidence;
 - a sanitized durable command rendering; and
 - a foreground process policy aligned with Browser Pilot's deadline.
 
@@ -351,18 +421,49 @@ Add Browser-specific action kinds to the shared catalog:
 | `browser.sensitive_read` | Any result that may expose browser, account, page, file, cookie, command, or network context |
 | `browser.developer` | JavaScript evaluation and network inspection/interception |
 
+This implementation also introduces a host-only `ToolSafetyEffect` vocabulary;
+its first required kind is `filesystem.write`. Safety effects are not model-tool
+action kinds, user block settings, or approval prompts. They carry the transient
+evidence needed to enforce host invariants. A Browser `filesystem.write` effect
+contains the canonical Turn output root, every recognized explicit destination,
+and whether the pinned `BROWSER_PILOT_OUTPUT_DIR` contract governs default
+output. Known commands attach the effect only when they may write. Every
+unclassified command attaches it as part of worst-case classification, even
+when no output flag is present.
+
+Add `decide(effect)` as a new host decision stage in
+`agentCapabilities.ts`; it does not exist in the current runtime. Its order is
+fixed:
+
+1. A non-user-configurable safety floor evaluates every `ToolSafetyEffect`. It
+   denies an unknown effect kind, a `filesystem.write` effect without complete
+   containment evidence, or any destination outside the canonical Turn output
+   root. The unavailable decision uses source `safety_floor`, stable code
+   `unsafe_filesystem_write`, and remediation that explains the contained
+   output-root requirement.
+2. If the safety floor allows, the existing explicit-block matcher evaluates
+   normalized action descriptors and may return `user_blocked`.
+3. Otherwise the call is allowed under Full Access.
+
+Settings cannot weaken or bypass step 1. This is a narrow Browser-provider
+admission invariant, not a general Agent filesystem sandbox or a per-operation
+approval system. The Direct Command Grammar's
+`unrecognized_output_path` rejection runs even earlier, so an unknown
+output-like flag never reaches the decision stage with fabricated containment
+evidence.
+
 For a classified command, the provider supplies its precise applicable
-descriptors before execution. Every observation-bearing result carries both
-`browser.read` and `browser.sensitive_read`, including connect,
-page/content/capture inventory, recovery, and post-action page state.
+descriptors and safety effects before execution. Every observation-bearing
+result carries both `browser.read` and `browser.sensitive_read`, including
+connect, page/content/capture inventory, recovery, and post-action page state.
 Version/help and the fixed result of `disconnect` are the only classified calls
 that do not carry sensitive read.
 
 `browser.sensitive_read` remains allowed by default in Full Access and is
-narrowed only by an explicit user block; it adds no approval prompt. The normal
-`decide(effect)` path still applies the safety floor before those user blocks.
-This intentionally lets authenticated browser content reach the active model
-when the capability is not blocked.
+narrowed only by an explicit user block; it adds no approval prompt. The safety
+floor does not independently deny sensitive reads. This intentionally lets
+authenticated browser content reach the active model when the capability is not
+blocked.
 
 Browser Pilot cannot reliably distinguish ordinary interaction from a message,
 form submission, purchase, or other business effect. Until trustworthy semantic
@@ -376,16 +477,19 @@ complete Browser Pilot surface, with no per-operation approval.
 Catalog membership is not an admission gate. An unclassified command or `net`
 subcommand receives all five Browser action kinds as its worst-case
 classification, plus `external.message.send` because the set includes
-`browser.external_action`. The complete descriptor set goes through the same
-`decide(effect)` path as a known command: the safety floor and any matching
-explicit block can deny it; otherwise Full Access allows the pinned executable
-to run it.
+`browser.external_action`, and the host-only `filesystem.write` safety effect.
+The complete worst-case set goes through the same new `decide(effect)` path as a
+known command. If the safety floor and all matching explicit blocks allow it,
+Full Access runs the pinned executable; an unsupported command then returns the
+CLI's own structured error.
 
 Capability audit and `commandActions` are derived only from that normalized
 intent and the sanitized durable command. Unclassified calls carry the durable
 marker `unclassified, worst-case classified` and a plain-language explanation
-that Tenon treated the command as capable of every Browser action. A block
-result explains that conservative classification and the matching rule without
+that Tenon treated the command as capable of every Browser action and a
+filesystem write. The audit records the safety-floor result, user-block result,
+and final decision source without persisting canonical paths. A denial explains
+either the host containment invariant or the matching user rule without
 exposing transient arguments. An unclassified direct call never falls back to
 `shell.unknown` or the default shell provider.
 
@@ -431,7 +535,11 @@ Each Turn receives a private output root through the existing scratch lifecycle:
 The provider creates and canonicalizes the directory before execution and
 injects it as `BROWSER_PILOT_OUTPUT_DIR`. Explicit screenshot, PDF, download,
 and saved-body destinations must resolve within that root; traversal, symlink
-escape, and alternate absolute destinations fail before process spawn.
+escape, and alternate absolute destinations fail before process spawn. Known
+destination flags contribute canonical targets to the `filesystem.write` safety
+effect. For an unclassified command, absence of an explicit destination is
+contained by the injected output root; any unrecognized output-like flag fails
+at grammar admission rather than trusting the CLI to choose a path.
 
 Browser Pilot returns absolute file metadata to the active model result. The
 Agent reads images, PDFs, and other files through Tenon's existing `file_read`
@@ -584,8 +692,11 @@ contributes its prepared direct-`bash` handler to the router, following the #456
 owner-contributes-handler pattern. The default shell provider contributes its
 sibling handler; the local-command module composes the router into one canonical
 `bash` `AgentTool` contribution. `agentCapabilities.ts` consumes prepared
-capability intent instead of reparsing Browser commands. `ToolRuntime.ts`
-remains assembly-only and contains no Browser conditionals.
+capability intent instead of reparsing Browser commands. As part of this change,
+`ToolRuntime.instrumentTool` is removed: capability decisions, mutation
+causation, audit attachment, and extension lifecycle notification move together
+to `ToolExecutionAdapter`. `ToolRuntime.ts` therefore becomes assembly-only
+rather than being described as if it already were.
 
 The optional execution contract extends the Tenon-owned `AgentTool`/kernel
 runner port in `runtime/kernel/types.ts` and the tool-runner code currently in
@@ -607,6 +718,16 @@ The same PR updates:
 - `src/core/agent/tools.ts` for Browser action kinds;
 - `src/core/agent/extensions.ts` comments/contracts to state lifecycle payloads
   are durable projections;
+- `src/main/agent/capabilities/agentCapabilities.ts` for the new ordered
+  safety-floor/user-block decision and host safety effects;
+- `src/main/agent/runtime/ToolRuntime.ts` to remove `instrumentTool` and leave
+  only contribution assembly, registry validation, configuration, and scope
+  filtering;
+- `src/main/agent/runtime/kernel/types.ts` and `kernel.ts` for the prepared
+  contract, durable intent/decision event envelope, and projected updates;
+- `src/main/agent/runtime/PiTurnExecutor.ts` so `PiEventNormalizer` projects the
+  durable intent into `commandActions` without changing the #444 diagnostics
+  observer chain;
 - `docs/spec/agent-tool-design.md` for prepared execution and Browser Control;
 - `docs/spec/agent-tool-permissions.md` for Browser descriptors and blocks;
 - `docs/spec/agent-integration.md` for identity, lifecycle, files, and recovery;
@@ -621,11 +742,21 @@ No URL Preview spec gains a Browser Control dependency.
   Item type and preserve the native-kernel Item/event golden. Prove
   `PiEventNormalizer` remains the sole tool Item translator and its
   `executionObserver` still produces identical Model Interactions batch links,
-  Item IDs, timings, and terminal statuses.
-- Prove preparation happens before Item creation, hooks, audit, logs, or spawn;
-  all kernel start/update/end events carry only durable projections; and a
-  projection failure after spawn returns one constant `unknown_outcome` without
-  exposing raw output.
+  Item IDs, timings, and terminal statuses. Assert `ToolRuntime.instrumentTool`
+  is gone and capability evaluation occurs exactly once before the start event.
+- Prove preparation and decision happen before Item creation, hooks, audit,
+  logs, or spawn. The start event must transport durable arguments, intent, and
+  decision into `commandActions`/`capabilityAudit`; update/end events carry only
+  durable projections. A projection failure after spawn returns one constant
+  `unknown_outcome` without exposing raw output.
+- Stream sensitive canaries through `projectUpdate`; prove the raw update is
+  never emitted or passed to an extension, transient updates remain in-memory,
+  durable updates are independently redacted or suppressed, and the default
+  adapter preserves every existing non-sensitive update sequence.
+- For allow, safety-floor deny, user-block deny, throw, cancellation, and
+  projection failure, prove `ToolExecutionAdapter` establishes mutation
+  causation and fires exactly one extension start/completion pair using only the
+  durable arguments and result.
 - Run `agentToolCatalogStability` against the complete canonical catalog. Review
   and snapshot only the intended `bash.stdin`/guidance byte delta; prove tool
   names, canonical order, and every unrelated description/schema byte remain
@@ -637,15 +768,25 @@ No URL Preview spec gains a Browser Control dependency.
 - Test the direct-command grammar exhaustively, including quoting and every
   rejected shell construct; prove compound commands can reach only the
   non-forwarding facade.
+- Prove each recognized output flag canonicalizes inside the Turn root and that
+  an unclassified command carrying `--out`, `--output-path`, `--save-to`, or any
+  other output-like unknown flag returns `unrecognized_output_path` through the
+  safe rejection lifecycle before capability evaluation or process spawn.
+- Prove the non-user-configurable safety floor runs before user blocks, settings
+  cannot disable it, unknown safety effects fail closed, and
+  `filesystem.write` without complete in-root containment evidence returns
+  `unsafe_filesystem_write` before spawn.
 - Compare the pinned command/subcommand catalog with `bp --help` and
   `bp net --help`; known entries retain exact mappings, while absent entries
-  receive the complete worst-case Browser descriptor set and execute only after
-  normal `decide(effect)`.
+  receive all five Browser descriptors, `external.message.send`, and the
+  `filesystem.write` safety effect, then execute only after the new
+  `decide(effect)` stage.
 - Prove an unclassified command carries the durable
   `unclassified, worst-case classified` marker and understandable explanation,
+  that the start-event intent produces the same marker in the persisted Item,
   every matching Browser or external-message block denies it before spawn, an
-  unblocked call reaches only the verified `bp` binary, and an unsupported
-  command returns `bp`'s structured error.
+  unblocked and safely contained call reaches only the verified `bp` binary,
+  and an unsupported command returns `bp`'s structured error.
 - Verify each Browser action kind independently blocks its mapped commands and
   that `Action(external.message.send)` conservatively blocks every ambiguous
   `browser.external_action` before spawn while leaving Browser reads and control
@@ -666,8 +807,10 @@ No URL Preview spec gains a Browser Control dependency.
   deadline derivation, `SIGTERM` grace, `SIGKILL` escalation, and uncertain
   recovery match Browser Pilot semantics.
 - Prove every Turn receives a distinct canonical output root, explicit paths
-  cannot escape through traversal or symlinks, and generated image/PDF/download
-  results are consumable through `file_read` and pruned by scratch policy.
+  cannot escape through traversal or symlinks, default outputs remain contained
+  for unclassified calls without path flags, and generated
+  image/PDF/download results are consumable through `file_read` and pruned by
+  scratch policy.
 - Verify release index, checksums, archive layout, executable bit, architecture,
   `bp --version`, compatibility range, license inventory, exact skill resources,
   source resolution, packaged resolution, and atomic unavailability.
@@ -683,7 +826,8 @@ No URL Preview spec gains a Browser Control dependency.
 
 - Extending the native kernel's tool-runner port to separate transient model
   results from durable event results is a broad runtime change. The default
-  adapter, Item/event golden, Turn diagnostics lifecycle suite, and full catalog
+  adapter, removal of `ToolRuntime.instrumentTool`, extension lifecycle tests,
+  Item/event golden, Turn diagnostics lifecycle suite, and full catalog
   byte-stability judge must remain green before Browser Pilot tests are
   considered.
 - **Accepted sensitive-content risk:** Full Access allows
@@ -699,6 +843,10 @@ No URL Preview spec gains a Browser Control dependency.
 - Browser Pilot's public surface is CLI-only and its command inventory is not a
   permanent native manifest. Every version bump requires a coordinated catalog,
   projection, skill, asset, checksum, and compatibility review.
+- The output-like flag predicate deliberately prefers a false-positive admission
+  rejection over an uncontained write when a new CLI flag is ambiguous. A
+  future pinned catalog update can classify that flag precisely; settings cannot
+  bypass the rejection or the safety floor.
 - Browser authorization depends on supported Chrome remote-debugging UI and a
   user Allow action Tenon cannot complete. Conversation-only remediation may be
   less discoverable than onboarding UI; that tradeoff is accepted for launch.
@@ -718,7 +866,11 @@ No URL Preview spec gains a Browser Control dependency.
 - Extend contributed handlers and the native kernel runner around
   `ToolExecutionContract` in the same PR, preserving normalizer Item ownership,
   Turn diagnostics capture, existing tool behavior, and all unrelated catalog
-  bytes.
+  bytes; remove `ToolRuntime.instrumentTool` and move its lifecycle duties to
+  `ToolExecutionAdapter`.
+- Add the durable intent/decision event envelope, projected update path, host
+  `ToolSafetyEffect` vocabulary, ordered `decide(effect)` stage, and
+  fail-closed output-path admission.
 - Add `CommandExecutionRouter`, bounded transient `bash.stdin`, the default
   shell provider, and reusable process policies.
 - Add Browser action kinds and the complete Browser Pilot command provider,
