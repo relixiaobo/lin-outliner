@@ -70,6 +70,7 @@ import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
 import { ToolCodeBlock } from '../ToolCodeBlock';
+import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
 
 export type ThreadToolItem = Extract<ThreadItem, {
   type:
@@ -92,7 +93,7 @@ interface ThreadItemViewProps {
   readonly streaming: boolean;
   readonly threadId: string;
   readonly threadCwd: string;
-  readonly onDisclosureToggle: () => void;
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
@@ -102,6 +103,7 @@ interface ThreadItemViewProps {
 }
 
 export interface ThreadDisclosureState {
+  readonly holdAnchorUntilSettled: () => DisclosureScrollAnchorHold | null;
   readonly isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
   readonly toggle: (id: string, currentlyExpanded: boolean, anchorElement?: HTMLElement | null) => void;
 }
@@ -386,7 +388,7 @@ function renderUserContent(
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
   threadId: string,
   itemId: string,
-  onDisclosureToggle: () => void,
+  onDisclosureToggle: (anchorElement: HTMLElement | null) => void,
 ): ReactNode[] {
   const images: ThreadAttachmentContent[] = [];
   const narrative: ReactNode[] = [];
@@ -460,7 +462,7 @@ function UserMessageCollapsibleContent({
 }: {
   readonly children: ReactNode;
   readonly measureKey: string;
-  readonly onDisclosureToggle: () => void;
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
 }) {
   const t = useT();
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -503,8 +505,8 @@ function UserMessageCollapsibleContent({
         <ButtonControl
           aria-expanded={expanded}
           className="thread-user-expand-button"
-          onClick={() => {
-            onDisclosureToggle();
+          onClick={(event) => {
+            onDisclosureToggle(event.currentTarget);
             setExpanded((current) => !current);
           }}
         >
@@ -594,12 +596,19 @@ function ToolItemDisclosure({
   const expanded = expandState.isExpanded(disclosureId, false);
   const detail = toolDetail(item, t, onOpenThread, threadId);
   const [fullOutput, setFullOutput] = useState<string | null | undefined>(undefined);
+  const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
   useEffect(() => {
     if (!expanded || !item.outputRef || fullOutput !== undefined) return undefined;
     let cancelled = false;
-    void onReadOutput(item).then((text) => {
-      if (!cancelled) setFullOutput(text);
-    });
+    const anchorHold = outputAnchorHoldRef.current;
+    void onReadOutput(item)
+      .then((text) => {
+        if (!cancelled) setFullOutput(text);
+      })
+      .finally(() => {
+        anchorHold?.settle();
+        if (outputAnchorHoldRef.current === anchorHold) outputAnchorHoldRef.current = null;
+      });
     return () => {
       cancelled = true;
     };
@@ -611,7 +620,12 @@ function ToolItemDisclosure({
         aria-expanded={expanded}
         className="thread-tool-toggle"
         data-thread-disclosure-id={disclosureId}
-        onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
+        onClick={(event) => {
+          expandState.toggle(disclosureId, expanded, event.currentTarget);
+          if (!expanded && item.outputRef && fullOutput === undefined) {
+            outputAnchorHoldRef.current = expandState.holdAnchorUntilSettled();
+          }
+        }}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
         <span className="thread-tool-label">{summarizeThreadToolItem(item, t.agent.thread.activity)}</span>

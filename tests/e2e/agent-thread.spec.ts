@@ -2501,6 +2501,151 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft while answering.');
   });
 
+  test('anchors a sent message and resumes streaming follow only after jumping to latest', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 10; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Earlier scroll evidence ${index + 1}` }],
+          clientUserMessageId: `scroll-evidence-${index + 1}`,
+        });
+      }
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    await expect(
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence' }),
+    ).toHaveCount(10);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill([
+      'Anchor this request.',
+      ...Array.from({ length: 80 }, (_, index) => `Disclosure evidence ${index + 1}.`),
+    ].join(' '));
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const userMessage = page.locator('.thread-user-message').filter({ hasText: 'Anchor this request.' });
+    await expect(userMessage).toBeVisible();
+    await expect.poll(() => userMessage.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+
+    const showMore = page.getByRole('button', { name: 'Show more' });
+    await expect(showMore).toBeVisible();
+    const disclosureTop = await showMore.evaluate((element) => element.getBoundingClientRect().top);
+    await showMore.click();
+    const showLess = page.getByRole('button', { name: 'Show less' });
+    await expect(showLess).toBeVisible();
+    await expect.poll(() => showLess.evaluate((element, expectedTop) => (
+      Math.abs(element.getBoundingClientRect().top - expectedTop)
+    ), disclosureTop)).toBeLessThanOrEqual(2);
+    const anchoredTop = await transcript.evaluate((element) => element.scrollTop);
+
+    const live = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const threads = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = threads?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const history = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>(
+        'thread/turns/list',
+        { threadId, limit: 100, itemsView: 'full' },
+      );
+      const turn = history?.data.at(-1) as Record<string, unknown> | undefined;
+      const turnId = typeof turn?.id === 'string' ? turn.id : null;
+      const items = Array.isArray(turn?.items) ? turn.items as Array<Record<string, unknown>> : [];
+      const userItem = items.find((item) => item.type === 'userMessage');
+      const responseItem = items.find((item) => item.type === 'agentMessage');
+      const responseItemId = typeof responseItem?.id === 'string' ? responseItem.id : null;
+      if (!turnId || !userItem || !responseItem || !responseItemId) throw new Error('Missing sent Turn');
+      const streamingText = Array.from(
+        { length: 36 },
+        (_, index) => `Streaming anchored evidence ${index + 1}.`,
+      ).join('\n\n');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          ...turn,
+          items: [userItem, { ...responseItem, text: streamingText }],
+          status: 'inProgress',
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { responseItemId, threadId, turnId };
+    });
+
+    await expect(page.getByText('Streaming anchored evidence 36.')).toBeVisible();
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(anchoredTop - 2);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(anchoredTop + 2);
+
+    await page.getByRole('button', { name: 'Jump to latest' }).click();
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+
+    await page.evaluate(({ responseItemId, threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/delta',
+        threadId,
+        turnId,
+        itemId: responseItemId,
+        delta: {
+          type: 'agentMessageText',
+          delta: Array.from({ length: 18 }, (_, index) => `\n\nPinned stream delta ${index + 1}.`).join(''),
+        },
+      });
+    }, live);
+    await expect(page.getByText('Pinned stream delta 18.')).toBeVisible();
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+  });
+
+  test('keeps following when a long user message expands at the bottom', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill(Array.from(
+      { length: 80 },
+      (_, index) => `Long message evidence ${index + 1}.`,
+    ).join(' '));
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const transcript = page.locator('.thread-transcript');
+    await expect(page.getByRole('button', { name: 'Show more' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+
+    await page.getByRole('button', { name: 'Show more' }).click();
+    await expect(page.getByRole('button', { name: 'Show less' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+  });
+
   test('does not pull the transcript down after the reader scrolls upward', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
@@ -2615,14 +2760,32 @@ test.describe('canonical agent Thread surface', () => {
     const turns = page.locator('.thread-transcript-turns');
     await expect(turns).toHaveAttribute('data-virtualized', 'true');
     await expect.poll(() => page.locator('[data-thread-turn-row]').count()).toBeLessThan(45);
-    const savedTop = await transcript.evaluate((element) => {
+    await transcript.evaluate((element) => {
       const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
       const top = Math.max(1, Math.min(480, Math.floor(maximum / 2)));
       element.scrollTop = top;
       element.dispatchEvent(new Event('scroll'));
-      return element.scrollTop;
     });
-    expect(savedTop).toBeGreaterThan(0);
+    await expect(page.getByText('Long history message 1', { exact: true })).toHaveCount(1);
+    const readingAnchor = await transcript.evaluate(async (element) => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      }));
+      const viewportTop = element.getBoundingClientRect().top;
+      const row = Array.from(element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'))
+        .find((candidate) => {
+          const bounds = candidate.getBoundingClientRect();
+          return bounds.top <= viewportTop && bounds.bottom > viewportTop;
+        });
+      const turnId = row?.dataset.threadTurnRow;
+      if (!row || !turnId) throw new Error('Missing reading anchor');
+      return {
+        offset: row.getBoundingClientRect().top - viewportTop,
+        scrollTop: element.scrollTop,
+        turnId,
+      };
+    });
+    expect(readingAnchor.scrollTop).toBeGreaterThan(0);
 
     await createNewThread(page);
     await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -2633,8 +2796,16 @@ test.describe('canonical agent Thread surface', () => {
 
     await expect(page.locator('.thread-dock-title')).toContainText('Long history');
     await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
-    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(savedTop - 2);
-    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(savedTop + 2);
+    const restoredRow = page.locator(
+      `[data-thread-turn-row="${readingAnchor.turnId}"]`,
+    );
+    await expect(restoredRow).toHaveCount(1);
+    await expect.poll(() => restoredRow.evaluate((element, expectedOffset) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const actualOffset = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      return Math.abs(actualOffset - expectedOffset);
+    }, readingAnchor.offset)).toBeLessThanOrEqual(2);
   });
 });
 

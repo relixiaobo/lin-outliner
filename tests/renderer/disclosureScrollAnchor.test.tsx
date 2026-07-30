@@ -6,6 +6,7 @@ import { parseHTML } from 'linkedom';
 import {
   captureDisclosureScrollAnchor,
   usePendingDisclosureAnchor,
+  type DisclosureScrollAnchorHold,
   type DisclosureScrollAnchorSnapshot,
 } from '../../src/renderer/ui/interactions/disclosureScrollAnchor';
 
@@ -13,6 +14,7 @@ interface Rendered {
   cleanup: () => void;
   dispatchScroll: () => void;
   flushFrame: () => void;
+  holdAnchor: () => DisclosureScrollAnchorHold | null;
   pendingFrameCount: () => number;
 }
 
@@ -126,14 +128,73 @@ describe('usePendingDisclosureAnchor', () => {
     rendered.flushFrame();
     expect(rendered.scroller.scrollTop).toBe(160);
   });
+
+  test('keeps a settled-frame anchor alive until asynchronous content lands', () => {
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    let layoutTop = 600;
+    const rendered = render(
+      (win) => {
+        (win as unknown as { __frames: Map<number, FrameRequestCallback> }).__frames = frameCallbacks;
+        win.requestAnimationFrame = (callback: FrameRequestCallback) => {
+          const handle = nextFrame;
+          nextFrame += 1;
+          frameCallbacks.set(handle, callback);
+          return handle;
+        };
+        win.cancelAnimationFrame = (handle: number) => {
+          frameCallbacks.delete(handle);
+        };
+      },
+      (document) => {
+        const scroller = document.createElement('div');
+        scroller.scrollTop = 100;
+        const anchor = document.createElement('button');
+        scroller.appendChild(anchor);
+        document.body.appendChild(scroller);
+        anchor.getBoundingClientRect = () => ({
+          bottom: layoutTop - scroller.scrollTop + 12,
+          height: 12,
+          left: 0,
+          right: 12,
+          top: layoutTop - scroller.scrollTop,
+          width: 12,
+          x: 0,
+          y: layoutTop - scroller.scrollTop,
+          toJSON: () => ({}),
+        });
+        const snapshot = captureDisclosureScrollAnchor(anchor, scroller);
+        if (!snapshot) throw new Error('Missing disclosure anchor snapshot');
+        return { anchor, scroller, snapshot };
+      },
+    );
+
+    const hold = rendered.holdAnchor();
+    expect(hold).not.toBeNull();
+    for (let frame = 0; frame < 12; frame += 1) rendered.flushFrame();
+    expect(rendered.pendingFrameCount()).toBe(0);
+
+    layoutTop = 540;
+    hold?.settle();
+    expect(rendered.pendingFrameCount()).toBe(1);
+    rendered.flushFrame();
+    expect(rendered.scroller.scrollTop).toBe(40);
+  });
 });
 
-function Probe({ snapshot }: { snapshot: DisclosureScrollAnchorSnapshot }) {
-  const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor();
+function Probe({
+  onReady,
+  snapshot,
+}: {
+  readonly onReady: (holdAnchor: () => DisclosureScrollAnchorHold | null) => void;
+  readonly snapshot: DisclosureScrollAnchorSnapshot;
+}) {
+  const { capturePendingAnchor, holdUntilSettled, restorePendingAnchor } = usePendingDisclosureAnchor();
   useLayoutEffect(() => {
     capturePendingAnchor(snapshot);
   }, [capturePendingAnchor, snapshot]);
   useLayoutEffect(() => restorePendingAnchor(), [restorePendingAnchor, snapshot]);
+  useLayoutEffect(() => onReady(holdUntilSettled), [holdUntilSettled, onReady]);
   return null;
 }
 
@@ -157,9 +218,10 @@ function render(
   });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const { anchor, scroller, snapshot } = createAnchor(document);
+  let holdAnchor = (): DisclosureScrollAnchorHold | null => null;
   const root = createRoot(document.getElementById('root')!);
   act(() => {
-    root.render(<Probe snapshot={snapshot} />);
+    root.render(<Probe onReady={(hold) => { holdAnchor = hold; }} snapshot={snapshot} />);
   });
   const rendered = {
     anchor,
@@ -179,6 +241,7 @@ function render(
       frameCallbacks.delete(first[0]);
       first[1](performance.now());
     },
+    holdAnchor: () => holdAnchor(),
     pendingFrameCount: () => (
       (window as unknown as { __frames?: Map<number, FrameRequestCallback> }).__frames?.size ?? 0
     ),

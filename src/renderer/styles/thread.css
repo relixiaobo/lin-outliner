@@ -120,7 +120,7 @@
 
 .thread-action-menu button {
   display: flex;
-  min-height: 28px;
+  min-height: var(--control-size-xl);
   align-items: center;
   gap: var(--space-4);
   border: 0;
@@ -328,16 +328,100 @@
   text-align: center;
 }
 
-.thread-transcript {
+.thread-transcript-shell {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1;
+}
+
+.thread-transcript {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
-  gap: var(--space-6);
   overflow: auto;
   overscroll-behavior: contain;
   padding: var(--space-8) var(--agent-content-x) var(--space-6);
   scrollbar-width: thin;
+}
+
+.thread-transcript-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.thread-send-anchor-spacer {
+  width: 100%;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.thread-jump-latest {
+  position: absolute;
+  bottom: var(--space-4);
+  left: 50%;
+  z-index: var(--z-popover);
+  isolation: isolate;
+  display: inline-flex;
+  max-width: calc(100% - 2 * var(--space-8));
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-3);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  letter-spacing: 0;
+  line-height: var(--line-ui-sm-tight);
+  outline: none;
+  padding: var(--space-3) var(--space-5);
+  transform: translateX(-50%);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.thread-jump-latest::before {
+  position: absolute;
+  z-index: 0;
+  border-radius: inherit;
+  background: transparent;
+  content: '';
+  inset: 0;
+  pointer-events: none;
+}
+
+.thread-jump-latest > * {
+  position: relative;
+  z-index: 1;
+}
+
+.thread-jump-latest:hover {
+  color: var(--text-primary);
+}
+
+.thread-jump-latest:hover::before {
+  background: var(--fill-2);
+}
+
+.thread-jump-latest:active::before {
+  background: var(--fill-3);
+}
+
+.thread-jump-latest:focus-visible {
+  color: var(--text-primary);
+  box-shadow: var(--overlay-shadow-level-1), var(--focus-ring-shadow);
 }
 
 .thread-transcript-turns {

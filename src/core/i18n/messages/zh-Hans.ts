@@ -1057,6 +1057,7 @@ commandPalette: {
       dropFilesToAttach: '拖放文件以添加附件',
       removeAttachment: ({ name }) => `移除 ${name}`,
       removeReference: ({ name }) => `移除 ${name}`,
+      jumpToLatest: '跳到最新',
       send: '发送',
       steer: '引导',
       interrupt: '中断本轮',
