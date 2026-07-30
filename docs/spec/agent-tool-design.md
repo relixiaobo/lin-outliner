@@ -164,9 +164,16 @@ spawn boundary. Enabled budgets create a host-owned ledger entry before the chil
 they do not occupy or modify the child's Goal slot.
 Collaboration views returned by `list_agents` and `wait_agent` include `tokensUsed` and
 nullable `tokenBudget`. Once ledger usage reaches the budget, new non-user Turn admission
-is rejected while explicit user Turn admission remains available. Idle-only feature
-callers receive a soft refusal, and collaboration tool callers receive the complete
-typed exhaustion error.
+is rejected while explicit user Turn admission and steering of an active Turn remain
+available. `followup_task` atomically removes its mailbox snapshot before awaiting
+admission, preserves concurrently queued messages, and prepends the snapshot again if
+admission is refused. Goal continuation records the complete typed refusal as a deferral;
+automation dispatch records it as a failed run. Completion and failure finalization
+accrue recorded usage before exposing an idle admission window. A budgeted spawner cannot
+spawn after exhaustion; when it omits a child budget, the child receives the lower of the
+global default and the spawner's remaining budget (or the remaining budget alone when the
+global default is `null`). An explicit child budget still takes precedence because this
+contract does not provide aggregate subtree accounting.
 
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,

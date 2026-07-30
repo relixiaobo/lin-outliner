@@ -1,7 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import type { ThreadId } from '../../../../core/agent/protocol';
-import { openSqlite, type SqliteDatabase } from '../../persistence/sqlite';
+import type { ThreadId } from '../../../core/agent/protocol';
+import type { SqliteDatabase } from './sqlite';
 
 interface SubagentBudgetRow {
   thread_id: string;
@@ -16,13 +14,9 @@ export interface SubagentBudgetRecord {
 }
 
 export class SubagentBudgetLedger {
-  private readonly db: SqliteDatabase;
   private readonly ephemeralBudgets = new Map<ThreadId, SubagentBudgetRecord>();
 
-  constructor(path: string, database?: SqliteDatabase) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+  constructor(private readonly db: SqliteDatabase) {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS thread_budgets (
         thread_id TEXT PRIMARY KEY,
@@ -30,10 +24,6 @@ export class SubagentBudgetLedger {
         tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0)
       ) STRICT;
     `);
-  }
-
-  close(): void {
-    this.db.close();
   }
 
   read(threadId: ThreadId): SubagentBudgetRecord | null {
@@ -54,29 +44,32 @@ export class SubagentBudgetLedger {
     return record;
   }
 
-  addUsage(threadId: ThreadId, tokens: number, ephemeral: boolean): SubagentBudgetRecord | null {
+  addUsage(threadId: ThreadId, tokens: number): SubagentBudgetRecord | null {
     if (!Number.isSafeInteger(tokens) || tokens < 0) {
       throw new Error('Subagent budget usage increment must be a non-negative integer');
     }
-    const current = this.read(threadId);
-    if (!current || tokens === 0) return current;
-    const tokensUsed = current.tokensUsed + tokens;
-    if (!Number.isSafeInteger(tokensUsed)) throw new Error('Subagent budget usage exceeds the safe integer range');
-    const record = { ...current, tokensUsed };
-    if (ephemeral) {
-      this.ephemeralBudgets.set(threadId, record);
-      return record;
-    }
+    const ephemeral = this.ephemeralBudgets.get(threadId);
+    if (ephemeral) return this.addEphemeralUsage(ephemeral, tokens);
+    const persisted = this.readPersisted(threadId);
+    if (!persisted || tokens === 0) return persisted;
+    const tokensUsed = checkedTotal(persisted.tokensUsed, tokens);
     const result = this.db.prepare(`
       UPDATE thread_budgets SET tokens_used = ? WHERE thread_id = ?
     `).run(tokensUsed, threadId);
     if (result.changes !== 1) throw new Error(`Subagent budget not found for Thread: ${threadId}`);
-    return record;
+    return { ...persisted, tokensUsed };
   }
 
   clear(threadId: ThreadId): boolean {
     return this.ephemeralBudgets.delete(threadId)
       || this.db.prepare('DELETE FROM thread_budgets WHERE thread_id = ?').run(threadId).changes === 1;
+  }
+
+  private addEphemeralUsage(current: SubagentBudgetRecord, tokens: number): SubagentBudgetRecord {
+    if (tokens === 0) return current;
+    const record = { ...current, tokensUsed: checkedTotal(current.tokensUsed, tokens) };
+    this.ephemeralBudgets.set(current.threadId, record);
+    return record;
   }
 
   private readPersisted(threadId: ThreadId): SubagentBudgetRecord | null {
@@ -89,4 +82,10 @@ export class SubagentBudgetLedger {
       tokensUsed: row.tokens_used,
     } : null;
   }
+}
+
+function checkedTotal(tokensUsed: number, increment: number): number {
+  const total = tokensUsed + increment;
+  if (!Number.isSafeInteger(total)) throw new Error('Subagent budget usage exceeds the safe integer range');
+  return total;
 }

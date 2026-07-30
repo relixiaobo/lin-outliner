@@ -112,13 +112,17 @@ import {
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
-import { SubagentBudgetLedger } from './extensions/goal/SubagentBudgetLedger';
 import { KeyedMutex, Mutex } from './Mutex';
+import { SubagentBudgetExhaustedError } from './SubagentBudgetExhaustedError';
 import {
   RolloutStore,
   type RolloutEntry,
   type ThreadHistoryRollbackMarker,
 } from './persistence/RolloutStore';
+import {
+  SubagentBudgetLedger,
+  type SubagentBudgetRecord,
+} from './persistence/SubagentBudgetLedger';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
   decodeThreadCursor,
@@ -132,6 +136,7 @@ import {
   referencesSameResourceFile,
   ToolPayloadStore,
 } from './persistence/ToolPayloadStore';
+import { openSqlite } from './persistence/sqlite';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { admitContextEvidence, contextEvidenceItem } from './context/evidenceAdmission';
 import {
@@ -355,6 +360,8 @@ interface ActiveTurn {
   steeringDelivery: Promise<void>;
   readonly completion: Promise<void>;
   readonly resolveCompletion: () => void;
+  recordedExecution: Turn['execution'] | null;
+  budgetUsageAccrued: boolean;
 }
 
 interface PendingUserInput {
@@ -507,15 +514,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     options: Omit<ThreadServiceOptions, 'stores' | 'executor'>,
   ): ThreadService {
     const paths = agentCorePaths(userDataPath);
+    const metadata = new ThreadMetadataStore(paths.state);
+    const goalsDatabase = openSqlite(paths.goals);
     return new ThreadService({
       executor,
       ...options,
       stores: {
-        metadata: new ThreadMetadataStore(paths.state),
+        metadata,
         history: new ThreadHistoryProjectionStore(paths.history),
         rollout: new RolloutStore(paths.rollouts),
-        goals: new GoalStore(paths.goals),
-        subagentBudgets: new SubagentBudgetLedger(paths.goals),
+        goals: new GoalStore(paths.goals, goalsDatabase),
+        subagentBudgets: new SubagentBudgetLedger(goalsDatabase),
         payloads: new ToolPayloadStore(paths.payloads),
       },
     });
@@ -583,7 +592,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       () => this.metadata.close(),
       () => this.history.close(),
       () => this.goalStore.close(),
-      () => this.subagentBudgets.close(),
     ]) {
       try {
         close();
@@ -1875,7 +1883,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const accepted = await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request), true);
       return accepted.response.turn;
     } catch (error) {
-      if (error instanceof ThreadBusyError || error instanceof SubagentBudgetExhaustedError) return null;
+      if (error instanceof ThreadBusyError) return null;
       throw error;
     }
   }
@@ -2134,7 +2142,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
     this.requireActiveTurn(input.parentThreadId, input.parentTurnId);
-    const tokenBudget = await this.childTokenBudget(input.maxTotalTokens);
+    const parentBudget = this.assertSubagentBudgetAvailable(input.parentThreadId);
+    const tokenBudget = await this.childTokenBudget(input.maxTotalTokens, parentBudget);
     let stagedThreadId: ThreadId | null = null;
     let result: SpawnChildThreadResult;
     try {
@@ -2306,19 +2315,28 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return result;
   }
 
-  private async childTokenBudget(maxTotalTokens: number | undefined): Promise<number | null> {
-    const tokenBudget = maxTotalTokens ?? await this.resolveSubagentTokenBudget();
-    if (tokenBudget !== null && (!Number.isSafeInteger(tokenBudget) || tokenBudget < 1)) {
-      throw new Error(maxTotalTokens === undefined
-        ? 'subagentTokenBudget must be a positive integer or null'
-        : 'max_total_tokens must be a positive integer');
+  private async childTokenBudget(
+    maxTotalTokens: number | undefined,
+    parentBudget: SubagentBudgetRecord | null,
+  ): Promise<number | null> {
+    if (maxTotalTokens !== undefined) {
+      if (!Number.isSafeInteger(maxTotalTokens) || maxTotalTokens < 1) {
+        throw new Error('max_total_tokens must be a positive integer');
+      }
+      return maxTotalTokens;
     }
-    return tokenBudget;
+    const tokenBudget = await this.resolveSubagentTokenBudget();
+    if (tokenBudget !== null && (!Number.isSafeInteger(tokenBudget) || tokenBudget < 1)) {
+      throw new Error('subagentTokenBudget must be a positive integer or null');
+    }
+    if (!parentBudget) return tokenBudget;
+    const remaining = parentBudget.tokenBudget - parentBudget.tokensUsed;
+    return tokenBudget === null ? remaining : Math.min(tokenBudget, remaining);
   }
 
-  private assertSubagentBudgetAvailable(threadId: ThreadId): void {
+  private assertSubagentBudgetAvailable(threadId: ThreadId): SubagentBudgetRecord | null {
     const budget = this.subagentBudgets.read(threadId);
-    if (!budget || budget.tokensUsed < budget.tokenBudget) return;
+    if (!budget || budget.tokensUsed < budget.tokenBudget) return budget;
     throw new SubagentBudgetExhaustedError(budget.tokensUsed, budget.tokenBudget);
   }
 
@@ -2331,11 +2349,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.requireActiveTurn(senderThreadId, senderTurnId);
     const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
     const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
-    this.assertSubagentBudgetAvailable(targetThread.id);
     const active = this.activeTurns.get(targetThread.id);
     if (active) {
       await this.steerTurn({ threadId: targetThread.id, expectedTurnId: active.turnId, input: content });
     } else {
+      this.assertSubagentBudgetAvailable(targetThread.id);
       const queued = this.mailbox.get(targetThread.id) ?? [];
       queued.push({ content });
       this.mailbox.set(targetThread.id, queued);
@@ -2353,22 +2371,29 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.requireActiveTurn(senderThreadId, senderTurnId);
     const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
     const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
-    this.assertSubagentBudgetAvailable(targetThread.id);
     const active = this.activeTurns.get(targetThread.id);
     if (active) {
       await this.steerTurn({ threadId: targetThread.id, expectedTurnId: active.turnId, input: content });
     } else {
+      this.assertSubagentBudgetAvailable(targetThread.id);
       const queued = this.mailbox.get(targetThread.id) ?? [];
-      await this.startPrivilegedTurn({
-        threadId: targetThread.id,
-        input: [...queued.flatMap((entry) => entry.content), ...content],
-        trigger: {
-          kind: 'subagent',
-          parentThreadId: senderThreadId,
-          parentItemId,
-        },
-      });
       this.mailbox.delete(targetThread.id);
+      try {
+        await this.startPrivilegedTurn({
+          threadId: targetThread.id,
+          input: [...queued.flatMap((entry) => entry.content), ...content],
+          trigger: {
+            kind: 'subagent',
+            parentThreadId: senderThreadId,
+            parentItemId,
+          },
+        });
+      } catch (error) {
+        if (queued.length > 0) {
+          this.mailbox.set(targetThread.id, [...queued, ...(this.mailbox.get(targetThread.id) ?? [])]);
+        }
+        throw error;
+      }
     }
     return this.collaborationView(targetThread.id);
   }
@@ -2695,6 +2720,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       steeringDelivery: Promise.resolve(),
       completion,
       resolveCompletion,
+      recordedExecution: null,
+      budgetUsageAccrued: false,
     };
 
     await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
@@ -2812,6 +2839,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     } finally {
       await resourceObservation.dispose().catch(() => undefined);
     }
+    if (result.execution) active.recordedExecution = result.execution;
 
     await this.threadMutex.run(active.threadId, async () => {
       if (this.activeTurns.get(active.threadId) === active) active.finishing = true;
@@ -2825,6 +2853,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         ...result,
         execution: { ...result.execution, diagnosticsRef },
       };
+      active.recordedExecution = result.execution ?? null;
     }
     const aborted = active.controller.signal.aborted;
     const executionError = active.fatalError ?? thrown;
@@ -2868,6 +2897,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         active.threadId,
         this.threadTurnDiagnosticsReferences(active.threadId),
       ).catch(() => undefined);
+      this.accrueSubagentBudgetUsage(active, thread, turn.execution);
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
     });
@@ -2875,11 +2905,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.requireThread(active.threadId).thread,
       turn,
       active.configuration,
-    );
-    this.subagentBudgets.addUsage(
-      active.threadId,
-      turn.execution.usage.totalTokens,
-      thread.ephemeral,
     );
     if (!hidden) {
       await this.goals.addUsage(
@@ -2894,6 +2919,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     this.queueChildTurnActivity(thread, turn);
     if (!hidden) await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
+  }
+
+  private accrueSubagentBudgetUsage(
+    active: ActiveTurn,
+    thread: Thread,
+    execution: Turn['execution'],
+  ): void {
+    if (active.budgetUsageAccrued || thread.parentThreadId === null) return;
+    this.subagentBudgets.addUsage(active.threadId, execution.usage.totalTokens);
+    active.budgetUsageAccrued = true;
   }
 
   private persistExecutionContextEvidence(
@@ -3041,6 +3076,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     await active.recorder.finishOpenItems('failed').catch(() => undefined);
     const initial = this.readTurn(active.threadId, active.turnId);
+    const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
     let failedTurn: Turn | null = null;
     if (initial) {
       const completedAt = this.now();
@@ -3049,6 +3085,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         items: active.recorder.orderedItems(),
         status: 'failed',
         error: { message: error.message, code: 'runtime_failure' },
+        execution: active.recordedExecution ?? initial.execution,
         completedAt,
         durationMs: Math.max(0, completedAt - active.startedAt),
       });
@@ -3064,6 +3101,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     }
     await this.threadMutex.run(active.threadId, async () => {
+      if (thread && failedTurn) {
+        try {
+          this.accrueSubagentBudgetUsage(active, thread, failedTurn.execution);
+        } catch (budgetError) {
+          console.error('[agent] failed to accrue Subagent usage during Turn failure', budgetError);
+        }
+      }
       await Promise.all([
         this.payloads.pruneUnreferencedContexts(
           active.threadId,
@@ -3073,11 +3117,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
           active.threadId,
           this.threadTurnDiagnosticsReferences(active.threadId),
         ),
-      ]);
+      ]).catch(() => undefined);
+      if (this.activeTurns.get(active.threadId) === active) this.activeTurns.delete(active.threadId);
+      await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     }).catch(() => undefined);
-    this.activeTurns.delete(active.threadId);
-    await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
-    const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
     if (thread && failedTurn) this.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
     if (thread && failedTurn) this.queueChildTurnActivity(thread, failedTurn);
   }
@@ -3908,16 +3951,6 @@ export class ThreadBusyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ThreadBusyError';
-  }
-}
-
-export class SubagentBudgetExhaustedError extends Error {
-  constructor(tokensUsed: number, tokenBudget: number) {
-    super(
-      `Subagent token budget exhausted (${tokensUsed} of ${tokenBudget} tokens); the child refuses new work. `
-      + 'Interrupt, review its output, or spawn a fresh child.',
-    );
-    this.name = 'SubagentBudgetExhaustedError';
   }
 }
 

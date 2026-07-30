@@ -70,6 +70,13 @@ applies when the spawn omits that parameter; `null` disables the default. An exp
 spawn value takes precedence. The same default applies to collaboration and isolated
 Skill child Threads through their shared spawn boundary.
 
+When the spawner itself has a budget entry, an omitted child budget is capped at the
+spawner's remaining committed budget: `min(globalDefault, parentRemaining)`. If the
+global default is `null`, the child still inherits `parentRemaining`. An explicit
+`max_total_tokens` remains authoritative and is not capped by the parent; budgets are
+per child rather than aggregate subtree accounting. An exhausted budgeted Thread cannot
+spawn another child.
+
 The default is a circuit breaker, not a task allocation. Local usage spans roughly
 12k-432k total tokens for legitimate child work (94k median), while the observed runaway
 was 682k, so a tight cap would not reliably separate useful work from anomalies. The
@@ -92,14 +99,29 @@ single-Goal semantics and never control this host-owned budget.
 
 When ledger usage reaches or exceeds its total, the single Turn-admission boundary
 rejects every new non-user trigger with `SubagentBudgetExhaustedError`. Collaboration
-follow-up and message tools surface the complete error to the parent, while
-idle-only feature callers receive a soft refusal so automation runs stay pending. The
-mailbox is checked before it is drained, preserving queued messages after a refusal.
-A renderer Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can
-always resume the child explicitly; its usage continues to accrue. Root Threads and
-self-managed Goals have no ledger entry and are structurally outside this gate. The
-budget currently governs admission between Turns; it does not interrupt a Turn already
-in flight, and the completing Turn may overshoot the configured total.
+follow-up and message tools surface the complete error to the parent. Steering an
+already-active Turn remains unconditional; the gate protects new-work admission only,
+so a parent can still steer an overshooting child to conclude.
+
+`followup_task` snapshots and removes the current mailbox synchronously before awaiting
+admission. Messages queued during that await remain in a new mailbox entry. If admission
+is refused, the snapshot is prepended to the new entry; if admission succeeds, only the
+snapshot is consumed and concurrently queued messages remain for the next Turn.
+
+Idle-only callers receive the typed refusal rather than a soft `null` result.
+`GoalExtension` records the complete error as its continuation deferral reason, while
+`AutomationDispatcher` marks the run failed with the same accurate message. A renderer
+Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can always resume
+the child explicitly; its usage continues to accrue. Root Threads and self-managed Goals
+have no ledger entry and are structurally outside this gate.
+
+Completion accrues usage inside the per-Thread mutex before the active Turn is removed
+or idle status is exposed, so racing admission observes the committed total. Failure
+finalization also accrues any execution usage already returned by the executor. A hard
+process crash can still lose usage that existed only in the in-flight process; the
+mid-Turn enforcement in the follow-up kernel change narrows that residual. The current
+budget does not otherwise interrupt a Turn already in flight, and the completing Turn
+may overshoot the configured total.
 
 `list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
 `tokenBudget`. A child without a ledger entry reports `0` and `null`, respectively.
