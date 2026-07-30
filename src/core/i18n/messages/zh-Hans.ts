@@ -399,6 +399,7 @@ export const zhHans: PartialMessages = {
     },
     workspace: {
       canvasAriaLabel: '工作区画布',
+      reorderPanesTitle: '拖动调整分栏顺序',
       resizePanelsLabel: '调整面板宽度',
       resizePanelsTitle: '调整面板宽度（双击重置）',
       tooNarrowForNewPane: '窗口太窄，无法打开更多面板。',

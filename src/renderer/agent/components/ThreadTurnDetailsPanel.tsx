@@ -33,7 +33,7 @@ import {
   InfoIcon,
   LoaderIcon,
 } from '../../ui/icons';
-import { PanelStickyBreadcrumb } from '../../ui/PanelShared';
+import { PanelStickyBreadcrumb, type PanelDragHandle } from '../../ui/PanelShared';
 import { ReadOnlyCodeBlock } from '../../ui/editor/CodeBlockSurface';
 import { Button } from '../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
@@ -49,6 +49,7 @@ interface ThreadTurnDetailsPanelProps {
   readonly canGoBack: boolean;
   readonly onBack: () => void;
   readonly onClose: () => void;
+  readonly panelDragHandle?: PanelDragHandle;
   readonly showClose: boolean;
   readonly threadId: string;
   readonly turnId: string;
@@ -69,6 +70,7 @@ export function ThreadTurnDetailsPanel({
   canGoBack,
   onBack,
   onClose,
+  panelDragHandle,
   showClose,
   threadId,
   turnId,
@@ -83,6 +85,7 @@ export function ThreadTurnDetailsPanel({
         canGoBack={canGoBack}
         closeLabel={t.nodePanel.closePanel}
         currentTitle={t.agent.turnDetails.title}
+        dragHandle={panelDragHandle}
         origin={null}
         onBack={onBack}
         onClose={onClose}

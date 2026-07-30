@@ -14,6 +14,7 @@ import type {
   WorkspacePanelState,
 } from './workspaceLayoutTypes';
 import { isRecord } from '../state/persistence';
+import { listWithItemMovedToIndex } from './interactions/dragDrop';
 
 let nextWorkspaceId = 0;
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v7';
@@ -623,6 +624,20 @@ export function useWorkspaceLayout({
     return repairedActiveRootId;
   }, [activePanelId, panels]);
 
+  // Move a pane to a new left-right position. `index` is an insertion position
+  // (0..length) interpreted against the CURRENT array (shared reorder helper,
+  // also used by the drag preview and the sidebar's pinNodeAtIndex). Order is
+  // the only thing that changes; ids, sizes, view history, and the active pane
+  // are untouched.
+  const movePanelToIndex = useCallback((panelId: string, index: number) => {
+    setPanels((prev) => {
+      const panel = prev.find((candidate) => candidate.id === panelId);
+      if (!panel) return prev;
+      const next = listWithItemMovedToIndex(prev, panel, index);
+      return next === prev ? prev : [...next];
+    });
+  }, []);
+
   const resizePanelPair = useCallback((
     leftPanelId: string,
     rightPanelId: string,
@@ -654,6 +669,7 @@ export function useWorkspaceLayout({
     activatePanel,
     closePanel,
     initializeLayout,
+    movePanelToIndex,
     navigatePanelRoot,
     navigatePanelPreview,
     bindPreviewPanelNode,

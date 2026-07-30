@@ -783,6 +783,134 @@ test.describe('workspace layout resizing', () => {
     await expect(panels).toHaveCount(1);
   });
 
+  test('dragging a pane breadcrumb reorders the split and persists the order', async ({ page }) => {
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
+    // Single pane: no reorder handle — the header stays pure window-drag.
+    await expect(page.locator('.panel-breadcrumb .pane-drag-handle')).toHaveCount(0);
+
+    // Open a split (Today | Schema) so there is an order to change.
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(2);
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
+    await expect(panels.nth(1).locator('.panel-title-editor')).toContainText('Schema');
+    const dayTitle = await panels.nth(0).locator('.panel-title-editor').innerText();
+    expect(dayTitle).not.toContain('Schema');
+
+    // Multi-pane: each breadcrumb's crumb content is a drag handle carved out
+    // of the window drag region (breadcrumb.css .pane-drag-handle).
+    const handles = page.locator('.panel-breadcrumb .pane-drag-handle');
+    await expect(handles).toHaveCount(2);
+    const appRegion = await handles.nth(1).evaluate((element) => (
+      getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    ));
+    expect(appRegion).toBe('no-drag');
+
+    // The handle advertises itself (hover tooltip).
+    await expect(handles.nth(1)).toHaveAttribute('title', 'Drag to reorder panes');
+
+    // HTML5 drag of the second pane's header onto the first pane's left half.
+    await page.evaluate(() => {
+      const source = document.querySelectorAll<HTMLElement>('.panel-breadcrumb .pane-drag-handle')[1];
+      if (!source) throw new Error('Missing pane drag handle');
+      const dataTransfer = new DataTransfer();
+      (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__ = dataTransfer;
+      source.dispatchEvent(new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+    });
+    // Hovering the dragged pane's own half is a no-op drop: the preview keeps
+    // every pane in place (no transforms).
+    await page.evaluate(() => {
+      const source = document.querySelectorAll<HTMLElement>('.outline-panel-surface')[1];
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!source || !dataTransfer) throw new Error('Missing pane drag source');
+      const rect = source.getBoundingClientRect();
+      source.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.75,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    const surfaceTransforms = async () => page.evaluate(() => (
+      [...document.querySelectorAll<HTMLElement>('.outline-panel-surface')]
+        .map((surface) => surface.style.transform || '')
+        .join('|')
+    ));
+    await expect(page.locator('.workspace-canvas.pane-dragging')).toHaveCount(1);
+    await expect.poll(surfaceTransforms).not.toContain('translateX');
+    // Pane content is pointer-shielded while the drag is active, so embedded
+    // iframe/webview previews cannot swallow dragover/drop.
+    await expect.poll(async () => page.evaluate(() => (
+      getComputedStyle(document.querySelector<HTMLElement>('.outline-panel-surface .main-panel')!).pointerEvents
+    ))).toBe('none');
+    // Tag the dragged pane's DOM node: the commit must reorder via CSS `order`
+    // without remounting pane subtrees (a remount would drop the marker).
+    await page.evaluate(() => {
+      const surface = document.querySelectorAll<HTMLElement>('.outline-panel-surface')[1];
+      if (surface) surface.dataset.e2eReorderMarker = 'dragged';
+    });
+    await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('.outline-panel-surface');
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!target || !dataTransfer) throw new Error('Missing pane drop target');
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.25,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    // The live preview slides both panes toward their would-be positions
+    // before the drop: the hovered pane shifts right, the dragged pane left.
+    await expect.poll(surfaceTransforms).toMatch(/^translateX\([\d.]+px\)\|translateX\(-[\d.]+px\)$/);
+    await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('.outline-panel-surface');
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!target || !dataTransfer) throw new Error('Missing pane drop target');
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.25,
+        clientY: rect.top + rect.height / 2,
+      }));
+      delete (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+    });
+
+    // Order swapped VISUALLY (pane DOM order is stable across reorders — the
+    // commit lands as CSS `order`, so iframe/webview content never remounts),
+    // preview transforms dropped with the commit, and the new order persists.
+    const visualTitles = async () => page.evaluate(() => (
+      [...document.querySelectorAll<HTMLElement>('.outline-panel-surface')]
+        .map((surface) => ({
+          left: surface.getBoundingClientRect().left,
+          title: surface.querySelector<HTMLElement>('.panel-title-editor')?.textContent ?? '',
+        }))
+        .sort((a, b) => a.left - b.left)
+        .map((entry) => entry.title)
+        .join('|')
+    ));
+    await expect.poll(visualTitles).toBe(`Schema|${dayTitle}`);
+    await expect(page.locator('.workspace-canvas.pane-dragging')).toHaveCount(0);
+    await expect.poll(surfaceTransforms).not.toContain('translateX');
+    // Same DOM node, new visual slot: the marker survived the commit.
+    await expect(page.locator('[data-e2e-reorder-marker="dragged"]')).toHaveCount(1);
+    await expect.poll(async () => page.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return '';
+      const parsed = JSON.parse(raw) as { panels?: Array<{ view?: { rootId?: string } }> };
+      return (parsed.panels ?? []).map((panel) => panel.view?.rootId ?? '?').join(',');
+    }, WORKSPACE_LAYOUT_STORAGE_KEY)).toBe(`${ids.schema},${ids.today}`);
+  });
+
   test('outline expansion state restores by root page across reload', async ({ page }) => {
     await page.evaluate(({ layoutStorageKey, rootId }) => {
       const date = new Date();

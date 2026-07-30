@@ -68,7 +68,7 @@ import { fileNodeTitle, isFileNode } from './preview/fileNode';
 import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
-import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from './PanelShared';
+import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from './PanelShared';
 import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from './outliner/OutlinerFlatView';
 import { useT } from '../i18n/I18nProvider';
 import { referenceSummaryForIndex } from '../state/referenceSummary';
@@ -78,6 +78,7 @@ const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
 interface NodePanelProps {
   panelId: string;
+  panelDragHandle?: PanelDragHandle;
   rootId: NodeId;
   canGoBack: boolean;
   initialScrollTop?: number;
@@ -565,6 +566,7 @@ export function NodePanel(props: NodePanelProps) {
           canGoBack={props.canGoBack}
           closeLabel={t.nodePanel.closePanel}
           currentTitle={currentPageTitle}
+          dragHandle={props.panelDragHandle}
           origin={(
             <ButtonControl
               aria-label={t.nodePanel.openLibrary}
@@ -603,6 +605,7 @@ export function NodePanel(props: NodePanelProps) {
                 <ButtonControl
                   className="panel-breadcrumb-button"
                   onClick={() => props.onRoot(node.id)}
+                  title={label}
                 >
                   {label}
                 </ButtonControl>

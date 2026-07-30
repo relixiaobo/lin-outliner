@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NodeId } from '../api/types';
 import type { DocumentIndex } from '../state/document';
 import { isRecord } from '../state/persistence';
+import { listWithItemMovedToIndex } from './interactions/dragDrop';
 
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
 const STORAGE_VERSION = 1;
@@ -92,19 +93,12 @@ export function useWorkspacePinnedNodes(byId: DocumentIndex['byId'] | null) {
 
   // Insert a node into the pinned list at a specific position. Handles both adding a
   // new pin (drag from the outline) and reordering an existing one (drag within the
-  // list): the node is removed first, then re-inserted, with `index` interpreted
-  // against the CURRENT list so a same-list move lands where the insertion line showed.
+  // list) via the shared remove-then-insert reorder helper.
   const pinNodeAtIndex = useCallback((nodeId: NodeId, index: number) => {
     if (!byId?.has(nodeId)) return;
     setPinnedNodeIds((current) => {
-      const currentIndex = current.indexOf(nodeId);
-      const without = current.filter((pinnedNodeId) => pinnedNodeId !== nodeId);
-      let target = index;
-      if (currentIndex !== -1 && currentIndex < index) target -= 1;
-      target = Math.max(0, Math.min(target, without.length));
-      if (currentIndex === target && currentIndex !== -1) return current;
-      const next = [...without.slice(0, target), nodeId, ...without.slice(target)];
-      return next.slice(0, MAX_PINNED_NODES);
+      const next = listWithItemMovedToIndex(current, nodeId, index);
+      return next === current ? current : next.slice(0, MAX_PINNED_NODES);
     });
   }, [byId]);
 

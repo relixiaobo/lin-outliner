@@ -47,7 +47,7 @@ import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKey
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import type { FilePreviewNavigationOptions, FilePreviewPresentation } from '../workspaceLayoutTypes';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
-import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from '../PanelShared';
+import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from '../PanelShared';
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
 import { fileNodeTarget, fileNodeTitle, isFileNode } from './fileNode';
 import {
@@ -94,6 +94,7 @@ interface FilePreviewPanelProps {
   onScrollPositionChange?: (scrollTop: number) => void;
   onTogglePin: (nodeId: NodeId) => void;
   panelId: string;
+  panelDragHandle?: PanelDragHandle;
   presentation?: FilePreviewPresentation;
   run: CommandRunner;
   setDragId: (nodeId: NodeId | null) => void;
@@ -481,6 +482,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         canGoBack={props.canGoBack}
         closeLabel={t.nodePanel.closePanel}
         currentTitle={displayTitle}
+        dragHandle={props.panelDragHandle}
         origin={readerMode ? null : looseUrlPreview ? (
           <span className="panel-breadcrumb-origin file-preview-path-origin" aria-hidden="true">
             {urlPageMetadata.faviconUrl ? (
@@ -549,6 +551,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                   <ButtonControl
                     className="panel-breadcrumb-button"
                     onClick={() => props.onRoot(node.id)}
+                    title={label}
                   >
                     {label}
                   </ButtonControl>
