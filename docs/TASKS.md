@@ -727,6 +727,17 @@ anything.
 
 ## Recently completed
 
+- **e2e-guard-debt-cleanup**
+  (main, direct on `main`, 2026-07-30, fast-track) — cleared the deterministic
+  e2e guard failures accumulated from unit-test-only gates: two named
+  focus-ring-transfer exceptions (automation settings rows, time-picker
+  trigger), the `ProviderParameterList` read-only tooltip registration, the
+  automation unread-dot margin tokenized to `--space-3`, the `canvas.css`
+  reduced-motion registration, and the composer attachment-error probe moved
+  to the Office ownership-file rejection (10 MB limit removed by design in
+  `0120a62d`). Full suite deterministically green; leftover per-run failures
+  are parallel-load flakiness (each passes in isolation).
+
 - **agent-tool-path-modifier-click**
   (`codex-4/tool-path-modifier-click`, PR #453, codex-4, merged 2026-07-30,
   plan-track, archived at

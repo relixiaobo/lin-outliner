@@ -41,6 +41,7 @@ const colorSchemeDeclarationFiles = new Map([
 ]);
 const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
+  ['src/renderer/styles/canvas.css', 'Pane-drag arrangement preview commits without sliding.'],
   ['src/renderer/styles/thread-turn-details.css', 'Turn Diagnostics disclosures and usage overlay become immediate.'],
   ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],

@@ -48,6 +48,7 @@ const tooltipSurfaceSelectors = new Map([
 ]);
 const readOnlyTooltipComponents = new Map([
   ['FilePreviewIcon', 'Read-only inline file identity glyph.'],
+  ['ProviderParameterList', 'Read-only provider parameter name/value list.'],
   ['ThreadUsageBreakdown', 'Read-only token and cost breakdown.'],
 ]);
 const chromeIconControlSelectors = [
@@ -59,6 +60,10 @@ const chromeIconControlSelectors = [
   '.settings-row-menu-trigger',
 ];
 const focusVisibleRingSuppressionExceptions = new Map([
+  [
+    'src/renderer/styles/automation.css|.automation-settings-group .time-picker-control:focus-within, :root[data-input-modality="keyboard"] .automation-settings-group .select-popup-input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-date-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-multi-select-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-setting input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-input:focus-visible',
+    'Automation settings controls transfer the keyboard ring to the setting row (.automation-setting-row:focus-within).',
+  ],
   [
     'src/renderer/styles/code.css|.code-block-textarea:focus-visible',
     'Code editor textarea is a transparent caret plane over syntax-highlighted text.',
@@ -92,6 +97,10 @@ const focusVisibleOutlineSuppressionExceptions = new Map([
   [
     'src/renderer/styles/base.css|input:focus-visible, textarea:focus-visible, select:focus-visible',
     'Text controls suppress the UA outline; the modality-gated keyboard rule adds the shared focus ring.',
+  ],
+  [
+    'src/renderer/styles/controls.css|.time-picker-trigger:focus-visible',
+    'The time-picker trigger suppresses the UA outline; the keyboard ring renders on the enclosing .time-picker-control:focus-within.',
   ],
   [
     'src/renderer/styles/file-preview.css|.file-node-image-button:focus-visible',

@@ -34,6 +34,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **E2E guard debt paid down (main)** — cleared every deterministic guard
+  failure that had accumulated on `main` from merges whose gates ran unit
+  tests only: named the automation-settings and time-picker focus-ring
+  transfers plus the read-only `ProviderParameterList` tooltip component in
+  the cursor-affordances exception maps, tokenized the automation unread-dot
+  margin (`--space-3`), registered `canvas.css`'s pane-drag reduced-motion
+  rule, and rewrote the composer attachment-error probe around the Office
+  ownership-file rejection (the 10 MB limit it relied on was removed by
+  bounded large-file observations). Full e2e suite is deterministically
+  green; remaining one-off failures are parallel-load flakiness only.
+
 - **Agent thread UX plans (PR #454, cc-2, plan-only)** — three gate-reviewed
   plans landed: `agent-subagent-interaction` (status truth for delegated work,
   children leave the Thread list, live delegation card, cascading user Stop —

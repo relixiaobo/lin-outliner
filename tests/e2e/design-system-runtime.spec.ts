@@ -339,23 +339,28 @@ async function showComposerAttachmentError(page: Page) {
             sizeBytes: number;
             lastModified: number;
           }>;
+          rejectedFiles?: Array<{
+            reason: string;
+            name: string;
+            suggestedName: string | null;
+          }>;
         }>;
       };
     };
     if (!win.lin) return;
     win.lin.pickLocalFiles = async () => ({
       canceled: false,
-      files: [{
-        path: '/Users/test/Pictures/huge.png',
-        name: 'huge.png',
-        mimeType: 'image/png',
-        sizeBytes: 11 * 1024 * 1024,
-        lastModified: 1_800_000_000_000,
+      files: [],
+      rejectedFiles: [{
+        reason: 'officeOwnershipFile',
+        name: '~$Report.docx',
+        suggestedName: 'Report.docx',
       }],
     });
   });
   await page.getByRole('button', { name: 'Add attachment' }).click();
-  await expect(page.getByRole('status')).toContainText('huge.png is larger than 10 MB');
+  await expect(page.getByRole('status'))
+    .toContainText('~$Report.docx is a temporary Office ownership file. Choose Report.docx instead.');
 }
 
 async function pasteClipboardFile(page: Page, file: { name: string; mimeType: string; text: string }) {

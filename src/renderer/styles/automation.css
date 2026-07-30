@@ -731,7 +731,7 @@
   align-self: start;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  margin: 6px auto 0;
+  margin: var(--space-3) auto 0;
   opacity: 0;
 }
 
