@@ -34,6 +34,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Browser Control plan refresh (PR #459, codex-3, plan-only)** — the
+  `agent-browser-control` plan now matches the shipped runtime
+  (#444/#445/#451/#456) and the PM's pre-implementation rulings: prepared
+  execution rides the kernel runner port via a four-operation
+  `ToolExecutionContract`, capability intent and the allow/deny decision
+  travel in a durable start-event envelope, `ToolExecutionAdapter` supersedes
+  `ToolRuntime.instrumentTool` as the lifecycle/hook owner, and a new
+  non-user-configurable `decide(effect)` safety floor (host `ToolSafetyEffect`
+  vocabulary with `filesystem.write` first, plus fail-closed admission of
+  unrecognized output flags) backs worst-case containment for unclassified
+  commands. Gate review confirmed 7 findings; all addressed same-day.
+
 - **E2E guard debt paid down (main)** — cleared every deterministic guard
   failure that had accumulated on `main` from merges whose gates ran unit
   tests only: named the automation-settings and time-picker focus-ring

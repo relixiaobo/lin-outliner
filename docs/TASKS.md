@@ -31,7 +31,15 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #449
+**In flight (2026-07-30).** Open PR queue: #455 (draft,
+`subagent-budget-propagation` PR C), #457 (draft, plan-only), #458 (ready,
+`agent-thread-scroll-follow`), #460 (draft, `subagent-transcript-artifact`),
+#461 (ready, `agent-run-presentation-consistency` PR A). Recently merged: #459
+(`codex-3/agent-browser-control-plan-refresh`, plan-track design update) after
+a medium review gate (7 confirmed findings, all addressed same-day; PM ruled
+the non-user-configurable safety floor into implementation scope) — the
+Browser Control plan now matches the post-#456 runtime; see *Agent
+capabilities* and *Recently completed*. #449
 (`cc/agent-deck-click-refocus`, fast-track) after main review — unclaimed
 thread-view clicks now hand focus back to the composer; see *Recently
 completed*. #448
@@ -336,7 +344,8 @@ before any directional/security-sensitive build.
   import sweep SHIPPED as #447 (2026-07-30, codex-2; two sanctioned chokepoints — `kernel/types`
   for the type vocabulary, `piModels` for runtime functions — completion criterion: the `pi-ai`
   importer list equals the transport allowlist exactly). Still queued: `subagent-budget-propagation`
-  PR B, the `agent-browser-control` plan revision, and the `Pi*` mechanical rename.
+  PR C (draft #455) and the `Pi*` mechanical rename; the `agent-browser-control`
+  plan revision shipped as #459 (2026-07-30, codex-3).
 - **threadservice-decomposition** (P2, `done` 2026-07-30; PR #451, codex-2) — the 4,502-line /
   107-method `ThreadService.ts` split into four owned modules (`ThreadResourceOps`,
   `ThreadCatalogOps`, `SubagentCollaboration`, `TurnLifecycle`) over one shared `ThreadCore`
@@ -489,25 +498,32 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1, design updated #443; **implementation resequenced
-  behind `native-turn-kernel` — PM 2026-07-29**) —
+- **agent-browser-control** (P1, design updated #443, revised #459;
+  **implementation ready to claim once draft #455 and draft #460 land or
+  close**) —
   Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
   its classified `bash` path rather than reimplementing browser automation or
   exposing a Tenon-native tool family. One complete feature PR first establishes
   prepared execution and durable projection, then adds deterministic distribution,
   the direct command provider, Thread identity, Turn files, conservative Browser
   capabilities, transient stdin, lifecycle cleanup, and per-Turn Skill availability.
-  **Before implementation, the claiming dev revises the plan's Prepared Tool
-  Execution section**: it predates #441/#444 (no awareness of Turn diagnostics —
-  `PiEventNormalizer`'s executionObserver now feeds
-  `captureToolExecutionStarted/Completed` and the Model Interactions batch
-  activities) and its move of tool-Item ownership out of the normalizer collides
-  head-on with `native-turn-kernel`'s behavioral contract and tripwires. Rebuild
-  that section on the kernel's `ToolRunner` port (`ToolExecutionContract` as a
-  port extension) and refresh stale runtime facts; the ownership-boundary,
-  command-grammar, provider, distribution, skill, and capability sections stand
-  as ratified. URL Preview remains wholly independent. See
-  `docs/plans/agent-browser-control.md`.
+  **Plan revision shipped 2026-07-30 (PR #459, codex-3)**: Prepared Tool
+  Execution is rebuilt on the kernel's runner port — four-operation
+  `ToolExecutionContract` (adding `projectUpdate` for transient/durable update
+  splitting), a durable intent/decision start-event envelope consumed by
+  `PiEventNormalizer` (which stays the sole tool-Item translator with the
+  #444 diagnostics chain intact), `ToolExecutionAdapter` replacing
+  `ToolRuntime.instrumentTool` as the sole prepared-lifecycle and
+  extension-hook owner, the host-only `ToolSafetyEffect` vocabulary with the
+  new ordered `decide(effect)` stage (non-user-configurable safety floor
+  first — PM-ruled 2026-07-30 — then explicit user blocks), and fail-closed
+  `unrecognized_output_path` admission for unclassified commands. The
+  2026-07-30/31 rulings (no catalog admission gate, worst-case unclassified
+  marker, Apple Silicon launch, Full Access sensitive-read default,
+  conversation-only authorization remediation) are folded in. The claiming
+  dev rebases on the landed #455/#460 catalog baseline and repeats the
+  open-PR scope check before claiming code. URL Preview remains wholly
+  independent. See `docs/plans/agent-browser-control.md`.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
@@ -737,6 +753,23 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **browser-control-plan-refresh**
+  (`codex-3/agent-browser-control-plan-refresh`, PR #459, codex-3, merged
+  2026-07-30, plan-track design update) — realigned
+  `docs/plans/agent-browser-control.md` with the post-#444/#445/#451/#456
+  runtime and folded in the 2026-07-30/31 PM rulings; plan-only, no product
+  code. **Gate (main):** medium review confirmed 7 findings — the plan leaned
+  on a nonexistent `decide(effect)`/safety-floor mechanism, `capabilityIntent`
+  had no transport onto kernel events, `ToolRuntime.instrumentTool`'s fate was
+  unstated, extension hooks lost their owner, the execution contract had no
+  update-projection operation, unrecognized output flags escaped containment,
+  and the collision section carried stale PR facts. The PM ruled the safety
+  floor be built for real (host `ToolSafetyEffect` vocabulary,
+  `filesystem.write` first, fail-closed admission on unrecognized output
+  flags); all 7 findings were addressed same-day in `7de4e9bb`, verified
+  item-by-item at the gate with `docs:check` and the changed-file assertion
+  green on the final head.
 
 - **e2e-guard-debt-cleanup**
   (main, direct on `main`, 2026-07-30, fast-track) — cleared the deterministic
