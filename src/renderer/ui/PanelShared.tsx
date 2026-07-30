@@ -74,6 +74,7 @@ export function usePanelTitleDock() {
 export interface PanelDragHandle {
   onDragStart: DragEventHandler<HTMLElement>;
   onDragEnd: DragEventHandler<HTMLElement>;
+  title: string;
 }
 
 interface PanelStickyBreadcrumbProps {
@@ -120,6 +121,7 @@ export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
         draggable={props.dragHandle ? true : undefined}
         onDragStart={props.dragHandle?.onDragStart}
         onDragEnd={props.dragHandle?.onDragEnd}
+        title={props.dragHandle?.title}
       >
         {props.children}
         {props.titleDocked && (

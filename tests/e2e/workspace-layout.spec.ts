@@ -806,6 +806,9 @@ test.describe('workspace layout resizing', () => {
     ));
     expect(appRegion).toBe('no-drag');
 
+    // The handle advertises itself (hover tooltip).
+    await expect(handles.nth(1)).toHaveAttribute('title', 'Drag to reorder panes');
+
     // HTML5 drag of the second pane's header onto the first pane's left half.
     await page.evaluate(() => {
       const source = document.querySelectorAll<HTMLElement>('.panel-breadcrumb.pane-drag-handle')[1];
@@ -818,6 +821,22 @@ test.describe('workspace layout resizing', () => {
         dataTransfer,
       }));
     });
+    // Hovering the dragged pane's own half is a no-op drop: no line, no wash.
+    await page.evaluate(() => {
+      const source = document.querySelectorAll<HTMLElement>('.outline-panel-surface')[1];
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!source || !dataTransfer) throw new Error('Missing pane drag source');
+      const rect = source.getBoundingClientRect();
+      source.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.75,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(0);
+    await expect(page.locator('.outline-panel-surface.panel-drop-after')).toHaveCount(0);
     await page.evaluate(() => {
       const target = document.querySelector<HTMLElement>('.outline-panel-surface');
       const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;

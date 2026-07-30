@@ -94,10 +94,34 @@
 /* Active pane indication stays subtle + neutral (handled by header strength in
    breadcrumb.css); no full box outline on the surface. */
 
-/* Pane drag-to-reorder insertion line: the neutral --drop-line (same token as the
-   outliner and sidebar insertion lines) at the boundary the dragged pane would land
-   on. Boundary i paints on pane i's left edge; the rightmost boundary paints on the
-   last pane's right edge. Pure overlay — hovering a drag never reflows the panes. */
+/* Pane drag-to-reorder feedback, per the design-system drag-and-drop contract:
+   a neutral --drop-line insertion line at the boundary the dragged pane would land
+   on, PLUS a --fill-2 landing wash over the adjacent half of the hovered pane — a
+   2px line alone is too quiet at pane scale (PM feedback). Boundary i paints on
+   pane i's left edge; the rightmost boundary paints on the last pane's right edge.
+   Both are pure overlays — hovering a drag never reflows the panes — and neither
+   renders while the hovered boundary is one of the dragged pane's own (a no-op
+   drop shows no feedback; WorkspaceCanvas suppresses the state). */
+.outline-panel-surface.panel-drop-before::before,
+.outline-panel-surface.panel-drop-after::before {
+  position: absolute;
+  z-index: var(--z-resize);
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  background: var(--fill-2);
+  content: "";
+  pointer-events: none;
+}
+
+.outline-panel-surface.panel-drop-before::before {
+  left: 0;
+}
+
+.outline-panel-surface.panel-drop-after::before {
+  right: 0;
+}
+
 .outline-panel-surface.panel-drop-before::after,
 .outline-panel-surface.panel-drop-after::after {
   position: absolute;

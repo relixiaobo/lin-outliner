@@ -52,10 +52,14 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
   const t = useT();
   const activePanels = props.panels;
   // Pane drag-to-reorder: the insertion position (0..length) the hovered drop
-  // would land on, shown as a line at the matching pane boundary. Null when no
-  // pane drag hovers the canvas. The dragged pane's id travels in the drag's
-  // dataTransfer (WORKSPACE_PANEL_REORDER_MIME), not in state.
+  // would land on, shown as a line at the matching pane boundary plus a landing
+  // wash on the hovered pane. Null when no pane drag hovers the canvas — or when
+  // the hovered boundary is one of the dragged pane's own (a no-op drop shows no
+  // feedback at all). The dragged pane's id travels in the drag's dataTransfer
+  // (WORKSPACE_PANEL_REORDER_MIME); dragPanelId mirrors it in state because
+  // dataTransfer payloads are unreadable during dragover.
   const [panelDropIndex, setPanelDropIndex] = useState<number | null>(null);
+  const [dragPanelId, setDragPanelId] = useState<string | null>(null);
 
   const isPanelDrag = (event: ReactDragEvent<HTMLElement>) => (
     event.dataTransfer.types.includes(WORKSPACE_PANEL_REORDER_MIME)
@@ -67,12 +71,22 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData(WORKSPACE_PANEL_REORDER_MIME, panel.id);
           event.dataTransfer.setData('text/plain', '');
+          setDragPanelId(panel.id);
         },
         // dragend fires on the source for drop AND cancel (Escape / drop outside).
-        onDragEnd: () => setPanelDropIndex(null),
+        onDragEnd: () => {
+          setDragPanelId(null);
+          setPanelDropIndex(null);
+        },
+        title: t.shell.workspace.reorderPanesTitle,
       }
       : undefined
   );
+  const updateDropIndex = (index: number) => {
+    const sourceIndex = activePanels.findIndex((panel) => panel.id === dragPanelId);
+    const noop = sourceIndex >= 0 && (index === sourceIndex || index === sourceIndex + 1);
+    setPanelDropIndex(noop ? null : index);
+  };
   // Surface-level dragover: before/after the hovered pane by its horizontal
   // midpoint (the pane analogue of the sidebar's pinned-row reorder).
   const handlePanelDragOver = (panelIndex: number) => (event: ReactDragEvent<HTMLDivElement>) => {
@@ -82,7 +96,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     event.dataTransfer.dropEffect = 'move';
     const rect = event.currentTarget.getBoundingClientRect();
     const after = event.clientX - rect.left > rect.width / 2;
-    setPanelDropIndex(after ? panelIndex + 1 : panelIndex);
+    updateDropIndex(after ? panelIndex + 1 : panelIndex);
   };
   // Divider dragover: the resize slot IS the boundary between panelIndex and
   // panelIndex + 1, so hovering it never flickers the line off.
@@ -90,12 +104,13 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     if (!isPanelDrag(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    setPanelDropIndex(panelIndex + 1);
+    updateDropIndex(panelIndex + 1);
   };
   const handlePanelDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     if (!isPanelDrag(event)) return;
     const panelId = event.dataTransfer.getData(WORKSPACE_PANEL_REORDER_MIME);
     const dropIndex = panelDropIndex;
+    setDragPanelId(null);
     setPanelDropIndex(null);
     if (!panelId || dropIndex === null) return;
     event.preventDefault();

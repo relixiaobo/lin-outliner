@@ -844,13 +844,17 @@ panels[1] -> next pane
 panels[2] -> next pane
 ```
 
-The user reorders panes by dragging a pane's breadcrumb path row onto another
-pane: before/after resolves by the hovered pane's horizontal midpoint (the pane
-analogue of the sidebar's pinned-row reorder), a neutral `--drop-line` insertion
-line marks the target boundary, and the drop is a pure array permutation
-(`movePanelToIndex`) — ids, sizes, per-pane history, and the active pane are
-untouched. Reordering therefore also renumbers the pane `order` the agent sees
-in its user-view context.
+The user reorders panes by dragging a pane's breadcrumb path row (hover title
+"Drag to reorder panes") onto another pane: before/after resolves by the hovered
+pane's horizontal midpoint (the pane analogue of the sidebar's pinned-row
+reorder). Drop feedback is a neutral `--drop-line` insertion line at the target
+boundary plus a `--fill-2` landing wash over the adjacent half of the hovered
+pane — pane-scale feedback, per the design-system drag-and-drop contract.
+Hovering one of the dragged pane's own boundaries (a no-op drop) shows no
+feedback. The drop is a pure array permutation (`movePanelToIndex`) — ids,
+sizes, per-pane history, and the active pane are untouched. Reordering
+therefore also renumbers the pane `order` the agent sees in its user-view
+context.
 
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.

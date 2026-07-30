@@ -432,6 +432,7 @@ export const en = {
     },
     workspace: {
       canvasAriaLabel: 'Workspace canvas',
+      reorderPanesTitle: 'Drag to reorder panes',
       resizePanelsLabel: 'Resize panels',
       resizePanelsTitle: 'Resize panels (double-click to reset)',
       tooNarrowForNewPane: 'Window is too narrow to open another pane.',
