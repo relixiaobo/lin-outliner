@@ -285,7 +285,12 @@ legibility gates after). Shipped: per-child ledger, admission gate, bright
 line (#446). Queued: budget plan PRs B and C.
 
 Cross-cutting rules: the user bright line (a human-triggered Turn is never
-gated) holds across all three layers; exhaustion gates the admission of NEW
+gated) holds across all three layers — as an ADMISSION-LEVEL invariant and
+defense-in-depth, not a product journey: child Threads are composer-less and
+user control on them is interrupt-only (PM ruling 2026-07-30, recorded in
+`docs/plans/agent-subagent-interaction.md`), so the supported recovery paths
+for an exhausted child are parent respawn/synthesis and the transcript
+artifact, not in-child continuation; exhaustion gates the admission of NEW
 work only and never destroys or hides produced artifacts; and the contract
 applies uniformly to every executor form — an executor that cannot yield all
 three layers is not complete.

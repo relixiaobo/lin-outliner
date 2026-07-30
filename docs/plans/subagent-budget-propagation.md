@@ -169,7 +169,11 @@ are visible to the parent.
    a tool error. `sendCollaborationMessage` checks the gate BEFORE draining
    the mailbox so queued messages survive a refusal. A user-triggered Turn is
    never gated (bright line; test), and a user Turn on an exhausted child
-   still runs with the ledger continuing to tally. Per A12 this is an
+   still runs with the ledger continuing to tally. The bright line is an
+   admission-level invariant (defense-in-depth), NOT a product journey:
+   children have no composer, so user-facing recovery from exhaustion is
+   parent respawn/synthesis plus the transcript artifact (PM ruling
+   2026-07-30; see `agent-subagent-interaction.md`). Per A12 this is an
    admission-boundary invariant — fail-closed is correct here.
 4. **Concurrency & failure-path contract** (gate pass 2 rulings, normative):
    accrual runs INSIDE the completion `threadMutex` callback before
