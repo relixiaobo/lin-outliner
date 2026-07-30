@@ -91,6 +91,7 @@ describe('renderer Thread store', () => {
 
   test('preserves text spacing around structured composer references', async () => {
     const owner = thread('thread-1', 1);
+    const startedTurn = turn('turn-started', 'inProgress', 'accepted');
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const client = {
       onAgentCoreNotification: () => () => undefined,
@@ -100,7 +101,11 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/start') return {};
+        if (method === 'turn/start') return {
+          acceptedItemId: 'item-accepted',
+          deduplicated: false,
+          turn: startedTurn,
+        };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -115,7 +120,7 @@ describe('renderer Thread store', () => {
       source: { kind: 'localFile' as const, path: '/workspace/report.pdf' },
     };
 
-    await store.send([
+    const acceptedTurn = await store.send([
       { type: 'text', text: '  Compare ' },
       { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
       { type: 'text', text: ' with ' },
@@ -130,6 +135,7 @@ describe('renderer Thread store', () => {
       attachment,
       { type: 'text', text: ' before deciding.' },
     ]);
+    expect(acceptedTurn).toEqual(startedTurn);
   });
 
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {

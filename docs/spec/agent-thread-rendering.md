@@ -440,19 +440,47 @@ arrow-key navigation. Ordinary root-user rows show relative time only. Special
 sources show a localized product label and never expose raw `threadSource` enum
 values.
 
-The transcript follows streaming output only while the reader remains near its
-bottom edge. Scrolling upward or opening a reasoning, tool, or long-message
-disclosure releases that lock, so later Item updates never pull the reader away
-from earlier evidence. A new explicit send restores bottom following.
+The transcript follows streaming output only while its visible follow state is
+within 56 pixels of the bottom after a user or programmatic scroll. While follow
+is active, Turn updates, non-Turn transcript content, transcript viewport changes,
+and composer-region height changes all coalesce through one frame-level bottom
+pin. Moving upward releases follow, so later Item updates never pull the reader
+away from earlier evidence. A visible Jump to latest material pill appears only
+when follow is inactive and content remains below the viewport; activating it
+returns to the bottom, re-engages follow, and restores composer focus.
+
+Starting a new Turn first moves to the existing tail for immediate feedback. Once
+the accepted user message mounts and measures, that message is anchored at the
+transcript top inset and follow is re-derived from the resulting position. A long
+conversation therefore streams below the anchored message without moving it;
+short conversations that are still within the bottom threshold continue
+following. The existing `turn/start` response identifies the exact accepted Turn,
+so a concurrently loaded history page cannot be mistaken for the new send.
+Steering an existing active Turn keeps the bottom-follow path. The renderer does
+not insert an optimistic user message or alter notification order.
+A temporary renderer-only tail spacer gives the new message enough scroll runway
+to reach the top before response content exists. It carries no document state,
+shrinks as real response content replaces that runway, and is removed when no
+runway remains or the reader jumps to the latest content. Spacer-only runway does
+not count as unread content for the Jump to latest control.
 
 Each Thread keeps an ephemeral scroll snapshot across Thread switches. Returning
-to a Thread restores its prior position, or continues following the bottom when
-the snapshot was bottom-locked. Threads above forty Turns reuse the established
+to a Thread waits for non-empty loaded history, then restores the prior position
+or the nearest reachable offset when viewport or history changes made the exact
+offset unavailable; empty history never replaces the saved snapshot with a top
+clamp. User scrolling takes ownership and cancels the pending restore. A failed
+send restores the pre-send position and follow state. A followed Thread continues
+at the bottom. Threads above forty Turns reuse the established
 measured-row virtual transcript with viewport overscan; terminal offscreen Turns
-do not remain mounted, while the active viewport and disclosure scroll anchors
-remain stable as measured heights replace estimates. The same content-visibility
-containment applies from a Turn's first render through its terminal state, so
-completion never swaps a measured live height for an intrinsic fallback.
+do not remain mounted. When a row fully above the viewport replaces an estimate
+with a measurement, its height delta is applied after the virtual container
+commits the corresponding total-height change, so browser clamping cannot discard
+the compensation and the visible reading position remains stable. Measurements
+ignore subtrees currently skipped by `content-visibility: auto`, preventing its
+intrinsic fallback size from entering the measured-height cache. The same
+content-visibility containment applies from a Turn's first render through its
+terminal state, so completion never swaps a measured live height for an intrinsic
+fallback.
 
 Provider request and stream retries are transient execution state, not Items.
 The selected Thread shows the established live reconnecting row while retrying
@@ -474,8 +502,11 @@ switching Threads, streaming-to-terminal remounts, and application reloads do no
 discard an explicit user choice. A live reasoning Item is open while streaming.
 A terminal reasoning Item rests folded unless it is the only process Item in a
 Turn without a final agent response, in which case it opens by default. Expanding
-or collapsing a disclosure preserves the clicked row's scroll position while
-releasing transcript bottom-follow.
+or collapsing a disclosure preserves the clicked row's scroll position; follow is
+then derived from the resulting geometry rather than released by the toggle. An
+asynchronous tool-output read holds that anchor until the expanded content lands,
+while wheel, pointer, touch, keyboard, or independent scroll intent still cancels
+the pending correction immediately.
 
 ## Pagination And Notifications
 

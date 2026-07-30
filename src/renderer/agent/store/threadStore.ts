@@ -182,10 +182,10 @@ export class ThreadStore {
   async send(
     contentInput: readonly ThreadUserContent[],
     userView?: RendererUserViewHints,
-  ): Promise<void> {
+  ): Promise<Turn | null> {
     const content = normalizeUserContent(contentInput);
     const threadId = this.snapshot.selectedThreadId;
-    if (!threadId || content.length === 0) return;
+    if (!threadId || content.length === 0) return null;
     const active = findLastInProgressTurn(this.turns(threadId));
     if (active) {
       await this.client.agentCoreRequest('turn/steer', {
@@ -195,13 +195,15 @@ export class ThreadStore {
         clientUserMessageId: crypto.randomUUID(),
         ...(userView ? { userView } : {}),
       });
+      return null;
     } else {
-      await this.client.agentCoreRequest('turn/start', {
+      const response = await this.client.agentCoreRequest('turn/start', {
         threadId,
         input: content,
         clientUserMessageId: crypto.randomUUID(),
         ...(userView ? { userView } : {}),
       });
+      return response.turn;
     }
   }
 

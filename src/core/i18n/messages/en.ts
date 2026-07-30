@@ -1123,6 +1123,7 @@ commandPalette: {
       dropFilesToAttach: 'Drop files to attach',
       removeAttachment: ({ name }: { name: string }) => `Remove ${name}`,
       removeReference: ({ name }: { name: string }) => `Remove ${name}`,
+      jumpToLatest: 'Jump to latest',
       send: 'Send',
       steer: 'Steer',
       interrupt: 'Interrupt Turn',
