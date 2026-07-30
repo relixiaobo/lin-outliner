@@ -23,7 +23,6 @@ export {
   CalendarClock as ScheduledIcon,
   Check as CheckIcon,
   CircleStop as BashStopToolIcon,
-  CircleX as ToolErrorIcon,
   Square as CheckboxIcon,
   ChevronDown as ChevronDownIcon,
   ChevronLeft as ChevronLeftIcon,

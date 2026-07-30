@@ -49,9 +49,7 @@ import {
   QuestionToolIcon,
   RestoreIcon,
   SkillIcon,
-  StopIcon,
   TerminalIcon,
-  ToolErrorIcon,
   WebFetchToolIcon,
   WebSearchToolIcon,
 } from '../../../ui/icons';
@@ -247,7 +245,7 @@ export function ThreadToolActivityGroup({
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, <GenericToolIcon size={ICON_SIZE.tiny} />)} />
-        <span className="thread-tool-activity-summary">{label}</span>
+        <span className="thread-tool-activity-summary" title={label}>{label}</span>
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-activity-members">
@@ -605,6 +603,7 @@ function ToolItemDisclosure({
     };
   }, [expanded, fullOutput, item, onReadOutput]);
   const output = fullOutput ?? detail.output;
+  const label = summarizeThreadToolItem(item, t.agent.thread.activity);
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -614,7 +613,7 @@ function ToolItemDisclosure({
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
-        <span className="thread-tool-label">{summarizeThreadToolItem(item, t.agent.thread.activity)}</span>
+        <span className="thread-tool-label" title={label}>{label}</span>
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-body">
@@ -639,7 +638,7 @@ function ToolItemDisclosure({
               />
             </ToolDetailSection>
           ) : null}
-          {detail.error ? <p className="thread-inline-error">{detail.error}</p> : null}
+          {detail.error ? <p className="thread-inline-error" role="status">{detail.error}</p> : null}
         </div>
       ) : null}
     </div>
@@ -662,8 +661,11 @@ function ToolDetailSection({
 }
 
 function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean; readonly status: ReactNode }) {
+  // Both layers are decorative: the row's label names the status in words and
+  // the toggle carries aria-expanded, so announcing the glyph would only
+  // duplicate them.
   return (
-    <span className={`thread-disclosure-indicator${expanded ? ' is-expanded' : ''}`}>
+    <span aria-hidden className={`thread-disclosure-indicator${expanded ? ' is-expanded' : ''}`}>
       <span className="thread-disclosure-status">{status}</span>
       <span className="thread-disclosure-chevron"><ChevronRightIcon size={ICON_SIZE.tiny} /></span>
     </span>
@@ -733,13 +735,18 @@ function toolDetail(
         input: item.command,
         inputLanguage: 'bash',
         output: item.aggregatedOutput,
+        // A real non-zero code is the useful explanation; a failure that never
+        // produced one says so plainly instead of borrowing "exit code 1".
         error: item.exitCode !== null && item.exitCode !== 0
           ? t.agent.thread.item.commandFailedWithExitCode({ code: item.exitCode })
-          : null,
+          : item.status === 'failed'
+            ? t.agent.thread.item.commandFailed
+            : null,
       };
     case 'fileChange':
       return {
         ...empty,
+        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
           <ul className="thread-file-changes">
             {item.changes.map((change, index) => (
@@ -770,14 +777,17 @@ function toolDetail(
       const images = (item.contentItems ?? []).filter((content): content is Extract<DynamicToolOutputContent, { type: 'image' }> => (
         content.type === 'image'
       ));
+      const failed = item.success === false;
       return {
         ...empty,
         input: jsonText(item.arguments),
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
-        outputLabel: t.agent.thread.item.result,
-        error: item.success === false && !textOutput ? t.agent.thread.item.status.failed : null,
+        // Failure prose is an error, not a "Result" — and a failure that
+        // returned nothing at all still owes the user a sentence.
+        outputLabel: failed ? t.agent.thread.item.error : t.agent.thread.item.result,
+        error: failed && !textOutput ? t.agent.thread.item.failedWithoutDetail : null,
         body: images.length > 0 ? (
           <div className="thread-tool-images">
             {images.map((image) => (
@@ -790,6 +800,7 @@ function toolDetail(
     case 'collabAgentToolCall':
       return {
         ...empty,
+        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         input: jsonText({
           tool: item.tool,
           receiverThreadIds: item.receiverThreadIds,
@@ -856,11 +867,13 @@ export function summarizeThreadToolItem(
       const command = quoteSubject(firstLine(item.command));
       if (item.status === 'inProgress') return labels.runningCommand({ command });
       if (item.status === 'failed') return labels.commandFailed({ command });
+      if (item.status === 'interrupted') return labels.commandInterrupted({ command });
       return labels.ranCommand({ command });
     }
     case 'fileChange':
       if (item.status === 'inProgress') return labels.changingFiles({ count: item.changes.length });
       if (item.status === 'failed') return labels.fileChangeFailed({ count: item.changes.length });
+      if (item.status === 'interrupted') return labels.fileChangeInterrupted({ count: item.changes.length });
       return labels.changedFiles({ count: item.changes.length });
     case 'mcpToolCall':
       return namedToolSummary(`${item.server}.${item.tool}`, item.status, labels);
@@ -872,6 +885,7 @@ export function summarizeThreadToolItem(
       const query = quoteSubject(item.query);
       if (item.status === 'inProgress') return labels.searchingWeb({ query });
       if (item.status === 'failed') return labels.searchFailed({ query });
+      if (item.status === 'interrupted') return labels.searchInterrupted({ query });
       return labels.searchedWeb({ query });
     }
     default:
@@ -886,6 +900,7 @@ function namedToolSummary(
 ): string {
   if (status === 'inProgress') return labels.usingTool({ name });
   if (status === 'failed') return labels.toolFailed({ name });
+  if (status === 'interrupted') return labels.toolInterrupted({ name });
   return labels.usedTool({ name });
 }
 
@@ -1036,7 +1051,13 @@ export function summarizeThreadToolActivity(
     if (!bucket || bucket.subjects.size === 0) return [];
     return [toolActivityPhrase(kind, bucket.subjects.size, bucket.running, labels)];
   });
-  if (fragments.length === 0) return labels.ranTools({ count: items.length });
+  if (fragments.length === 0) fragments.push(labels.ranTools({ count: items.length }));
+  // A group whose colour says "failed" must say it in words too — colour alone
+  // is not a state (design-system patterns.md).
+  const failed = items.filter((item) => item.status === 'failed').length;
+  const interrupted = items.filter((item) => item.status === 'interrupted').length;
+  if (failed > 0) fragments.push(labels.failedCount({ count: failed }));
+  if (interrupted > 0) fragments.push(labels.interruptedCount({ count: interrupted }));
   return fragments.map((fragment, index) => index === 0 ? fragment : sentenceFragment(fragment)).join(' · ');
 }
 
@@ -1132,11 +1153,14 @@ function dynamicToolArgument(
   return (item.arguments as { readonly [argument: string]: unknown })[key];
 }
 
-function executionStatusNode(status: ItemExecutionStatus, completed: ReactNode): ReactNode {
-  if (status === 'inProgress') return <LoaderIcon size={ICON_SIZE.tiny} />;
-  if (status === 'failed') return <ToolErrorIcon size={ICON_SIZE.tiny} />;
-  if (status === 'interrupted') return <StopIcon size={ICON_SIZE.tiny} />;
-  return completed;
+/**
+ * A row's status is carried by colour and by its label wording, never by
+ * swapping the tool's own glyph: a failed row has to keep saying WHICH tool
+ * broke. Only `inProgress` substitutes, because there the spinner *is* the
+ * state and nothing else animates.
+ */
+function executionStatusNode(status: ItemExecutionStatus, toolGlyph: ReactNode): ReactNode {
+  return status === 'inProgress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : toolGlyph;
 }
 
 function ToolOutputImage({

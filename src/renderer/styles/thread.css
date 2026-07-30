@@ -1244,24 +1244,53 @@
   transform: rotate(90deg);
 }
 
-.thread-tool-completed .thread-disclosure-status {
+/* A running row keeps its spinner through hover, focus, and expansion: the
+   chevron swap would leave the only "still working" cue invisible. The chevron
+   stands down for the duration — aria-expanded and the body still carry the
+   disclosure state, and the slot geometry never changes (B7). */
+.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status,
+.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-status,
+.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-status,
+.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-status,
+.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status,
+.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status {
+  opacity: 1;
+}
+
+.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron,
+.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-chevron,
+.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-chevron,
+.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-chevron,
+.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron,
+.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron {
+  opacity: 0;
+}
+
+/* Row status is colour on the glyph + label, never a second slot treatment:
+   the tool keeps its own icon so a broken row still says WHICH tool broke, and
+   the shared 14px indicator geometry is not overridden (one-slot rule,
+   design-system patterns.md). Every status selector is scoped with `>` to the
+   row's own toggle so a group never restyles its members — each member row
+   carries its own status class. */
+.thread-tool-completed > .thread-tool-toggle .thread-disclosure-status,
+.thread-tool-completed > .thread-tool-activity-toggle .thread-disclosure-status {
   color: var(--text-faint);
 }
 
-.thread-tool-failed .thread-disclosure-status {
-  top: 50%;
-  bottom: auto;
-  height: 14px;
-  transform: translateY(-50%);
-  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+.thread-tool-failed > .thread-tool-toggle .thread-disclosure-status,
+.thread-tool-failed > .thread-tool-toggle .thread-tool-label,
+.thread-tool-failed > .thread-tool-activity-toggle .thread-disclosure-status,
+.thread-tool-failed > .thread-tool-activity-toggle .thread-tool-activity-summary {
   color: var(--status-danger);
 }
 
-.thread-tool-failed .thread-disclosure-status svg {
-  width: 9px;
-  height: 9px;
+/* Interrupted work did not error — it was cut off. A muted, deliberately
+   un-alarming treatment, and the label wording carries the state. */
+.thread-tool-interrupted > .thread-tool-toggle .thread-disclosure-status,
+.thread-tool-interrupted > .thread-tool-toggle .thread-tool-label,
+.thread-tool-interrupted > .thread-tool-activity-toggle .thread-disclosure-status,
+.thread-tool-interrupted > .thread-tool-activity-toggle .thread-tool-activity-summary {
+  color: var(--text-faint);
 }
 
 .thread-disclosure-content {
@@ -1389,7 +1418,10 @@
   padding-left: 20px;
 }
 
-.thread-tool-inProgress .thread-disclosure-status svg {
+/* Scoped to the row's own toggle: a running group must not spin the glyphs of
+   the finished children it contains. */
+.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
+.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
   animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
 }
 
@@ -2589,7 +2621,8 @@ button.thread-inline-activity:focus-visible,
   .thread-plan-progress-spinner,
   .thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg,
   .thread-process-spinner,
-  .thread-tool-inProgress .thread-disclosure-status svg {
+  .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
+  .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
     animation: none;
   }
 }
