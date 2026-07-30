@@ -120,8 +120,9 @@ Idle-only callers receive the typed refusal rather than a soft `null` result.
 `AutomationDispatcher` marks the run failed with the same accurate model-facing message.
 A renderer Turn carries `{ kind: 'user' }` and is never budget-gated; descendant usage
 still accrues to its member and shared pool. This is a defense-in-depth invariant only.
-User-facing recovery happens in the parent through respawn or synthesis and the preserved
-transcript artifact. Self-managed Goals never control this gate.
+Because descendant Threads expose no composer, user-facing recovery happens in the
+parent through respawn or synthesis and the preserved transcript artifact. Self-managed
+Goals never control this gate.
 
 Completion accrues usage inside the per-Thread mutex before the active Turn is removed
 or idle status is exposed, so racing admission observes the committed total. Failure
