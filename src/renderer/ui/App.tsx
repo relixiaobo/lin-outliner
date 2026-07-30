@@ -145,6 +145,7 @@ export function App() {
     bindPreviewPanelNode,
     closePanel,
     initializeLayout,
+    movePanelToIndex,
     navigatePanelBack: goPanelBack,
     navigatePanelForward: goPanelForward,
     navigatePanelPreview: setPanelPreview,
@@ -627,6 +628,7 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onError={setError}
+          onMovePanel={movePanelToIndex}
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}

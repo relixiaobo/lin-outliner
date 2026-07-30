@@ -94,6 +94,30 @@
 /* Active pane indication stays subtle + neutral (handled by header strength in
    breadcrumb.css); no full box outline on the surface. */
 
+/* Pane drag-to-reorder insertion line: the neutral --drop-line (same token as the
+   outliner and sidebar insertion lines) at the boundary the dragged pane would land
+   on. Boundary i paints on pane i's left edge; the rightmost boundary paints on the
+   last pane's right edge. Pure overlay — hovering a drag never reflows the panes. */
+.outline-panel-surface.panel-drop-before::after,
+.outline-panel-surface.panel-drop-after::after {
+  position: absolute;
+  z-index: var(--z-resize);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--drop-line);
+  content: "";
+  pointer-events: none;
+}
+
+.outline-panel-surface.panel-drop-before::after {
+  left: 0;
+}
+
+.outline-panel-surface.panel-drop-after::after {
+  right: 0;
+}
+
 .outline-panel-close {
   position: absolute;
   z-index: var(--z-resize);

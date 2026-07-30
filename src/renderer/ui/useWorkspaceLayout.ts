@@ -623,6 +623,25 @@ export function useWorkspaceLayout({
     return repairedActiveRootId;
   }, [activePanelId, panels]);
 
+  // Move a pane to a new left-right position. `index` is an insertion position
+  // (0..length) interpreted against the CURRENT array — remove-then-insert with
+  // the same index correction as the sidebar's pinNodeAtIndex, so a drop lands
+  // exactly where the insertion line showed. Order is the only thing that
+  // changes; ids, sizes, view history, and the active pane are untouched.
+  const movePanelToIndex = useCallback((panelId: string, index: number) => {
+    setPanels((prev) => {
+      const currentIndex = prev.findIndex((panel) => panel.id === panelId);
+      if (currentIndex < 0) return prev;
+      const moved = prev[currentIndex];
+      const without = prev.filter((panel) => panel.id !== panelId);
+      let target = index;
+      if (currentIndex < index) target -= 1;
+      target = Math.max(0, Math.min(target, without.length));
+      if (target === currentIndex) return prev;
+      return [...without.slice(0, target), moved, ...without.slice(target)];
+    });
+  }, []);
+
   const resizePanelPair = useCallback((
     leftPanelId: string,
     rightPanelId: string,
@@ -654,6 +673,7 @@ export function useWorkspaceLayout({
     activatePanel,
     closePanel,
     initializeLayout,
+    movePanelToIndex,
     navigatePanelRoot,
     navigatePanelPreview,
     bindPreviewPanelNode,

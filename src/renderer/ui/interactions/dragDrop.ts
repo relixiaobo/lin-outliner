@@ -42,6 +42,10 @@ export const OUTLINER_NODE_DRAG_MIME = 'application/x-lin-outliner-node-id';
  *  pinned list (distinct from OUTLINER_NODE_DRAG_MIME, which adds a new pin). */
 export const PINNED_NODE_REORDER_MIME = 'application/x-lin-pinned-node-id';
 
+/** Set while dragging a workspace pane by its breadcrumb header to reorder the
+ *  canvas panes left/right. Carries the pane id. */
+export const WORKSPACE_PANEL_REORDER_MIME = 'application/x-lin-workspace-panel-id';
+
 export function resolveOutlinerDropMove(input: ResolveOutlinerDropMoveInput): OutlinerDropMove | null {
   const {
     dragNodeId,

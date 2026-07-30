@@ -59,6 +59,15 @@
   -webkit-app-region: no-drag;
 }
 
+/* With several panes open the breadcrumb path row doubles as the pane's
+   drag-to-reorder handle (WorkspaceCanvas attaches the handle only then), so it
+   must receive mouse events instead of feeding the window drag region. The
+   header's top padding strip and the leading/trailing gaps stay window-drag;
+   single-pane canvases keep the full drag region (no handle → no carve-out). */
+.panel-breadcrumb.pane-drag-handle {
+  -webkit-app-region: no-drag;
+}
+
 /* Trailing close: a no-drag descendant of the breadcrumb drag region (so its click is
    reliably carved out on macOS) sitting in the trailing grid column, hugging the right
    --panel-content-x inset (the breadcrumb's own right padding) so it aligns with content. */

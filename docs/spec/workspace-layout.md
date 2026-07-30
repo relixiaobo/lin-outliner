@@ -71,6 +71,11 @@ Center — per-pane breadcrumb headers:
 - The breadcrumb is the pane's header and its drag region. A per-pane back
   control lives in the breadcrumb row; global page-history back/forward are on
   `Cmd+[` / `Cmd+]` with no chrome buttons.
+- With more than one pane open, the breadcrumb's path row is additionally the
+  pane's drag-to-reorder handle and opts out of the window drag region
+  (`no-drag` carve-out, like the breadcrumb's buttons); the header's top strip
+  and remaining gaps stay window-drag. Single-pane canvases keep the full drag
+  region.
 
 Right corner — agent chrome:
 
@@ -839,6 +844,14 @@ panels[1] -> next pane
 panels[2] -> next pane
 ```
 
+The user reorders panes by dragging a pane's breadcrumb path row onto another
+pane: before/after resolves by the hovered pane's horizontal midpoint (the pane
+analogue of the sidebar's pinned-row reorder), a neutral `--drop-line` insertion
+line marks the target boundary, and the drop is a pure array permutation
+(`movePanelToIndex`) — ids, sizes, per-pane history, and the active pane are
+untouched. Reordering therefore also renumbers the pane `order` the agent sees
+in its user-view context.
+
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.
 
@@ -880,6 +893,9 @@ Rules:
   stay at their minimums and the pane degrades inside the available width rather
   than introducing canvas-level horizontal scroll.
 - Pane resize handles sit between panes.
+- Panes reorder by dragging a pane's breadcrumb path row (multi-pane only).
+  The divider between two panes accepts the drop as that exact boundary. Only
+  order changes; sizes stay with their panes.
 - Opening a pane appends it next to the current pane or at the end only when the
   resulting pane count can fit after rail re-clamping. The hard cap remains
   `MAX_PERSISTED_PANELS` (4). At the count cap, or when a root/file-preview split

@@ -783,6 +783,83 @@ test.describe('workspace layout resizing', () => {
     await expect(panels).toHaveCount(1);
   });
 
+  test('dragging a pane breadcrumb reorders the split and persists the order', async ({ page }) => {
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
+    // Single pane: no reorder handle — the header stays pure window-drag.
+    await expect(page.locator('.panel-breadcrumb.pane-drag-handle')).toHaveCount(0);
+
+    // Open a split (Today | Schema) so there is an order to change.
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(2);
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
+    await expect(panels.nth(1).locator('.panel-title-editor')).toContainText('Schema');
+    const dayTitle = await panels.nth(0).locator('.panel-title-editor').innerText();
+    expect(dayTitle).not.toContain('Schema');
+
+    // Multi-pane: each breadcrumb path row is a drag handle carved out of the
+    // window drag region (breadcrumb.css .pane-drag-handle).
+    const handles = page.locator('.panel-breadcrumb.pane-drag-handle');
+    await expect(handles).toHaveCount(2);
+    const appRegion = await handles.nth(1).evaluate((element) => (
+      getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    ));
+    expect(appRegion).toBe('no-drag');
+
+    // HTML5 drag of the second pane's header onto the first pane's left half.
+    await page.evaluate(() => {
+      const source = document.querySelectorAll<HTMLElement>('.panel-breadcrumb.pane-drag-handle')[1];
+      if (!source) throw new Error('Missing pane drag handle');
+      const dataTransfer = new DataTransfer();
+      (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__ = dataTransfer;
+      source.dispatchEvent(new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+    });
+    await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('.outline-panel-surface');
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!target || !dataTransfer) throw new Error('Missing pane drop target');
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.25,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    // The neutral insertion line marks the target boundary before the drop.
+    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(1);
+    await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>('.outline-panel-surface');
+      const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+      if (!target || !dataTransfer) throw new Error('Missing pane drop target');
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + rect.width * 0.25,
+        clientY: rect.top + rect.height / 2,
+      }));
+      delete (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
+    });
+
+    // Order swapped, indicator gone, and the new order is what persists.
+    await expect(panels.nth(0).locator('.panel-title-editor')).toContainText('Schema');
+    await expect(panels.nth(1).locator('.panel-title-editor')).toContainText(dayTitle);
+    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(0);
+    await expect.poll(async () => page.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return '';
+      const parsed = JSON.parse(raw) as { panels?: Array<{ view?: { rootId?: string } }> };
+      return (parsed.panels ?? []).map((panel) => panel.view?.rootId ?? '?').join(',');
+    }, WORKSPACE_LAYOUT_STORAGE_KEY)).toBe(`${ids.schema},${ids.today}`);
+  });
+
   test('outline expansion state restores by root page across reload', async ({ page }) => {
     await page.evaluate(({ layoutStorageKey, rootId }) => {
       const date = new Date();

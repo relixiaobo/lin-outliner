@@ -69,12 +69,20 @@ export function usePanelTitleDock() {
   };
 }
 
+/** Handed down from WorkspaceCanvas (only while several panes are open) to make
+ *  the breadcrumb path the pane's drag-to-reorder handle. */
+export interface PanelDragHandle {
+  onDragStart: DragEventHandler<HTMLElement>;
+  onDragEnd: DragEventHandler<HTMLElement>;
+}
+
 interface PanelStickyBreadcrumbProps {
   breadcrumbAriaLabel: string;
   canGoBack: boolean;
   children: ReactNode;
   closeLabel: string;
   currentTitle: string;
+  dragHandle?: PanelDragHandle;
   origin: ReactNode;
   onBack: () => void;
   onClose: () => void;
@@ -103,7 +111,16 @@ export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
         />
         {props.origin}
       </div>
-      <nav className="panel-breadcrumb" aria-label={props.breadcrumbAriaLabel}>
+      {/* With a drag handle, the path row is draggable to reorder panes. It opts
+          out of the window drag region via .pane-drag-handle (breadcrumb.css);
+          the header's top strip and gaps stay window-drag. */}
+      <nav
+        className={`panel-breadcrumb${props.dragHandle ? ' pane-drag-handle' : ''}`}
+        aria-label={props.breadcrumbAriaLabel}
+        draggable={props.dragHandle ? true : undefined}
+        onDragStart={props.dragHandle?.onDragStart}
+        onDragEnd={props.dragHandle?.onDragEnd}
+      >
         {props.children}
         {props.titleDocked && (
           <span className="panel-breadcrumb-segment panel-breadcrumb-current">
