@@ -127,7 +127,7 @@ export interface PiAgentRuntime {
   readonly state: Pick<AgentState, 'errorMessage' | 'interruptionError'>;
   subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void;
   abort(): void;
-  steer(message: Message): void;
+  steer(message: Message, onDelivered?: () => void): void;
   prompt(message: Message): Promise<void>;
 }
 
@@ -285,8 +285,12 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         transformContext,
         sessionId: cacheAffinity,
         providerOptions,
-        remainingTokenBudget: context.remainingTokenBudget,
-        getTurnTokenUsage: () => normalizer.usage.totalTokens,
+        remainingTokenBudget: context.remainingTokenBudget
+          ? () => {
+              const budget = context.remainingTokenBudget?.() ?? null;
+              return budget ? { ...budget, used: budget.used + normalizer.usage.totalTokens } : null;
+            }
+          : undefined,
         onBudgetWarning: context.onBudgetWarning,
       });
       if (context.signal.aborted) {
@@ -302,13 +306,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted && agent) {
-          diagnostics.setSteeringDelivered(activityIndex, true);
-          try {
-            agent.steer(message);
-          } catch (error) {
-            diagnostics.setSteeringDelivered(activityIndex, false);
-            throw error;
-          }
+          agent.steer(message, () => diagnostics.setSteeringDelivered(activityIndex, true));
         }
       });
       await agent.prompt(prompt);

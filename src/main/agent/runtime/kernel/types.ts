@@ -129,6 +129,11 @@ export interface ProviderRetryLifecycleEvent {
   maxRetries: number;
 }
 
+export interface TokenBudgetUsage {
+  readonly budget: number;
+  readonly used: number;
+}
+
 export interface RetryPolicyOptions {
   requestRetryDelayMs?: (retryCount: number) => number;
   onProviderRetry?: (event: ProviderRetryLifecycleEvent) => void;
@@ -152,7 +157,6 @@ export interface KernelAgentOptions {
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;
   providerOptions?: SimpleStreamOptions;
-  remainingTokenBudget?: () => number | null;
-  getTurnTokenUsage?: () => number;
-  onBudgetWarning?: () => Promise<void>;
+  remainingTokenBudget?: () => TokenBudgetUsage | null;
+  onBudgetWarning?: (actuals: TokenBudgetUsage) => Promise<void>;
 }

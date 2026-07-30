@@ -1,4 +1,4 @@
-import { runKernel } from './kernel';
+import { runKernel, type KernelSteeringMessage } from './kernel';
 import { EMPTY_USAGE } from './types';
 import type {
   AgentEvent,
@@ -20,7 +20,7 @@ export class NativeAgentRuntime {
     event: AgentEvent,
     signal: AbortSignal,
   ) => Promise<void> | void>();
-  private steeringQueue: Message[] = [];
+  private steeringQueue: KernelSteeringMessage[] = [];
   private activeRun?: ActiveRun;
 
   constructor(private readonly options: KernelAgentOptions) {
@@ -47,8 +47,8 @@ export class NativeAgentRuntime {
     return () => this.listeners.delete(listener);
   }
 
-  steer(message: Message): void {
-    this.steeringQueue.push(message);
+  steer(message: Message, onDelivered?: () => void): void {
+    this.steeringQueue.push({ message, onDelivered });
   }
 
   abort(): void {
@@ -92,7 +92,7 @@ export class NativeAgentRuntime {
     }
   }
 
-  private drainSteering(): Message[] {
+  private drainSteering(): KernelSteeringMessage[] {
     const drained = this.steeringQueue;
     this.steeringQueue = [];
     return drained;

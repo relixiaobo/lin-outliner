@@ -317,12 +317,23 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Budgeted child Turns expose their Turn-start remaining token budget to the native kernel.
-The first model call is never blocked. Before each later projection, the kernel reads the
-normalizer's accumulated `totalTokens`; reaching the remainder settles the Turn as
-`interrupted`, while the first 80% crossing requests one host-generated budget notice.
-That notice uses the same canonical steering admission and diagnostics path as external
-steering, so it is a durable `userMessage` rather than a private runtime message.
+Budgeted child non-user Turns expose a Turn-start ledger snapshot (`budget`, `used`) to
+the native kernel; explicit user Turns expose the same port as unlimited and omit the
+warning callback. The first model call is never blocked. At every later model-call
+boundary, before draining steering or emitting the next `turn_start`, the executor adds
+the normalizer's accumulated `totalTokens` to that snapshot. Reaching the Turn-start
+remainder interrupts only genuinely outstanding model work, such as completed tool
+calls. A terminal assistant answer stays completed even when exhausted and racing
+steering remains queued and undelivered. Thus every emitted `turn_start` still has its
+matching `turn_end`.
+
+The first 80% crossing of the Turn-start remainder requests one host-generated budget
+notice carrying the actual ledger total and full budget. The notice uses the same
+canonical steering admission and diagnostics path as external steering, so it is a
+durable `userMessage` rather than a private runtime message. Warning delivery is
+advisory: failure is logged and execution continues. Steering diagnostics become
+consumed only when the native queue is drained into a later provider context; queue
+acceptance alone does not mark delivery.
 
 Interrupt aborts provider and tool work through the Turn signal, including
 provider and tool initialization before `prompt()`. Any execution

@@ -24,13 +24,18 @@ export interface KernelRunResult {
   readonly interruptionError: string | null;
 }
 
+export interface KernelSteeringMessage {
+  readonly message: Message;
+  readonly onDelivered?: () => void;
+}
+
 export async function runKernel(
   prompts: Message[],
   initialContext: KernelContext,
   options: KernelAgentOptions,
   emit: KernelEventSink,
   signal: AbortSignal,
-  getSteeringMessages: () => Promise<Message[]>,
+  getSteeringMessages: () => Promise<KernelSteeringMessage[]>,
 ): Promise<KernelRunResult> {
   const newMessages: Message[] = [...prompts];
   const context: KernelContext = {
@@ -44,44 +49,61 @@ export async function runKernel(
     await emit({ type: 'message_start', message: prompt });
     await emit({ type: 'message_end', message: prompt });
   }
+  const startingBudget = options.remainingTokenBudget?.() ?? null;
+  const turnAllowance = startingBudget
+    ? Math.max(0, startingBudget.budget - startingBudget.used)
+    : null;
 
-  let firstTurn = true;
   let providerCallCount = 0;
   let budgetWarningSent = false;
   let pendingMessages = await getSteeringMessages();
   let hasMoreToolCalls = true;
-  while (hasMoreToolCalls || pendingMessages.length > 0) {
-    if (!firstTurn) {
-      await emit({ type: 'turn_start' });
-    } else {
-      firstTurn = false;
-    }
-
+  while (true) {
     if (providerCallCount > 0) {
-      const remaining = options.remainingTokenBudget?.() ?? null;
-      const used = options.getTurnTokenUsage?.() ?? 0;
-      if (remaining !== null && used >= remaining) {
-        const interruptionError = `Token budget exhausted mid-Turn (${used} of ${remaining} tokens)`;
-        await emit({ type: 'agent_end', messages: newMessages });
-        return { messages: newMessages, interruptionError };
+      const actuals = options.remainingTokenBudget?.() ?? null;
+      const turnUsage = startingBudget && actuals
+        ? Math.max(0, actuals.used - startingBudget.used)
+        : null;
+      if (actuals && turnAllowance !== null && turnUsage !== null && turnUsage >= turnAllowance) {
+        if (hasMoreToolCalls) {
+          const interruptionError = `Token budget exhausted mid-Turn (${actuals.used} of ${actuals.budget} tokens)`;
+          await emit({ type: 'agent_end', messages: newMessages });
+          return { messages: newMessages, interruptionError };
+        }
+        break;
       }
+
+      pendingMessages = await getSteeringMessages();
+      if (!hasMoreToolCalls && pendingMessages.length === 0) break;
+
       if (
-        remaining !== null
-        && used >= Math.ceil(remaining * 0.8)
+        actuals
+        && turnAllowance !== null
+        && turnUsage !== null
+        && turnUsage >= Math.ceil(turnAllowance * 0.8)
         && !budgetWarningSent
         && options.onBudgetWarning
       ) {
         budgetWarningSent = true;
-        await options.onBudgetWarning();
+        try {
+          await options.onBudgetWarning(actuals);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[agent] Budget warning delivery failed: ${message}`);
+        }
         pendingMessages.push(...await getSteeringMessages());
       }
+
+      await emit({ type: 'turn_start' });
     }
 
-    for (const message of pendingMessages) {
+    for (const steering of pendingMessages) {
+      const { message } = steering;
       await emit({ type: 'message_start', message });
       await emit({ type: 'message_end', message });
       context.messages.push(message);
       newMessages.push(message);
+      steering.onDelivered?.();
     }
     pendingMessages = [];
 
@@ -110,7 +132,6 @@ export async function runKernel(
     }
 
     await emit({ type: 'turn_end', message, toolResults });
-    pendingMessages = await getSteeringMessages();
   }
 
   await emit({ type: 'agent_end', messages: newMessages });
