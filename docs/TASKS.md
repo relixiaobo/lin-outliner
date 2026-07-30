@@ -383,9 +383,10 @@ before any directional/security-sensitive build.
   (immutable in the event-sourced store — no rewrite, no memo), driven by turn completion, not
   the parent's `wait_agent` path; `wait_agent` stays result-first with `transcriptPath` as an
   absolute app-owned reference (capability layer already resolves absolute paths,
-  `agentCapabilities.ts:391`); deletion race-free against the wait resume it triggers. cc
-  redrafts the one-pager against this baseline; plan file updated on ratification. Touches
-  package.json (infrastructure — the PR is the coordinated change). See
+  `agentCapabilities.ts:391`); deletion race-free against the wait resume it triggers. The
+  plan (main-authored) was revised in place to the ratified design 2026-07-30 — **no
+  one-pager round**: cc reworks the branch directly against the plan. Touches package.json
+  (infrastructure — the PR is the coordinated change). See
   `docs/plans/subagent-transcript-artifact.md`.
 - **agent-subagent-interaction** (P2, `draft` — cc-2, plan merged #454 after gate review;
   shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
