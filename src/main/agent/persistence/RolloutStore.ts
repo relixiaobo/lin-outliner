@@ -101,6 +101,18 @@ export class RolloutStore {
     return (await this.read(threadId)).filter((entry) => entry.ordinal > ordinal);
   }
 
+  /**
+   * Read without the torn-tail repair `read` performs. For out-of-process
+   * readers (the `agent:dump` operator CLI) that must never write to a log the
+   * running app owns: a partial trailing line is dropped from the result
+   * instead of being truncated on disk.
+   */
+  async readSnapshot(threadId: ThreadId): Promise<readonly RolloutEntry[]> {
+    assertThreadId(threadId);
+    await this.waitForThread(threadId);
+    return readEntries(this.pathFor(threadId), false);
+  }
+
   async delete(threadId: ThreadId): Promise<void> {
     assertThreadId(threadId);
     await this.serialized(threadId, async () => {
