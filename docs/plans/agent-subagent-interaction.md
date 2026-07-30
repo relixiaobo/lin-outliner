@@ -97,7 +97,9 @@ but replaces its row presentation; it must land after PR 1.
   1016-1019`, `1049`).
 - **S9 — Blocked state is dead data.** `waitingOnUserInput`
   (`protocol.ts:48`, set at `ThreadService.ts:2040`) is read by nothing in
-  `src/renderer`.
+  `src/renderer`. (Parent-side rendering is owned by
+  `agent-run-presentation-consistency.md` PR B; a child can never carry the
+  flag — see the PR 1 correction below.)
 
 ### Navigation & list (PR 2)
 
@@ -181,9 +183,18 @@ projection* over them (same pattern as the existing Turn process projection,
   i18n keys (en + zh-Hans), replacing "Using spawn_agent" (S7). An
   idle-but-alive child renders "Idle", distinct from "Completed" (S8; the
   model-facing `wait_agent` payload is unchanged).
-- `waitingOnUserInput` renders on the child row as a paused "Waiting for
-  input" state (S9) — visibility only; answering still happens through the
-  parent's flow by steering the parent.
+- **Correction (PM discussion, 2026-07-30):** a child Thread can never carry
+  `waitingOnUserInput` — `request_user_input` is root-scoped and hard-rejected
+  for children (`src/core/agent/tools.ts:412-418`,
+  `ThreadService.ts:2013-2015`), so the earlier "blocked child" framing was
+  wrong. Blocked-on-input surfacing applies to the parent only and is owned by
+  `agent-run-presentation-consistency.md` PR B. What this PR adds instead
+  (Q3, ratified): while the parent Turn's only in-progress work is
+  `collaboration.wait_agent`, the Turn divider names the actual bottleneck —
+  "Waiting on N subagents · elapsed" — instead of the generic "Working"; the
+  timer keeps counting because work is genuinely progressing in the children.
+  Renderer-only derivation from the in-progress wait tool Item plus the live
+  child projection; new i18n keys (en + zh-Hans).
 
 ### PR 2 — navigation and Thread-list hygiene
 
@@ -196,58 +207,78 @@ projection* over them (same pattern as the existing Turn process projection,
   (catalog-recovering, `threadStore.ts:120-127`); a genuinely deleted Thread
   produces the existing transient feedback affordance instead of a silent
   throw (S11).
-- **List hygiene (S12, S13).** The Thread list groups children directly under
-  their parent row (true adjacency, not margin-only), collapsed by default
-  behind a per-parent count chip ("3 subagents"); running children show a
-  neutral in-progress indicator dot derived from catalog status, and
-  `waitingOnUserInput` shows an attention badge. A list-level filter hides
-  terminal subagent rows by default (toggle to show). Isolated-Skill children
-  stay behind that filter and additionally become reachable from their
-  invoking `skill` tool row via a child-Thread link (the same supplemental
-  affordance collaboration rows have,
-  `docs/spec/agent-thread-rendering.md:54-66`). Bulk cleanup ("Delete
-  finished subagents" on the parent's row menu) cascades through the existing
-  delete path (`ThreadService.ts:1617-1647`).
-- Spec: `docs/spec/agent-thread-rendering.md:14-16` (nesting) and the Thread
-  list section are updated in the same change.
+- **Children leave the Thread list (PM-ratified, 2026-07-30; S12, S13).**
+  The history list is "conversations the user had"; a child Thread is an
+  execution artifact of a Turn, not a conversation — and the current
+  indentation-without-adjacency rendering (recency sort,
+  `threadStore.ts:624-626`, plus margin-only depth, `ThreadList.tsx:126`,
+  `201-215`) is internally contradictory. Rather than building true nesting
+  (tree rendering, expand state, sort ambiguity, a fight with the flat keyset
+  pagination), child Threads stop being list rows entirely:
+  - `thread/list` returns root Threads only (service-side filter,
+    `ThreadService.ts:1240-1263`), so children stop occupying keyset cursor
+    slots and cannot displace roots between pages. The lineage-indent
+    rendering is deleted.
+  - A root Thread with any live descendant shows a neutral
+    background-activity indicator on its list row (derived from catalog
+    status notifications) — "this conversation has background work running",
+    which also covers fire-and-forget children whose parent Turn already
+    ended.
+  - Thread Details for a root Thread gains a children section: readable
+    name, status, last activity; each row opens the child (via
+    `openThreadById`) and offers Delete, plus a "Delete finished subagents"
+    bulk action through the existing cascading delete path
+    (`ThreadService.ts:1617-1647`). This is the fallback browse surface now
+    that the list no longer carries children.
+  - Isolated-Skill children (`skill_<slug>_<hex>`) equally leave the list and
+    become reachable from their invoking `skill` tool row via the same
+    supplemental child-Thread link affordance collaboration rows have
+    (`docs/spec/agent-thread-rendering.md:54-66`).
+- Spec: rewrite `docs/spec/agent-thread-rendering.md:14-16` and the Thread
+  list section in the same change — child Threads are not Thread-list rows;
+  they are reachable from the parent transcript and parent Thread Details.
 
 ### PR 3 — live delegation card + user interrupt
 
-Pending the open questions below; the intended shape:
+Ratified shape (Q1/Q2, PM 2026-07-30):
 
-- **One live delegation card per Turn** in the parent process block while at
-  least one child spawned by that Turn is alive: one line per child —
-  readable name, live status, elapsed time, terminal glyph on completion —
+- **One live delegation card per Turn (Q1)** in the parent process block
+  while at least one child spawned by that Turn is alive: one line per child
+  — readable name, live status, elapsed time, terminal glyph on completion —
   replacing the individual projection rows from PR 1 (which remain the
   fallback and the post-hoc rendering). Time/status only; no token numbers
-  (Delegation Contract §3).
-- **User interrupt.** Each running child line, and the child Thread view
-  header, exposes Stop. It calls the existing `interruptTurn` seam over a new
-  renderer→main request (`thread/interrupt` already exists for the composer
-  path; this exposes it for descendant Threads with the same authorization:
-  the target must be a descendant of a user-owned root). Per the user bright
-  line, a human-triggered interrupt is never budget- or state-gated: it
-  aborts the active child Turn and leaves the Thread for follow-up
-  (`ThreadService.ts:1996-2002` semantics unchanged) (S14).
-- Whether parent Stop cascades to the subtree is open question Q2.
+  (Delegation Contract §3). **No dock-level "agents" panel:** the per-Turn
+  card keeps status in the conversation where the delegation happened, and
+  the list-row activity indicator (PR 2) covers cross-thread awareness; a
+  global panel is a mostly-empty persistent surface and is reconsidered only
+  on demonstrated need.
+- **User interrupt (S14).** Each running child line, and the child Thread
+  view header, exposes Stop. It calls the existing `interruptTurn` seam over
+  a renderer→main request, extended to descendant Threads with explicit
+  authorization: the target must be a descendant of a user-owned root. Per
+  the user bright line, a human-triggered interrupt is never budget- or
+  state-gated: it aborts the active child Turn and leaves the Thread for
+  follow-up (`ThreadService.ts:1996-2002` semantics unchanged).
+- **Parent Stop cascades (Q2).** The composer Stop on a delegating Turn
+  interrupts the parent Turn and every live descendant Turn (service-side
+  walk of the descendant tree, same authorization). A user pressing Stop
+  means "stop the work I asked for"; leaving children burning invisibly
+  after Stop is a trust violation, and over-stopping is cheap because
+  interrupted children keep their Threads for follow-up. There is no second
+  global button — selective control is the per-child Stop on the card.
 
-## Open questions (for PM/main ratification)
+## Open questions
 
-- **Q1 — Delegation card scope (S15).** Is the per-Turn in-transcript card
-  enough, or should a dock-level "agents" panel (the task-panel concept from
-  `agent-program.md`) aggregate across Turns and Threads? Recommendation:
-  ship the per-Turn card first; it needs no new surface and covers the common
-  case.
-- **Q2 — Should parent Stop cascade?** Options: (a) parent Stop aborts the
-  parent Turn only (today), (b) also interrupts all live descendants, (c) two
-  affordances (Stop / Stop all). Recommendation: (b) — a user pressing Stop
-  on a delegating Turn almost always means "stop the work", and children keep
-  their Threads for follow-up.
-- **Q3 — Blocked-child surfacing depth.** PR 1/PR 2 make
-  `waitingOnUserInput` visible (row state + list badge). Should the parent
-  Turn's divider also switch to "Waiting on subagent input" while any child
-  is blocked? Recommendation: yes, it is the same paused-state rule as
-  `agent-run-presentation-consistency.md` PR B/P2.
+None. Ratified by the PM on 2026-07-30, from the UX discussion:
+
+- **Q1** — per-Turn delegation card; no dock-level agents panel.
+- **Q2** — parent Stop cascades to all live descendants; per-child Stop on
+  the card covers selective control.
+- **Q3** — the parent divider names the `wait_agent` bottleneck ("Waiting on
+  N subagents"); the original "waiting on subagent input" framing was
+  corrected — a child can never request user input.
+- **Thread list** — child Threads leave the history list entirely (PR 2);
+  the list is root conversations only.
 
 ## Verification
 
@@ -257,12 +288,15 @@ Pending the open questions below; the intended shape:
   live Running with elapsed; child completes mid-parent-Turn → row flips
   without waiting for flush; child failure shows tinted row + error summary.
 - PR 2: E2E for back-affordance round-trip (child → parent preserves parent
-  scroll per the existing snapshot mechanism), grouped list rendering,
-  filter behavior, skill-row child link; renderer test for `openThreadById`
-  fallback feedback.
-- PR 3: E2E for card lifecycle (spawn/live/terminal), user interrupt of a
-  running child, and (per Q2) cascade behavior; light + dark visual
-  verification for card and badges.
+  scroll per the existing snapshot mechanism); the Thread list excludes
+  children while the parent row shows the activity indicator during a live
+  child run; Thread Details children section opens a child and deletes
+  finished ones; skill-row child link; renderer test for `openThreadById`
+  fallback feedback; core test for the root-only `thread/list` page shape.
+- PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
+  a running child, parent-Stop cascade interrupting live descendants, and the
+  "Waiting on N subagents" divider while `wait_agent` is the only in-progress
+  work; light + dark visual verification for card and indicators.
 - All PRs: `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   focused `bun run test:e2e` scope, `bun run docs:check`; spec updated in the
   same change (A6); dev userData wipe noted in the PR body for the PR 1
