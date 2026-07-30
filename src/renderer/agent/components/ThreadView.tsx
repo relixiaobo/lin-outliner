@@ -77,6 +77,7 @@ import {
   type ThreadToolItem,
 } from './items/ThreadItemView';
 import { threadErrorMessage } from '../threadErrorMessage';
+import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
   subscribeThreadDisclosure,
@@ -808,8 +809,26 @@ export function ThreadView({
     updateAttachments(() => retained);
   }
 
+  function refocusComposerFromClick(event: MouseEvent<HTMLDivElement>) {
+    if (!composerEnabled || waitingForInput) return;
+    const decision = composerRefocusDecision({
+      altKey: event.altKey,
+      button: event.button,
+      ctrlKey: event.ctrlKey,
+      detail: event.detail,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      target: event.target instanceof Element ? event.target : null,
+    }, window.getSelection());
+    if (!decision.refocus) return;
+    window.requestAnimationFrame(() => {
+      if (clickInstalledFocusTarget(document.activeElement, decision.control, document.body)) return;
+      composerRef.current?.focus();
+    });
+  }
+
   return (
-    <div className="thread-view">
+    <div className="thread-view" onClick={refocusComposerFromClick}>
       <div
         className="thread-transcript"
         onScroll={(event) => {

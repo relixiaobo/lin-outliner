@@ -326,6 +326,18 @@ Reopening the Agent rail restores focus to the composer of an editable Thread.
 An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.
 
+Within an editable Thread the composer is also the pointer's default focus
+target ("terminal model"): a mouse click anywhere in the thread view that is
+not claimed by anything hands focus back to the composer, so transcript
+blank space and one-shot actions (copy, fork, disclosure toggles, details)
+never strand focus outside the input. A click is claimed by a typing surface
+(inputs, `contenteditable`), a link or Node reference (attention moves to the
+document or an external browser), a text selection the user still needs for
+copying, or any surface that installs its own focus target within a frame of
+the click (self-focusing popovers, dialogs, the inline message editor).
+Keyboard-activated clicks are never intercepted, and an active
+`request_user_input` suspends the hand-back entirely.
+
 Typing `/` opens the established composer command menu. It is populated from
 the reserved `/compact` and `/clear` commands plus the current user-invocable Skill
 catalog. `/compact` inserts a trailing space for optional instructions; `/clear` inserts
