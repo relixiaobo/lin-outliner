@@ -292,6 +292,37 @@ any conflicting earlier wording):**
    codes (`subagent_budget_exhausted`, `subagent_structural_limit`); the
    renderer classifies by code, never by copy regex.
 
+**Round-2 additions (gate pass 2026-07-30, 10 findings):**
+
+10. **The port speaks `remaining`, not differentials.** The kernel's
+    denomination-differential dies: the port returns the authoritative live
+    `remaining` (min of cap-remaining and pool-remaining, including the
+    in-flight tally) plus the BINDING constraint's `{used, total}` for
+    message/warning formatting only. The kernel interrupts on
+    `remaining <= 0` after the first call and warns at 80% of the binding
+    constraint; it never subtracts across snapshots. Denomination flips are
+    thereby harmless by construction.
+11. **The live tally feeds from the runtime's own usage stream, never from
+    diagnostics.** Usage enters the in-flight tally at the executor's
+    normalizer accumulation point (runtime-owned), not via the diagnostics
+    collector's provider-call matching — inspection-only structures are never
+    load-bearing (A12). The observer is installed only for pool-covered
+    threads (root threads pay nothing).
+12. **Spawn is transactional over budget rows.** Pool/member creation happens
+    under the same mutex scope as the fallible admission steps, ordered so a
+    failed spawn needs no cascading rollback; if rollback is unavoidable it
+    removes exactly the rows this spawn created (by id), never a
+    pool-wide member cascade, and runs before the mutex releases. Settings
+    reads happen before mutex acquisition.
+13. **Tally clearance is adjacent to accrual on EVERY path** — no await
+    between accrue and clear on failure/interrupt paths (the happy path's
+    discipline applies uniformly).
+14. **Code constants live in `src/core`** (both processes import them); the
+    kernel emits its typed code at the source (structured, not
+    message-prefix sniffed); `Turn.error.code` accepts only the known code
+    set with `runtime_failure` fallback — arbitrary error `.code` strings
+    never cross the seam.
+
 
 One complete feature: close the mint. PR A/B bound the SLOPE of runaway spend
 (per-child breakers, mid-Turn stop); PR C bounds the TOTAL by construction and
