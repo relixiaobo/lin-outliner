@@ -1,5 +1,5 @@
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
-import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,PrivilegedTurnStartRequest,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId,TurnStartResponse,TurnSteerRequest,TurnSteerResponse } from '../../../core/agent/protocol';
+import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { contextPayloadReferenceKey,itemContextPayloadReferences,itemOutputReferences,itemResourceReferences,outputReferenceKey,resourceReferenceKey } from '../context/contextDependencies';
 import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
@@ -9,6 +9,7 @@ import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationW
 import { uuidV7 } from '../uuid';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
+import type { TurnLifecycle } from './TurnLifecycle';
 
 export interface StagedContextEvidence {
   readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
@@ -28,16 +29,6 @@ interface CollaborationActivityState {
   pending: boolean;
   readonly waiters: Set<() => void>;
 }
-export interface SubagentTurnLifecycle {
-  assertActiveTurn(threadId: ThreadId, turnId: string): void;
-  activeTurnId(threadId: ThreadId): string | null;
-  assertSubagentBudgetAvailable(threadId: ThreadId): SubagentBudgetRecord | null;
-  acceptAndLaunch(request: PrivilegedTurnStartRequest & { readonly stagedContextEvidence?: readonly StagedContextEvidence[] }): Promise<{ readonly response: TurnStartResponse }>;
-  startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse>;
-  steerTurn(request: TurnSteerRequest): Promise<TurnSteerResponse>;
-  interruptTurn(threadId: ThreadId, turnId: string): Promise<void>;
-  recordSubagentActivity(ownerThreadId: ThreadId, ownerTurnId: string, agentThreadId: ThreadId, agentPath: string, kind: PendingSubagentActivity['kind'], completedAt: number): Promise<void>;
-}
 interface SubagentCatalog {
   createThread: ThreadCatalogOps['createThread'];
   deleteThread: ThreadCatalogOps['deleteThread'];
@@ -51,7 +42,7 @@ export class SubagentCollaboration {
   constructor(
     private readonly core: ThreadCore,
     private readonly catalog: SubagentCatalog,
-    private readonly turnLifecycle: SubagentTurnLifecycle,
+    private readonly turnLifecycle: TurnLifecycle,
     private readonly subagentBudgets: SubagentBudgetLedger,
     private readonly resolveRole: (name: string, cwd: string) => AgentRole,
     private readonly resolveSubagentTokenBudget: () => Promise<number | null>,
@@ -83,7 +74,7 @@ export class SubagentCollaboration {
     return activities.map((activity) => subagentActivityItem(threadId, turnId, activity));
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
-      this.turnLifecycle.assertActiveTurn(input.parentThreadId, input.parentTurnId);
+      this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const parentBudget = this.turnLifecycle.assertSubagentBudgetAvailable(input.parentThreadId);
       const tokenBudget = await this.childTokenBudget(input.maxTotalTokens, parentBudget);
       let stagedThreadId: ThreadId | null = null;
@@ -195,7 +186,7 @@ export class SubagentCollaboration {
       };
     }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
-      this.turnLifecycle.assertActiveTurn(input.parentThreadId, input.parentTurnId);
+      this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const parentPath = this.taskPathForThread(input.parentThreadId) ?? '/root';
       const skillSlug = input.skillName.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'skill';
       const identity = uuidV7(this.now()).replace(/-/g, '').slice(-12);
@@ -224,7 +215,7 @@ export class SubagentCollaboration {
       forkTurns?: string;
       maxTotalTokens?: number;
     }): Promise<SpawnChildThreadResult> {
-      this.turnLifecycle.assertActiveTurn(input.senderThreadId, input.senderTurnId);
+      this.turnLifecycle.requireActiveTurn(input.senderThreadId, input.senderTurnId);
       if (!/^[a-z][a-z0-9_]*$/.test(input.taskName)) {
         throw new Error('Subagent task_name must use lowercase letters, digits, and underscores');
       }
@@ -279,7 +270,7 @@ export class SubagentCollaboration {
       target: string,
       message: string,
     ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.assertActiveTurn(senderThreadId, senderTurnId);
+      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
       const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
       const activeTurnId = this.turnLifecycle.activeTurnId(targetThread.id);
@@ -300,7 +291,7 @@ export class SubagentCollaboration {
       target: string,
       message: string,
     ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.assertActiveTurn(senderThreadId, senderTurnId);
+      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
       const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
       const activeTurnId = this.turnLifecycle.activeTurnId(targetThread.id);
@@ -347,7 +338,7 @@ export class SubagentCollaboration {
       senderTurnId: string,
       target: string,
     ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.assertActiveTurn(senderThreadId, senderTurnId);
+      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       const thread = this.resolveCollaborationTarget(senderThreadId, target);
       const activeTurnId = this.turnLifecycle.activeTurnId(thread.id);
       if (activeTurnId !== null) await this.turnLifecycle.interruptTurn(thread.id, activeTurnId);
@@ -358,7 +349,7 @@ export class SubagentCollaboration {
       senderTurnId: string,
       signal?: AbortSignal,
     ): Promise<CollaborationWaitResult> {
-      this.turnLifecycle.assertActiveTurn(senderThreadId, senderTurnId);
+      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
   
       if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {

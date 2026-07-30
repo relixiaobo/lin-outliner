@@ -1,7 +1,7 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
-import type { AgentCoreRequestByMethod,ContextCursor,Thread,ThreadConfigurationResponse,ThreadConfigurationSetRequest,ThreadConfigurationSummary,ThreadForkRequest,ThreadId,ThreadItem,ThreadItemEntry,ThreadItemsListRequest,ThreadItemsListResponse,ThreadListRequest,ThreadListResponse,ThreadReadRequest,ThreadReadResponse,ThreadRollbackRequest,ThreadStartRequest,ThreadStartResponse,ThreadStatus,ThreadTurnsListRequest,ThreadTurnsListResponse,Turn,TurnDiagnosticsPayload } from '../../../core/agent/protocol';
+import type { AgentCoreRequestByMethod,ContextCursor,Thread,ThreadConfigurationResponse,ThreadConfigurationSetRequest,ThreadConfigurationSummary,ThreadForkRequest,ThreadId,ThreadItem,ThreadItemEntry,ThreadItemsListRequest,ThreadItemsListResponse,ThreadListRequest,ThreadListResponse,ThreadReadRequest,ThreadReadResponse,ThreadRollbackRequest,ThreadStartRequest,ThreadStartResponse,ThreadTurnsListRequest,ThreadTurnsListResponse,Turn,TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import { assertContextPayloadDependencies,itemContextPayloadReferences,itemResourceReferences } from '../context/contextDependencies';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { decodeCursor,encodeCursor,pageLimit } from '../persistence/cursor';
@@ -13,18 +13,12 @@ import type { FeatureRootThreadInput,PersistentThreadExecutionContext,RendererTh
 import { uuidV7 } from '../uuid';
 import { ThreadCore } from './ThreadCore';
 import { ThreadResourceOps } from './ThreadResourceOps';
+import type { TurnLifecycle } from './TurnLifecycle';
 
 interface PendingThreadNameGeneration {
   readonly turnId: string;
   readonly controller: AbortController;
   readonly completion: Promise<void>;
-}
-
-export interface ThreadCatalogTurnLifecycle {
-  hasActiveTurn(threadId: ThreadId): boolean;
-  abortForSubtreeStop(threadId: ThreadId): Promise<void>;
-  waitForIdle(threadId: ThreadId): Promise<void>;
-  setStatus(threadId: ThreadId, status: ThreadStatus): Promise<void>;
 }
 
 export interface ThreadCatalogCollaboration {
@@ -53,7 +47,7 @@ export class ThreadCatalogOps {
     private readonly now: () => number,
     private readonly isClosing: () => boolean,
     private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
-    private readonly turnLifecycle: ThreadCatalogTurnLifecycle,
+    private readonly turnLifecycle: TurnLifecycle,
     private readonly collaboration: ThreadCatalogCollaboration,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
