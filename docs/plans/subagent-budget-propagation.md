@@ -103,9 +103,15 @@ are visible to the parent.
    subsection (spawn parameter, Goal reuse, admission-gate rule, bright line);
    `docs/spec/agent-tool-design.md` collaboration table row updated.
 
-Not touched in PR A (tripwire): `src/main/agent/runtime/**`,
-`PiTurnExecutor.ts`, `GoalStore.ts` semantics, any codec beyond the two schema
-additions.
+Not touched in PR A (tripwire): `src/main/agent/runtime/kernel/**` and
+`src/main/agent/runtime/PiTurnExecutor.ts` (the loop surface the tripwire
+exists to protect); `GoalStore.ts` semantics; any codec beyond the two schema
+additions. **Narrow allowance** (fixes a self-contradiction an earlier
+revision had with Design step 2, which always named this handler):
+`runtime/ToolRuntime.ts` may change ONLY inside the `spawn_agent`
+collaboration handler (`:191-205`) — validate and pass `max_total_tokens`
+through to `spawnCollaborationAgent`; the file's diff must contain nothing
+outside that handler (plus a validator helper if none fits).
 
 ## Design — PR B: mid-Turn enforcement (after `native-turn-kernel`)
 
