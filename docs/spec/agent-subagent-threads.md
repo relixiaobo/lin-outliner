@@ -62,6 +62,26 @@ because those are the Threads whose terminal transitions are delivered to that
 sender. Descendant status remains visible, but a detached grandchild cannot leave an
 ancestor blocked on an event routed to a different parent.
 
+## Budgets
+
+`collaboration.spawn_agent` accepts an optional `max_total_tokens` positive safe
+integer. When present, the host creates the child Goal with objective `Subagent task:
+<task_name>` and uses the existing Goal accounting to accumulate completed-Turn token
+usage. Omitting the parameter creates no Goal and leaves the child unlimited, preserving
+the unbudgeted spawn behavior.
+
+Reaching or exceeding the total changes the Goal to `budgetLimited`. The single Turn
+admission boundary then rejects every new non-user trigger with the complete exhaustion
+error, including Subagent follow-up, Goal continuation, and host feature work. A
+renderer Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can always
+resume the child explicitly. The budget currently governs admission between Turns; it
+does not interrupt a Turn already in flight, and the completing Turn may overshoot the
+configured total.
+
+`list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
+`tokenBudget`. A child without a Goal reports `0` and `null`, respectively. Goal status
+continues to use the canonical Goal projection, including `budgetLimited`.
+
 ## History And Activity
 
 Spawning records a `collabAgentToolCall` in the sender and a

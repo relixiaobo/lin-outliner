@@ -313,6 +313,8 @@ export interface CollaborationAgentView {
   readonly nickname: string | null;
   readonly role: string | null;
   readonly status: 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored';
+  readonly tokensUsed: number;
+  readonly tokenBudget: number | null;
 }
 
 export interface CollaborationTerminalOutcome {
@@ -2256,10 +2258,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
     model?: string;
     reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
     forkTurns?: string;
+    maxTotalTokens?: number;
   }): Promise<SpawnChildThreadResult> {
     this.requireActiveTurn(input.senderThreadId, input.senderTurnId);
     if (!/^[a-z][a-z0-9_]*$/.test(input.taskName)) {
       throw new Error('Subagent task_name must use lowercase letters, digits, and underscores');
+    }
+    if (input.maxTotalTokens !== undefined
+      && (!Number.isSafeInteger(input.maxTotalTokens) || input.maxTotalTokens < 1)) {
+      throw new Error('max_total_tokens must be a positive integer');
     }
     const parentPath = this.taskPathForThread(input.senderThreadId) ?? '/root';
     const taskPath = `${parentPath}/${input.taskName}`;
@@ -2284,6 +2291,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       ...(inheritedContext === null ? {} : { inheritedContext }),
     });
+    if (input.maxTotalTokens !== undefined) {
+      await this.goals.create({
+        threadId: result.thread.id,
+        objective: `Subagent task: ${input.taskName}`,
+        tokenBudget: input.maxTotalTokens,
+      }, result.turn.id);
+    }
     return result;
   }
 
@@ -2487,6 +2501,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         thread: record.thread,
         active: null,
       };
+    }
+    const goal = this.goals.get({ threadId: request.threadId }).goal;
+    if (request.trigger.kind !== 'user' && goal?.status === 'budgetLimited') {
+      throw new Error(
+        `Subagent token budget exhausted (${goal.tokensUsed} of ${goal.tokenBudget} tokens); the child refuses new work. Interrupt, review its output, or spawn a fresh child.`,
+      );
     }
     if (this.stoppingThreads.has(request.threadId)) throw new ThreadBusyError('Thread is stopping');
     if (record.archived) throw new ThreadBusyError('Thread is archived');
@@ -3568,6 +3588,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const thread = this.requireThread(threadId).thread;
     const edge = this.ephemeralSpawnEdges.get(threadId) ?? this.metadata.spawnEdgeForChild(threadId);
     if (!edge || !thread.parentThreadId) throw new Error(`Thread is not a Subagent: ${threadId}`);
+    const goal = this.goals.get({ threadId }).goal;
     const latest = this.allTurns(threadId).at(-1);
     const status: CollaborationAgentView['status'] = this.activeTurns.has(threadId)
       ? 'running'
@@ -3585,6 +3606,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       nickname: thread.agentNickname,
       role: thread.agentRole,
       status,
+      tokensUsed: goal?.tokensUsed ?? 0,
+      tokenBudget: goal?.tokenBudget ?? null,
     };
   }
 

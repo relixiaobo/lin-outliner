@@ -156,6 +156,12 @@ standing authorization are specified in
 These tools operate on child Threads as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+`collaboration.spawn_agent` accepts optional `max_total_tokens`; the host validates a
+positive safe integer and creates a Goal-backed child budget when it is present.
+Collaboration views returned by `list_agents` and `wait_agent` include `tokensUsed` and
+nullable `tokenBudget`. Once that Goal is `budgetLimited`, new non-user Turn admission is
+rejected while explicit user Turn admission remains available.
+
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,
 and returns for terminal child activity or steering. Its structured result batches
