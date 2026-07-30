@@ -326,8 +326,9 @@ before any directional/security-sensitive build.
   high-effort review (10 verified findings, all fixed same-day), real-run smoke (mixed
   sequential/parallel batch, mid-stream steering). Plan (with its two dev-review revision rounds)
   archived at `docs/plans/archive/native-turn-kernel.md`. **Unblocked and claimable now:**
-  the vocabulary-fronting import sweep (fast-track, mechanical, A11 queue: route `pi-ai` type
-  imports in context/runtime layers through `kernel/types` so only gateway/transport files import
+  the vocabulary-fronting import sweep (fast-track, mechanical, A11 queue; two sanctioned
+  chokepoints: `kernel/types` re-exports the type vocabulary, `piModels` re-exports the few
+  pi-ai runtime functions non-transport files need — so only gateway/transport files import
   `pi-ai` directly), `subagent-budget-propagation` PR B, the `agent-browser-control` plan
   revision, and the `Pi*` mechanical rename.
 - **threadservice-decomposition** (P2, `draft` — **PM-directed 2026-07-30; main-authored plan,
