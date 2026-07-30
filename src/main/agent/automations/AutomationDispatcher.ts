@@ -135,7 +135,9 @@ export class AutomationDispatcher {
       return dispatched;
     } catch (error) {
       if (isSubagentBudgetExhaustedError(error)) {
-        const failed = this.options.store.markFailed(current.id, error.message, this.now());
+        const failed = this.options.store.markFailed(current.id, JSON.stringify({
+          error: { code: error.code, message: error.message },
+        }), this.now());
         await this.changed(failed);
         return failed;
       }

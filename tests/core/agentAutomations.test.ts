@@ -914,8 +914,13 @@ describe('Automation Thread dispatch', () => {
 
     expect(await dispatcher.dispatch(run)).toMatchObject({
       state: 'failed',
-      error: 'Subagent token budget exhausted (12 of 10 tokens); the child refuses new work. '
-        + 'Interrupt, review its output, or spawn a fresh child.',
+      error: JSON.stringify({
+        error: {
+          code: 'subagent_budget_exhausted',
+          message: 'Subagent token budget exhausted (12 of 10 tokens); the child refuses new work. '
+            + 'Interrupt, review its output, or spawn a fresh child.',
+        },
+      }),
     });
     expect(dispatcher.isRunActive(store.readRun(run.id)!)).toBe(false);
   });

@@ -1,21 +1,39 @@
+import type { TurnError } from '../../core/agent/protocol';
+
 const ERROR_PREVIEW_MAX = 280;
+const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
 }
 
-function parsedPayloadMessage(text: string): string | null {
+function parsedPayloadError(text: string): TurnError | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return null;
   try {
-    const parsed = JSON.parse(trimmed) as { error?: { message?: unknown } | string; message?: unknown };
+    const parsed = JSON.parse(trimmed) as {
+      error?: { code?: unknown; message?: unknown } | string;
+      code?: unknown;
+      message?: unknown;
+    };
     const message = typeof parsed.error === 'string'
       ? parsed.error
       : parsed.error?.message ?? parsed.message;
-    return typeof message === 'string' && message.trim() ? message.trim() : null;
+    if (typeof message !== 'string' || !message.trim()) return null;
+    const code = typeof parsed.error === 'object' && parsed.error !== null
+      ? parsed.error.code
+      : parsed.code;
+    return {
+      message: message.trim(),
+      ...(typeof code === 'string' && code ? { code } : {}),
+    };
   } catch {
     return null;
   }
+}
+
+function parsedPayloadMessage(text: string): string | null {
+  return parsedPayloadError(text)?.message ?? null;
 }
 
 function htmlTitle(text: string): string | null {
@@ -47,14 +65,11 @@ export function threadErrorMessage(raw: string): string {
   return truncate(trimmed, ERROR_PREVIEW_MAX);
 }
 
-export function userFacingAgentError(raw: string, resourceLimitMessage: string): string {
-  const trimmed = raw.trim().replace(/^Error:\s*/iu, '').replace(/^Proxy error:\s*/iu, '');
-  return isSubagentResourceLimitError(trimmed)
+export function userFacingAgentError(raw: TurnError | string, resourceLimitMessage: string): string {
+  const error = typeof raw === 'string'
+    ? parsedPayloadError(raw) ?? { message: raw }
+    : raw;
+  return error.code === SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE
     ? resourceLimitMessage
-    : threadErrorMessage(trimmed);
-}
-
-function isSubagentResourceLimitError(message: string): boolean {
-  return /^Token budget exhausted mid-Turn \(\d+ of \d+ tokens\)$/iu.test(message)
-    || /^Subagent token budget exhausted \(\d+ of \d+ tokens\);/iu.test(message);
+    : threadErrorMessage(error.message);
 }

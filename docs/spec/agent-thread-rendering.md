@@ -240,9 +240,11 @@ established quiet stopped row and the same three actions. Hover and keyboard
 focus reveal the row without changing geometry.
 
 Subagent token limits are system internals. Stable admission- and mid-Turn-budget
-errors are translated before transcript display or copy into localized resource-limit
-copy that says produced results were preserved. The same translation applies in Turn
-Details and Automation run errors. Token counts never render on these user surfaces.
+errors carry `subagent_budget_exhausted`; renderer surfaces classify that code rather
+than model-facing copy. They translate it before transcript display or copy into
+localized resource-limit copy that says produced results were preserved. The same
+translation applies in Turn Details and structured Automation run errors. Token counts
+never render on these user surfaces.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and

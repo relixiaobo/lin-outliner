@@ -254,7 +254,7 @@ function TurnOverview({
         <dl aria-label={t.agent.turnDetails.turnError} className="thread-turn-details-identity-list">
           <Fact
             label={t.agent.turnDetails.turnError}
-            value={userFacingAgentError(turn.error.message, t.agent.thread.resourceLimitReached)}
+            value={userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)}
           />
           {turn.error.code ? <Identity label={t.agent.turnDetails.errorCode} value={turn.error.code} /> : null}
           {turn.error.detail ? <Fact label={t.agent.turnDetails.errorDetail} value={turn.error.detail} /> : null}

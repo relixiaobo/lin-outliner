@@ -1535,7 +1535,7 @@ function ThreadResponseTail({
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted';
   const errorText = turn.error
-    ? userFacingAgentError(turn.error.message, t.agent.thread.resourceLimitReached)
+    ? userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)
     : '';
   return (
     <>
@@ -1744,7 +1744,7 @@ async function buildTurnCopyText(
     }
   }
   if (parts.length === 0 && turn.error?.message) {
-    parts.push(userFacingAgentError(turn.error.message, resourceLimitMessage));
+    parts.push(userFacingAgentError(turn.error, resourceLimitMessage));
   }
   return parts.join('\n\n');
 }

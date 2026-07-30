@@ -20,14 +20,19 @@ describe('threadErrorMessage', () => {
 
   test('translates budget failures without exposing token counts', () => {
     const translated = '任务达到系统资源上限，成果已保全。';
-    for (const raw of [
-      'Token budget exhausted mid-Turn (1234 of 1000 tokens)',
-      'Subagent token budget exhausted (1500001 of 1500000 tokens); the child refuses new work. '
-        + 'Interrupt, review its output, or spawn a fresh child.',
+    for (const error of [
+      { message: 'Token budget exhausted mid-Turn (1234 of 1000 tokens)', code: 'subagent_budget_exhausted' },
+      {
+        message: 'Subagent token budget exhausted (1500001 of 1500000 tokens); the child refuses new work. '
+          + 'Interrupt, review its output, or spawn a fresh child.',
+        code: 'subagent_budget_exhausted',
+      },
     ]) {
-      const rendered = userFacingAgentError(raw, translated);
+      const rendered = userFacingAgentError(error, translated);
       expect(rendered).toBe(translated);
       expect(rendered).not.toMatch(/\d/u);
     }
+    expect(userFacingAgentError('Token budget exhausted mid-Turn (12 of 10 tokens)', translated))
+      .toBe('Token budget exhausted mid-Turn (12 of 10 tokens)');
   });
 });

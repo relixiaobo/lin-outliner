@@ -317,20 +317,23 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Covered descendant non-user Turns expose a Turn-start shared-pool snapshot (`budget`,
-`used`) to the native kernel. When a per-child contribution cap has less remaining, the
-same port carries that tighter snapshot. Pool-holder Turns are outside their own pool;
-explicit descendant user Turns expose the port as unlimited and omit the warning
-callback while still accruing on completion. The first model call is never blocked. At every later model-call
-boundary, before draining steering or emitting the next `turn_start`, the executor adds
-the normalizer's accumulated `totalTokens` to that snapshot. Reaching the Turn-start
-remainder interrupts only genuinely outstanding model work, such as completed tool
-calls. A terminal assistant answer stays completed even when exhausted and racing
-steering remains queued and undelivered. Thus every emitted `turn_start` still has its
-matching `turn_end`.
+Descendant non-user Turns expose a live budget port (`budget`, `used`) to the native
+kernel. Each read resolves the authoritative ancestor pool, re-reads persisted usage,
+and adds every other active Turn's model-call tally; the executor then adds the current
+Turn's normalizer `totalTokens`. When a per-child contribution cap has less remaining,
+the same port carries that tighter boundary. An uncapped top-level spawner that holds the
+pool is outside it; an explicitly capped child that anchors a pool remains a covered
+member. Explicit descendant user Turns expose the port as unlimited and omit the warning
+callback while their usage remains in the sibling tally and accrues on completion. The
+first model call is never blocked. At every later model-call boundary,
+before draining steering or emitting the next `turn_start`, reaching the live remainder
+interrupts only genuinely outstanding model work, such as completed tool calls. A
+terminal assistant answer stays completed even when exhausted and racing steering
+remains queued and undelivered. Thus every emitted `turn_start` still has its matching
+`turn_end`.
 
-The first 80% crossing of the Turn-start remainder requests one host-generated budget
-notice carrying the actual ledger total and full budget. The notice uses the same
+The first 80% crossing of the live remainder requests one host-generated budget notice
+carrying the actual controlling total and budget. The notice uses the same
 canonical steering admission and diagnostics path as external steering, so it is a
 durable `userMessage` rather than a private runtime message. Warning delivery is
 advisory: failure is logged and execution continues. Steering diagnostics become

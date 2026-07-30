@@ -179,22 +179,16 @@ export class SubagentCollaboration {
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
       this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const tokenCap = this.childTokenCap(input.maxTotalTokens);
-      const existingPool = this.turnLifecycle.resolveSubagentBudget(input.parentThreadId)?.pool
-        ?? this.subagentBudgets.readPool(input.parentThreadId);
-      const configuredPoolBudget = existingPool ? null : await this.configuredPoolBudget();
       let stagedThreadId: ThreadId | null = null;
+      let createdPoolThreadId: ThreadId | null = null;
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
         if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
         const parent = this.core.requireThread(input.parentThreadId);
-        const nextSpawnCount = this.assertSpawnStructure(input.parentThreadId);
+        const collaborationChild = input.childKind !== 'isolatedSkill';
+        const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
         const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
-        const pool = inheritedBudget?.pool
-          ?? this.subagentBudgets.readPool(input.parentThreadId)
-          ?? (configuredPoolBudget === null
-            ? null
-            : this.subagentBudgets.createPool(input.parentThreadId, configuredPoolBudget, parent.thread.ephemeral));
         const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
         const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
           role,
@@ -223,6 +217,16 @@ export class SubagentCollaboration {
           taskPath: input.taskPath,
         });
         stagedThreadId = thread.id;
+        let pool = inheritedBudget?.pool ?? null;
+        if (!pool && !inheritedBudget?.resolutionFailed) {
+          const poolBudget = tokenCap ?? await this.configuredPoolBudget();
+          if (poolBudget !== null) {
+            const poolThreadId = tokenCap === null ? parent.thread.id : thread.id;
+            pool = this.subagentBudgets.createPool(poolThreadId, poolBudget, parent.thread.ephemeral);
+            createdPoolThreadId = poolThreadId;
+            this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+          }
+        }
         if (pool || tokenCap !== null) {
           this.subagentBudgets.createMember(thread.id, pool?.poolThreadId ?? null, tokenCap, thread.ephemeral);
         }
@@ -240,11 +244,23 @@ export class SubagentCollaboration {
           ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
           ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
         });
-        this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
+        if (nextSpawnCount !== null) {
+          this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
+        }
         return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
         });
       } catch (error) {
         if (stagedThreadId) await this.catalog.deleteThread(stagedThreadId).catch(() => undefined);
+        if (createdPoolThreadId) {
+          try {
+            this.subagentBudgets.deletePool(createdPoolThreadId);
+          } catch (rollbackError) {
+            console.warn('[agent][subagent-budget-audit] failed to roll back a staged pool', {
+              poolThreadId: createdPoolThreadId,
+              error: rollbackError,
+            });
+          }
+        }
         throw error;
       }
       if (result.thread.source === 'collaboration') {
@@ -379,8 +395,12 @@ export class SubagentCollaboration {
       const parentTaskPath = this.taskPathForThread(parentThreadId) ?? '/root';
       const parentDepth = parentTaskPath.split('/').filter(Boolean).length - 1;
       if (parentDepth >= MAX_SUBAGENT_DEPTH) throw new SubagentDepthLimitError(MAX_SUBAGENT_DEPTH);
-      const persistentCount = this.core.metadata.childEdges(parentThreadId).length;
-      const ephemeralCount = this.ephemeralChildThreadIds(parentThreadId).length;
+      const persistentCount = this.core.metadata.childEdges(parentThreadId)
+        .filter((edge) => this.core.requireThread(edge.childThreadId).thread.source === 'collaboration')
+        .length;
+      const ephemeralCount = this.ephemeralChildThreadIds(parentThreadId)
+        .filter((threadId) => this.core.requireThread(threadId).thread.source === 'collaboration')
+        .length;
       const spawnCount = Math.max(
         this.subagentBudgets.readSpawnCount(parentThreadId),
         persistentCount + ephemeralCount,
@@ -564,7 +584,7 @@ export class SubagentCollaboration {
       const thread = this.core.requireThread(threadId).thread;
       const edge = this.ephemeralSpawnEdges.get(threadId) ?? this.core.metadata.spawnEdgeForChild(threadId);
       if (!edge || !thread.parentThreadId) throw new Error(`Thread is not a Subagent: ${threadId}`);
-      const budget = this.turnLifecycle.resolveSubagentBudget(threadId);
+      const budget = this.turnLifecycle.subagentBudgetView(threadId);
       const latest = this.core.allTurns(threadId).at(-1);
       const status: CollaborationAgentView['status'] = this.turnLifecycle.activeTurnId(threadId) !== null
         ? 'running'
@@ -582,8 +602,8 @@ export class SubagentCollaboration {
         nickname: thread.agentNickname,
         role: thread.agentRole,
         status,
-        tokensUsed: budget?.pool?.tokensUsed ?? 0,
-        tokenBudget: budget?.pool?.tokenBudget ?? null,
+        tokensUsed: budget?.tokensUsed ?? 0,
+        tokenBudget: budget?.tokenBudget ?? null,
       };
     }
   private async collaborationWaitResult(

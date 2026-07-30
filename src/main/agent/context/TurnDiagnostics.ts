@@ -24,6 +24,7 @@ import type {
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
+import { recordModelCallUsage } from './ModelCallUsageScope';
 
 interface PreparedProviderPlan {
   readonly protectedFromMessageIndex: number;
@@ -280,6 +281,7 @@ export class TurnDiagnosticsCollector {
     if (event.type !== 'message_end' || event.message.role !== 'assistant') return;
     const call = [...this.providerCalls].reverse().find((candidate) => candidate.response === null);
     if (!call) return;
+    recordModelCallUsage(event.message.usage.totalTokens);
     call.response = {
       receivedAt: Date.now(),
       stopReason: event.message.stopReason,

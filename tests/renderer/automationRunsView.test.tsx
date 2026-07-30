@@ -26,8 +26,13 @@ describe('AutomationRunsView', () => {
       turnId: null,
       worktree: null,
       omission: null,
-      error: 'Subagent token budget exhausted (1500001 of 1500000 tokens); the child refuses new work. '
-        + 'Interrupt, review its output, or spawn a fresh child.',
+      error: JSON.stringify({
+        error: {
+          code: 'subagent_budget_exhausted',
+          message: 'Subagent token budget exhausted (1500001 of 1500000 tokens); the child refuses new work. '
+            + 'Interrupt, review its output, or spawn a fresh child.',
+        },
+      }),
       readAt: null,
       pinned: false,
       createdAt: timestamp,

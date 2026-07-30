@@ -9,6 +9,7 @@ import {
   encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
 import { TurnDiagnosticsCollector } from '../../src/main/agent/context/TurnDiagnostics';
+import { withModelCallUsageObserver } from '../../src/main/agent/context/ModelCallUsageScope';
 
 const model = {
   id: 'test-model',
@@ -24,7 +25,7 @@ const model = {
 } as Model<Api>;
 
 describe('Turn diagnostics', () => {
-  test('records reconstructable ordered requests, pooled prefixes, execution Items, and responses', () => {
+  test('records reconstructable ordered requests, pooled prefixes, execution Items, and responses', async () => {
     const imageBytes = Buffer.from('diagnostic image');
     const firstMessage: UserMessage = {
       role: 'user',
@@ -129,10 +130,16 @@ describe('Turn diagnostics', () => {
         'set-cookie': 'private-cookie',
       },
     });
-    collector.captureEvent({
-      type: 'message_end',
-      message: assistantMessage('First response'),
-    } as AgentEvent);
+    let observedModelCallTokens = 0;
+    await withModelCallUsageObserver((tokens) => {
+      observedModelCallTokens += tokens;
+    }, async () => {
+      collector.captureEvent({
+        type: 'message_end',
+        message: assistantMessage('First response'),
+      } as AgentEvent);
+    });
+    expect(observedModelCallTokens).toBe(15);
     collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
     collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 

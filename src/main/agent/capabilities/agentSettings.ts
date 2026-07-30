@@ -122,6 +122,7 @@ const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
+  // Captured as a fixed grant only when a new delegated tree creates its pool.
   subagentTokenBudget: 1_500_000,
   providerTimeoutMs: null,
   providerMaxRetries: null,

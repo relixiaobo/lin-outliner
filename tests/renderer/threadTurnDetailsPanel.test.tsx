@@ -44,7 +44,10 @@ describe('ThreadTurnDetailsPanel', () => {
       turn: {
         ...base.turn,
         status: 'interrupted',
-        error: { message: 'Token budget exhausted mid-Turn (1234 of 1000 tokens)' },
+        error: {
+          message: 'Token budget exhausted mid-Turn (1234 of 1000 tokens)',
+          code: 'subagent_budget_exhausted',
+        },
       },
     };
     const rendered = renderPanel(async (method) => {

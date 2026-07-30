@@ -44,7 +44,7 @@ describe('Codex Agent Core model-tool contract', () => {
       properties: {
         max_total_tokens: {
           type: 'number',
-          description: 'Optional per-child token cap within the shared Subagent tree pool.',
+          description: 'Optional per-child token cap. It shares an ancestor pool or creates one when none exists.',
         },
       },
       required: ['task_name', 'message'],

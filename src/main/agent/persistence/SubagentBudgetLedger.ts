@@ -96,6 +96,9 @@ export class SubagentBudgetLedger {
     ephemeral: boolean,
   ): SubagentBudgetMember {
     if (tokenCap !== null) positiveSafeInteger(tokenCap, 'Subagent token cap');
+    if (poolThreadId !== null && !this.readPool(poolThreadId)) {
+      throw new Error(`Subagent token pool not found: ${poolThreadId}`);
+    }
     const record = { threadId, poolThreadId, tokenCap, tokensUsed: 0 } satisfies SubagentBudgetMember;
     if (ephemeral) {
       if (this.ephemeralMembers.has(threadId)) throw new Error(`Subagent budget member already exists: ${threadId}`);
@@ -107,6 +110,38 @@ export class SubagentBudgetLedger {
       VALUES (?, ?, ?, 0)
     `).run(threadId, poolThreadId, tokenCap);
     return record;
+  }
+
+  rebindMemberPool(threadId: ThreadId, poolThreadId: ThreadId | null): SubagentBudgetMember | null {
+    const ephemeral = this.ephemeralMembers.get(threadId);
+    if (ephemeral) {
+      const rebound = { ...ephemeral, poolThreadId };
+      this.ephemeralMembers.set(threadId, rebound);
+      return rebound;
+    }
+    const member = this.readPersistedMember(threadId);
+    if (!member) return null;
+    const result = this.db.prepare(`
+      UPDATE subagent_budget_members SET pool_thread_id = ? WHERE thread_id = ?
+    `).run(poolThreadId, threadId);
+    if (result.changes !== 1) return null;
+    return { ...member, poolThreadId };
+  }
+
+  deletePool(poolThreadId: ThreadId): boolean {
+    const ephemeralPool = this.ephemeralPools.delete(poolThreadId);
+    if (ephemeralPool) {
+      for (const [memberThreadId, member] of this.ephemeralMembers) {
+        if (member.poolThreadId === poolThreadId) this.ephemeralMembers.delete(memberThreadId);
+      }
+    }
+    const memberChanges = this.db.prepare(
+      'DELETE FROM subagent_budget_members WHERE pool_thread_id = ?',
+    ).run(poolThreadId).changes;
+    const poolChanges = this.db.prepare(
+      'DELETE FROM subagent_budget_pools WHERE pool_thread_id = ?',
+    ).run(poolThreadId).changes;
+    return ephemeralPool || Number(memberChanges) > 0 || Number(poolChanges) > 0;
   }
 
   recordSpawnCount(spawnerThreadId: ThreadId, spawnCount: number, ephemeral: boolean): number {
@@ -131,28 +166,36 @@ export class SubagentBudgetLedger {
     threadId: ThreadId,
     poolThreadId: ThreadId | null,
     tokens: number,
-  ): { readonly member: SubagentBudgetMember; readonly pool: SubagentBudgetPool | null } | null {
+  ): { readonly member: SubagentBudgetMember | null; readonly pool: SubagentBudgetPool | null } | null {
     if (!Number.isSafeInteger(tokens) || tokens < 0) {
       throw new Error('Subagent budget usage increment must be a non-negative integer');
     }
-    const ephemeral = this.ephemeralMembers.get(threadId);
-    if (ephemeral) return this.addEphemeralUsage(ephemeral, poolThreadId, tokens);
-    const member = this.readPersistedMember(threadId);
-    if (!member) return null;
-    if (member.poolThreadId !== poolThreadId) {
-      throw new Error(`Subagent budget pool mismatch for Thread: ${threadId}`);
+    const ephemeralMember = this.ephemeralMembers.get(threadId) ?? null;
+    const ephemeralPool = poolThreadId === null ? null : this.ephemeralPools.get(poolThreadId) ?? null;
+    if (ephemeralMember || ephemeralPool) {
+      return this.addEphemeralUsage(ephemeralMember, ephemeralPool, poolThreadId, tokens);
     }
+    let member = this.readPersistedMember(threadId);
+    if (member?.poolThreadId !== poolThreadId) {
+      member = this.rebindMemberPool(threadId, poolThreadId);
+    }
+    const pool = poolThreadId === null ? null : this.readPersistedPool(poolThreadId);
+    if (!member && !pool) return null;
     if (tokens === 0) {
-      return { member, pool: poolThreadId === null ? null : this.readPersistedPool(poolThreadId) };
+      return { member, pool };
     }
 
     this.db.exec('BEGIN IMMEDIATE;');
     try {
-      const updatedMember = { ...member, tokensUsed: checkedTotal(member.tokensUsed, tokens) };
-      const memberResult = this.db.prepare(`
-        UPDATE subagent_budget_members SET tokens_used = ? WHERE thread_id = ?
-      `).run(updatedMember.tokensUsed, threadId);
-      if (memberResult.changes !== 1) throw new Error(`Subagent budget member not found: ${threadId}`);
+      const updatedMember = member
+        ? { ...member, tokensUsed: checkedTotal(member.tokensUsed, tokens) }
+        : null;
+      if (updatedMember) {
+        const memberResult = this.db.prepare(`
+          UPDATE subagent_budget_members SET tokens_used = ? WHERE thread_id = ?
+        `).run(updatedMember.tokensUsed, threadId);
+        if (memberResult.changes !== 1) throw new Error(`Subagent budget member not found: ${threadId}`);
+      }
       const updatedPool = poolThreadId === null ? null : this.addPersistedPoolUsage(poolThreadId, tokens);
       this.db.exec('COMMIT;');
       return { member: updatedMember, pool: updatedPool };
@@ -197,20 +240,23 @@ export class SubagentBudgetLedger {
   }
 
   private addEphemeralUsage(
-    member: SubagentBudgetMember,
+    member: SubagentBudgetMember | null,
+    pool: SubagentBudgetPool | null,
     poolThreadId: ThreadId | null,
     tokens: number,
-  ): { readonly member: SubagentBudgetMember; readonly pool: SubagentBudgetPool | null } {
-    if (member.poolThreadId !== poolThreadId) {
-      throw new Error(`Subagent budget pool mismatch for Thread: ${member.threadId}`);
+  ): { readonly member: SubagentBudgetMember | null; readonly pool: SubagentBudgetPool | null } {
+    if (member && member.poolThreadId !== poolThreadId) {
+      member = this.rebindMemberPool(member.threadId, poolThreadId);
     }
+    if (!member && !pool) throw new Error('Ephemeral Subagent budget record not found');
     if (tokens === 0) {
-      return { member, pool: poolThreadId === null ? null : this.ephemeralPools.get(poolThreadId) ?? null };
+      return { member, pool };
     }
-    const updatedMember = { ...member, tokensUsed: checkedTotal(member.tokensUsed, tokens) };
-    this.ephemeralMembers.set(member.threadId, updatedMember);
+    const updatedMember = member
+      ? { ...member, tokensUsed: checkedTotal(member.tokensUsed, tokens) }
+      : null;
+    if (updatedMember) this.ephemeralMembers.set(updatedMember.threadId, updatedMember);
     if (poolThreadId === null) return { member: updatedMember, pool: null };
-    const pool = this.ephemeralPools.get(poolThreadId);
     if (!pool) throw new Error(`Subagent token pool not found: ${poolThreadId}`);
     const updatedPool = { ...pool, tokensUsed: checkedTotal(pool.tokensUsed, tokens) };
     this.ephemeralPools.set(poolThreadId, updatedPool);

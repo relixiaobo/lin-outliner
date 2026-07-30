@@ -68,7 +68,10 @@ The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000`; `null` d
 the shared default. When a Thread with no ancestor pool first spawns, that Thread becomes
 the pool holder. Every descendant resolves the nearest holder by following
 `parentThreadId`, and every descendant Turn contributes `totalTokens` to that one pool.
-The holder's own Turns never debit or gate against the pool. The user-triggered Turn
+The grant is fixed from the setting value at pool creation; later setting changes affect
+only new delegated trees, while interrupt remains the control for a live tree. The
+holder's own Turns never debit or gate against the pool when the holder is the
+top-level spawner rather than a capped child member. The user-triggered Turn
 bright line is an admission-level defense-in-depth invariant, not a product journey:
 children have no composer, so recovery from exhaustion is parent respawn or synthesis
 plus the preserved transcript artifact.
@@ -76,9 +79,9 @@ plus the preserved transcript artifact.
 `collaboration.spawn_agent` also accepts optional `max_total_tokens` as a positive safe
 integer. It is a per-child cap on that Thread's own contribution inside the shared pool,
 not a grant, reservation, nested pool, or refundable allocation. Omitting it creates no
-child-local cap. If the runtime default is disabled, an explicit cap remains enforceable
-for that child even though no shared pool exists. Collaboration and isolated Skill
-children use the same spawn boundary and accounting rules.
+child-local cap. When no ancestor pool exists, an explicit cap creates a pool of that
+size anchored at the new child; its descendants join the same pool. Collaboration and
+isolated Skill children use the same spawn boundary and accounting rules.
 
 The default is a circuit breaker, not a task allocation. Local usage spans roughly
 12k-432k total tokens for legitimate child work (94k median), while the observed runaway
@@ -93,15 +96,24 @@ global pool default. The explicit value and global value are different constrain
 than overrides: admission and in-flight enforcement obey whichever has less remaining.
 Role and Skill caps remain deferred.
 
-`SubagentBudgetLedger` stores one pool row per holder and one internal contribution row
-per covered descendant before that descendant's first Turn. Persistent rows live in
+`SubagentBudgetLedger` stores one pool row per holder and an internal contribution row
+for each child spawned while that pool exists. Persistent rows live in
 `subagent_budget_pools` and `subagent_budget_members` beside Goals in `goals.sqlite`;
 ephemeral rows mirror them in memory. The old per-child `thread_budgets` format is deleted,
 not migrated or read. Deleting a descendant removes only its member row and never refunds
 usage. Deleting the holder Thread deletes the complete Thread subtree and its pool plus
 all remaining member rows. A separate lifetime spawn counter survives child deletion and
 is removed only with its spawner. The ledger has no model-tool surface; child Goals remain
-independent and cannot replace, remove, or raise these host-owned limits.
+independent and cannot replace, remove, or raise these host-owned limits. Coverage does
+not depend on a member row: a child that predates pool creation still gates and debits the
+pool resolved by its ancestry.
+
+One guarded ancestor walk is authoritative for spawn binding, admission, in-flight
+enforcement, accrual, and views. Member rows record contribution and optional cap state,
+not an independent pool assignment. If a stored member binding disagrees with the walk,
+the host re-binds it and writes a budget audit entry. Read, re-bind, and accrual failures
+also audit and degrade without changing Turn status; only pool/member creation remains a
+fail-closed write boundary.
 
 When either the shared pool or the target child's local cap is exhausted, the single
 Turn-admission boundary rejects every new non-user trigger with
@@ -129,17 +141,20 @@ or idle status is exposed, so racing admission observes the committed total. Fai
 finalization also accrues any execution usage already returned by the executor. A hard
 process crash can still lose usage that existed only in the in-flight process.
 
-At a covered descendant non-user Turn's start, `ThreadService` captures the shared pool
-snapshot. If the child's local cap has less remaining than the pool, it captures that
-tighter snapshot through the same unchanged kernel port. Explicit user Turns receive an
-unlimited (`null`) kernel port and no warning callback, preserving the bright-line
-override while still accruing their completed usage. The first provider call is always
-admitted; an already exhausted fresh non-user Turn belongs to the admission gate. Before
-every later provider projection, the executor adds the normalizer's accumulated Turn
-`totalTokens` to the captured usage. Reaching the Turn-start remainder settles genuinely
-outstanding model work as `interrupted` with the model-facing token-denominated error.
-Normal completion accounting then commits the same usage to both the member and pool,
-and the admission gate rejects later non-user Turns.
+Every descendant Turn receives the unchanged kernel budget port. Before each model call,
+the port re-runs the authoritative walk, re-reads persisted pool usage, and adds an
+in-memory tally from every other active Turn in that pool. The executor then adds the
+current Turn's normalizer usage, so concurrent siblings can overrun only by one provider
+call each instead of independently spending the full pool. If the child's local cap has
+less remaining, the port returns that tighter boundary. Explicit user Turns receive an
+unlimited (`null`) result and no warning callback, preserving the bright-line override;
+their model-call usage still joins the live pool tally and their completed usage still
+accrues. This lets a previously uncovered child become both gated and debited when a
+later spawn creates an ancestor pool. The first provider call is always admitted; an
+already exhausted fresh non-user Turn belongs to the admission gate. Reaching the live
+remainder settles genuinely outstanding model work as `interrupted` with the
+model-facing token-denominated error. Completion commits usage before removing its
+in-flight tally, and the admission gate owns later non-user work.
 
 The exhaustion check runs before steering is drained and before a new `turn_start` is
 emitted. If the preceding assistant message is terminal, the Turn remains `completed`
@@ -147,7 +162,7 @@ and racing steering remains undelivered even when the budget was exhausted; over
 still accrues. Only a boundary with outstanding model work can be interrupted, and every
 emitted kernel Turn boundary remains paired.
 
-On the first later-call boundary where Turn usage reaches 80% of the captured remainder,
+On the first later-call boundary where Turn usage reaches 80% of the live remainder,
 the host admits one steering input through the ordinary canonical steering path:
 `[Budget notice] ~80% of the token budget is consumed (<used> of <budget>). Synthesize
 your findings and conclude now.` The notice is a real `userMessage` Item, appears in
@@ -156,25 +171,31 @@ once per Turn; no private prompt overlay or synthetic non-canonical message carr
 The displayed values are the actual controlling pool-or-cap values at the crossing,
 never reconstructed threshold values. Delivery failure is advisory: the kernel
 logs it and continues without changing Turn status. Diagnostics mark accepted steering
-as consumed only after the runtime drains it into a provider context. Pool holders,
-uncovered children, and Threads without a local cap provide no execution port for their
-own Turns, so their kernel behavior and event cadence are unchanged.
+as consumed only after the runtime drains it into a provider context. A top-level pool
+holder provides no execution port for its own Turns. Every descendant has the port so a
+later-created ancestor pool can cover it; while uncovered, that port returns `null` and
+does not change model-call behavior.
 
-Spawn admission also enforces two fixed legibility limits: `/root/a/b` is the deepest
-task path, so a depth-2 Thread cannot spawn; and one Thread may create at most 16 direct
-children across its lifetime. The durable count cannot be reset by deleting a child. The
-constants live beside the budget ledger. Both checks run inside the Thread tree mutex and
-throw distinct typed errors whose messages name the relevant limit.
+Collaboration spawn admission also enforces two fixed legibility limits: `/root/a/b` is
+the deepest task path, so a depth-2 Thread cannot spawn a collaboration child; and one
+Thread may create at most 16 direct collaboration children across its lifetime. The
+durable count cannot be reset by deleting a child. Isolated Skill children are leaf-only,
+host-created work and are exempt from both gates and the count. The constants live beside
+the budget ledger. Both checks run inside the Thread tree mutex and throw distinct typed
+errors whose messages name the relevant limit.
 
-`list_agents` and the child tree returned by `wait_agent` expose shared-pool state:
-`tokenBudget` is the pool total and `tokensUsed` is total pool spend. Every descendant in
-the same pool therefore reports the same pair; child-local contribution and cap remain
-internal. An uncovered child reports `0` and `null`.
+`list_agents` and the child tree returned by `wait_agent` expose the boundary that would
+refuse the child's next non-user Turn. They normally report shared-pool state, where
+`tokenBudget` is the pool total and `tokensUsed` is total live pool spend. When a local
+cap has less remaining, they report that cap and the child's live contribution instead;
+a legacy cap-only member does the same. An uncovered child reports `0` and `null`.
 
 Token quantities are system-internal. Parent-model tools, warning steering, typed errors,
-and diagnostics remain token-denominated. Transcript errors, Turn Details, copied error
-text, and Automation run errors translate either stable budget failure into localized
-resource-limit copy stating that results were preserved; they never render token counts.
+and diagnostics remain token-denominated. Terminal Turns carry stable
+`subagent_budget_exhausted` or `subagent_structural_limit` error codes. Transcript errors,
+Turn Details, copied error text, and Automation run errors classify budget failure by
+code and translate it into localized resource-limit copy stating that results were
+preserved; they never render token counts.
 
 ## History And Activity
 
