@@ -101,7 +101,22 @@ provider, filesystem, Node, Skill, import, and web capabilities live under
 `src/main/agent/capabilities/`; they may contribute tools and configuration but
 may not own Thread history or lifecycle state. The Tenon-owned turn loop,
 runtime state, tool batching, retry policy, and transport gateway live under
-`src/main/agent/runtime/kernel/`. There are no flat
+`src/main/agent/runtime/kernel/`. Thread coordination is split into five owned
+modules under `src/main/agent/thread/`:
+
+- `ThreadCore` owns the stores, canonical reads, notification bus, admission
+  barriers, and the single shared Thread mutex.
+- `ThreadResourceOps` owns attachments, Thread resources, payload references,
+  observations, and admission content resolution.
+- `ThreadCatalogOps` owns Thread creation, resume, fork, rollback, naming,
+  archival, deletion, configuration, and subtree stop.
+- `SubagentCollaboration` owns child spawning, inherited context, mailboxes,
+  task paths, activity queues, and collaboration waits.
+- `TurnLifecycle` owns Turn admission, execution, steering, user input,
+  compaction, client bindings, active-Turn state, and Subagent budget usage.
+
+`ThreadService` constructs those owners and preserves the host, extension, and
+protocol facade; it does not duplicate their state. There are no flat
 `src/main/agent*.ts` implementations, forwarding wrappers, alternate runtimes,
 or compatibility readers.
 
@@ -160,9 +175,9 @@ equivalent audit edge in Thread history.
 
 ## Lifecycle
 
-`ThreadService` is the only lifecycle coordinator. It serializes acceptance per
-Thread, enforces one active Turn, and deduplicates renderer submissions by stable
-client message ID.
+`TurnLifecycle`, reached through the unchanged `ThreadService` facade, is the
+only lifecycle coordinator. It serializes acceptance per Thread, enforces one
+active Turn, and deduplicates renderer submissions by stable client message ID.
 
 Starting a Turn follows this order:
 
