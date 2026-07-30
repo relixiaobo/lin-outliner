@@ -59,12 +59,18 @@
   -webkit-app-region: no-drag;
 }
 
-/* With several panes open the breadcrumb path row doubles as the pane's
+/* With several panes open the crumb content doubles as the pane's
    drag-to-reorder handle (WorkspaceCanvas attaches the handle only then), so it
    must receive mouse events instead of feeding the window drag region. The
-   header's top padding strip and the leading/trailing gaps stay window-drag;
-   single-pane canvases keep the full drag region (no handle → no carve-out). */
-.panel-breadcrumb.pane-drag-handle {
+   handle is sized to the crumb CONTENT, not the nav's full 1fr column — the
+   empty header space right of the crumbs, the top padding strip, and the gaps
+   all stay window-drag; single-pane canvases keep the full drag region (no
+   handle → no carve-out). Layout mirrors the nav so truncation still works. */
+.panel-breadcrumb .pane-drag-handle {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
   -webkit-app-region: no-drag;
 }
 

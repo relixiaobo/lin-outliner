@@ -71,11 +71,12 @@ Center — per-pane breadcrumb headers:
 - The breadcrumb is the pane's header and its drag region. A per-pane back
   control lives in the breadcrumb row; global page-history back/forward are on
   `Cmd+[` / `Cmd+]` with no chrome buttons.
-- With more than one pane open, the breadcrumb's path row is additionally the
-  pane's drag-to-reorder handle and opts out of the window drag region
-  (`no-drag` carve-out, like the breadcrumb's buttons); the header's top strip
-  and remaining gaps stay window-drag. Single-pane canvases keep the full drag
-  region.
+- With more than one pane open, the breadcrumb's crumb content — sized to the
+  crumbs, not the header's full middle column — is additionally the pane's
+  drag-to-reorder handle and opts out of the window drag region (`no-drag`
+  carve-out, like the breadcrumb's buttons); the empty header space right of
+  the crumbs, the top strip, and the gaps stay window-drag. Single-pane
+  canvases keep the full drag region.
 
 Right corner — agent chrome:
 
@@ -844,20 +845,25 @@ panels[1] -> next pane
 panels[2] -> next pane
 ```
 
-The user reorders panes by dragging a pane's breadcrumb path row (hover title
-"Drag to reorder panes"). Feedback is a **live arrangement preview**: while the
-drag is active, every pane slides — pure CSS transform, no DOM move, so pane
-content never reloads or loses scroll — to the position it would occupy if the
-drop landed now, and the divider hairlines slide along to the previewed
-boundaries. Geometry is frozen at dragstart and the insertion index derives
-from the pointer X against the frozen pane midpoints (monotonic in X, so the
-preview cannot oscillate as panes slide under the cursor). Hovering one of the
+The user reorders panes by dragging a pane's breadcrumbs (hover title "Drag to
+reorder panes"). Feedback is a **live arrangement preview**: while the drag is
+active, every pane slides — pure CSS transform, no DOM move — to the position
+it would occupy if the drop landed now, and the divider hairlines slide along
+to the previewed boundaries. Geometry is frozen at dragstart and the insertion
+index derives from the pointer X against the frozen pane midpoints (monotonic
+in X, so the preview cannot oscillate as panes slide under the cursor). Pane
+content is pointer-shielded for the duration of the drag so embedded
+iframe/webview previews cannot swallow the drag events. Hovering one of the
 dragged pane's own boundaries previews as "everything stays put"; cancelling
 (Escape / drop outside) slides the preview back. Reduced motion previews the
 positions without the slide animation. The drop commits a pure array
-permutation (`movePanelToIndex`) — ids, sizes, per-pane history, and the
-active pane are untouched. Reordering therefore also renumbers the pane
-`order` the agent sees in its user-view context.
+permutation (`movePanelToIndex`, the same shared reorder helper the preview
+uses) — ids, sizes, per-pane history, and the active pane are untouched. The
+committed order reaches the screen as CSS `order`: pane DOM order stays stable
+across reorders, so embedded preview content neither reloads nor loses state
+on a reorder (accepted trade-off at ≤4 panes: focus/reader sequence follows
+DOM order and can diverge from the visual order). Reordering also renumbers
+the pane `order` the agent sees in its user-view context.
 
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.
@@ -900,8 +906,8 @@ Rules:
   stay at their minimums and the pane degrades inside the available width rather
   than introducing canvas-level horizontal scroll.
 - Pane resize handles sit between panes.
-- Panes reorder by dragging a pane's breadcrumb path row (multi-pane only).
-  The divider between two panes accepts the drop as that exact boundary. Only
+- Panes reorder by dragging a pane's breadcrumbs (multi-pane only). The
+  divider between two panes accepts the drop as that exact boundary. Only
   order changes; sizes stay with their panes.
 - Opening a pane appends it next to the current pane or at the end only when the
   resulting pane count can fit after rail re-clamping. The hard cap remains

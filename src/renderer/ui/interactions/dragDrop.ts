@@ -46,6 +46,21 @@ export const PINNED_NODE_REORDER_MIME = 'application/x-lin-pinned-node-id';
  *  canvas panes left/right. Carries the pane id. */
 export const WORKSPACE_PANEL_REORDER_MIME = 'application/x-lin-workspace-panel-id';
 
+/** Remove-then-insert list reorder shared by pinned-node and pane reordering
+ *  (and the pane drag's arrangement preview, so preview and commit can never
+ *  disagree): `insertIndex` is interpreted against the CURRENT list, so a move
+ *  lands exactly where the insertion point showed. An absent item is inserted.
+ *  Returns the input list object when the move is a no-op. */
+export function listWithItemMovedToIndex<T>(list: readonly T[], item: T, insertIndex: number): readonly T[] {
+  const currentIndex = list.indexOf(item);
+  const without = list.filter((entry) => entry !== item);
+  let target = insertIndex;
+  if (currentIndex !== -1 && currentIndex < insertIndex) target -= 1;
+  target = Math.max(0, Math.min(target, without.length));
+  if (currentIndex === target && currentIndex !== -1) return list;
+  return [...without.slice(0, target), item, ...without.slice(target)];
+}
+
 export function resolveOutlinerDropMove(input: ResolveOutlinerDropMoveInput): OutlinerDropMove | null {
   const {
     dragNodeId,

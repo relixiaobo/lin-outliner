@@ -605,6 +605,7 @@ export function NodePanel(props: NodePanelProps) {
                 <ButtonControl
                   className="panel-breadcrumb-button"
                   onClick={() => props.onRoot(node.id)}
+                  title={label}
                 >
                   {label}
                 </ButtonControl>

@@ -93,6 +93,24 @@ interface PanelStickyBreadcrumbProps {
   titleDocked: boolean;
 }
 
+function breadcrumbContent(props: PanelStickyBreadcrumbProps) {
+  return (
+    <>
+      {props.children}
+      {props.titleDocked && (
+        <span className="panel-breadcrumb-segment panel-breadcrumb-current">
+          <span className="panel-breadcrumb-divider">/</span>
+          {/* The label carries its own title so the drag handle's tooltip does
+              not leak over it (and a truncated title stays readable). */}
+          <span className="panel-breadcrumb-current-label" data-current-page-title title={props.currentTitle}>
+            {props.currentTitle}
+          </span>
+        </span>
+      )}
+    </>
+  );
+}
+
 export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
   return (
     <div className="panel-sticky-breadcrumb" ref={props.stickyRef}>
@@ -112,26 +130,22 @@ export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
         />
         {props.origin}
       </div>
-      {/* With a drag handle, the path row is draggable to reorder panes. It opts
-          out of the window drag region via .pane-drag-handle (breadcrumb.css);
-          the header's top strip and gaps stay window-drag. */}
-      <nav
-        className={`panel-breadcrumb${props.dragHandle ? ' pane-drag-handle' : ''}`}
-        aria-label={props.breadcrumbAriaLabel}
-        draggable={props.dragHandle ? true : undefined}
-        onDragStart={props.dragHandle?.onDragStart}
-        onDragEnd={props.dragHandle?.onDragEnd}
-        title={props.dragHandle?.title}
-      >
-        {props.children}
-        {props.titleDocked && (
-          <span className="panel-breadcrumb-segment panel-breadcrumb-current">
-            <span className="panel-breadcrumb-divider">/</span>
-            <span className="panel-breadcrumb-current-label" data-current-page-title>
-              {props.currentTitle}
-            </span>
+      {/* With a drag handle, the crumb CONTENT (and only it — fit-content, so
+          the empty header space right of the crumbs stays part of the window
+          drag region) is draggable to reorder panes; it opts out of the window
+          drag region via .pane-drag-handle (breadcrumb.css). */}
+      <nav className="panel-breadcrumb" aria-label={props.breadcrumbAriaLabel}>
+        {props.dragHandle ? (
+          <span
+            className="pane-drag-handle"
+            draggable
+            onDragStart={props.dragHandle.onDragStart}
+            onDragEnd={props.dragHandle.onDragEnd}
+            title={props.dragHandle.title}
+          >
+            {breadcrumbContent(props)}
           </span>
-        )}
+        ) : breadcrumbContent(props)}
       </nav>
       {/* Close lives INSIDE the breadcrumb (the pane's toolbar row): it is a no-drag
           DOM descendant of the breadcrumb's drag region - the only reliable carve-out

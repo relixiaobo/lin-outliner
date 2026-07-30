@@ -39,18 +39,21 @@
    from the other DOM subtree (an overlap makes the toggle's clicks flicker / get
    swallowed on macOS). The pane body below stays full-bleed; the zone's opaque
    backing (shell.css) caps the top band the breadcrumb no longer covers. */
-.app.sidebar-collapsed .outline-panel-surface:first-child .panel-sticky-breadcrumb {
+/* Visual first/last pane, NOT :first-child/:last-child: pane DOM order is
+   stable across drag reorders and the visual order lives in CSS `order`, so
+   WorkspaceCanvas stamps .is-first-pane/.is-last-pane from the array index. */
+.app.sidebar-collapsed .outline-panel-surface.is-first-pane .panel-sticky-breadcrumb {
   margin-left: var(--chrome-left-zone-width);
 }
 
-.app:not(.agent-open) .outline-panel-surface:last-child .panel-sticky-breadcrumb {
+.app:not(.agent-open) .outline-panel-surface.is-last-pane .panel-sticky-breadcrumb {
   margin-right: var(--chrome-right-zone-width);
 }
 
 /* Same reason for the per-pane close button (only shown with >1 pane): when the
    agent is collapsed the last pane reaches the right edge, so its close button —
    pinned to the pane's top-right — would land under the agent toggle. Clear it. */
-.app:not(.agent-open) .outline-panel-surface:last-child .outline-panel-close {
+.app:not(.agent-open) .outline-panel-surface.is-last-pane .outline-panel-close {
   right: var(--chrome-right-zone-width);
 }
 
@@ -105,6 +108,15 @@
 .workspace-canvas.pane-dragging .outline-panel-surface,
 .workspace-canvas.pane-dragging .panel-resize-slot {
   transition: transform var(--motion-layout);
+}
+
+/* While a pane drag is active, pane content must not swallow the drag: an
+   embedded iframe/webview preview otherwise eats dragover/drop and the reorder
+   goes dead over its body (only the canvas-level capture handler may see pane
+   drags). The drag source's dragend still fires — it is dispatched to the
+   source element, not hit-tested. */
+.workspace-canvas.pane-dragging .outline-panel-surface .main-panel {
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

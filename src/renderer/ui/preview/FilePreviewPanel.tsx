@@ -551,6 +551,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                   <ButtonControl
                     className="panel-breadcrumb-button"
                     onClick={() => props.onRoot(node.id)}
+                    title={label}
                   >
                     {label}
                   </ButtonControl>

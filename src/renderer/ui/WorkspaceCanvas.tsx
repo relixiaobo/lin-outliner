@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
 import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
@@ -10,8 +10,13 @@ import type { FilePreviewNavigationOptions, WorkspacePanelState } from './worksp
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
 import { ThreadTurnDetailsPanel } from '../agent/components/ThreadTurnDetailsPanel';
-import { WORKSPACE_PANEL_REORDER_MIME } from './interactions/dragDrop';
+import { listWithItemMovedToIndex, WORKSPACE_PANEL_REORDER_MIME } from './interactions/dragDrop';
 import type { PanelDragHandle } from './PanelShared';
+
+// How long a cancelled drag keeps .pane-dragging (and with it the transform
+// transition) so the preview can slide back home instead of snapping. Matches
+// --motion-layout-duration (160ms) with a little slack.
+const PANE_DRAG_SETTLE_MS = 200;
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -74,6 +79,24 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     mids: number[];
     gap: number;
   } | null>(null);
+  const settleTimeoutRef = useRef<number | null>(null);
+
+  const clearSettleTimeout = () => {
+    if (settleTimeoutRef.current === null) return;
+    window.clearTimeout(settleTimeoutRef.current);
+    settleTimeoutRef.current = null;
+  };
+  useEffect(() => clearSettleTimeout, []);
+  // Hardening: every cleanup path hangs on the source nav's dragend, which
+  // never fires if the dragged pane unmounts mid-drag (an async close). Drop
+  // the whole drag state when the dragged id leaves the layout.
+  useEffect(() => {
+    if (!dragPanelId || activePanels.some((panel) => panel.id === dragPanelId)) return;
+    clearSettleTimeout();
+    dragLayoutRef.current = null;
+    setDragPanelId(null);
+    setPanelDropIndex(null);
+  }, [activePanels, dragPanelId]);
 
   const isPanelDrag = (event: ReactDragEvent<HTMLElement>) => (
     event.dataTransfer.types.includes(WORKSPACE_PANEL_REORDER_MIME)
@@ -85,10 +108,15 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData(WORKSPACE_PANEL_REORDER_MIME, panel.id);
           event.dataTransfer.setData('text/plain', '');
-          const surfaces = props.canvasRef.current
-            ?.querySelectorAll<HTMLElement>(':scope > .outline-panel-surface');
-          if (surfaces && surfaces.length === activePanels.length) {
-            const rects = [...surfaces].map((surface) => surface.getBoundingClientRect());
+          clearSettleTimeout();
+          // Freeze the VISUAL-order geometry (panes render in stable DOM
+          // order with CSS `order`, so query by id, not DOM position).
+          const rects = activePanels.map((activePanel) => (
+            props.canvasRef.current
+              ?.querySelector<HTMLElement>(`:scope > [data-panel-id="${activePanel.id}"]`)
+              ?.getBoundingClientRect() ?? null
+          ));
+          if (rects.every((rect): rect is DOMRect => rect !== null)) {
             dragLayoutRef.current = {
               ids: activePanels.map((activePanel) => activePanel.id),
               lefts: rects.map((rect) => rect.left),
@@ -102,11 +130,17 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           setDragPanelId(panel.id);
         },
         // dragend fires on the source for drop AND cancel (Escape / drop
-        // outside) — cancel slides the preview back to the real order.
+        // outside). On cancel, clear the transforms first but keep
+        // .pane-dragging (the transition carrier) until the panes have slid
+        // back home — dropping both at once would snap.
         onDragEnd: () => {
           dragLayoutRef.current = null;
-          setDragPanelId(null);
           setPanelDropIndex(null);
+          clearSettleTimeout();
+          settleTimeoutRef.current = window.setTimeout(() => {
+            settleTimeoutRef.current = null;
+            setDragPanelId(null);
+          }, PANE_DRAG_SETTLE_MS);
         },
         title: t.shell.workspace.reorderPanesTitle,
       }
@@ -130,14 +164,17 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
   };
   const handleCanvasDrop = (event: ReactDragEvent<HTMLElement>) => {
     if (!isPanelDrag(event)) return;
+    // Cancel the default drop unconditionally — a no-op release must not
+    // deliver the dragstart text/plain payload into pane content.
+    event.preventDefault();
+    event.stopPropagation();
     const panelId = event.dataTransfer.getData(WORKSPACE_PANEL_REORDER_MIME);
     const dropIndex = panelDropIndex;
+    clearSettleTimeout();
     dragLayoutRef.current = null;
     setDragPanelId(null);
     setPanelDropIndex(null);
     if (!panelId || dropIndex === null) return;
-    event.preventDefault();
-    event.stopPropagation();
     props.onMovePanel(panelId, dropIndex);
   };
   const handleCanvasDragLeave = (event: ReactDragEvent<HTMLElement>) => {
@@ -152,13 +189,10 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
   const preview = (() => {
     const layout = dragLayoutRef.current;
     if (!layout || !dragPanelId || panelDropIndex === null) return null;
-    const from = layout.ids.indexOf(dragPanelId);
-    if (from < 0) return null;
-    const order = layout.ids.filter((id) => id !== dragPanelId);
-    let target = panelDropIndex;
-    if (from < panelDropIndex) target -= 1;
-    target = Math.max(0, Math.min(target, order.length));
-    order.splice(target, 0, dragPanelId);
+    if (!layout.ids.includes(dragPanelId)) return null;
+    // The same reorder helper the commit uses — preview and commit cannot
+    // disagree on where the drop lands.
+    const order = listWithItemMovedToIndex(layout.ids, dragPanelId, panelDropIndex);
     const panes = new Map<string, number>();
     const slots: number[] = [];
     let x = layout.lefts[0];
@@ -176,6 +210,24 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     return { panes, slots };
   })();
 
+  // Pane DOM order stays STABLE across reorders (first-seen order); the visual
+  // left-right order is CSS `order` from the array index. React then never
+  // moves the pane subtrees on a reorder commit, so embedded iframe/webview
+  // preview content neither reloads nor loses state. (Trade-off, decided: with
+  // ≤4 panes, focus/reader sequence follows DOM order and can diverge from the
+  // visual order after a reorder.)
+  const domOrderRef = useRef<string[]>([]);
+  {
+    const live = new Set(activePanels.map((panel) => panel.id));
+    const kept = domOrderRef.current.filter((id) => live.has(id));
+    const seen = new Set(kept);
+    const added = activePanels.filter((panel) => !seen.has(panel.id)).map((panel) => panel.id);
+    domOrderRef.current = [...kept, ...added];
+  }
+  const domOrderPanels = domOrderRef.current
+    .map((id) => activePanels.find((panel) => panel.id === id))
+    .filter((panel): panel is WorkspacePanelState => Boolean(panel));
+
   return (
     <section
       className={[
@@ -189,11 +241,16 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
       onDropCapture={handleCanvasDrop}
       onDragLeave={handleCanvasDragLeave}
     >
-      {activePanels.map((panel, panelIndex) => (
-        <Fragment key={panel.id}>
+      {domOrderPanels.map((panel) => {
+        const panelIndex = activePanels.findIndex((candidate) => candidate.id === panel.id);
+        return (
           <WorkspacePanelSurface
+            key={panel.id}
             active={props.activePanelId === panel.id}
+            firstPane={panelIndex === 0}
+            lastPane={panelIndex === activePanels.length - 1}
             onActivate={() => props.onActivatePanel(panel)}
+            order={panelIndex * 2}
             panel={panel}
             previewOffset={preview?.panes.get(panel.id) ?? null}
             size={panel.size}
@@ -263,30 +320,36 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               null
             )}
           </WorkspacePanelSurface>
-          {panelIndex < activePanels.length - 1 && (
-            <div
-              className="panel-resize-slot"
-              style={preview?.slots[panelIndex]
-                ? { transform: `translateX(${preview.slots[panelIndex]}px)` }
-                : undefined}
-            >
-              <ResizeHandle
-                className="panel-resize-handle"
-                label={t.shell.workspace.resizePanelsLabel}
-                onDoubleClick={() => (
-                  props.onPanelResizeReset(panel.id, activePanels[panelIndex + 1].id)
-                )}
-                onKeyDown={(event) => (
-                  props.onPanelResizeKeyDown(panel.id, activePanels[panelIndex + 1].id, event)
-                )}
-                onPointerDown={(event) => (
-                  props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
-                )}
-                title={t.shell.workspace.resizePanelsTitle}
-              />
-            </div>
-          )}
-        </Fragment>
+        );
+      })}
+      {/* Divider slots are stateless, so they render in a separate loop keyed
+          by boundary index; CSS `order` interleaves them with the panes. */}
+      {activePanels.slice(0, -1).map((panel, panelIndex) => (
+        <div
+          key={`panel-divider-${panelIndex}`}
+          className="panel-resize-slot"
+          style={{
+            order: panelIndex * 2 + 1,
+            ...(preview?.slots[panelIndex]
+              ? { transform: `translateX(${preview.slots[panelIndex]}px)` }
+              : {}),
+          }}
+        >
+          <ResizeHandle
+            className="panel-resize-handle"
+            label={t.shell.workspace.resizePanelsLabel}
+            onDoubleClick={() => (
+              props.onPanelResizeReset(panel.id, activePanels[panelIndex + 1].id)
+            )}
+            onKeyDown={(event) => (
+              props.onPanelResizeKeyDown(panel.id, activePanels[panelIndex + 1].id, event)
+            )}
+            onPointerDown={(event) => (
+              props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
+            )}
+            title={t.shell.workspace.resizePanelsTitle}
+          />
+        </div>
       ))}
     </section>
   );
