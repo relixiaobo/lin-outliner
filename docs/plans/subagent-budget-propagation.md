@@ -44,6 +44,16 @@ asymmetric:
 - Budget measures `totalTokens` (includes cacheRead — work volume, not billed
   cost); the 1.5M default absorbs that inflation. CacheRead down-weighting is
   a deferred, data-informed follow-up.
+- **User-irrelevance boundary (PM-ratified 2026-07-30): the token budget is a
+  system fail-safe, not a user concept.** Humans never see or set token
+  numbers: the runtime setting stays developer/ops-level config (no product
+  settings UI); any user-visible rendering of an exhausted budget uses
+  translated copy (task status + preserved results), never token counts; any
+  future user-facing budget surface (task panel, notifications) speaks
+  time/status first and money at most — tokens never. Model-facing surfaces
+  (`max_total_tokens`, `wait_agent` fields, the 80% notice, the typed error
+  read by the parent model) are system-internal and stay token-denominated.
+  Open question (b) is to be read under this boundary.
 
 ## Goal
 
