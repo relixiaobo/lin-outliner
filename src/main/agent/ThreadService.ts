@@ -1,4 +1,3 @@
-import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Stats } from 'node:fs';
 import type { DocumentProjection } from '../../core/types';
@@ -105,10 +104,6 @@ import type {
   TurnSteerResponse,
 } from '../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../core/agent/threadPreview';
-import {
-  createManagedAttachmentObservation,
-  type ManagedAttachmentObservation,
-} from './capabilities/agentAttachmentMaterialization';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
@@ -132,10 +127,7 @@ import {
   type ThreadCatalogRecord,
   type ThreadNameOrigin,
 } from './persistence/ThreadMetadataStore';
-import {
-  referencesSameResourceFile,
-  ToolPayloadStore,
-} from './persistence/ToolPayloadStore';
+import { ToolPayloadStore } from './persistence/ToolPayloadStore';
 import { openSqlite } from './persistence/sqlite';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { admitContextEvidence, contextEvidenceItem } from './context/evidenceAdmission';
@@ -147,7 +139,6 @@ import {
 import { planRoleCatalogEvidence, reduceRoleContext } from './context/RoleContextReducer';
 import { planContextCompaction } from './context/ContextCompaction';
 import { cursorFor, selectEffectiveContext } from './context/ContextEpoch';
-import { assertCanonicalUserContent } from './context/userContentIntegrity';
 import {
   assertContextPayloadDependencies,
   contextPayloadReferenceKey,
@@ -173,6 +164,7 @@ import {
 } from './AgentConfigurationLoader';
 import { applyThreadItemDelta } from './itemDelta';
 import { RollbackHookRecoveryQueue, type RollbackHookRecoveryTarget } from './RollbackHookRecoveryQueue';
+import { ThreadResourceOps } from './thread/ThreadResourceOps';
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -416,7 +408,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly history: ThreadHistoryProjectionStore;
   private readonly rollout: RolloutStore;
   private readonly payloads: ToolPayloadStore;
-  private readonly attachmentScratchRoot: string;
   private readonly executor: TurnExecutor;
   private readonly nameGenerator: ThreadNameGenerator | null;
   private readonly extensions: ExtensionRegistry;
@@ -428,10 +419,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly validateRendererConfiguration: (
     configuration: ThreadConfigurationSummary,
   ) => void | Promise<void>;
-  private readonly resolveUserContent: (
-    content: readonly ThreadUserContent[],
-    context: ThreadUserContentResolutionContext,
-  ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   private readonly getDocumentProjection: () => DocumentProjection | null;
   private readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
   private readonly resolveSkillAdmission: (
@@ -447,6 +434,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
   private readonly subagentBudgets: SubagentBudgetLedger;
+  private readonly resourceOps: ThreadResourceOps;
   private readonly ephemeral = new Map<ThreadId, EphemeralThreadState>();
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>();
   private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
@@ -459,10 +447,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     createdAt: number;
   }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
-  private readonly detachedResourceObservations = new Map<string, {
-    readonly observation: ManagedAttachmentObservation;
-    readonly path: Promise<string | null>;
-  }>();
   private readonly hiddenEphemeralThreads = new Set<ThreadId>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
   private readonly stoppingThreads = new Set<ThreadId>();
@@ -482,14 +466,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.history = options.stores.history;
     this.rollout = options.stores.rollout;
     this.payloads = options.stores.payloads;
-    this.attachmentScratchRoot = options.attachmentScratchRoot;
     this.executor = options.executor;
     this.nameGenerator = options.nameGenerator ?? null;
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
     this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
     this.validateRendererConfiguration = options.validateRendererConfiguration ?? (() => undefined);
-    this.resolveUserContent = options.resolveUserContent ?? ((content) => content);
     this.getDocumentProjection = options.getDocumentProjection ?? (() => null);
     this.resolveReferencedAsset = options.resolveReferencedAsset;
     this.resolveSkillAdmission = async (input) => await options.resolveSkillAdmission?.(input) ?? {
@@ -503,6 +485,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
     this.subagentBudgets = options.stores.subagentBudgets;
+    this.resourceOps = new ThreadResourceOps({
+      payloads: this.payloads,
+      threadMutex: this.threadMutex,
+      requireThread: (threadId) => this.requireThread(threadId),
+      allTurns: (threadId) => this.allTurns(threadId),
+      readTurn: (threadId, turnId) => this.readTurn(threadId, turnId),
+    }, options.attachmentScratchRoot, options.resolveUserContent ?? ((content) => content));
     this.goals = new GoalExtension(this.goalStore, (notification) => this.recordNotification(notification));
     this.goals.bindHost(this, (threadId) => this.requireThread(threadId).thread);
     this.extensions.register(this.goals);
@@ -548,10 +537,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     }
     await Promise.all(knownThreadIds.flatMap((threadId) => [
-      this.payloads.pruneUnreferencedResources(threadId, this.threadResourceReferences(threadId)),
-      this.payloads.pruneUnreferencedContexts(threadId, this.threadContextPayloadReferences(threadId)),
-      this.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.threadTurnDiagnosticsReferences(threadId)),
-      this.payloads.pruneUnreferencedTextOutputs(threadId, this.threadTextPayloadReferences(threadId)),
+      this.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
+      this.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
+      this.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
+      this.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
     ]));
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
@@ -880,45 +869,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> {
-    const turn = this.readTurn(request.threadId, request.turnId);
-    if (!turn) return { output: null };
-    const item = turn.items.find((candidate) => candidate.id === request.itemId);
-    if (!item || !('outputRef' in item) || !item.outputRef || item.outputRef.id !== request.outputId) {
-      return { output: null };
-    }
-    const text = await this.payloads.readTextReference(request.threadId, item.outputRef);
-    if (text === null) return { output: null };
-    return { output: { ref: item.outputRef, text } };
+    return this.resourceOps.readItemOutput(request);
   }
 
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> {
-    const turn = this.readTurn(request.threadId, request.turnId);
-    if (!turn) return { context: null };
-    const item = turn.items.find((candidate) => candidate.id === request.itemId);
-    if (item?.type !== 'contextEvidence' || item.payloadRef.id !== request.contextId) {
-      return { context: null };
-    }
-    const payload = await this.payloads.readContext(request.threadId, item.payloadRef);
-    if (!payload) return { context: null };
-    assertContextPayloadDependencies(item, payload);
-    return { context: { ref: item.payloadRef, payload } };
+    return this.resourceOps.readContextPayload(request);
   }
 
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
-    const thread = this.requireThread(request.threadId).thread;
-    const turn = this.readTurn(request.threadId, request.turnId);
-    if (!turn) throw new Error(`Unknown Turn: ${request.turnId}`);
-    const ref = turn.execution.diagnosticsRef;
-    if (!ref) return { thread, turn, diagnostics: null };
-    const payload = await this.payloads.readTurnDiagnostics(request.threadId, ref).catch(() => null);
-    if (!payload) {
-      return {
-        thread,
-        turn: decodeTurn({ ...turn, execution: { ...turn.execution, diagnosticsRef: null } }),
-        diagnostics: null,
-      };
-    }
-    return { thread, turn, diagnostics: { ref, payload } };
+    return this.resourceOps.readTurnDetails(request);
   }
 
   async beginAttachmentUpload(input: {
@@ -928,8 +887,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     readonly mimeType: string;
     readonly fileName: string;
   }): Promise<string> {
-    this.requireThread(input.threadId);
-    return this.payloads.beginResourceUpload(input);
+    return this.resourceOps.beginAttachmentUpload(input);
   }
 
   async appendAttachmentUpload(input: {
@@ -938,13 +896,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     readonly uploadId: string;
     readonly bytes: Uint8Array;
   }): Promise<void> {
-    this.requireThread(input.threadId);
-    await this.payloads.appendResourceUpload(
-      input.threadId,
-      input.attachmentId,
-      input.uploadId,
-      input.bytes,
-    );
+    return this.resourceOps.appendAttachmentUpload(input);
   }
 
   async finishAttachmentUpload(input: {
@@ -952,8 +904,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     readonly attachmentId: string;
     readonly uploadId: string;
   }): Promise<ThreadResourceReference> {
-    this.requireThread(input.threadId);
-    return this.payloads.finishResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+    return this.resourceOps.finishAttachmentUpload(input);
   }
 
   async abortAttachmentUpload(input: {
@@ -961,7 +912,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     readonly attachmentId: string;
     readonly uploadId: string;
   }): Promise<void> {
-    await this.payloads.abortResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+    return this.resourceOps.abortAttachmentUpload(input);
   }
 
   async writeThreadResource(
@@ -970,8 +921,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     mimeType: string,
     fileName: string,
   ): Promise<ThreadResourceReference> {
-    this.requireThread(threadId);
-    return this.payloads.writeResource(threadId, bytes, mimeType, fileName);
+    return this.resourceOps.writeThreadResource(threadId, bytes, mimeType, fileName);
   }
 
   async writeThreadResourceWithStatus(
@@ -980,8 +930,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     mimeType: string,
     fileName: string,
   ): Promise<{ readonly ref: ThreadResourceReference; readonly created: boolean }> {
-    this.requireThread(threadId);
-    return this.payloads.writeResourceWithStatus(threadId, bytes, mimeType, fileName);
+    return this.resourceOps.writeThreadResourceWithStatus(threadId, bytes, mimeType, fileName);
   }
 
   async useThreadResourcePath<T>(
@@ -989,241 +938,42 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ref: ThreadResourceReference,
     use: (path: string) => Promise<T>,
   ): Promise<T | null> {
-    this.requireThread(threadId);
-    return this.payloads.useResourcePath(threadId, ref, use);
+    return this.resourceOps.useThreadResourcePath(threadId, ref, use);
   }
 
   async readThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<Buffer | null> {
-    this.requireThread(threadId);
-    return this.payloads.readResource(threadId, ref);
+    return this.resourceOps.readThreadResource(threadId, ref);
   }
 
   async readReferencedThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<Buffer | null> {
-    this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => (
-      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
-    ))) {
-      return null;
-    }
-    return this.payloads.readResource(threadId, ref);
+    return this.resourceOps.readReferencedThreadResource(threadId, ref);
   }
 
   async discardUnreferencedThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<boolean> {
-    return this.threadMutex.run(threadId, async () => {
-      this.requireThread(threadId);
-      if (this.threadResourceReferences(threadId).some((candidate) => referencesSameResourceFile(candidate, ref))) {
-        return false;
-      }
-      return this.payloads.deleteResource(threadId, ref);
-    });
+    return this.resourceOps.discardUnreferencedThreadResource(threadId, ref);
   }
 
   async resolveAttachmentFile(
     threadId: ThreadId,
     attachmentId: string,
   ): Promise<ResolvedThreadAttachmentFile | null> {
-    this.requireThread(threadId);
-    const matches = this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => (
-      item.type === 'userMessage'
-        ? item.content.flatMap((content) => (
-            content.type === 'attachment' && content.id === attachmentId ? [content] : []
-          ))
-        : []
-    )));
-    if (matches.length === 0) return null;
-    const attachment = matches[0]!;
-    if (matches.some((candidate) => !attachmentSourcesEqual(candidate, attachment))) return null;
-    const storedPath = attachment.source.kind === 'localFile'
-      ? attachment.source.path
-      : await this.detachedResourceObservationPath(
-          threadId,
-          `attachment:${attachmentId}`,
-          attachment.source.ref,
-        );
-    if (!storedPath) return null;
-    if (attachment.source.kind === 'threadPayload') {
-      const storedStats = await lstat(storedPath).catch(() => null);
-      if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-        return null;
-      }
-    }
-    const canonicalPath = await realpath(storedPath).catch(() => null);
-    if (!canonicalPath) {
-      if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-      }
-      return null;
-    }
-    if (attachment.source.kind === 'threadPayload' && canonicalPath !== storedPath) {
-      await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-      return null;
-    }
-    if (attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) return null;
-    const fileStats = await stat(canonicalPath).catch(() => null);
-    const entryKind = fileStats?.isFile() ? 'file' : fileStats?.isDirectory() ? 'directory' : null;
-    if (!fileStats || !entryKind) {
-      if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-      }
-      return null;
-    }
-    // Managed copies remain available to Preview/Open/Reveal until scratch TTL cleanup.
-    return { attachment, entryKind, path: canonicalPath, stats: fileStats };
+    return this.resourceOps.resolveAttachmentFile(threadId, attachmentId);
   }
 
   async resolveThreadResourceFile(
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<ResolvedThreadResourceFile | null> {
-    this.requireThread(threadId);
-    if (!this.threadResourceReferences(threadId).some((candidate) => (
-      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
-    ))) {
-      return null;
-    }
-    const identity = `resource:${ref.id}:${ref.fileName}`;
-    const storedPath = await this.detachedResourceObservationPath(threadId, identity, ref);
-    if (!storedPath) return null;
-    const storedStats = await lstat(storedPath).catch(() => null);
-    if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
-      await this.discardDetachedResourceObservation(threadId, identity);
-      return null;
-    }
-    const canonicalPath = await realpath(storedPath).catch(() => null);
-    if (!canonicalPath || canonicalPath !== storedPath) {
-      await this.discardDetachedResourceObservation(threadId, identity);
-      return null;
-    }
-    const fileStats = await stat(canonicalPath).catch(() => null);
-    if (!fileStats?.isFile()) {
-      await this.discardDetachedResourceObservation(threadId, identity);
-      return null;
-    }
-    return { entryKind: 'file', path: canonicalPath, stats: fileStats, ref };
-  }
-
-  private async detachedResourceObservationPath(
-    threadId: ThreadId,
-    identity: string,
-    ref: ThreadResourceReference,
-  ): Promise<string | null> {
-    const available = await this.payloads.useResourcePath(threadId, ref, async () => true);
-    if (!available) {
-      await this.discardDetachedResourceObservation(threadId, identity);
-      return null;
-    }
-    const key = `${threadId}\0${identity}`;
-    let entry = this.detachedResourceObservations.get(key);
-    if (!entry) {
-      const observation = this.createResourceObservation(threadId);
-      entry = { observation, path: observation.resolvePath(ref) };
-      this.detachedResourceObservations.set(key, entry);
-    }
-    try {
-      const path = await entry.path;
-      if (!path && this.detachedResourceObservations.get(key) === entry) {
-        this.detachedResourceObservations.delete(key);
-        await entry.observation.dispose();
-      }
-      return path;
-    } catch (error) {
-      if (this.detachedResourceObservations.get(key) === entry) {
-        this.detachedResourceObservations.delete(key);
-        await entry.observation.dispose();
-      }
-      throw error;
-    }
-  }
-
-  private async discardDetachedResourceObservation(
-    threadId: ThreadId,
-    identity: string,
-  ): Promise<void> {
-    const key = `${threadId}\0${identity}`;
-    const entry = this.detachedResourceObservations.get(key);
-    if (!entry) return;
-    this.detachedResourceObservations.delete(key);
-    await entry.observation.dispose();
-  }
-
-  private createResourceObservation(
-    threadId: ThreadId,
-    stableProviderPath = false,
-  ): ManagedAttachmentObservation {
-    return createManagedAttachmentObservation(
-      this.attachmentScratchRoot,
-      (ref, targetDirectory) => this.payloads.copyResourceForObservation(
-        threadId,
-        ref,
-        targetDirectory,
-      ),
-      stableProviderPath ? { stableWorkspaceKey: threadId } : {},
-    );
-  }
-
-  private threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
-    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
-  }
-
-  private threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
-    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
-  }
-
-  private threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
-    return this.allTurns(threadId).flatMap((turn) => (
-      turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
-    ));
-  }
-
-  private threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
-    return this.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => [
-      ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
-      ...(item.type === 'contextEvidence' || item.type === 'contextCompaction' ? item.outputRefs : []),
-    ]));
-  }
-
-  private async resolveAdmissionContent(
-    content: readonly ThreadUserContent[],
-    thread: Thread,
-  ): Promise<{
-    readonly content: readonly ThreadUserContent[];
-    readonly createdResources: readonly ThreadResourceReference[];
-  }> {
-    const createdResources: ThreadResourceReference[] = [];
-    try {
-      const resolved = await this.resolveUserContent(content, {
-        threadId: thread.id,
-        cwd: thread.cwd,
-        recordCreatedResource: (ref) => createdResources.push(ref),
-      });
-      assertCanonicalUserContent(resolved);
-      return { content: resolved, createdResources };
-    } catch (error) {
-      await this.discardUnreferencedCreatedResources(thread.id, createdResources);
-      throw error;
-    }
-  }
-
-  private async discardUnreferencedCreatedResources(
-    threadId: ThreadId,
-    resources: readonly ThreadResourceReference[],
-  ): Promise<void> {
-    const referenced = this.threadResourceReferences(threadId);
-    const unique = resources.filter((ref, index) => (
-      resources.findIndex((candidate) => referencesSameResourceFile(candidate, ref)) === index
-      && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
-    ));
-    await Promise.all(unique.map((ref) => this.payloads.deleteResource(threadId, ref)));
+    return this.resourceOps.resolveThreadResourceFile(threadId, ref);
   }
 
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
@@ -1547,13 +1297,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // The rollback marker is already durable. Orphan cleanup is retried at startup
       // and must not turn a committed rollback into a reported operation failure.
       await Promise.all([
-        this.payloads.pruneUnreferencedResources(thread.id, this.threadResourceReferences(thread.id)),
-        this.payloads.pruneUnreferencedContexts(thread.id, this.threadContextPayloadReferences(thread.id)),
+        this.payloads.pruneUnreferencedResources(thread.id, this.resourceOps.threadResourceReferences(thread.id)),
+        this.payloads.pruneUnreferencedContexts(thread.id, this.resourceOps.threadContextPayloadReferences(thread.id)),
         this.payloads.pruneUnreferencedTurnDiagnostics(
           thread.id,
-          this.threadTurnDiagnosticsReferences(thread.id),
+          this.resourceOps.threadTurnDiagnosticsReferences(thread.id),
         ),
-        this.payloads.pruneUnreferencedTextOutputs(thread.id, this.threadTextPayloadReferences(thread.id)),
+        this.payloads.pruneUnreferencedTextOutputs(thread.id, this.resourceOps.threadTextPayloadReferences(thread.id)),
       ]).catch(() => undefined);
       if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
       return { thread: this.requireThread(thread.id).thread };
@@ -1866,7 +1616,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (createdContextRefs.length > 0) {
           await this.payloads.pruneUnreferencedContexts(
             request.threadId,
-            this.threadContextPayloadReferences(request.threadId),
+            this.resourceOps.threadContextPayloadReferences(request.threadId),
           ).catch(() => undefined);
         }
         throw error;
@@ -1903,7 +1653,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       if (!active || active.turnId !== request.expectedTurnId) throw new ThreadBusyError('Expected Turn is not active');
       if (active.finishing || active.fatalError) throw new ThreadBusyError('Expected Turn is no longer accepting steering');
       const thread = this.requireThread(request.threadId).thread;
-      const admission = await this.resolveAdmissionContent(request.input, thread);
+      const admission = await this.resourceOps.resolveAdmissionContent(request.input, thread);
       const createdEvidenceResources: ThreadResourceReference[] = [];
       const acceptedAt = this.now();
       let item: ThreadItem;
@@ -1968,13 +1718,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
         admittedItems = [...evidence.items, item];
         await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
       } catch (error) {
-        await this.discardUnreferencedCreatedResources(
+        await this.resourceOps.discardUnreferencedCreatedResources(
           thread.id,
           [...admission.createdResources, ...createdEvidenceResources],
         );
         await this.payloads.pruneUnreferencedContexts(
           thread.id,
-          this.threadContextPayloadReferences(thread.id),
+          this.resourceOps.threadContextPayloadReferences(thread.id),
         );
         throw error;
       }
@@ -2562,7 +2312,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
     const startedAt = this.now();
     const turnId = request.turnId ?? uuidV7(startedAt);
-    const admission = await this.resolveAdmissionContent(request.input, record.thread);
+    const admission = await this.resourceOps.resolveAdmissionContent(request.input, record.thread);
     const createdEvidenceResources: ThreadResourceReference[] = [];
     try {
       return await this.commitAcceptedTurn(
@@ -2574,13 +2324,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
         (ref) => createdEvidenceResources.push(ref),
       );
     } catch (error) {
-      await this.discardUnreferencedCreatedResources(
+      await this.resourceOps.discardUnreferencedCreatedResources(
         record.thread.id,
         [...admission.createdResources, ...createdEvidenceResources],
       );
       await this.payloads.pruneUnreferencedContexts(
         record.thread.id,
-        this.threadContextPayloadReferences(record.thread.id),
+        this.resourceOps.threadContextPayloadReferences(record.thread.id),
       );
       throw error;
     }
@@ -2770,7 +2520,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       : this.subagentBudgets.read(active.threadId);
     const turnBudget = budget ? { ...budget } : null;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
-    const resourceObservation = this.createResourceObservation(active.threadId, true);
+    const resourceObservation = this.resourceOps.createResourceObservation(active.threadId, true);
     const createdOutputResources: ThreadResourceReference[] = [];
     try {
       result = await this.executor.execute({
@@ -2906,14 +2656,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
         turnId: active.turnId,
         turn,
       });
-      await this.discardUnreferencedCreatedResources(active.threadId, createdOutputResources).catch(() => undefined);
+      await this.resourceOps.discardUnreferencedCreatedResources(active.threadId, createdOutputResources).catch(() => undefined);
       await this.payloads.pruneUnreferencedContexts(
         active.threadId,
-        this.threadContextPayloadReferences(active.threadId),
+        this.resourceOps.threadContextPayloadReferences(active.threadId),
       ).catch(() => undefined);
       await this.payloads.pruneUnreferencedTurnDiagnostics(
         active.threadId,
-        this.threadTurnDiagnosticsReferences(active.threadId),
+        this.resourceOps.threadTurnDiagnosticsReferences(active.threadId),
       ).catch(() => undefined);
       this.accrueSubagentBudgetUsage(active, thread, turn.execution);
       this.activeTurns.delete(active.threadId);
@@ -2980,7 +2730,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       if (!plan) return null;
       const cleanupLocked = () => this.payloads.pruneUnreferencedContexts(
         active.threadId,
-        this.threadContextPayloadReferences(active.threadId),
+        this.resourceOps.threadContextPayloadReferences(active.threadId),
       ).catch(() => undefined);
       const cleanup = () => this.threadMutex.run(active.threadId, cleanupLocked);
       try {
@@ -3061,7 +2811,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     } catch (error) {
       await this.payloads.pruneUnreferencedContexts(
         active.threadId,
-        this.threadContextPayloadReferences(active.threadId),
+        this.resourceOps.threadContextPayloadReferences(active.threadId),
       ).catch(() => undefined);
       throw error;
     }
@@ -3149,11 +2899,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await Promise.all([
         this.payloads.pruneUnreferencedContexts(
           active.threadId,
-          this.threadContextPayloadReferences(active.threadId),
+          this.resourceOps.threadContextPayloadReferences(active.threadId),
         ),
         this.payloads.pruneUnreferencedTurnDiagnostics(
           active.threadId,
-          this.threadTurnDiagnosticsReferences(active.threadId),
+          this.resourceOps.threadTurnDiagnosticsReferences(active.threadId),
         ),
       ]).catch(() => undefined);
       if (this.activeTurns.get(active.threadId) === active) this.activeTurns.delete(active.threadId);
@@ -4305,27 +4055,6 @@ function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must be non-empty`);
   return normalized;
-}
-
-function attachmentSourcesEqual(
-  left: ThreadAttachmentContent,
-  right: ThreadAttachmentContent,
-): boolean {
-  if (
-    left.name !== right.name
-    || left.mimeType !== right.mimeType
-    || left.sizeBytes !== right.sizeBytes
-    || left.source.kind !== right.source.kind
-  ) return false;
-  if (left.source.kind === 'localFile' && right.source.kind === 'localFile') {
-    if (left.source.path !== right.source.path) return false;
-  } else if (left.source.kind === 'threadPayload' && right.source.kind === 'threadPayload') {
-    if (resourceReferenceKey(left.source.ref) !== resourceReferenceKey(right.source.ref)) return false;
-  } else {
-    return false;
-  }
-  if (!left.promptImage || !right.promptImage) return left.promptImage === right.promptImage;
-  return resourceReferenceKey(left.promptImage) === resourceReferenceKey(right.promptImage);
 }
 
 function userMessage(
