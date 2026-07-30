@@ -1,15 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act, useState } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { DocumentProjection } from '../../src/core/types';
 import type {
   CommandExecutionThreadItem,
+  ItemExecutionStatus,
   ThreadItem,
   UserMessageThreadItem,
 } from '../../src/core/agent/protocol';
+import { en } from '../../src/core/i18n';
 import {
   ThreadItemView,
+  ThreadToolActivityGroup,
+  summarizeThreadToolActivity,
+  summarizeThreadToolItem,
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
@@ -121,7 +126,183 @@ describe('ThreadItemView tool output disclosure', () => {
   });
 });
 
+describe('ThreadItemView tool row status presentation', () => {
+  test('keeps the tool own glyph on failed and interrupted rows and only swaps it while running', async () => {
+    const glyphs = new Map<ItemExecutionStatus, string>();
+    for (const status of ['completed', 'failed', 'interrupted', 'inProgress'] as const) {
+      const rendered = renderItem(command({ status }));
+      await flush();
+      const row = rendered.document.querySelector('.thread-tool');
+      expect(row?.className).toContain(`thread-tool-${status}`);
+      const glyph = row?.querySelector('.thread-disclosure-status svg')?.outerHTML ?? '';
+      expect(glyph).not.toBe('');
+      glyphs.set(status, glyph);
+      while (mounted.length > 0) mounted.pop()?.();
+    }
+
+    expect(glyphs.get('failed')).toBe(glyphs.get('completed'));
+    expect(glyphs.get('interrupted')).toBe(glyphs.get('completed'));
+    expect(glyphs.get('inProgress')).not.toBe(glyphs.get('completed'));
+  });
+
+  test('hides the decorative indicator from assistive tech and titles the truncating label', async () => {
+    const rendered = renderItem(command({ status: 'failed' }));
+    await flush();
+
+    const indicator = rendered.document.querySelector('.thread-disclosure-indicator');
+    expect(indicator?.getAttribute('aria-hidden')).toBe('true');
+    const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
+    expect(label?.title).toBe('Command failed · "npm test"');
+    expect(label?.textContent).toBe(label?.title);
+  });
+
+  test('explains a failure that never produced an exit code without inventing one', async () => {
+    const rendered = renderItem(command({ status: 'failed', exitCode: null }), { expanded: true });
+    await flush();
+
+    const error = rendered.document.querySelector('.thread-inline-error');
+    expect(error?.getAttribute('role')).toBe('status');
+    expect(error?.textContent).toBe('Command failed');
+  });
+
+  test('gives a failed file change a failure sentence instead of a silent body', async () => {
+    const item: ThreadItem = {
+      ...base('file-1'),
+      type: 'fileChange',
+      status: 'failed',
+      outputRef: null,
+      changes: [{ path: '/workspace/a.ts', kind: 'update' }],
+    };
+    const rendered = renderItem(item, { expanded: true });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-inline-error')?.textContent)
+      .toBe('Failed without an error message.');
+  });
+
+  test('labels failed dynamic-tool prose as an error rather than a result', async () => {
+    const item: ThreadItem = {
+      ...base('dynamic-1'),
+      type: 'dynamicToolCall',
+      status: 'failed',
+      outputRef: null,
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/missing.ts' },
+      contentItems: [{ type: 'text', text: 'ENOENT: no such file' }],
+      success: false,
+      durationMs: 4,
+    };
+    const rendered = renderItem(item, { expanded: true });
+    await flush();
+
+    const headers = [...rendered.document.querySelectorAll('.thread-tool-section > header')]
+      .map((header) => header.textContent);
+    expect(headers).toContain('Error');
+    expect(headers).not.toContain('Result');
+    expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
+  });
+
+  test('names failed members in a group summary instead of relying on colour alone', async () => {
+    const items = [
+      command({ id: 'command-1', status: 'completed' }),
+      command({ id: 'command-2', status: 'failed' }),
+      command({ id: 'command-3', status: 'interrupted' }),
+    ];
+    const rendered = renderGroup(items);
+    await flush();
+
+    const group = rendered.document.querySelector('.thread-tool-activity-group');
+    expect(group?.className).toContain('thread-tool-failed');
+    expect(group?.querySelector('.thread-tool-activity-summary')?.textContent)
+      .toBe('Ran 3 commands · 1 failed · 1 interrupted');
+  });
+});
+
+describe('thread tool summaries', () => {
+  const labels = en.agent.thread.activity;
+
+  test('reads interrupted work as interrupted, never as past-tense success', () => {
+    expect(summarizeThreadToolItem(command({ status: 'interrupted' }), labels))
+      .toBe('Command interrupted · "npm test"');
+    expect(summarizeThreadToolItem({
+      ...base('mcp-1'),
+      type: 'mcpToolCall',
+      status: 'interrupted',
+      outputRef: null,
+      server: 'files',
+      tool: 'read',
+      arguments: {},
+      pluginId: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    }, labels)).toBe('files.read interrupted');
+    expect(summarizeThreadToolItem({
+      ...base('search-1'),
+      type: 'webSearch',
+      status: 'interrupted',
+      outputRef: null,
+      query: 'tenon',
+      results: [],
+      error: null,
+    }, labels)).toBe('Web search interrupted · "tenon"');
+    expect(summarizeThreadToolItem({
+      ...base('file-2'),
+      type: 'fileChange',
+      status: 'interrupted',
+      outputRef: null,
+      changes: [{ path: '/workspace/a.ts', kind: 'update' }],
+    }, labels)).toBe('Interrupted changing 1 file');
+  });
+
+  test('leaves a clean group summary untouched', () => {
+    expect(summarizeThreadToolActivity([
+      command({ id: 'command-1', status: 'completed' }),
+      command({ id: 'command-2', status: 'completed' }),
+    ], labels)).toBe('Ran 2 commands');
+  });
+});
+
+function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandExecutionThreadItem {
+  return {
+    ...base('command-1'),
+    type: 'commandExecution',
+    status: 'completed',
+    outputRef: null,
+    command: 'npm test',
+    cwd: '/workspace',
+    processId: null,
+    commandActions: [],
+    aggregatedOutput: null,
+    exitCode: 0,
+    durationMs: 12,
+    ...overrides,
+  };
+}
+
+function base(id: string) {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-1', originTurnId: 'turn-1', originItemId: id },
+  } as const;
+}
+
+function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Document } {
+  return renderTree(
+    <ThreadToolActivityGroup
+      expandState={{ isExpanded: () => false, toggle: () => undefined }}
+      items={items}
+      onOpenThread={async () => undefined}
+      onReadToolOutput={async () => null}
+      threadCwd="/workspace"
+      threadId="thread-1"
+    />,
+  );
+}
+
 interface RenderItemOptions {
+  readonly expanded?: boolean;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -130,6 +311,32 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
   readonly document: Document;
   readonly rerender: (nextItem: ThreadItem) => void;
 } {
+  const { document, root } = installDom();
+  const holdAnchorUntilSettled = options.holdAnchorUntilSettled ?? (() => null);
+  const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
+  const render = (nextItem: ThreadItem) => act(() => root.render(
+    <I18nProvider>
+      <ThreadItemProbe
+        holdAnchorUntilSettled={holdAnchorUntilSettled}
+        initiallyExpanded={options.expanded === true}
+        item={nextItem}
+        onReadToolOutput={onReadToolOutput}
+      />
+    </I18nProvider>,
+  ));
+  render(item);
+  mounted.push(() => act(() => root.unmount()));
+  return { document, rerender: render };
+}
+
+function renderTree(tree: ReactNode): { readonly document: Document } {
+  const { document, root } = installDom();
+  act(() => root.render(<I18nProvider>{tree}</I18nProvider>));
+  mounted.push(() => act(() => root.unmount()));
+  return { document };
+}
+
+function installDom(): { readonly document: Document; readonly root: ReturnType<typeof createRoot> } {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   Object.assign(window, {
     getComputedStyle: () => ({ lineHeight: '26px' }),
@@ -151,32 +358,21 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
-  const holdAnchorUntilSettled = options.holdAnchorUntilSettled ?? (() => null);
-  const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
-  const render = (nextItem: ThreadItem) => act(() => root.render(
-      <I18nProvider>
-        <ThreadItemProbe
-          holdAnchorUntilSettled={holdAnchorUntilSettled}
-          item={nextItem}
-          onReadToolOutput={onReadToolOutput}
-        />
-      </I18nProvider>,
-    ));
-  render(item);
-  mounted.push(() => act(() => root.unmount()));
-  return { document, rerender: render };
+  return { document, root };
 }
 
 function ThreadItemProbe({
   holdAnchorUntilSettled,
+  initiallyExpanded,
   item,
   onReadToolOutput,
 }: {
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
     <ThreadItemView
       agentResponseTail={null}

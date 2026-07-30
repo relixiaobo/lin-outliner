@@ -959,7 +959,10 @@ async function completedToolItem(
         outputRef,
         processId: isRecord(data) && typeof data.processId === 'string' ? data.processId : item.processId,
         aggregatedOutput: boundedText(toolResultText(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
-        exitCode: isRecord(data) && typeof data.exitCode === 'number' ? data.exitCode : isError ? 1 : 0,
+        // A timeout or a kill has no exit code; synthesizing 1 made the row
+        // claim the shell reported a status it never did. `null` is the honest
+        // value and the renderer has a wording for it.
+        exitCode: isRecord(data) && typeof data.exitCode === 'number' ? data.exitCode : isError ? null : 0,
         durationMs,
       };
     }

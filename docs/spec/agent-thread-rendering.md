@@ -44,8 +44,25 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   file interaction, copy actions, and image previews retain their native
   affordances; a successful shell exit code is redundant with the completed row
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
-  explanation; a completed row rests on its tool-type icon rather than a generic
-  success check, while only failure carries a status ring
+  explanation. A failure that never produced an exit code — a timeout, a kill —
+  keeps a null code and says only that the command failed; the renderer never
+  borrows a plausible code the shell did not report. Every other tool failure
+  surfaces its own message, or, when it has none, states plainly that it failed
+  without one; failure prose is never presented under a neutral result heading
+- a tool row keeps its own tool-type icon in every terminal state, so a broken
+  row still says which tool broke; only the running state substitutes a glyph,
+  because there the spinner *is* the state. Status is carried by colour on that
+  glyph plus the label — failure tints both with `--status-danger`, an
+  interrupted row is muted rather than alarmed — and the label wording always
+  names the state, so no row encodes status by colour alone. The status colour
+  rides on the label and never becomes a fill, ring, or second slot geometry, and
+  it persists through hover, focus, and expansion instead of being swapped away
+  by the disclosure chevron. A running row likewise keeps its spinner through
+  hover, focus, and expansion, and a group only ever animates its own glyph, not
+  the finished children inside it. A counted activity group names its failed and
+  interrupted members in the summary. The indicator is decorative to assistive
+  technology: the label text and `aria-expanded` carry the state, and the label
+  exposes its untruncated text as a title
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the
   full text, while copied Turns use the same full result
