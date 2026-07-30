@@ -1,0 +1,1747 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`canonical provider tool catalog keeps names, order, descriptions, and JSON schemas byte-stable 1`] = `
+"[
+  {
+    "name": "bash",
+    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nUse run_in_background for long-running commands. You do not need to append \\"&\\"; use bash_stop if the task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command to execute."
+        },
+        "description": {
+          "type": "string",
+          "description": "Clear, concise description of what this command does in active voice.\\nDo not use vague words like \\"complex\\" or \\"risk\\"; describe the concrete action.\\nFor simple commands such as git, npm, or standard CLI tools, keep it brief.\\nFor piped commands or obscure flags, add enough context to clarify what the command does."
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000,
+          "description": "Optional timeout in milliseconds. Maximum 600000."
+        },
+        "run_in_background": {
+          "type": "boolean",
+          "description": "Set to true to run this command in the background. You do not need to append \\"&\\"; use file_read on the returned output path later if needed."
+        }
+      }
+    }
+  },
+  {
+    "name": "bash_stop",
+    "description": "Stops a running background task by its ID.\\nUse this tool when you need to terminate a long-running task created by bash.\\nOnly task_id is supported; shell_id is not accepted.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ID of the background task to stop. Use the task_id returned by bash when a command runs in the background."
+        }
+      }
+    }
+  },
+  {
+    "name": "collaboration__followup_task",
+    "description": "Start a child Turn when idle or deliver the task at a safe active-Turn boundary.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Relative or canonical task path returned by spawn_agent."
+        },
+        "message": {
+          "type": "string",
+          "description": "Message text for the target Subagent."
+        }
+      },
+      "required": [
+        "target",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "collaboration__interrupt_agent",
+    "description": "Interrupt a child current Turn while retaining its Thread for later work.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Relative or canonical task path returned by spawn_agent."
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "collaboration__list_agents",
+    "description": "List the live child-Thread tree, optionally below a task-path prefix.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path_prefix": {
+          "type": "string",
+          "description": "Task-path prefix without a trailing slash."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "collaboration__send_message",
+    "description": "Queue a message for an existing child Thread without starting a Turn.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Relative or canonical task path returned by spawn_agent."
+        },
+        "message": {
+          "type": "string",
+          "description": "Message text for the target Subagent."
+        }
+      },
+      "required": [
+        "target",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "collaboration__spawn_agent",
+    "description": "Create a child Thread, resolve its Agent Role, and start its first Turn. max_total_tokens overrides the host-owned runtime budget default, which refuses later non-user Turns after exhaustion.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_name": {
+          "type": "string",
+          "description": "Lowercase task name using letters, digits, and underscores."
+        },
+        "message": {
+          "type": "string",
+          "description": "Initial plain-text task for the new Subagent."
+        },
+        "max_total_tokens": {
+          "type": "number",
+          "description": "Optional total token budget for the child Thread. Omit to use the runtime default."
+        },
+        "fork_turns": {
+          "type": "string",
+          "description": "Use none, all, or a positive integer string. Defaults to all."
+        },
+        "agent_type": {
+          "type": "string",
+          "description": "Agent Role override. Omit unless explicitly requested."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model override. Omit unless an explicit override is needed."
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "description": "Reasoning effort override. Omit to inherit the parent effort."
+        }
+      },
+      "required": [
+        "task_name",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "collaboration__wait_agent",
+    "description": "Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its host-owned ledger tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_goal",
+    "description": "Create a Goal only when explicitly requested and no unfinished Goal exists.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "description": "Concrete objective to pursue."
+        },
+        "token_budget": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "objective"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "data_import",
+    "description": "Preview or commit a validated Tenon Import Pack into the Outliner.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "preview_file",
+            "commit_file",
+            "preview_content",
+            "commit_content"
+          ]
+        },
+        "pack_file": {
+          "type": "string"
+        },
+        "pack_content": {
+          "type": "string"
+        },
+        "pack_label": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "preview_id": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "file_delete",
+    "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the Thread working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file_path"
+      ],
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute path or a path relative to the Thread working directory to move to agent trash."
+        }
+      }
+    }
+  },
+  {
+    "name": "file_edit",
+    "description": "Performs exact string replacements in files.\\nYou must use file_read before editing. This tool will error if you attempt an edit without reading the file.\\nThe edit will fail if old_string is not unique in the file. Provide more surrounding context or use replace_all to change every instance.\\nold_string must not be empty. Use file_write to create files or rewrite an empty file.\\nThis tool does not edit Jupyter notebooks (.ipynb). There is currently no notebook cell edit tool.\\nUse replace_all for replacing or renaming strings across the file.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file_path",
+        "old_string",
+        "new_string"
+      ],
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute path or a path relative to the Thread working directory."
+        },
+        "old_string": {
+          "type": "string",
+          "description": "The exact text to replace."
+        },
+        "new_string": {
+          "type": "string",
+          "description": "The text to replace it with. Must be different from old_string."
+        },
+        "replace_all": {
+          "type": "boolean",
+          "description": "Replace all occurrences of old_string. Defaults to false."
+        }
+      }
+    }
+  },
+  {
+    "name": "file_glob",
+    "description": "Fast file pattern matching tool that works with large file trees.\\nSupports glob patterns like \\"**/*.js\\" or \\"src/**/*.ts\\".\\nReturns matching file paths sorted by modification time.\\nUse this tool when you need to find files by name patterns.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pattern"
+      ],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The glob pattern to match files against."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute directory or one relative to the Thread working directory. Omit it to search the Thread working directory."
+        }
+      }
+    }
+  },
+  {
+    "name": "file_grep",
+    "description": "Search file contents with a regular expression.\\nAlways use file_grep for search tasks instead of invoking grep or rg through bash.\\nSupports regex syntax, glob filtering, type filtering, output modes, context lines, pagination, and explicit multiline matching.\\nDefault output mode is files_with_matches so broad searches stay cheap.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pattern"
+      ],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The regular expression pattern to search for in file contents."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute file or directory, or one relative to the Thread working directory. Defaults to the Thread working directory."
+        },
+        "glob": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Glob pattern to filter files, for example \\"*.js\\" or \\"*.{ts,tsx}\\"."
+        },
+        "output_mode": {
+          "type": "string",
+          "enum": [
+            "content",
+            "files_with_matches",
+            "count"
+          ],
+          "description": "Output mode: \\"content\\" shows matching lines, \\"files_with_matches\\" shows file paths, \\"count\\" shows match counts. Defaults to \\"files_with_matches\\"."
+        },
+        "-B": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of lines to show before each match. Requires output_mode: \\"content\\", ignored otherwise."
+        },
+        "-A": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of lines to show after each match. Requires output_mode: \\"content\\", ignored otherwise."
+        },
+        "-C": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Alias for context."
+        },
+        "context": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of lines to show before and after each match. Requires output_mode: \\"content\\", ignored otherwise."
+        },
+        "-n": {
+          "type": "boolean",
+          "description": "Show line numbers in output. Requires output_mode: \\"content\\", ignored otherwise. Defaults to true."
+        },
+        "-i": {
+          "type": "boolean",
+          "description": "Case insensitive search."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File type to search, such as js, py, rust, go, java, ts, md, or json."
+        },
+        "head_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Limit output to first N lines or entries, equivalent to \\"| head -N\\". Works across all output modes. Defaults to 250. Pass 0 for unlimited within tool hard caps."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip first N lines or entries before applying head_limit, equivalent to \\"| tail -n +N | head -N\\". Works across all output modes. Defaults to 0."
+        },
+        "multiline": {
+          "type": "boolean",
+          "description": "Enable multiline mode where patterns can span lines. Default false."
+        }
+      }
+    }
+  },
+  {
+    "name": "file_read",
+    "description": "Reads a local file.\\nUse an absolute file_path when known; relative paths resolve from the Thread working directory.\\nBy default, it reads up to 2000 lines starting from the beginning of the file.\\nYou can optionally specify a line offset and limit, especially for long files.\\nThis tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.\\nUse this before file_edit or before rewriting an existing file with file_write.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file_path"
+      ],
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute path or a path relative to the Thread working directory."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The line number to start reading from. Only provide if the file is too large to read at once."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000,
+          "description": "The number of lines to read. Only provide if the file is too large to read at once."
+        },
+        "pages": {
+          "type": "string",
+          "description": "Page range for PDF files, for example \\"1-5\\", \\"3\\", or \\"10-20\\". Only applicable to PDF files. Maximum 20 pages per request."
+        }
+      }
+    }
+  },
+  {
+    "name": "file_write",
+    "description": "Writes a local file.\\nThis tool overwrites the existing file if there is one at the provided path.\\nIf this is an existing file, you must use file_read first to read the file contents.\\nPrefer file_edit for modifying existing files because it only sends the diff. Use file_write to create new files or for complete rewrites.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file_path",
+        "content"
+      ],
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An absolute path or a path relative to the Thread working directory."
+        },
+        "content": {
+          "type": "string",
+          "description": "The content to write to the file."
+        }
+      }
+    }
+  },
+  {
+    "name": "generate_image",
+    "description": "Generate or edit raster images with an enabled image-capable provider. Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion. Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned markdownImage exactly where each image belongs in the final answer.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "description": "Required visual instruction for generation or editing. Include subject, style, composition, text to render, and constraints the image must follow."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional image model id. Use a bare model id when unambiguous, or provider:model / provider/model to select a provider explicitly. Omit or pass auto to use the default enabled image model."
+        },
+        "image_paths": {
+          "type": "array",
+          "maxItems": 4,
+          "description": "Optional local image paths for edits or transformations. Use path values or markdownImage values returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Readable local image path, file:^... target, Markdown image, or [[file:...]] marker to use as an edit/reference input."
+          }
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Optional number of images to request. Default 1, max 4. Providers may still return fewer images."
+        },
+        "size": {
+          "type": "string",
+          "description": "Optional provider-specific output size. Examples: OpenAI 1024x1024, 1536x1024, 1024x1536, or a supported WIDTHxHEIGHT value for gpt-image-2; Google image size hints include 1K, 2K, and 4K. Omit for provider default."
+        },
+        "aspect_ratio": {
+          "type": "string",
+          "description": "Optional provider-specific aspect ratio, for example 1:1, 16:9, 9:16, 4:3, or 3:4. Use mainly for providers that expose aspect ratio separately from size. Omit for provider default."
+        },
+        "quality": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "Optional quality or speed hint. Use low for drafts, medium/high for final assets, or auto for provider choice. Omit for provider default."
+        },
+        "background": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "opaque",
+            "transparent"
+          ],
+          "description": "Optional background hint. Use transparent only with models that support transparency; otherwise omit, use auto, or use opaque."
+        },
+        "output_format": {
+          "type": "string",
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ],
+          "description": "Optional requested output file format where supported. OpenAI defaults to png; jpeg and webp are useful when smaller files matter. Omit for provider default."
+        }
+      }
+    }
+  },
+  {
+    "name": "get_goal",
+    "description": "Get the Goal attached one-to-one to the current Thread.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "node_create",
+    "description": "Creates outliner content under a parent. Omit parent_id to create under today, not the current UI selection.\\n\\nUsage:\\n- Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children. The outline parameter contains the complete creation grammar.\\n- Use definition to create a tag or field definition node under Schema. Existing same-name definitions are returned unchanged; use node_edit configure_definition to change config.\\n- Prefer nested child lines over node descriptions for normal user-authored content.\\n- Prefer ordinary child nodes over Field:: lines unless the user clearly wants structured data.\\n- Prefer ordinary child nodes over #tags unless the tag is explicit, already established, or useful as a durable category.\\n- Use [ ]/[x] only for real tasks or explicit checklist items.\\n- Use %%search%% only when creating a saved search/view the user asked to keep; use node_search for temporary lookup.\\n- Use target_id only to create one reference node at the insertion point.\\n- Use duplicate_id only to duplicate an existing subtree with new ids.\\n- Insertion: after_id omitted appends, after_id null inserts first, after_id string inserts after that sibling.\\n- Use preview_only to parse and validate before mutating the document.\\n- Successful creation results include fresh %%node:id%% edit handles as protocol metadata. For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parent_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Parent node id. Omit to create under today's journal node, not the current UI selection."
+        },
+        "after_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sibling insertion point under parent_id. Omit to append, pass null to insert as first child, or pass a sibling id to insert after that sibling."
+        },
+        "outline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60000,
+          "description": "Outline format to create. Outline format uses \\"- Title\\" lines with exactly 2 spaces per child level. It supports #tags, #中文 tags, [[#tag]] / #[[multi word tags]], Field:: value, references, nested children, search nodes, and [ ]/[x] checkbox state when the marker is alone or whitespace-separated from the title. Markdown inline syntax creates rich-text marks in normal node text: **bold**, *italic*, ~~strike~~, ==highlight==, \`code\`, and [label](https://example.com). Use \\"- \`\`\`lang\\" followed by raw code lines and a closing \\"\`\`\`\\" line to create a code-block node. Use child nodes for ordinary notes, task details, meeting notes, and explanatory body text. Use \\"Title - description\\" only when the user explicitly asks for a description/caption, when preserving an existing description, or when importing external metadata that belongs in the node description. Use Field:: values, #tags, and [ ]/[x] checkbox state conservatively: only when the user asks for structured fields/tags/tasks, when preserving existing structure, or when the outline must be filterable/searchable as that structure. Field:: writes resolve existing owner fields and document field definitions before creating new fields; existing field types are preserved and incompatible values are rejected. Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with \\"/\\" such as 2026-05-20/2026-05-24. Do not use \\"..\\" for date ranges. Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol. Saved search nodes use the same search query outline syntax as node_search. Search outlines start with one root line like \\"- %%search%% Title\\" and exactly one query root child. AND, OR, and NOT are group nodes and may be nested. Rule nodes are operator names. Put operands under rules as field::, tag::, target::, value::, or operand:: lines. field::, tag::, and target:: must be node references or exact node ids. Plain field names, tag names, and target titles are not enough. Node references use [[node:Display^...]] markers, or [[node:^...]] when only the id is known. Exact node ids are also accepted in tool parameters. Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with \\"/\\" such as 2026-05-20/2026-05-24. Do not use \\"..\\" for date ranges."
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Create one reference node to this target node id at the insertion point. Use outline for normal nodes."
+        },
+        "duplicate_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Duplicate an existing subtree by serializing and recreating its outline with new node ids."
+        },
+        "definition": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Create a tag or field definition node under Schema. Use this for schema definitions, not ordinary content nodes.",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "field",
+                "tag"
+              ],
+              "description": "Definition kind to create."
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Definition display name."
+            },
+            "config": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Initial definition config. Field definitions accept field_type/source_supertag/etc.; tag definitions accept color/show_checkbox/etc.",
+              "properties": {
+                "field_type": {
+                  "type": "string",
+                  "enum": [
+                    "plain",
+                    "options",
+                    "options_from_supertag",
+                    "date",
+                    "number",
+                    "url",
+                    "email",
+                    "checkbox"
+                  ],
+                  "description": "Field definition type."
+                },
+                "fieldType": {
+                  "type": "string",
+                  "enum": [
+                    "plain",
+                    "options",
+                    "options_from_supertag",
+                    "date",
+                    "number",
+                    "url",
+                    "email",
+                    "checkbox"
+                  ],
+                  "description": "Alias for field_type."
+                },
+                "source_supertag": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Tag definition id used by options_from_supertag fields."
+                },
+                "sourceSupertag": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for source_supertag."
+                },
+                "autocollect_options": {
+                  "type": "boolean",
+                  "description": "Whether an options field auto-collects new values."
+                },
+                "autocollectOptions": {
+                  "type": "boolean",
+                  "description": "Alias for autocollect_options."
+                },
+                "auto_initialize": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Comma-separated auto-initialize strategies."
+                },
+                "autoInitialize": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for auto_initialize."
+                },
+                "nullable": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Whether a field value may be empty."
+                },
+                "required": {
+                  "type": "boolean",
+                  "description": "Convenience inverse of nullable."
+                },
+                "hide_field": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "never",
+                        "empty",
+                        "not_empty",
+                        "value_is_default",
+                        "always"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "When to hide this field."
+                },
+                "hideField": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "never",
+                        "empty",
+                        "not_empty",
+                        "value_is_default",
+                        "always"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for hide_field."
+                },
+                "min_value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Minimum value for number fields."
+                },
+                "minValue": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for min_value."
+                },
+                "max_value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Maximum value for number fields."
+                },
+                "maxValue": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for max_value."
+                },
+                "color": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Tag color token."
+                },
+                "extends": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Parent tag definition id to extend."
+                },
+                "child_supertag": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Default child supertag id."
+                },
+                "childSupertag": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Alias for child_supertag."
+                },
+                "show_checkbox": {
+                  "type": "boolean",
+                  "description": "Whether nodes with this tag show a checkbox."
+                },
+                "showCheckbox": {
+                  "type": "boolean",
+                  "description": "Alias for show_checkbox."
+                },
+                "done_state_enabled": {
+                  "type": "boolean",
+                  "description": "Whether done-state mapping is enabled."
+                },
+                "doneStateEnabled": {
+                  "type": "boolean",
+                  "description": "Alias for done_state_enabled."
+                },
+                "done_map_checked": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Option node ids mapped to checked state."
+                },
+                "doneMapChecked": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Alias for done_map_checked."
+                },
+                "done_map_unchecked": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Option node ids mapped to unchecked state."
+                },
+                "doneMapUnchecked": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Alias for done_map_unchecked."
+                }
+              }
+            }
+          }
+        },
+        "preview_only": {
+          "type": "boolean",
+          "description": "Parse and validate only; do not mutate the document."
+        }
+      }
+    }
+  },
+  {
+    "name": "node_delete",
+    "description": "Moves one or more outliner nodes to Trash, or restores nodes from Trash with restore true. This is not a permanent delete.\\n\\nUsage:\\n- Use node_id for one node, or node_ids for a batch that matches a user multi-selection.\\n- Children and fields move with their parent. If both a parent and its descendant are provided, the descendant is skipped because the parent covers it.\\n- Use preview_only to inspect affected nodes before mutating the document.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Single node id to move to Trash. This is not a permanent delete."
+        },
+        "node_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Multiple node ids to move to Trash as one operation. Use this for selected-row style batch deletes; do not combine with node_id."
+        },
+        "restore": {
+          "type": "boolean",
+          "description": "Restore nodes from Trash instead of moving them to Trash."
+        },
+        "preview_only": {
+          "type": "boolean",
+          "description": "Validate and describe affected nodes only; do not mutate the document."
+        }
+      }
+    }
+  },
+  {
+    "name": "node_edit",
+    "description": "Edits existing outliner content.\\n\\nUsage:\\n- Set operation explicitly: replace_outline, move, merge, replace_with_reference, configure_definition, reuse_field_definition, or merge_definition.\\n- For operation \\"replace_outline\\", use node_read first, then pass exact old_string/new_string against the target node line, its field lines, field value lines, or saved-search config.\\n- For operation \\"configure_definition\\", target a tagDef or fieldDef node_id and pass definition_patch. Do not edit locked defConfig child rows directly.\\n- For operation \\"reuse_field_definition\\", target a field entry node_id and pass target_definition_id to relink the entry to an existing field definition.\\n- For operation \\"merge_definition\\", target the surviving tagDef/fieldDef node_id and pass duplicate definitions in merge_from_node_ids. Do not use ordinary merge for definitions.\\n- For operation \\"merge\\", target ordinary duplicate content nodes only. Do not merge field entries, references, searches, views, definitions, config nodes, or other structural nodes.\\n- Use old_string \\"*\\" only to replace the target node's whole editable outline; include expected_revision unless preview_only is true.\\n- For replace_outline, preserve existing %%node:id%% markers and follow the exact annotated-outline rules in the new_string parameter.\\n- operation \\"move\\" supports user-like move operations; operation \\"merge\\" merges source nodes into one surviving target; operation \\"replace_with_reference\\" replaces a node with a reference.\\n- Use preview_only when the edit is large or ambiguous and you want validation before mutating the document.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "replace_outline",
+            "move",
+            "merge",
+            "replace_with_reference",
+            "configure_definition",
+            "reuse_field_definition",
+            "merge_definition"
+          ],
+          "description": "Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; configure_definition with node_id + definition_patch for tag/field definition config; reuse_field_definition with a field entry node_id + target_definition_id; merge_definition with a target definition node_id + merge_from_node_ids; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to."
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target node id. Required for replace_outline, single-node move, merge target, and replace_with_reference. Use node_read first when you need the current id or revision."
+        },
+        "node_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Target node ids for operation \\"move\\", matching a user multi-selection. Do not combine with node_id."
+        },
+        "old_string": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact fragment from node_read for this node only: target line, field lines, field value lines, or saved-search config. Use \\"*\\" only to replace the target node's whole editable outline; non-preview \\"*\\" edits require expected_revision from node_read. For the target root line only, the leading %%node:id%% marker may be omitted because node_id already names it. Include enough surrounding lines to make partial fragments unique."
+        },
+        "new_string": {
+          "type": "string",
+          "description": "Replacement fragment for the target node line, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes. Annotated outlines come from node_read and include %%node:id%% markers for exact follow-up edits. For content edits, call node_edit with operation \\"replace_outline\\". It edits one existing node only: its own text, description, checkbox state, tags, fields, field values, or saved-search config. Use old_string \\"*\\" only when replacing that whole single-node editable outline; non-preview \\"*\\" edits must include expected_revision from node_read. For the target root line only, old_string/new_string may omit the leading %%node:id%% marker because node_id already names that node. Keep field and field-value %%node:id%% markers when updating existing field/value lines; they are not redundant with the target node_id. Do not edit child structure through node_edit outline fragments. Use node_create for new children, node_edit move for reordering/reparenting, and node_delete for removals. Omitted fields and field values are preserved; delete them explicitly with node_delete by id. Treat %%node:id%% as protocol metadata, not user-visible node text. For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed. Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with \\"/\\" such as 2026-05-20/2026-05-24. Do not use \\"..\\" for date ranges."
+        },
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional revision from node_read. The edit fails if the node changed since that read."
+        },
+        "move": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "parent_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Destination parent node id for an absolute move. Use with after_id; do not combine with structural_action."
+            },
+            "after_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Destination sibling under parent_id. Omit to append, pass null to insert as first child, or pass a sibling id to insert after that sibling."
+            },
+            "structural_action": {
+              "type": "string",
+              "enum": [
+                "indent",
+                "outdent",
+                "move_up",
+                "move_down"
+              ],
+              "description": "User-like structural command for one or more nodes, matching keyboard operations on selected rows."
+            }
+          }
+        },
+        "merge_from_node_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "For operation \\"merge\\", source content node ids to merge into node_id. For operation \\"merge_definition\\", source field/tag definition ids to merge into target definition node_id."
+        },
+        "replace_with_reference_to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Replace node_id with a reference to this target node id at the same position."
+        },
+        "definition_patch": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Config patch for operation \\"configure_definition\\". Use snake_case keys such as field_type, source_supertag, show_checkbox, or color.",
+          "properties": {
+            "field_type": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "options",
+                "options_from_supertag",
+                "date",
+                "number",
+                "url",
+                "email",
+                "checkbox"
+              ],
+              "description": "Field definition type."
+            },
+            "fieldType": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "options",
+                "options_from_supertag",
+                "date",
+                "number",
+                "url",
+                "email",
+                "checkbox"
+              ],
+              "description": "Alias for field_type."
+            },
+            "source_supertag": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Tag definition id used by options_from_supertag fields."
+            },
+            "sourceSupertag": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for source_supertag."
+            },
+            "autocollect_options": {
+              "type": "boolean",
+              "description": "Whether an options field auto-collects new values."
+            },
+            "autocollectOptions": {
+              "type": "boolean",
+              "description": "Alias for autocollect_options."
+            },
+            "auto_initialize": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated auto-initialize strategies."
+            },
+            "autoInitialize": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for auto_initialize."
+            },
+            "nullable": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Whether a field value may be empty."
+            },
+            "required": {
+              "type": "boolean",
+              "description": "Convenience inverse of nullable."
+            },
+            "hide_field": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "never",
+                    "empty",
+                    "not_empty",
+                    "value_is_default",
+                    "always"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "When to hide this field."
+            },
+            "hideField": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "never",
+                    "empty",
+                    "not_empty",
+                    "value_is_default",
+                    "always"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for hide_field."
+            },
+            "min_value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Minimum value for number fields."
+            },
+            "minValue": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for min_value."
+            },
+            "max_value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum value for number fields."
+            },
+            "maxValue": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for max_value."
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Tag color token."
+            },
+            "extends": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Parent tag definition id to extend."
+            },
+            "child_supertag": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Default child supertag id."
+            },
+            "childSupertag": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Alias for child_supertag."
+            },
+            "show_checkbox": {
+              "type": "boolean",
+              "description": "Whether nodes with this tag show a checkbox."
+            },
+            "showCheckbox": {
+              "type": "boolean",
+              "description": "Alias for show_checkbox."
+            },
+            "done_state_enabled": {
+              "type": "boolean",
+              "description": "Whether done-state mapping is enabled."
+            },
+            "doneStateEnabled": {
+              "type": "boolean",
+              "description": "Alias for done_state_enabled."
+            },
+            "done_map_checked": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Option node ids mapped to checked state."
+            },
+            "doneMapChecked": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Alias for done_map_checked."
+            },
+            "done_map_unchecked": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Option node ids mapped to unchecked state."
+            },
+            "doneMapUnchecked": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Alias for done_map_unchecked."
+            }
+          }
+        },
+        "existing_values": {
+          "type": "string",
+          "enum": [
+            "validate"
+          ],
+          "description": "How field type changes treat existing field values. v1 supports validate: reject incompatible existing values before mutation."
+        },
+        "target_definition_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target field definition id for operation \\"reuse_field_definition\\". May be a user fieldDef id or supported sys:* field id."
+        },
+        "preview_only": {
+          "type": "boolean",
+          "description": "Validate and render before/after data only; do not mutate the document."
+        }
+      }
+    }
+  },
+  {
+    "name": "node_read",
+    "description": "Reads outliner nodes as annotated outline text with %%node:id%% markers for exact follow-up edits.\\n\\nUsage:\\n- Omit node_id and node_ids to read today.\\n- Use node_ids for independent nodes. Use depth, child_offset, and child_limit to bound children.\\n- Use node_read before node_edit whenever you need exact node ids, revisions, or outline fragments.\\n- Annotated outlines come from node_read and include %%node:id%% markers for exact follow-up edits. For content edits, call node_edit with operation \\"replace_outline\\". It edits one existing node only: its own text, description, checkbox state, tags, fields, field values, or saved-search config. Use old_string \\"*\\" only when replacing that whole single-node editable outline; non-preview \\"*\\" edits must include expected_revision from node_read. For the target root line only, old_string/new_string may omit the leading %%node:id%% marker because node_id already names that node. Keep field and field-value %%node:id%% markers when updating existing field/value lines; they are not redundant with the target node_id. Do not edit child structure through node_edit outline fragments. Use node_create for new children, node_edit move for reordering/reparenting, and node_delete for removals. Omitted fields and field values are preserved; delete them explicitly with node_delete by id. Treat %%node:id%% as protocol metadata, not user-visible node text. For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The node id to read. Omit node_id and node_ids to read today's journal node."
+        },
+        "node_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Node ids to read in one call. Use this for independent nodes; do not combine with node_id."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Descendant depth to include. 0 reads only the requested node, 1 includes direct children. Default 1, max 3."
+        },
+        "child_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip the first N root children before applying child_limit. Default 0."
+        },
+        "child_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "Maximum root children to return in this page. Default 20, max 50."
+        },
+        "include_deleted": {
+          "type": "boolean",
+          "description": "Set true only when you intentionally need to read nodes in Trash. Default false."
+        },
+        "include_backlinks": {
+          "type": "boolean",
+          "description": "Include tree, inline, and field backlinks to the requested nodes. Default false."
+        }
+      }
+    }
+  },
+  {
+    "name": "node_search",
+    "description": "Searches outliner nodes by executing a temporary search outline or an existing saved search node.\\n\\nUsage:\\n- Use outline for one-off searches; use search_node_id only when executing an existing saved search node.\\n- For several counts that share a condition, set count true, put the shared rule/group fragment in common_query, and put 1-20 uniquely named rule/group fragments in queries. Batch fragments omit the %%search%% wrapper.\\n- Use node_search for temporary lookup. Create a saved search node with node_create only when the user explicitly asks to save a search/view.\\n- Search outlines start with one root line like \\"- %%search%% Title\\" and exactly one query root child. AND, OR, and NOT are group nodes and may be nested. Rule nodes are operator names. Put operands under rules as field::, tag::, target::, value::, or operand:: lines. field::, tag::, and target:: must be node references or exact node ids. Plain field names, tag names, and target titles are not enough. Node references use [[node:Display^...]] markers, or [[node:^...]] when only the id is known. Exact node ids are also accepted in tool parameters. Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with \\"/\\" such as 2026-05-20/2026-05-24. Do not use \\"..\\" for date ranges.\\n- Match system checkbox/completion state with TODO, DONE, NOT_DONE, or DONE_LAST_DAYS. These are not field queries.\\n- Use DATE_OVERLAPS only for values stored in a date field; field:: must reference the date field definition node.\\n- Use FIELD_IS and related field operators only for user fields; find the field definition id with node_read/node_search when needed.\\n- Returned outlines include %%node:id%% markers so you can call node_read or node_edit on exact matches.\\n- For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.\\n\\nOperator guide:\\n- Text: STRING_MATCH value:: text; REGEXP_MATCH value:: regex.\\n- Tags: HAS_TAG tag:: [[node:#tag^...]].\\n- Checkbox/completion state: TODO, DONE, NOT_DONE, DONE_LAST_DAYS value:: 7. Do not express done state as FIELD_IS field:: done value:: true.\\n- Timestamps: CREATED_LAST_DAYS value:: 7, EDITED_LAST_DAYS value:: 7, DONE_LAST_DAYS value:: 7.\\n- User fields: FIELD_IS, FIELD_IS_NOT, FIELD_CONTAINS, LT, GT, IS_EMPTY, IS_NOT_EMPTY, HAS_FIELD, FIELD_IS_SET, FIELD_IS_NOT_SET, FIELD_IS_DEFINED, FIELD_IS_NOT_DEFINED. These use field:: [[node:Field^...]] except HAS_FIELD may omit field:: to match any field.\\n- Date fields: DATE_OVERLAPS uses field:: [[node:Date field^...]] plus value:: YYYY-MM-DD or start/end. OVERDUE checks unfinished nodes with overdue date field values and may include field:: to limit which date field.\\n- Date/calendar nodes: FOR_DATE and FOR_RELATIVE_DATE use value:: date to match date-related nodes; ON_DAY_NODE matches nodes under day nodes.\\n- Links and structure: LINKS_TO, CHILD_OF, DESCENDANT_OF, DESCENDANT_OF_WITH_REFS, and OWNED_BY use target:: [[node:Node^...]]. PARENTS_DESCENDANTS, GRANDPARENTS_DESCENDANTS, PARENTS_DESCENDANTS_WITH_REFS, and GRANDPARENTS_DESCENDANTS_WITH_REFS are scoped to the saved search node position. SIBLING_NAMED uses value:: sibling title. IN_LIBRARY needs no operand.\\n- Type/media: IS_TYPE value:: node|tag|field|search|day|week|year|image|embed|code; HAS_MEDIA, HAS_AUDIO, HAS_VIDEO, and HAS_IMAGE need no operand.\\n- EDITED_BY exists in the data model but is not executable yet. Do not use it.\\n\\nExamples:\\n- Completed recently: \\"- %%search%% Recently completed\\\\n  - DONE_LAST_DAYS\\\\n    - value:: 7\\"\\n- Due in a date range: \\"- %%search%% Due soon\\\\n  - DATE_OVERLAPS\\\\n    - field:: [[node:Due^...]]\\\\n    - value:: 2026-05-20/2026-05-24\\"\\n- Open tagged work: \\"- %%search%% Open tasks\\\\n  - AND\\\\n    - HAS_TAG\\\\n      - tag:: [[node:#task^...]]\\\\n    - FIELD_IS\\\\n      - field:: [[node:Status^...]]\\\\n      - value:: Open\\"",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000,
+          "description": "Temporary search outline with one %%search%% root and one query rule/group child. This does not create a saved search node. Use the query grammar and operator guide in the node_search tool description."
+        },
+        "search_node_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Existing saved search node id to execute. Use outline instead for a one-off search."
+        },
+        "common_query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000,
+          "description": "Optional query rule/group outline fragment shared by every queries item. Batch count mode only; uses the same query-tree grammar as queries[].query."
+        },
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "Named query rule/group outline fragments for one count-only batch. Set count true and omit outline, search_node_id, limit, and offset.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "query"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "Unique result name returned as a key in data.counts."
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 12000,
+                "description": "One canonical query rule/group outline fragment, without a %%search%% wrapper."
+              }
+            }
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum matching nodes to return. Default 20, max 50."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip the first N matching nodes before returning results. Default 0."
+        },
+        "count": {
+          "type": "boolean",
+          "description": "When true, return only counts without editable result ids. Required with queries for shared-condition batch count mode."
+        }
+      }
+    }
+  },
+  {
+    "name": "outline_undo_stack",
+    "description": "Inspect, undo, or redo outliner operations.\\n\\nUsage:\\n- Use action \\"list\\" first when you need to see recent user and agent outline operations before deciding what to undo or redo.\\n- Undo/redo uses the Loro-backed operation stack. Agent calls default to the agent-origin stack so agent undo does not unexpectedly undo user work.\\n- Use operation_id as a guard when undoing or redoing a specific visible operation.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "undo",
+            "redo"
+          ],
+          "description": "Undo stack action. Defaults to list. list is read-only; undo and redo operate on the selected outline operation stack."
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Number of operation stack steps for undo or redo. Default 1, max 10."
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional stack-top guard from outline_undo_stack list. Undo/redo is skipped unless the current stack top has this operation_id."
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "all",
+            "agent",
+            "user"
+          ],
+          "description": "Filter for list and target stack for undo/redo. Defaults to all for list and agent for undo/redo."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum history items to return. Default 20, max 100."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip the first N history items before returning results. Default 0."
+        }
+      }
+    }
+  },
+  {
+    "name": "request_user_input",
+    "description": "Request one to three short product questions from the user. This never requests authorization.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable snake-case identifier used to map the answer."
+              },
+              "header": {
+                "type": "string",
+                "description": "Short UI header, at most 12 characters."
+              },
+              "question": {
+                "type": "string",
+                "description": "One sentence shown to the user."
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "description": "User-facing label of one to five words."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "One sentence explaining the trade-off."
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "description"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \\"(Recommended)\\". Do not include an \\"Other\\" option in this list; the client will add a free-form \\"Other\\" option automatically."
+              }
+            },
+            "required": [
+              "id",
+              "header",
+              "question",
+              "options"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "autoResolutionMs": {
+          "type": "number",
+          "description": "Optional non-blocking timeout from 60000 to 240000 milliseconds."
+        }
+      },
+      "required": [
+        "questions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "skill",
+    "description": "Execute a skill within the current Thread\\nWhen users ask you to perform tasks, check if any available skills match. Skills provide specialized capabilities and domain knowledge.\\nWhen users reference a slash skill or \\"/<something>\\" (e.g., \\"/commit\\", \\"/review-pr\\"), they are referring to a skill. Use this tool to invoke it.\\nHow to invoke:\\n- Use this tool with the skill name and optional arguments\\n- Examples:\\n  - \`skill: \\"pdf\\"\` - invoke the pdf skill\\n  - \`skill: \\"commit\\", args: \\"-m 'Fix bug'\\"\` - invoke with arguments\\n  - \`skill: \\"review-pr\\", args: \\"123\\"\` - invoke with arguments\\nImportant:\\n- Available skills are listed in the current Skill catalog context.\\n- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant skill tool BEFORE generating any other response about the task.\\n- NEVER mention a skill without actually calling this tool.\\n- Do not invoke a skill that is already running.\\n- Do not use this tool for built-in commands.\\n- If the current context already contains a matching Skill invocation, follow the loaded instructions instead of calling this tool again.\\n- An isolated Skill runs once in one child Thread; its catalog entry states whether Subagent fan-out must stay in the parent.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skill"
+      ],
+      "properties": {
+        "skill": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The skill name, for example \\"commit\\", \\"review-pr\\", or \\"pdf\\". A leading slash is accepted."
+        },
+        "args": {
+          "type": "string",
+          "description": "Optional arguments to pass to the skill."
+        }
+      }
+    }
+  },
+  {
+    "name": "update_goal",
+    "description": "Mark the current Goal complete or genuinely blocked.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "blocked"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_plan",
+    "description": "Update the transient execution checklist for the active Turn.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "type": "string",
+          "description": "Optional explanation for the plan update."
+        },
+        "plan": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "string",
+                "description": "Task step text."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
+              }
+            },
+            "required": [
+              "step",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "plan"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "web_fetch",
+    "description": "Reads a known web URL and returns page content, matching snippets, metadata, or binary file metadata.\\n\\nUsage:\\n- Use web_fetch when you already have a URL. Use web_search first when you need to discover sources.\\n- Use format=\\"markdown\\" by default for readable page content. Use format=\\"text\\" for plain text, \\"raw\\" when exact extracted text matters, and \\"metadata\\" when you only need title, description, headings, or links.\\n- Use query to find matching snippets within a large page instead of reading the whole page.\\n- Use offset/max_chars and nextOffset to continue reading long pages. Use match_offset and nextMatchOffset to continue find-mode results.\\n- If binaryFile is returned, use file_read on binaryFile.filePath when you need to inspect supported files such as PDFs or images.\\n- If the page requires login, is blocked, or redirects to an unexpected host, follow the tool instructions or choose another accessible source.\\n- When web results inform the final answer, cite the relevant result or fetched source URLs as markdown links.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "The absolute http(s) URL to read. Use web_search first if you do not know the URL. http:// URLs are upgraded to https://."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "markdown",
+            "text",
+            "raw",
+            "metadata"
+          ],
+          "description": "Output format. Defaults to markdown. Use metadata for title, description, headings, and links; text for plain text; raw when exact extracted text matters."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Character offset for read mode. Use nextOffset from a previous web_fetch result to continue reading. Default 0."
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Maximum characters returned in read mode. Use this with offset for long pages. Default 30000, max 100000."
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "When set, web_fetch uses find mode and returns matching snippets from this page instead of reading from offset."
+        },
+        "context": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000,
+          "description": "Characters before and after each query match in find mode. Increase this when snippets lack enough surrounding context. Default 500."
+        },
+        "head_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum matches returned in find mode. Use nextMatchOffset from the result to continue. Default 10."
+        },
+        "match_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Skip the first N matches in find mode. Use nextMatchOffset from a previous result to continue. Default 0."
+        },
+        "case_insensitive": {
+          "type": "boolean",
+          "description": "Case-insensitive matching in find mode. Default true."
+        }
+      }
+    }
+  },
+  {
+    "name": "web_search",
+    "description": "Searches the web for current external information and source URLs, or for images with kind \\"image\\".\\n\\nUsage:\\n- Use web_search when you do not already have a specific URL, or when local/model knowledge may be stale.\\n- Search results are source discovery, not final evidence. Use web_fetch on result URLs when you need details, exact dates, quotations, or higher confidence.\\n- Include the current year, date, product version, place, or entity name in the query when freshness or disambiguation matters.\\n- Use site for a single-host search. Use recency_days only as a best-effort freshness hint, then verify dates with web_fetch.\\n- Set kind to \\"image\\" to find images: each result adds imageUrl (the full image to download with web_fetch) and thumbnailUrl (a preview). Pick by thumbnail, then web_fetch the imageUrl to save the file for embedding. Image results may be copyright-protected, so treat them as drafts and confirm reuse with the user.\\n- When web results inform the final answer, cite the relevant result or fetched source URLs as markdown links.",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "The web search query. Natural language and search operators are allowed. Include the current year/date, product version, names, or locations when freshness or disambiguation matters."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "web",
+            "image"
+          ],
+          "description": "Result kind. \\"web\\" (default) returns page results with snippets; \\"image\\" returns image results, each with imageUrl (full image to download via web_fetch) and thumbnailUrl (preview). site and recency_days still apply."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum search results to return. Use a small limit for focused lookup and a larger limit when comparing sources. Default 10, max 20."
+        },
+        "site": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Optional single host to scope the search to, such as example.com. Do not include \\"site:\\"; the tool adds it."
+        },
+        "recency_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Optional best-effort freshness hint in days. Use web_fetch on source URLs to verify publication dates or event dates when freshness matters."
+        }
+      }
+    }
+  }
+]"
+`;

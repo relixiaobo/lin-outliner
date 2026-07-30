@@ -210,17 +210,9 @@ are visible to the parent.
 Not touched in PR A (tripwire): `src/main/agent/runtime/kernel/**` and
 `src/main/agent/runtime/PiTurnExecutor.ts` (the loop surface the tripwire
 exists to protect); `GoalStore.ts` semantics; any codec beyond the two schema
-additions. **Narrow allowance** (fixes a self-contradiction an earlier
-revision had with Design step 2, which always named this handler):
-`runtime/ToolRuntime.ts` may change ONLY inside the `spawn_agent`
-`collaborationTool` handler (identified by name, not line — locate via
-`rg -n "collaborationTool\('spawn_agent'" `) — validate and pass
-`max_total_tokens` through to `spawnCollaborationAgent`; the file's diff must
-contain nothing outside that handler (plus a validator helper if none fits).
-This carve-out exists because collaboration tool handler bodies currently
-live inside runtime infrastructure; the structural fix (domain modules
-contribute their handlers, `ToolRuntime` becomes pure dispatch) is deferred
-to after `threadservice-decomposition` — see that plan's deferred notes.
+additions. The former `ToolRuntime` `spawn_agent` carve-out retired in
+`toolruntime-handler-contribution`; collaboration handlers now come from their
+owning domain module.
 
 ## Design — PR B: mid-Turn enforcement (after `native-turn-kernel`)
 

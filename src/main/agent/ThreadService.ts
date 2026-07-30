@@ -97,6 +97,7 @@ import type {
 ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
+import type { AgentTool } from './runtime/kernel/types';
 import { SubagentCollaboration } from './thread/SubagentCollaboration';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
@@ -751,6 +752,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
+  collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
     senderTurnId: string;
