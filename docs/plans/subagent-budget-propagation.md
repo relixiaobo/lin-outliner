@@ -109,9 +109,14 @@ exists to protect); `GoalStore.ts` semantics; any codec beyond the two schema
 additions. **Narrow allowance** (fixes a self-contradiction an earlier
 revision had with Design step 2, which always named this handler):
 `runtime/ToolRuntime.ts` may change ONLY inside the `spawn_agent`
-collaboration handler (`:191-205`) — validate and pass `max_total_tokens`
-through to `spawnCollaborationAgent`; the file's diff must contain nothing
-outside that handler (plus a validator helper if none fits).
+`collaborationTool` handler (identified by name, not line — locate via
+`rg -n "collaborationTool\('spawn_agent'" `) — validate and pass
+`max_total_tokens` through to `spawnCollaborationAgent`; the file's diff must
+contain nothing outside that handler (plus a validator helper if none fits).
+This carve-out exists because collaboration tool handler bodies currently
+live inside runtime infrastructure; the structural fix (domain modules
+contribute their handlers, `ToolRuntime` becomes pure dispatch) is deferred
+to after `threadservice-decomposition` — see that plan's deferred notes.
 
 ## Design — PR B: mid-Turn enforcement (after `native-turn-kernel`)
 

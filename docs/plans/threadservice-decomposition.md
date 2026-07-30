@@ -209,9 +209,16 @@ single-class story with the five-module map (one sentence each), in this PR.
 
 ## Open questions
 
-None blocking. Deferred: whether `ThreadCore`'s notification bus should later
-absorb `applyEphemeralNotification`'s projection logic into the history store
-(behavior-adjacent; separate plan if wanted).
+None blocking. Deferred, both post-decomposition follow-ups:
+- whether `ThreadCore`'s notification bus should later absorb
+  `applyEphemeralNotification`'s projection logic into the history store
+  (behavior-adjacent; separate plan if wanted);
+- collaboration tool handler bodies still live inside `runtime/ToolRuntime.ts`
+  (domain logic in infrastructure — the root cause of the budget plan's
+  ToolRuntime carve-out). Once `SubagentCollaboration` exists, a small
+  follow-up has it contribute those handlers and `ToolRuntime` becomes pure
+  dispatch, retiring that carve-out. Out of scope here: this plan's own
+  tripwire keeps `runtime/` untouched.
 
 ## Checklist
 
