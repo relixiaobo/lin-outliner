@@ -419,7 +419,7 @@ export class ThreadCatalogOps {
           await this.finalizeHistoryRollbackHooks([...prepared].reverse(), 'abort', context);
           throw error;
         }
-  
+
         let markerEntry: RolloutEntry | undefined;
         try {
           markerEntry = await this.core.rollout.appendHistoryRollback(context, this.now());

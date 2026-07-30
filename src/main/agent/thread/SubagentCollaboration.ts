@@ -351,7 +351,7 @@ export class SubagentCollaboration {
     ): Promise<CollaborationWaitResult> {
       this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
-  
+
       if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {
         this.takePendingCollaborationActivity(senderThreadId);
         const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
@@ -375,7 +375,7 @@ export class SubagentCollaboration {
           agents,
         };
       }
-  
+
       const state = this.collaborationActivityState(senderThreadId);
       await new Promise<void>((resolve, reject) => {
         const done = () => {
