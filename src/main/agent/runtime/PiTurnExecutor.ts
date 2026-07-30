@@ -124,7 +124,7 @@ export interface PiRuntimeSelection {
 }
 
 export interface PiAgentRuntime {
-  readonly state: Pick<AgentState, 'errorMessage'>;
+  readonly state: Pick<AgentState, 'errorMessage' | 'interruptionError'>;
   subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void;
   abort(): void;
   steer(message: Message): void;
@@ -285,6 +285,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         transformContext,
         sessionId: cacheAffinity,
         providerOptions,
+        remainingTokenBudget: context.remainingTokenBudget,
+        getTurnTokenUsage: () => normalizer.usage.totalTokens,
+        onBudgetWarning: context.onBudgetWarning,
       });
       if (context.signal.aborted) {
         agent.abort();
@@ -310,11 +313,18 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       });
       await agent.prompt(prompt);
       await normalizer.flush();
-      if (context.signal.aborted || normalizer.stopReason === 'aborted') {
+      if (
+        context.signal.aborted
+        || normalizer.stopReason === 'aborted'
+        || agent.state.interruptionError
+      ) {
         diagnostics.finalizeOpenToolExecutions('interrupted');
         const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
         return {
           status: 'interrupted',
+          ...(agent.state.interruptionError
+            ? { error: { message: agent.state.interruptionError } }
+            : {}),
           execution: persisted.details,
           refreshDiagnostics: persisted.refresh,
         };

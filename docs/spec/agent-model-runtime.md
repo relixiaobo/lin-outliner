@@ -317,6 +317,13 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
+Budgeted child Turns expose their Turn-start remaining token budget to the native kernel.
+The first model call is never blocked. Before each later projection, the kernel reads the
+normalizer's accumulated `totalTokens`; reaching the remainder settles the Turn as
+`interrupted`, while the first 80% crossing requests one host-generated budget notice.
+That notice uses the same canonical steering admission and diagnostics path as external
+steering, so it is a durable `userMessage` rather than a private runtime message.
+
 Interrupt aborts provider and tool work through the Turn signal, including
 provider and tool initialization before `prompt()`. Any execution
 Item still `inProgress` is completed as `interrupted`; unexpected executor

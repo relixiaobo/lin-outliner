@@ -87,6 +87,7 @@ export interface AgentState {
   readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: ReadonlySet<string>;
   readonly errorMessage?: string;
+  readonly interruptionError?: string;
 }
 
 export type KernelEvent =
@@ -151,4 +152,7 @@ export interface KernelAgentOptions {
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;
   providerOptions?: SimpleStreamOptions;
+  remainingTokenBudget?: () => number | null;
+  getTurnTokenUsage?: () => number;
+  onBudgetWarning?: () => Promise<void>;
 }

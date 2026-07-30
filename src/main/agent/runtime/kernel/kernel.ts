@@ -19,6 +19,11 @@ interface KernelContext {
   tools: AgentTool[];
 }
 
+export interface KernelRunResult {
+  readonly messages: Message[];
+  readonly interruptionError: string | null;
+}
+
 export async function runKernel(
   prompts: Message[],
   initialContext: KernelContext,
@@ -26,7 +31,7 @@ export async function runKernel(
   emit: KernelEventSink,
   signal: AbortSignal,
   getSteeringMessages: () => Promise<Message[]>,
-): Promise<Message[]> {
+): Promise<KernelRunResult> {
   const newMessages: Message[] = [...prompts];
   const context: KernelContext = {
     ...initialContext,
@@ -41,6 +46,8 @@ export async function runKernel(
   }
 
   let firstTurn = true;
+  let providerCallCount = 0;
+  let budgetWarningSent = false;
   let pendingMessages = await getSteeringMessages();
   let hasMoreToolCalls = true;
   while (hasMoreToolCalls || pendingMessages.length > 0) {
@@ -48,6 +55,26 @@ export async function runKernel(
       await emit({ type: 'turn_start' });
     } else {
       firstTurn = false;
+    }
+
+    if (providerCallCount > 0) {
+      const remaining = options.remainingTokenBudget?.() ?? null;
+      const used = options.getTurnTokenUsage?.() ?? 0;
+      if (remaining !== null && used >= remaining) {
+        const interruptionError = `Token budget exhausted mid-Turn (${used} of ${remaining} tokens)`;
+        await emit({ type: 'agent_end', messages: newMessages });
+        return { messages: newMessages, interruptionError };
+      }
+      if (
+        remaining !== null
+        && used >= Math.ceil(remaining * 0.8)
+        && !budgetWarningSent
+        && options.onBudgetWarning
+      ) {
+        budgetWarningSent = true;
+        await options.onBudgetWarning();
+        pendingMessages.push(...await getSteeringMessages());
+      }
     }
 
     for (const message of pendingMessages) {
@@ -59,11 +86,12 @@ export async function runKernel(
     pendingMessages = [];
 
     const message = await streamAssistantResponse(context, options, signal, emit);
+    providerCallCount += 1;
     newMessages.push(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       await emit({ type: 'turn_end', message, toolResults: [] });
       await emit({ type: 'agent_end', messages: newMessages });
-      return newMessages;
+      return { messages: newMessages, interruptionError: null };
     }
 
     const toolCalls = message.content.filter((part): part is AgentToolCall => part.type === 'toolCall');
@@ -86,7 +114,7 @@ export async function runKernel(
   }
 
   await emit({ type: 'agent_end', messages: newMessages });
-  return newMessages;
+  return { messages: newMessages, interruptionError: null };
 }
 
 async function streamAssistantResponse(

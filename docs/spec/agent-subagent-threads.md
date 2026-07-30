@@ -118,10 +118,26 @@ have no ledger entry and are structurally outside this gate.
 Completion accrues usage inside the per-Thread mutex before the active Turn is removed
 or idle status is exposed, so racing admission observes the committed total. Failure
 finalization also accrues any execution usage already returned by the executor. A hard
-process crash can still lose usage that existed only in the in-flight process; the
-mid-Turn enforcement in the follow-up kernel change narrows that residual. The current
-budget does not otherwise interrupt a Turn already in flight, and the completing Turn
-may overshoot the configured total.
+process crash can still lose usage that existed only in the in-flight process.
+
+At a budgeted child Turn's start, `ThreadService` captures the ledger remainder
+(`tokenBudget - tokensUsed`) in the execution context. The first provider call is always
+admitted; an already exhausted fresh Turn belongs to the admission gate, and an explicit
+user Turn retains its bright-line override. Before every later provider projection, the
+native kernel compares the normalizer's accumulated Turn `totalTokens` with that captured
+remainder. Reaching it settles the Turn as `interrupted` with `Token budget exhausted
+mid-Turn (<total> of <budget> tokens)`. Normal completion accounting then commits the
+same usage to the ledger, and the admission gate rejects later non-user Turns.
+
+On the first later-call boundary where Turn usage reaches 80% of the captured remainder,
+the host admits one steering input through the ordinary canonical steering path:
+`[Budget notice] ~80% of the token budget is consumed (<used> of <budget>). Synthesize
+your findings and conclude now.` The notice is a real `userMessage` Item, appears in
+diagnostics as steering, and reaches the next provider projection. It is emitted at most
+once per Turn; no private prompt overlay or synthetic non-canonical message carries it.
+The displayed values are the ledger total at the 80% threshold and the full ledger budget.
+Root Threads and children without a budget entry provide neither execution port, so their
+kernel behavior and event cadence are unchanged.
 
 `list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
 `tokenBudget`. A child without a ledger entry reports `0` and `null`, respectively.

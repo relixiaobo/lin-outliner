@@ -2275,6 +2275,50 @@ describe('PiTurnExecutor provider payload', () => {
     ]);
   });
 
+  test('maps kernel budget exhaustion to an interrupted Turn with recorded usage', async () => {
+    const fixture = createContext();
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      remainingTokenBudget: () => 7,
+    };
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('budget_tool', 'Budget boundary tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: () => {
+          providerCalls += 1;
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'budget-call',
+                  name: 'budget_tool',
+                  arguments: {},
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'must not run' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({
+      status: 'interrupted',
+      error: { message: 'Token budget exhausted mid-Turn (7 of 7 tokens)' },
+      execution: { usage: { totalTokens: 7 } },
+    });
+    expect(providerCalls).toBe(1);
+  });
+
   test('matches the native kernel Item and diagnostics golden', async () => {
     const fixture = createContext();
     let callCount = 0;

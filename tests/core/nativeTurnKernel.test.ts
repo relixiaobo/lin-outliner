@@ -235,6 +235,60 @@ describe('native turn kernel parity', () => {
     ]);
   });
 
+  test('settles as interrupted before a second provider call when the Turn budget is exhausted', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'budget-call', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'must not run' }])),
+    ]);
+    const runtime = createRuntime(gateway, {
+      tools: [tool('budget-tool')],
+      remainingTokenBudget: () => 10,
+      getTurnTokenUsage: () => gateway.requests.length * USAGE.totalTokens,
+    });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => events.push(event));
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(runtime.state.interruptionError).toBe(
+      'Token budget exhausted mid-Turn (10 of 10 tokens)',
+    );
+    expect(events.at(-1)?.type).toBe('agent_end');
+  });
+
+  test('delivers one budget warning on the first 80 percent crossing', async () => {
+    const notice = '[Budget notice] test';
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'warning-call-1', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'warning-call-2', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
+    ]);
+    let warnings = 0;
+    let runtime!: NativeAgentRuntime;
+    runtime = createRuntime(gateway, {
+      tools: [tool('budget-tool')],
+      remainingTokenBudget: () => 25,
+      getTurnTokenUsage: () => 20,
+      onBudgetWarning: async () => {
+        warnings += 1;
+        runtime.steer({ role: 'user', content: notice, timestamp: 3 });
+      },
+    });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests).toHaveLength(3);
+    expect(warnings).toBe(1);
+    expect(gateway.requests[1]?.context.messages.map(messageText)).toContain(notice);
+  });
+
   test('resolves API keys for every model call and preserves the configured fallback', async () => {
     let keyReads = 0;
     const gateway = new ScriptedGateway([
@@ -316,6 +370,9 @@ function createRuntime(
     transformContext?: KernelAgentOptions['transformContext'];
     getApiKey?: KernelAgentOptions['getApiKey'];
     providerOptions?: KernelAgentOptions['providerOptions'];
+    remainingTokenBudget?: KernelAgentOptions['remainingTokenBudget'];
+    getTurnTokenUsage?: KernelAgentOptions['getTurnTokenUsage'];
+    onBudgetWarning?: KernelAgentOptions['onBudgetWarning'];
   } = {},
 ): NativeAgentRuntime {
   return new NativeAgentRuntime({
@@ -330,6 +387,9 @@ function createRuntime(
     transformContext: overrides.transformContext,
     getApiKey: overrides.getApiKey,
     providerOptions: overrides.providerOptions,
+    remainingTokenBudget: overrides.remainingTokenBudget,
+    getTurnTokenUsage: overrides.getTurnTokenUsage,
+    onBudgetWarning: overrides.onBudgetWarning,
   });
 }
 

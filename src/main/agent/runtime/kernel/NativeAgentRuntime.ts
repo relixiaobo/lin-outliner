@@ -34,6 +34,7 @@ export class NativeAgentRuntime {
       streamingMessage: undefined,
       pendingToolCalls: new Set(),
       errorMessage: undefined,
+      interruptionError: undefined,
     };
   }
 
@@ -66,8 +67,9 @@ export class NativeAgentRuntime {
     this.mutableState.isStreaming = true;
     this.mutableState.streamingMessage = undefined;
     this.mutableState.errorMessage = undefined;
+    this.mutableState.interruptionError = undefined;
     try {
-      await runKernel(
+      const result = await runKernel(
         prompts,
         {
           systemPrompt: this.mutableState.systemPrompt,
@@ -79,6 +81,7 @@ export class NativeAgentRuntime {
         abortController.signal,
         async () => this.drainSteering(),
       );
+      this.mutableState.interruptionError = result.interruptionError ?? undefined;
     } catch (error) {
       await this.handleRunFailure(error, abortController.signal.aborted);
     } finally {

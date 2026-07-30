@@ -2761,6 +2761,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
     const thread = this.requireThread(active.threadId).thread;
+    const budget = thread.parentThreadId === null
+      ? null
+      : this.subagentBudgets.read(active.threadId);
+    const turnBudget = budget ? {
+      ...budget,
+      remaining: Math.max(0, budget.tokenBudget - budget.tokensUsed),
+    } : null;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     const resourceObservation = this.createResourceObservation(active.threadId, true);
     const createdOutputResources: ThreadResourceReference[] = [];
@@ -2833,6 +2840,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
           const queued = active.queuedSteering.splice(0);
           for (const input of queued) this.enqueueSteeringDelivery(active, input);
         },
+        ...(turnBudget ? {
+          remainingTokenBudget: () => turnBudget.remaining,
+          onBudgetWarning: () => this.deliverSubagentBudgetWarning(
+            active,
+            turnBudget.tokensUsed + Math.ceil(turnBudget.remaining * 0.8),
+            turnBudget.tokenBudget,
+          ),
+        } : {}),
       });
     } catch (error) {
       thrown = error instanceof Error ? error : new Error(String(error));
@@ -3060,6 +3075,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
         this.failCommittedActiveTurn(active, error);
       });
     return active.steeringDelivery;
+  }
+
+  private async deliverSubagentBudgetWarning(
+    active: ActiveTurn,
+    used: number,
+    budget: number,
+  ): Promise<void> {
+    await this.steerTurn({
+      threadId: active.threadId,
+      expectedTurnId: active.turnId,
+      input: [{
+        type: 'text',
+        text: `[Budget notice] ~80% of the token budget is consumed (${used} of ${budget}). `
+          + 'Synthesize your findings and conclude now.',
+      }],
+    });
   }
 
   private failCommittedActiveTurn(active: ActiveTurn, value: unknown): void {
