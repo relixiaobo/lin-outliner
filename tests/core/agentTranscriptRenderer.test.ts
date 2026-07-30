@@ -138,6 +138,21 @@ Two files: a.ts and b.ts.
     expect(rendered).toContain('[truncated 300 bytes]');
   });
 
+  test('never splits an astral character at the truncation boundary', async () => {
+    // An emoji straddling the cap: cutting by UTF-16 code units would keep a lone
+    // high surrogate, which persists as U+FFFD and corrupts the dropped-byte count.
+    const oversized = `${'a'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS - 1)}${'\u{1F600}'.repeat(50)}`;
+    const rendered = await renderTranscript(
+      [turnWith([bashItem(outputReference('astral', oversized))])],
+      reader({ astral: oversized }),
+    );
+
+    expect(rendered).not.toContain('\uFFFD');
+    for (const code of rendered) expect(code.codePointAt(0)! > 0xdbff || code.codePointAt(0)! < 0xd800).toBe(true);
+    // 50 emoji (4 bytes each) dropped, minus the 'a' given back by backing off the split.
+    expect(rendered).toContain('[truncated 200 bytes]');
+  });
+
   test('renders a running Thread without inventing terminal facts', async () => {
     const running: Turn = {
       ...turnWith([{

@@ -272,6 +272,21 @@ export class ThreadHistoryProjectionStore {
     };
   }
 
+  /**
+   * Every Turn of a Thread, paged. The single owner of that paging contract, so
+   * in-process readers and the `agent:dump` CLI cannot drift apart on it.
+   */
+  allTurns(threadId: ThreadId, itemsView: TurnItemsView = 'full'): Turn[] {
+    const turns: Turn[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: ThreadTurnsListResponse = this.listTurns({ threadId, cursor, limit: 100, itemsView });
+      turns.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return turns;
+  }
+
   readTurn(threadId: ThreadId, turnId: string, itemsView: TurnItemsView = 'full'): Turn | null {
     const row = this.db.prepare(`
       SELECT * FROM thread_turns WHERE thread_id = ? AND turn_id = ?

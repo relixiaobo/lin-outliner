@@ -321,17 +321,25 @@ whole-Turn prefix rather than a torn file. A Turn still running is simply not in
 the file yet; steering and messages remain the live-interaction surface.
 Appends are serialized per child so Turns land in completion order.
 
-**Recovery.** The in-session cursor records how many Turns were appended and how
-many bytes that produced. When the cursor is cold (process restart mid-child) or
-disagrees with the file's size, the artifact is rebuilt once from the completed
-Turns through `atomicWriteFile` (tmp+rename, so readers see old-or-new and never
-a partial file) and appending resumes. Artifacts stay disposable and rebuildable:
-canonical truth is the rollout log and the payload store.
+**Recovery.** The in-session cursor records which Turns the file already
+contains, how many, and how many bytes that produced. When the cursor is cold
+(process restart mid-child) or disagrees with the file's size, the artifact is
+rebuilt once from the completed Turns through `atomicWriteFile` (tmp+rename, so
+readers see old-or-new and never a partial file) and appending resumes.
+Deduplication is by Turn membership, not by "was this the last one": a rebuild
+folds in every completed Turn, so Turns still queued behind it are already on
+disk and re-appending them would duplicate blocks under wrong ordinals.
+Artifacts stay disposable and rebuildable: canonical truth is the rollout log and
+the payload store.
 
 **Contract surface.** `CollaborationTerminalOutcome.transcriptPath` carries the
 absolute path, and `wait_agent` stays result-first: it renders nothing, and only
 reports whether the artifact is on disk after waiting on the child's own append
-chain. Isolated-Skill children use the identical location, renderer, and write
+chain. Every such wait is deadline-bounded, and on timeout the in-session cursor
+decides the answer: A12 covers a filesystem that throws, but a wedged one would
+otherwise park the delegator's Turn indefinitely — exactly the outcome A12
+exists to prevent. A stalled volume costs the account layer accuracy, never the
+delegator its result. Isolated-Skill children use the identical location, renderer, and write
 model, and their result envelope carries the same path — the contract applies
 uniformly to every executor form.
 
@@ -341,11 +349,15 @@ just the write. An account failure logs, leaves `transcriptPath` null, and never
 fails the Turn, the outcome delivery, or the Skill result.
 
 **Lifecycle.** `ThreadCatalogOps.deleteThread`'s descendant cascade removes the
-artifact, and two guards close the deletion race (deletion's stop cascade wakes
-the parent's parked `wait_agent`): materialization skips when the Thread is in
-`core.stoppingThreads`, and the cascade drains the child's append chain and
-removes the file only after coordination-state teardown, so no in-flight append
-can land behind the removal. At startup an orphan sweep deletes any transcript
+artifact. Removal marks the Thread discarded so nothing new enqueues, then drains
+the child's append chain so an append already past its guard and awaiting reads
+finishes BEFORE the `rm` — otherwise it lands behind the removal and resurrects a
+transcript the user deleted — and it owns the chain entry's removal for the same
+reason: a chain cleared during coordination teardown cannot afterwards be
+drained. The guard is scoped to deletion specifically and NOT to any subtree
+stop: archive and stop keep the artifact, and the Turn they interrupt is the
+child's last one, so skipping it would leave a retained transcript ending
+mid-task with no later Turn to heal it. At startup an orphan sweep deletes any transcript
 whose Thread id has no Thread record (A11: the work queue is derived from disk,
 so an interrupted sweep resumes for free). Accumulation here is an app-retention
 concern; git is never involved.

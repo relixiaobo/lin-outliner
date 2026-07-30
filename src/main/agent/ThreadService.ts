@@ -439,14 +439,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
         cursor = page.nextCursor;
       } while (cursor);
     }
-    await Promise.all(knownThreadIds.flatMap((threadId) => [
-      this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
-      this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
-      this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
-      this.core.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
-    ]));
     const knownThreads = new Set(knownThreadIds);
-    await this.collaboration.sweepOrphanTranscripts((threadId) => knownThreads.has(threadId));
+    await Promise.all([
+      // Transcript reclamation is the same kind of work as payload pruning, so it
+      // joins the same startup batch rather than adding a serial step.
+      this.collaboration.sweepOrphanTranscripts((threadId) => knownThreads.has(threadId)),
+      ...knownThreadIds.flatMap((threadId) => [
+        this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
+        this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
+        this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
+        this.core.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
+      ]),
+    ]);
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
       const { thread } = await this.resumeThread(threadId);

@@ -30,10 +30,18 @@ export interface PendingSubagentActivity {
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
 }
+/**
+ * Ceiling on any filesystem wait the account layer puts in front of a delegator.
+ * Long enough that an ordinary slow volume still answers accurately, short enough
+ * that a wedged one is a hiccup rather than a parked Turn.
+ */
+const TRANSCRIPT_READY_TIMEOUT_MS = 2_000;
+
 interface TranscriptCursor {
   readonly turns: number;
   readonly bytes: number;
-  readonly lastTurnId: TurnId | null;
+  /** Every Turn already in the file — not just the last, so a rebuild dedups what is queued behind it. */
+  readonly turnIds: ReadonlySet<TurnId>;
 }
 interface CollaborationActivityState {
   pending: boolean;
@@ -53,6 +61,8 @@ export class SubagentCollaboration {
   private readonly transcriptCursors = new Map<ThreadId, TranscriptCursor>();
   /** Per child: the tail of its serialized append chain, so Turns land in order and deletion can drain it. */
   private readonly transcriptWrites = new Map<ThreadId, Promise<void>>();
+  /** Children whose artifact was deleted. Thread ids are never reused, so this only ever grows by real deletions. */
+  private readonly discardedTranscripts = new Set<ThreadId>();
   constructor(
     private readonly core: ThreadCore,
     private readonly catalog: SubagentCatalog,
@@ -78,7 +88,9 @@ export class SubagentCollaboration {
       this.pendingSubagentActivities.delete(threadId);
       this.collaborationActivity.delete(threadId);
       this.transcriptCursors.delete(threadId);
-      this.transcriptWrites.delete(threadId);
+      // `transcriptWrites` is deliberately NOT cleared here: deletion drains it
+      // after this teardown runs, and a chain removed early cannot be drained.
+      // The chain removes its own entry when it settles.
     }
   }
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[] {
@@ -573,9 +585,11 @@ export class SubagentCollaboration {
       status: CollaborationTerminalOutcome['status'],
       turnId?: TurnId,
     ): Promise<CollaborationTerminalOutcome> {
-      // One history read serves both the result text and the transcript projection.
-      const turns = this.core.allTurns(threadId);
-      const terminalTurn = turnId === undefined ? turns.at(-1) : turns.find((turn) => turn.id === turnId);
+      // A queued activity names its Turn, so read that one Turn rather than
+      // paging the child's whole history on the parent's wait path.
+      const terminalTurn = turnId === undefined
+        ? this.core.allTurns(threadId).at(-1)
+        : this.core.readTurn(threadId, turnId);
       const result = terminalTurn?.items
         .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
           ? [item.text.trim()]
@@ -594,18 +608,31 @@ export class SubagentCollaboration {
 
   /**
    * The account layer is written where a completed Turn already exists, never
-   * here: `wait_agent` stays result-first and only reports whether the artifact
-   * is there. It waits on the child's own append chain first, so a Turn that
-   * has just completed is on disk before its path is reported.
+   * here: `wait_agent` renders nothing and only resolves whether the artifact is
+   * on disk. It waits for the child's append chain so a Turn that just completed
+   * is durable before its path is reported.
    *
-   * A12: every step is inside the guard and a failure reports null. Losing the
-   * account must never cost the delegator the result.
+   * Every wait is DEADLINE-BOUNDED. A12 protects against a throwing filesystem,
+   * but not against a wedged one — an fs promise that never settles would park
+   * the parent's Turn forever, which is precisely the failure mode A12 exists to
+   * prevent. On timeout the in-session cursor decides: if this process appended a
+   * Turn, the artifact exists and the path is reported anyway; otherwise null.
+   * A stalled volume then costs the account layer accuracy, never the delegator
+   * its result (A12), and never more than the deadline in latency (A9).
    */
   async transcriptPathForReader(threadId: ThreadId): Promise<string | null> {
       try {
-        await this.transcriptWrites.get(threadId);
         const path = subagentTranscriptPath(this.transcriptRoot, threadId);
-        return await subagentTranscriptSize(path) === null ? null : path;
+        await settledWithin(this.transcriptWrites.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
+        // A Turn appended in this process is known to be on disk: no stat needed
+        // on the common path, which is also the one a parent waits on.
+        if (this.transcriptCursors.has(threadId)) return path;
+        const size = await withDeadline(
+          subagentTranscriptSize(path),
+          TRANSCRIPT_READY_TIMEOUT_MS,
+          null,
+        );
+        return size === null ? null : path;
       } catch (error) {
         console.warn(`[agent] Subagent transcript artifact was not resolved for ${threadId}`, error);
         return null;
@@ -641,13 +668,18 @@ export class SubagentCollaboration {
    */
   private async appendTranscriptTurn(thread: Thread, turn: Turn): Promise<void> {
       try {
-        // Deletion tears down coordination state and then removes the file; a
-        // late append would otherwise resurrect a transcript the user deleted.
-        if (this.core.stoppingThreads.has(thread.id)) return;
+        // Scoped to DELETION, not to any subtree stop. Stop and archive keep the
+        // artifact, and the Turn they interrupt is the child's last one — skipping
+        // it would leave a retained transcript ending mid-task while the store
+        // says interrupted, with no later Turn to heal it.
+        if (this.discardedTranscripts.has(thread.id)) return;
         if (!this.taskPathForThread(thread.id)) return;
         const path = subagentTranscriptPath(this.transcriptRoot, thread.id);
         const cursor = this.transcriptCursors.get(thread.id);
-        if (cursor?.lastTurnId === turn.id) return;
+        // Membership, not "was it the last one": a rebuild folds in EVERY
+        // completed Turn, so Turns still queued behind it are already on disk
+        // and re-appending them would duplicate blocks under wrong ordinals.
+        if (cursor?.turnIds.has(turn.id)) return;
         const size = cursor ? await subagentTranscriptSize(path) : null;
         // Cold cursor, a removed file, or bytes that disagree with what we
         // appended: rebuild once, atomically, and resume appending from there.
@@ -663,7 +695,7 @@ export class SubagentCollaboration {
         this.transcriptCursors.set(thread.id, {
           turns: cursor.turns + 1,
           bytes: cursor.bytes + Buffer.byteLength(text),
-          lastTurnId: turn.id,
+          turnIds: new Set(cursor.turnIds).add(turn.id),
         });
       } catch (error) {
         console.warn(`[agent] Subagent transcript Turn was not appended for ${thread.id}`, error);
@@ -687,18 +719,24 @@ export class SubagentCollaboration {
       this.transcriptCursors.set(thread.id, {
         turns: turns.length,
         bytes: Buffer.byteLength(text),
-        lastTurnId: turns.at(-1)?.id ?? null,
+        turnIds: new Set(turns.map((turn) => turn.id)),
       });
     }
 
   /**
-   * Best-effort removal from the Thread-deletion descendant cascade. It drains
-   * the child's append chain first: an append already in flight when the
-   * cascade started would otherwise land after the `rm`.
+   * Best-effort removal from the Thread-deletion descendant cascade.
+   *
+   * The order is the whole point. Mark the Thread discarded FIRST so nothing new
+   * enqueues, then drain the append chain so an append already past its guard and
+   * awaiting payload reads finishes BEFORE the `rm` — otherwise it lands behind
+   * the removal and resurrects a transcript the user deleted. This owns the chain
+   * entry's removal for the same reason: clearing it elsewhere first would leave
+   * this draining `undefined`, which is a no-op wearing a drain's clothes.
    */
   async deleteTranscriptArtifact(threadId: ThreadId): Promise<void> {
+      this.discardedTranscripts.add(threadId);
       try {
-        await this.transcriptWrites.get(threadId);
+        await settledWithin(this.transcriptWrites.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
         this.transcriptWrites.delete(threadId);
         this.transcriptCursors.delete(threadId);
         await removeSubagentTranscript(subagentTranscriptPath(this.transcriptRoot, threadId));
@@ -1015,6 +1053,28 @@ function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must be non-empty`);
   return normalized;
+}
+
+/**
+ * Resolve with `fallback` if `work` has not settled in time. A rejection is the
+ * caller's to handle; a promise that NEVER settles is the case this exists for.
+ */
+async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** Await a bounded settle, treating "no chain" and "timed out" alike. */
+async function settledWithin(work: Promise<unknown> | undefined, timeoutMs: number): Promise<void> {
+  if (work === undefined) return;
+  await withDeadline(work.then(() => undefined, () => undefined), timeoutMs, undefined);
 }
 
 function collaborationTool(

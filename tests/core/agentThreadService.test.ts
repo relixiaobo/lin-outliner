@@ -6835,6 +6835,102 @@ describe('subagent transcript artifact', () => {
     await fixture.service.close();
   });
 
+  test('drains an append already in flight before removing the artifact', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'draining_child');
+
+    // The append is now past its guards and parked inside rendering — exactly the
+    // window where a drain that awaits `undefined` lets the write outlive the rm.
+    await blocked.reached;
+    const deletion = fixture.service.deleteThread(spawned.root.id);
+    // Let the cascade run all the way to its removal step while the append is
+    // still parked. A real drain cannot get past it; a no-op drain removes the
+    // file here and the released append recreates it.
+    for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+    blocked.release();
+    await deletion;
+
+    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    await fixture.service.close();
+  });
+
+  // Pins the observable invariant: a rebuild plus the appends queued behind it
+  // leave exactly one block per Turn. It does NOT reproduce the narrow
+  // stat-boundary interleaving that motivated membership-based dedup — see the
+  // PR body; `allTurns` is read synchronously at rebuild start, so forcing a
+  // rebuild to fold in a non-last queued Turn needs two Turn completions inside
+  // one `stat` await, which no public seam can schedule deterministically.
+  test('leaves one block per Turn when appends queue behind a rebuild', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'deduped_child');
+    await blocked.reached;
+
+    // Turn 2 completes while Turn 1's cold-cursor rebuild is still parked, so the
+    // rebuild will fold in both and Turn 2's queued append must recognise that.
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'deduped_child-followup');
+    await fixture.service.followupCollaborationTask(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+      'deduped_child-followup',
+      'deduped_child',
+      'Second pass',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    blocked.release();
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+
+    const transcript = await readFile(
+      subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
+      'utf8',
+    );
+    expect(transcript.match(/^## Turn 1 —/gm)).toHaveLength(1);
+    expect(transcript.match(/^## Turn 2 —/gm)).toHaveLength(1);
+    expect(transcript).not.toContain('## Turn 3');
+    expect(transcript.match(/# Agent Thread transcript/g)).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('records the interrupted Turn when the tree is archived rather than deleted', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate, then archive mid-flight' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'archived_child-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'archived_child-spawn',
+      taskName: 'archived_child',
+      message: 'Work that gets cut short',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    // Archive keeps the artifact, so the Turn it interrupts is the child's last
+    // word: dropping it would leave a retained transcript ending mid-task.
+    await fixture.service.setThreadArchived(root.id, true);
+    await fixture.service.flushSubagentTranscript(child.thread.id);
+
+    const transcript = await readFile(
+      subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id),
+      'utf8',
+    );
+    expect(transcript).toContain('## Turn 1 — interrupted');
+    await fixture.service.close();
+  });
+
   test('sweeps transcripts whose Thread no longer exists at startup', async () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'swept_child');
@@ -6919,6 +7015,88 @@ describe('subagent transcript artifact', () => {
     await fixture.service.close();
   });
 });
+
+/**
+ * Park every transcript payload read until released, so a test can hold an append
+ * inside rendering — past its guards, before its write.
+ */
+function blockPayloadReads(fixture: Fixture): { reached: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let markReached!: () => void;
+  const reached = new Promise<void>((resolve) => { markReached = resolve; });
+  fixture.stores.payloads.readTextReference = async () => {
+    markReached();
+    await gate;
+    return 'parked tool output';
+  };
+  return { reached, release };
+}
+
+/**
+ * A child whose completed Turn carries a tool Item with an output reference, so
+ * rendering it must go through the payload store (and can therefore be parked).
+ * Deliberately does NOT flush: these tests need the append still in flight.
+ */
+async function spawnTranscriptChildWithToolOutput(fixture: Fixture, taskName: string): Promise<{
+  root: Awaited<ReturnType<ThreadService['startThread']>>['thread'];
+  rootTurn: Awaited<ReturnType<ThreadService['startRendererTurn']>>;
+  child: Awaited<ReturnType<ThreadService['spawnCollaborationAgent']>>;
+}> {
+  const root = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  const rootTurn = await fixture.service.startRendererTurn({
+    threadId: root.id,
+    input: [{ type: 'text', text: 'Delegate work that reads a payload' }],
+  });
+  await fixture.executor.waitUntilWaiting(0);
+  await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, `${taskName}-spawn`);
+  const child = await fixture.service.spawnCollaborationAgent({
+    senderThreadId: root.id,
+    senderTurnId: rootTurn.turn.id,
+    parentItemId: `${taskName}-spawn`,
+    taskName,
+    message: 'Complete the delegated task',
+  });
+  await fixture.executor.waitUntilWaiting(1);
+  await recordChildToolOutput(fixture.executor.contexts[1]!, `${taskName}-tool`);
+  fixture.executor.finish(1);
+  await fixture.service.waitForIdle(child.thread.id);
+  return { root, rootTurn, child };
+}
+
+async function recordChildToolOutput(context: TurnExecutionContext, itemId: string): Promise<void> {
+  const item = {
+    type: 'dynamicToolCall' as const,
+    id: itemId,
+    provenance: context.recorder.localProvenance(itemId),
+    namespace: null,
+    tool: 'file_read',
+    arguments: { file_path: '/w/a.ts' },
+    contentItems: null,
+    success: null,
+    durationMs: null,
+    status: 'inProgress' as const,
+    outputRef: null,
+  };
+  await context.recorder.started(item);
+  await context.recorder.completed({
+    ...item,
+    status: 'completed',
+    success: true,
+    durationMs: 1,
+    outputRef: {
+      id: createHash('sha256').update(itemId).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: 18,
+      summary: 'file_read output',
+    },
+  });
+}
 
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
 function transcriptRootFor(fixture: Fixture): string {

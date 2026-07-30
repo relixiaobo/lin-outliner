@@ -16,7 +16,7 @@
  * never opened, so no lock is taken and nothing on disk changes.
  */
 import { Database } from 'bun:sqlite';
-import type { ThreadId, Turn } from '../src/core/agent/protocol';
+import type { ThreadId } from '../src/core/agent/protocol';
 import { RolloutStore } from '../src/main/agent/persistence/RolloutStore';
 import type { SqliteDatabase, SqliteValue } from '../src/main/agent/persistence/sqlite';
 import { ThreadHistoryProjectionStore } from '../src/main/agent/persistence/ThreadHistoryProjectionStore';
@@ -47,13 +47,15 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
 
-  const database = new Database(':memory:');
-  const history = new ThreadHistoryProjectionStore(':memory:', bunSqliteAdapter(database));
+  // Bun ships `bun:sqlite`, not Node's `node:sqlite`; the shapes line up, which is
+  // how the test suite opens these stores too.
+  const database = new Database(':memory:') as unknown as SqliteDatabase;
+  const history = new ThreadHistoryProjectionStore(':memory:', database);
   try {
     history.rebuildThread(threadId, entries);
     const payloads = new ToolPayloadStore(paths.payloads);
     const transcript = await renderTranscript(
-      allTurns(history, threadId),
+      history.allTurns(threadId),
       {
         readOutput: (ref) => payloads.readTextReference(threadId, ref),
         readDiagnostics: (ref) => payloads.readTurnDiagnostics(threadId, ref),
@@ -65,17 +67,6 @@ async function main(argv: readonly string[]): Promise<number> {
   } finally {
     history.close();
   }
-}
-
-function allTurns(history: ThreadHistoryProjectionStore, threadId: ThreadId): Turn[] {
-  const turns: Turn[] = [];
-  let cursor: string | null = null;
-  do {
-    const page = history.listTurns({ threadId, cursor, limit: 100, itemsView: 'full' });
-    turns.push(...page.data);
-    cursor = page.nextCursor;
-  } while (cursor);
-  return turns;
 }
 
 /**
@@ -95,25 +86,6 @@ function subjectFromRollout(
     role: thread?.agentRole ?? null,
     nickname: thread?.agentNickname ?? null,
     cwd: thread?.cwd ?? null,
-  };
-}
-
-/** Bun ships `bun:sqlite`, not Node's `node:sqlite`, so the CLI adapts it. */
-function bunSqliteAdapter(database: Database): SqliteDatabase {
-  return {
-    exec: (sql: string) => { database.exec(sql); },
-    prepare: (sql: string) => {
-      const statement = database.prepare(sql);
-      return {
-        run: (...params: readonly SqliteValue[]) => {
-          const result = statement.run(...params);
-          return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
-        },
-        get: (...params: readonly SqliteValue[]) => statement.get(...params) ?? null,
-        all: (...params: readonly SqliteValue[]) => statement.all(...params),
-      };
-    },
-    close: () => { database.close(); },
   };
 }
 

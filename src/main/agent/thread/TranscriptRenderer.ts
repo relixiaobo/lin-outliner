@@ -134,7 +134,7 @@ export async function renderTurn(
     `trigger: ${triggerLabel(turn)}`,
     `duration: ${turn.durationMs === null ? 'unknown' : `${turn.durationMs}ms`}`,
     `model: ${turn.execution.modelProvider}/${turn.execution.model} (${turn.execution.reasoningEffort})`,
-    `tokens: ${usageLabel(turn)}`,
+    `tokens: ${usageLabel(turn.execution.usage)}`,
   ];
   if (detail === 'full') lines.push(`turnId: ${turn.id}`, `itemsView: ${turn.itemsView}`);
   if (turn.error) lines.push(`error: ${errorLabel(turn)}`);
@@ -143,7 +143,10 @@ export async function renderTurn(
   }
   if (detail === 'full') lines.push(...await providerCallLines(turn, reader));
 
-  for (const item of turn.items) lines.push('', ...await itemLines(item, reader, detail));
+  // Items resolve concurrently but stay in canonical order: on the rebuild path a
+  // whole history's payload reads would otherwise run strictly one at a time.
+  const rendered = await Promise.all(turn.items.map((item) => itemLines(item, reader, detail)));
+  for (const item of rendered) lines.push('', ...item);
   return `${lines.join('\n')}\n`;
 }
 
@@ -171,8 +174,16 @@ function triggerLabel(turn: Turn): string {
   }
 }
 
-function usageLabel(turn: Turn): string {
-  const usage = turn.execution.usage;
+interface TokenUsageFields {
+  readonly totalTokens: number;
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
+/** One usage format for the Turn header and for per-provider-call lines. */
+function usageLabel(usage: TokenUsageFields): string {
   return `total=${usage.totalTokens} in=${usage.input} out=${usage.output}`
     + ` cacheRead=${usage.cacheRead} cacheWrite=${usage.cacheWrite}`;
 }
@@ -193,10 +204,7 @@ async function providerCallLines(turn: Turn, reader: TranscriptPayloadReader): P
   return diagnostics.providerCalls.map((call) => {
     const usage = call.response?.usage;
     const stop = call.response?.stopReason ?? 'noResponse';
-    const tokens = usage
-      ? `total=${usage.totalTokens} in=${usage.input} out=${usage.output}`
-        + ` cacheRead=${usage.cacheRead} cacheWrite=${usage.cacheWrite}`
-      : 'usage unavailable';
+    const tokens = usage ? usageLabel(usage) : 'usage unavailable';
     return `providerCall ${call.index}: ${stop} · ${tokens}`;
   });
 }
@@ -331,9 +339,19 @@ function jsonLine(value: unknown): string {
 /**
  * Head-retaining truncation with an explicit byte count of what was dropped, so
  * a reader can tell "the child said nothing more" from "the record was cut".
+ *
+ * The cap counts UTF-16 code units, so a boundary can land between the halves of
+ * an astral character (emoji, rarer CJK). Keeping the lone high surrogate would
+ * persist U+FFFD and make the dropped-byte count a measurement of the corruption
+ * rather than of the content, so the split backs off one unit instead.
  */
 function bounded(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
-  const kept = value.slice(0, maxChars);
+  const end = maxChars > 0 && isHighSurrogate(value.charCodeAt(maxChars - 1)) ? maxChars - 1 : maxChars;
+  const kept = value.slice(0, end);
   return `${kept}\n[truncated ${Buffer.byteLength(value) - Buffer.byteLength(kept)} bytes]`;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
 }
