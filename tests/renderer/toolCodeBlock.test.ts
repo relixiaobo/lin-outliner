@@ -1,15 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { toolTextSegments } from '../../src/renderer/agent/components/ToolCodeBlock';
+import { toolPathRanges } from '../../src/renderer/agent/components/ToolCodeBlock';
 
 describe('tool code block file paths', () => {
   test('resolves JSON path fields against the Thread working directory', () => {
-    const segments = toolTextSegments(JSON.stringify({
+    const code = JSON.stringify({
       file_path: 'src/main.ts',
       paths: ['./docs/spec.md', '../shared/types.ts'],
       url: 'https://example.com/docs/file.ts',
-    }, null, 2), 'json', '/workspace/project');
+    }, null, 2);
+    const ranges = toolPathRanges(code, 'json', '/workspace/project');
 
-    expect(fileSegments(segments)).toEqual([
+    expect(pathRanges(code, ranges)).toEqual([
       { text: 'src/main.ts', path: '/workspace/project/src/main.ts' },
       { text: './docs/spec.md', path: '/workspace/project/docs/spec.md' },
       { text: '../shared/types.ts', path: '/workspace/shared/types.ts' },
@@ -17,28 +18,45 @@ describe('tool code block file paths', () => {
   });
 
   test('links absolute and relative output paths while leaving URLs and labels alone', () => {
-    const segments = toolTextSegments(
-      'Changed /workspace/project/src/app.ts:42 and tests/app.test.ts. See https://example.com/src/app.ts and owner/repo.',
-      'text',
-      '/workspace/project',
-    );
+    const code = 'Changed /workspace/project/src/app.ts:42 and tests/app.test.ts. See https://example.com/src/app.ts and owner/repo.';
+    const ranges = toolPathRanges(code, 'text', '/workspace/project');
 
-    expect(fileSegments(segments)).toEqual([
+    expect(pathRanges(code, ranges)).toEqual([
       { text: '/workspace/project/src/app.ts:42', path: '/workspace/project/src/app.ts' },
       { text: 'tests/app.test.ts', path: '/workspace/project/tests/app.test.ts' },
     ]);
   });
 
   test('resolves home-relative paths from a macOS Thread working directory', () => {
-    const segments = toolTextSegments('{"path":"~/Desktop/report.pdf"}', 'json', '/Users/dev/project');
-    expect(fileSegments(segments)).toEqual([
+    const code = '{"path":"~/Desktop/report.pdf"}';
+    const ranges = toolPathRanges(code, 'json', '/Users/dev/project');
+    expect(pathRanges(code, ranges)).toEqual([
       { text: '~/Desktop/report.pdf', path: '/Users/dev/Desktop/report.pdf' },
+    ]);
+  });
+
+  test('keeps glob patterns as code while linking the concrete search root', () => {
+    const code = JSON.stringify({
+      pattern: '**/A Brief History of Intelligence*.epub',
+      path: '/Users/dev/Library',
+    }, null, 2);
+    const ranges = toolPathRanges(code, 'json', '/Users/dev/project');
+
+    expect(pathRanges(code, ranges)).toEqual([
+      { text: '/Users/dev/Library', path: '/Users/dev/Library' },
+    ]);
+  });
+
+  test('decorates the original encoded JSON text without rewriting it', () => {
+    const code = '{"path":"C:\\\\Users\\\\dev\\\\report.md"}';
+    const ranges = toolPathRanges(code, 'json', '/workspace/project');
+
+    expect(pathRanges(code, ranges)).toEqual([
+      { text: 'C:\\\\Users\\\\dev\\\\report.md', path: 'C:\\Users\\dev\\report.md' },
     ]);
   });
 });
 
-function fileSegments(segments: ReturnType<typeof toolTextSegments>) {
-  return segments.flatMap((segment) => segment.type === 'file'
-    ? [{ text: segment.text, path: segment.path }]
-    : []);
+function pathRanges(code: string, ranges: ReturnType<typeof toolPathRanges>) {
+  return ranges.map((range) => ({ text: code.slice(range.start, range.end), path: range.path }));
 }

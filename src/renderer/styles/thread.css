@@ -1279,6 +1279,37 @@
   overflow-wrap: anywhere;
 }
 
+.thread-tool-code-block {
+  min-width: 0;
+}
+
+.thread-tool-path-reference {
+  border-radius: var(--radius-xs);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  padding: 0;
+  text-decoration: none;
+  white-space: inherit;
+}
+
+.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover,
+.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover span {
+  color: var(--link);
+}
+
+.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover {
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.thread-tool-path-reference:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
 .thread-file-changes,
 .thread-agent-states {
   display: grid;

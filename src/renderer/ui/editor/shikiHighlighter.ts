@@ -3,6 +3,7 @@ import {
   bundledLanguagesAlias,
   createHighlighter,
   type BundledLanguage,
+  type DecorationItem,
   type Highlighter,
 } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
@@ -14,6 +15,8 @@ export {
   normalizeCodeLanguage,
   type CodeLanguageOption,
 } from './codeLanguages';
+
+export type CodeDecoration = DecorationItem;
 
 // Dual-theme highlight: Shiki emits `--shiki-light` / `--shiki-dark` CSS custom
 // properties per token (via `defaultColor: false`) instead of baking one theme's
@@ -80,11 +83,21 @@ export function isKnownCodeLanguage(language: string | undefined | null): boolea
   return id in bundledLanguages || id in bundledLanguagesAlias;
 }
 
-export async function highlightCode(code: string, language: string | undefined | null): Promise<string> {
+export async function highlightCode(
+  code: string,
+  language: string | undefined | null,
+  decorations: readonly CodeDecoration[] = [],
+): Promise<string> {
   const id = normalizeCodeLanguage(language);
-  if (!id || id === PLAIN) return plainCodeHtml(code);
-
+  if ((!id || id === PLAIN) && decorations.length === 0) return plainCodeHtml(code);
   const highlighter = await getHighlighter();
+  const options = {
+    themes: THEMES,
+    defaultColor: false as const,
+    decorations: [...decorations],
+  };
+  if (!id || id === PLAIN) return highlighter.codeToHtml(code, { lang: PLAIN, ...options });
+
   if (!loadedLangs.has(id) && !failedLangs.has(id)) {
     try {
       await highlighter.loadLanguage(id as BundledLanguage);
@@ -93,7 +106,7 @@ export async function highlightCode(code: string, language: string | undefined |
       failedLangs.add(id);
     }
   }
-  if (!loadedLangs.has(id)) return plainCodeHtml(code);
+  if (!loadedLangs.has(id)) return highlighter.codeToHtml(code, { lang: PLAIN, ...options });
 
-  return highlighter.codeToHtml(code, { lang: id, themes: THEMES, defaultColor: false });
+  return highlighter.codeToHtml(code, { lang: id, ...options });
 }
