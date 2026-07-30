@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **ThreadService decomposition (PR #451, codex-2)** — the 4,502-line god
+  object split into four owned modules over one shared coordination core:
+  `ThreadCore` (single `KeyedMutex` by construction, notification bus, stores,
+  canonical reads), `TurnLifecycle` (admission→acceptance→execution→steering),
+  `SubagentCollaboration` (spawn/mailbox/wait/activities),
+  `ThreadCatalogOps` (start/fork/rollback/archive/naming),
+  `ThreadResourceOps` (attachments/resources/pruning), behind a byte-compatible
+  850-line facade. Zero behavior change, proven mechanically: facade API frozen
+  (64/64 public methods), test suites entirely untouched (1554 core / 793
+  renderer, 0 fail), five-file line budget within +5% with 2 lines to spare,
+  `src/core/` and `runtime/` diff-empty, four per-stage commits, real-run
+  smoke. Zero review findings. **Gate (main):** six mechanical tripwires run
+  independently on both the original and post-#450 rebase baselines.
+
 - **Subagent token budgets, PR B: mid-Turn enforcement (PR #450, codex)** —
   the kernel now consults a live budget view before every model call on
   budgeted, non-user Turns (ThreadService supplies the committed ledger base;
