@@ -253,6 +253,46 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
 
 ## Design — PR C: budget conservation + structural gates (after `threadservice-decomposition`)
 
+**Normative contract (gate pass 2026-07-30, 10 findings — these rules replace
+any conflicting earlier wording):**
+
+1. **One resolution authority.** A single ancestor-walk function is the ONLY
+   way anything (spawn binding, admission gate, mid-turn port, accrual, views)
+   answers "which pool covers this thread". Member rows record caps, not an
+   alternative pool binding; a recorded binding that disagrees with the walk
+   degrades (re-bind + audit log) — pool-mismatch throws are reserved for the
+   CREATE write boundary (A12).
+2. **Gate and debit share one predicate.** A thread is pool-covered iff the
+   resolution finds a pool; then it is BOTH gated and accrued. No
+   gated-but-never-debits state can exist.
+3. **Single pool per tree, by construction.** Pool creation happens only when
+   the walk finds NO ancestor pool; otherwise the spawn joins the existing
+   pool. An explicit `max_total_tokens` where no ancestor pool exists CREATES
+   a pool of that size anchored at the child (descendants join it) — closing
+   the uncapped-descendant escape; with an ancestor pool it is a per-child
+   cap within that pool.
+4. **Live pool view under concurrency.** The mid-turn port never uses a
+   turn-start snapshot: remaining = persisted pool usage (re-read per call)
+   minus the in-memory in-flight tally that every active Turn in the tree
+   updates at its model-call boundaries. Sibling overrun is bounded by one
+   model call per sibling, not by N x pool.
+5. **All accrual paths guarded (A12).** Ledger errors on the accrual/read
+   path log + audit and never change turn status.
+6. **Structural gates scope: collaboration children only.** Isolated-skill
+   children are exempt from both the depth-2 and count-16 gates (leaf-only,
+   host-created, bounded). The count stays lifetime + MAX-monotonic for
+   collaboration spawns.
+7. **Grant fixed at pool creation, documented.** A tree's pool budget is the
+   setting value when the pool is created; setting changes govern NEW trees
+   (setting description says so). User control over a live tree is interrupt.
+8. **Views mirror the enforced binding.** Cap-only members report cap
+   usage/cap; pool members report pool totals; a view may never contradict a
+   refusal message.
+9. **Typed error codes across the seam.** `Turn.error.code` carries stable
+   codes (`subagent_budget_exhausted`, `subagent_structural_limit`); the
+   renderer classifies by code, never by copy regex.
+
+
 One complete feature: close the mint. PR A/B bound the SLOPE of runaway spend
 (per-child breakers, mid-Turn stop); PR C bounds the TOTAL by construction and
 adds the two legibility gates, superseding the min(default, spawner-remaining)
