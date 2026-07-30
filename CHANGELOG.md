@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Terminal-style path links in agent tool output (PR #453, codex-4)** — file
+  paths inside tool arguments and results now behave like paths in a modern
+  terminal: the block keeps its plain code styling, holding ⌘ (Ctrl) while
+  hovering reveals the link affordance, ⌘-click opens the file preview in a
+  new pane, plain click still selects text, and keyboard focus + Enter opens
+  in the current pane. Relative paths in declared path fields resolve against
+  the thread's working directory; the existing hover preview, right-click
+  file menu, and tooltip keep working on these paths.
+
 - **Pane reorder by dragging breadcrumbs (PR #452, cc)** — with several panes
   open, a pane's breadcrumbs become its drag handle ("Drag to reorder panes"):
   dragging shows a live arrangement preview — panes and divider hairlines slide

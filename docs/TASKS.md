@@ -727,6 +727,32 @@ anything.
 
 ## Recently completed
 
+- **agent-tool-path-modifier-click**
+  (`codex-4/tool-path-modifier-click`, PR #453, codex-4, merged 2026-07-30,
+  plan-track, archived at
+  `docs/plans/archive/agent-tool-path-modifier-click.md`) — local paths in
+  agent tool arguments and results render like terminal links: the code block
+  keeps its terminal styling (no icon, no resting background), holding the
+  platform primary modifier reveals the link affordance (link-blue underline +
+  pointer), Cmd/Ctrl-click opens per the global new-pane meaning, and focus +
+  Enter opens in the current pane. Paths are painted via Shiki decorations
+  over a single render path (`ReadOnlyCodeBlock`); the shared inline-file
+  hover preview / context menu / tooltip stay attached through the same
+  delegation attributes. Spec folded into
+  `docs/spec/agent-thread-rendering.md` in the same change.
+  **Gate (main):** `/code-review` (medium, adversarial verify) yielded 8
+  verified findings — glob over-exclusion of bracketed concrete paths,
+  fallback `<pre>` tabindex regression, dropped inline-ref delegation
+  attributes (context menu/preview/tooltip loss), per-block stale modifier
+  listeners, uncaught highlight rejection, dead `PlainReadOnlyCodeBlock`
+  export, an unrelated bundled plan file, aria-label/visible-text divergence —
+  all addressed in `2eb21c1c` (unrelated plan withdrawn from the PR).
+  Verified on the PR head with typecheck, 770 renderer + 1395 core tests,
+  the affected agent-thread/cursor-affordances E2E specs (one failure
+  pre-exists on `main`, untouched files), `docs:check` (sole issue was the
+  main-owned board entry, added here), and light/dark visual verification of
+  the modifier-hover state.
+
 - **pane-reorder**
   (`cc/pane-reorder`, PR #452, cc, merged 2026-07-30, fast-track) — split
   panes reorder by dragging a pane's breadcrumbs (multi-pane only; the handle
