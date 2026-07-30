@@ -59,20 +59,32 @@ unrelated user tabs.
 
 ## Collision Result
 
-- No open PR claims Browser Pilot distribution, the built-in skill, command
-  routing, or this plan.
-- Draft PR #441 claims Agent context composition and evidence admission. It
-  currently publishes no code diff. Because this plan deliberately moves tool
-  Item recording out of `PiTurnExecutor`, implementation must recheck #441 and
-  rebase or sequence the overlapping runtime work before editing it.
+- Current `main` includes #444's provider-boundary Turn diagnostics, #445's
+  Tenon-owned kernel and `ModelGateway`, #451's `thread/` ownership split, and
+  #456's domain-handler contribution seam plus canonical tool-catalog
+  byte-stability judge. Those changes are the implementation baseline, not
+  outstanding collisions.
+- Draft PR #455 overlaps the future implementation in
+  `src/core/agent/tools.ts`, `ThreadService`, `TurnLifecycle`, and Agent specs,
+  and deliberately changes collaboration tool descriptions. It must land or
+  close before Browser Control implementation starts; the claiming dev then
+  rebases and records the post-#455 catalog bytes before making the intentional
+  `bash` catalog delta.
+- Draft PR #457 is plan-only in a different file, and Draft PR #458 is limited
+  to Thread renderer behavior and its owning spec. Neither overlaps this plan
+  revision or the Browser Control implementation surface.
+- Draft PR #459 owns this plan-only refresh. It changes only this file; it does
+  not claim or modify runtime, protocol, tests, `docs/TASKS.md`, or
+  `CHANGELOG.md`.
 - `docs/plans/browser-extension-integration.md` remains limited to future
   read-only URL Preview extraction and has no Browser Control dependency.
-- This PR owns the complete prepared-execution refactor, Browser action kinds,
-  Browser Pilot distribution, runtime provider, built-in skill, specs, and
-  tests. `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned.
-- The PM explicitly ratified one complete feature PR rather than a preceding
-  interface-only PR. The interface-first wording in `docs/TASKS.md` is stale;
-  the main agent updates that board entry at the integration gate.
+- The later implementation PR remains one complete feature and owns the
+  prepared-execution port extension, Browser action kinds, Browser Pilot
+  distribution, command provider, built-in skill, specs, and tests.
+  `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned.
+- This refresh reopens only Prepared Tool Execution and its stale runtime
+  references for PM approval. Ownership boundaries, command grammar, provider,
+  distribution, skill, and capability mapping retain their prior approval.
 
 ## Design
 
@@ -99,68 +111,101 @@ Tenon depends only on Browser Pilot's published 0.5 contracts:
 
 ### Prepared Tool Execution
 
-Tool execution becomes an explicit host contract instead of being reconstructed
-from raw provider events after execution has already begun.
+Prepared execution extends the domain-handler contribution seam established by
+#456. `SubagentCollaboration.collaborationToolContributions(...)` is the
+reference shape: an owning domain or command-family module binds its handlers to
+the Turn context and contributes them, while `ToolRuntime` only aggregates the
+contributions, matches them to the canonical registry, applies configuration and
+scope filters, and rejects identity or schema collisions. Browser preparation,
+execution, and projection logic never branches inside `ToolRuntime`.
+
+The Tenon-owned kernel remains the tool runner. A contributed `AgentTool` may
+attach a `ToolExecutionContract`; a generic default contract adapts existing
+tools without changing their behavior. The Browser Pilot command family
+contributes the specialized contract used by its direct `bash` route.
 
 ```text
-model tool call
-  -> ToolRuntime.prepare
-       -> transient execution input
-       -> durable argument projection
-       -> capability intent
+domain/command module contributes AgentTool handler
+  -> ToolRuntime assembles the effective canonical catalog
+  -> native kernel tool runner receives a model tool call
+  -> ToolExecutionContract.prepare
+       -> transient execution state
+       -> durable arguments
+       -> capability intent and execution policy
   -> evaluate explicit blocks
-  -> record Item from durable arguments and resolved capability intent
+  -> emit existing tool_execution_start with durable arguments
+       -> PiEventNormalizer records the existing Item kind
+       -> executionObserver records the diagnostic execution start
   -> execute transient input
   -> project model result and durable result independently
-  -> complete Item and extension hooks from durable result
-  -> return transient model result to the active Turn
+  -> emit existing tool_execution_end with the durable result
+       -> PiEventNormalizer completes the Item
+       -> executionObserver records the diagnostic execution completion
+  -> append the model result only to the active kernel transcript
 ```
 
-Introduce an internal `ToolExecutionContract` with three operations:
+Extend the internal tool-runner port with three operations:
 
 ```ts
 interface ToolExecutionContract<TPrepared> {
-  prepare(args: unknown, context: ToolPreparationContext): TPrepared;
+  prepare(
+    args: unknown,
+    context: ToolPreparationContext,
+  ): PreparedToolExecution<TPrepared>;
   execute(prepared: TPrepared, signal?: AbortSignal): Promise<unknown>;
   projectOutcome(
-    prepared: TPrepared,
+    call: PreparedToolExecution<TPrepared>,
     outcome: ToolExecutionOutcome,
   ): { modelResult: AgentToolResult; durableResult: JsonValue };
 }
 ```
 
-Every prepared call carries immutable, separately typed fields:
+Every prepared call carries immutable, separately typed fields. `execution` is
+raw in-memory state used only by the contributed handler.
+`durableArguments` is the sole argument source for kernel events, Items,
+extension hooks, audit, history, Memory, diagnostics, payloads, and logs.
+`capabilityIntent` contains the normalized descriptors evaluated by the existing
+explicit-block engine. Optional execution policy remains owned by the concrete
+handler: process-backed calls use `ProcessExecutionPolicy`; other tools do not
+carry process fields.
 
-- `execution`: raw in-memory values used only by the executor;
-- `durableArguments`: the sole argument source for Items, hooks, audit, history,
-  Memory, diagnostics, and logs;
-- `capabilityIntent`: normalized descriptors evaluated by the existing block
-  engine;
-- `itemProjection`: the canonical Item presentation, or the existing explicit
-  no-Item policy for controller calls such as `update_plan`; and
-- optional execution policy owned by the concrete executor. Process-backed
-  calls use `ProcessExecutionPolicy`; other tools do not carry process fields.
+`PiEventNormalizer` remains the sole translator from the existing kernel event
+stream into canonical tool Items, including the explicit no-Item policy for
+controller calls such as `update_plan`. Its `executionObserver` continues to
+feed `TurnDiagnosticsCollector.captureToolExecutionStarted/Completed`, so Model
+Interactions retains the same tool-execution batches, Item IDs, timing, status,
+and adjacent Provider Call links established by #444. The change is that the
+kernel emits the contract's durable arguments and durable result on
+`tool_execution_start`, `tool_execution_update`, and `tool_execution_end`; raw
+transient values never reach the normalizer or diagnostics. Sensitive contracts
+must project or suppress partial updates by the same rule.
 
-Existing tools use a default contract that preserves their current behavior.
-Sensitive integrations provide a specialized contract. Core protocol types do
-not learn Browser Pilot's private schema.
-
-`ToolRuntime`, which has the canonical tool identity, call ID, configuration,
-and recorder, becomes the only owner of executable tool Item start/completion
-and extension lifecycle notification. `PiEventNormalizer` remains responsible
-for model messages, reasoning, usage, and terminal state, but no longer creates
-Items from `tool_execution_start` or persists results from
-`tool_execution_end`. This removes the race in which raw arguments are recorded
-before the runtime can classify or project them.
+This is not a second diagnostics pipeline. `PiTurnExecutor` still creates the
+collector, subscribes it and the normalizer to `NativeAgentRuntime`, and wires
+the pre-adapter context, post-adapter payload, and response hooks through
+`PiModelGateway`. `TurnLifecycle` remains responsible for executing the Turn,
+persisting and late-refreshing the inspection-only diagnostics payload, and
+installing its reference on the terminal Turn. `ModelGateway` remains a
+provider-transport port and receives no Browser tool-execution responsibility.
 
 Preparation must finish before Item creation, capability hooks, or process
-spawn. A preparation failure creates only a constant safe rejection projection
-and never invokes the executor. `ToolExecutionOutcome` represents both returned
-results and thrown errors, so one projector governs every completion path.
+spawn. A preparation failure emits a start/end pair containing only a constant
+safe rejection projection and never invokes the executor.
+`ToolExecutionOutcome` represents both returned results and thrown errors, so
+one projector governs every completion path.
 Outcome projection must finish before a result is returned to the model or
 persisted. If it fails after execution, the raw result is discarded and both
 model and durable surfaces receive a constant `unknown_outcome` result with
 inspect-before-retry guidance.
+
+The full provider-facing catalog is governed by
+`tests/fixtures/agentToolCatalogStability.test.ts`. Any change to tool name,
+canonical order, description, or JSON schema must be an intentional reviewed
+snapshot delta in the same PR. Browser Control adds no native Browser model
+tool; the expected catalog delta is limited to the approved optional
+`bash.stdin` schema and corresponding `bash` guidance. Every other catalog byte
+must remain stable, and the existing deliberate reorder and description
+mutations must continue to fail the judge.
 
 ### Command Execution Router
 
@@ -469,7 +514,7 @@ catch-all files:
 ```text
 src/main/agent/runtime/toolExecution/
   ToolExecutionContract.ts
-  ToolItemLifecycle.ts
+  ToolExecutionAdapter.ts
   CommandExecutionRouter.ts
   ProcessExecutionPolicy.ts
 
@@ -482,11 +527,25 @@ src/main/agent/browserPilot/
   BrowserPilotLifecycle.ts
 ```
 
-`agentLocalTools.ts` delegates `bash` preparation/execution to the router.
-`agentCapabilities.ts` consumes prepared capability intent instead of reparsing
-Browser commands. `ToolRuntime.ts` owns prepared execution and tool Item
-lifecycle. `PiTurnExecutor.ts` stops persisting raw tool events. Main-process
-composition creates one distribution/lifecycle service and injects Turn context.
+The local-command owner delegates `bash` preparation/execution to the router and
+contributes that handler through the #456 seam. `agentCapabilities.ts` consumes
+prepared capability intent instead of reparsing Browser commands.
+`ToolRuntime.ts` remains assembly-only and contains no Browser conditionals.
+
+The optional execution contract extends the Tenon-owned `AgentTool`/kernel
+runner port in `runtime/kernel/types.ts` and the tool-runner code currently in
+`runtime/kernel/kernel.ts`; it does not create a parallel runner in
+`ToolRuntime`. `PiEventNormalizer` keeps tool Item translation and its
+diagnostics observer unchanged, while the kernel events it consumes carry only
+durable projections. `PiTurnExecutor` keeps the #444 collector and #445
+`NativeAgentRuntime`/`PiModelGateway` wiring.
+
+In the post-#451 Thread layout, `TurnLifecycle` supplies Thread/Turn execution
+context and owns diagnostics finalization, `ThreadCatalogOps` owns the deletion
+path that schedules Browser namespace cleanup, and `ThreadResourceOps` remains
+the owner of Thread payload/reference cleanup. `ThreadService` only composes and
+forwards those owners; Browser lifecycle state does not move back into the
+facade.
 
 The same PR updates:
 
@@ -503,11 +562,19 @@ No URL Preview spec gains a Browser Control dependency.
 
 ## Validation
 
-- Contract-test the prepared-execution lifecycle for every existing tool Item
-  type and prove `ToolRuntime` is the sole executable Item recorder.
+- Contract-test the default prepared-execution adapter for every existing tool
+  Item type and preserve the native-kernel Item/event golden. Prove
+  `PiEventNormalizer` remains the sole tool Item translator and its
+  `executionObserver` still produces identical Model Interactions batch links,
+  Item IDs, timings, and terminal statuses.
 - Prove preparation happens before Item creation, hooks, audit, logs, or spawn;
-  projection failure after spawn returns one constant `unknown_outcome` and
-  never exposes raw output.
+  all kernel start/update/end events carry only durable projections; and a
+  projection failure after spawn returns one constant `unknown_outcome` without
+  exposing raw output.
+- Run `agentToolCatalogStability` against the complete canonical catalog. Review
+  and snapshot only the intended `bash.stdin`/guidance byte delta; prove tool
+  names, canonical order, and every unrelated description/schema byte remain
+  unchanged, and re-run both deliberate judge mutations.
 - Use canaries across typed text, credentials, upload paths, headers, bodies,
   URLs, selectors, Profile labels, cookies, page content, eval source, refs, and
   command IDs; prove they never enter any durable surface in the persistence
@@ -552,9 +619,11 @@ No URL Preview spec gains a Browser Control dependency.
 
 ## Risks
 
-- Moving tool Item ownership from `PiEventNormalizer` to `ToolRuntime` is a
-  broad runtime correction. The complete existing tool lifecycle suite must
-  remain green before Browser Pilot tests are considered.
+- Extending the native kernel's tool-runner port to separate transient model
+  results from durable event results is a broad runtime change. The default
+  adapter, Item/event golden, Turn diagnostics lifecycle suite, and full catalog
+  byte-stability judge must remain green before Browser Pilot tests are
+  considered.
 - Authenticated page content is intentionally available to the active model
   when `browser.sensitive_read` is allowed. Durable projection prevents silent
   raw retention but cannot remove content the Agent deliberately includes in
@@ -580,8 +649,10 @@ No URL Preview spec gains a Browser Control dependency.
 
 ## Subtasks
 
-- Refactor tool execution and Item lifecycle around `ToolExecutionContract` in
-  the same PR, preserving all existing tool behavior.
+- Extend contributed handlers and the native kernel runner around
+  `ToolExecutionContract` in the same PR, preserving normalizer Item ownership,
+  Turn diagnostics capture, existing tool behavior, and all unrelated catalog
+  bytes.
 - Add `CommandExecutionRouter`, bounded transient `bash.stdin`, the default
   shell provider, and reusable process policies.
 - Add Browser action kinds and the complete Browser Pilot command provider,
