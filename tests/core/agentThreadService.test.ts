@@ -51,6 +51,8 @@ import {
   createSkillTool,
   resolveUserSkillInvocation,
 } from '../../src/main/agent/capabilities/agentSkills';
+import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { subagentTranscriptPath } from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -6675,4 +6677,193 @@ async function recordCollaborationSpawnBoundary(
     agentsStates: {},
     outputRef: null,
   });
+}
+
+describe('subagent transcript artifact', () => {
+  test('materializes the child transcript and carries its path in the terminal outcome', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'transcript_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    const outcome = terminal.updates[0]!;
+    expect(outcome).toMatchObject({ taskPath: '/root/transcript_child', status: 'completed', result: 'Done' });
+    expect(outcome.transcriptPath).toBe(subagentTranscriptPath(
+      fixture.root,
+      '/root/transcript_child',
+      spawned.child.thread.id,
+    ));
+    const transcript = await readFile(outcome.transcriptPath!, 'utf8');
+    expect(transcript).toContain('threadId: ' + spawned.child.thread.id);
+    expect(transcript).toContain('taskPath: /root/transcript_child');
+    expect(transcript).toContain('status: completed');
+    expect(transcript).toContain('### User');
+    expect(transcript).toContain('Complete the delegated task');
+    expect(transcript).toContain('### Assistant (final_answer)');
+    expect(transcript).toContain('Done');
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('rewrites one artifact per child instead of accumulating files', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'idempotent_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+    const idle = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    expect(idle.reason).toBe('idle');
+    expect(idle.updates[0]!.transcriptPath).toBe(terminal.updates[0]!.transcriptPath);
+    expect(await readdir(join(fixture.root, 'subagent-transcripts'))).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('delivers the outcome with a null path when the artifact cannot be written (A12)', async () => {
+    const fixture = await createFixture();
+    // Occupy the artifact directory name with a file so the write must fail.
+    await writeFile(join(fixture.root, 'subagent-transcripts'), 'not a directory', 'utf8');
+    const spawned = await spawnTranscriptChild(fixture, 'unwritable_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    expect(terminal.updates[0]).toMatchObject({
+      taskPath: '/root/unwritable_child',
+      status: 'completed',
+      result: 'Done',
+      transcriptPath: null,
+    });
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('removes the artifact when the Thread is deleted', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'deleted_child');
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+    const path = terminal.updates[0]!.transcriptPath!;
+    expect(await readFile(path, 'utf8')).toContain('taskPath: /root/deleted_child');
+
+    await finishTranscriptRoot(fixture, spawned);
+    await fixture.service.deleteThread(spawned.root.id);
+
+    expect(await readdir(join(fixture.root, 'subagent-transcripts'))).toEqual([]);
+    await fixture.service.close();
+  });
+
+  test('lets the parent verify a reported claim by grepping the transcript with the existing file tools', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'verified_child');
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+    const outcome = terminal.updates[0]!;
+
+    // The parent's own capability set, unchanged: no account-layer tool, no widened path.
+    const tools = createLocalTools({ localRoot: fixture.root, scratchRoot: join(fixture.root, 'agent-scratch') });
+    const grep = await executeTool(tools, 'file_grep', 'verify-claim', {
+      pattern: outcome.result!,
+      path: outcome.transcriptPath!,
+      output_mode: 'content',
+    });
+
+    expect(grep.details).toMatchObject({ ok: true, data: { mode: 'content', numLines: 1 } });
+    expect(JSON.stringify(grep.details)).toContain(outcome.result!);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('gives an isolated-Skill child the same artifact as a collaboration Subagent', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Run an isolated Skill' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'isolated-skill-spawn');
+    const child = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'isolated-skill-spawn',
+      skillName: 'Review PR',
+      prompt: 'Review the pending change',
+      allowedTools: ['file_read'],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    const path = await fixture.service.materializeSubagentTranscript(child.thread.id);
+
+    expect(path).toBe(subagentTranscriptPath(fixture.root, child.taskPath, child.thread.id));
+    const transcript = await readFile(path!, 'utf8');
+    expect(transcript).toContain(`taskPath: ${child.taskPath}`);
+    expect(transcript).toContain('Review the pending change');
+    expect(transcript).toContain('### Assistant (final_answer)');
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+});
+
+async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{
+  root: Awaited<ReturnType<ThreadService['startThread']>>['thread'];
+  rootTurn: Awaited<ReturnType<ThreadService['startRendererTurn']>>;
+  child: Awaited<ReturnType<ThreadService['spawnCollaborationAgent']>>;
+}> {
+  const root = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  const rootTurn = await fixture.service.startRendererTurn({
+    threadId: root.id,
+    input: [{ type: 'text', text: 'Delegate and then verify the account' }],
+  });
+  await fixture.executor.waitUntilWaiting(0);
+  await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, `${taskName}-spawn`);
+  const child = await fixture.service.spawnCollaborationAgent({
+    senderThreadId: root.id,
+    senderTurnId: rootTurn.turn.id,
+    parentItemId: `${taskName}-spawn`,
+    taskName,
+    message: 'Complete the delegated task',
+  });
+  await fixture.executor.waitUntilWaiting(1);
+  fixture.executor.finish(1);
+  await fixture.service.waitForIdle(child.thread.id);
+  return { root, rootTurn, child };
+}
+
+async function finishTranscriptRoot(
+  fixture: Fixture,
+  spawned: { root: { id: string } },
+): Promise<void> {
+  fixture.executor.finish(0);
+  await fixture.service.waitForIdle(spawned.root.id);
 }

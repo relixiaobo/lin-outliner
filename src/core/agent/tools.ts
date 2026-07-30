@@ -330,7 +330,8 @@ const collaborationTerminalOutcomeSchema = objectSchema({
   status: enumSchema(['interrupted', 'completed', 'errored']),
   result: { type: ['string', 'null'] },
   error: { type: ['string', 'null'] },
-}, ['taskPath', 'threadId', 'status', 'result', 'error']);
+  transcriptPath: { type: ['string', 'null'] },
+}, ['taskPath', 'threadId', 'status', 'result', 'error', 'transcriptPath']);
 
 const collaborationToolContracts: readonly ModelToolContract[] = [
   {
@@ -364,7 +365,7 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
   },
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'wait_agent' },
-    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its host-owned ledger tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work.',
+    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its host-owned ledger tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work. To verify or debug a reported result, read or grep the child transcript at its transcriptPath with the file tools; it stays readable after the child stops or exhausts its budget.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),

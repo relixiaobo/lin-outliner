@@ -31,6 +31,7 @@ export interface ThreadCatalogCollaboration {
   deleteEphemeralSpawnEdge(threadId: ThreadId): void;
   ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
+  deleteTranscriptArtifact(threadId: ThreadId): Promise<void>;
 }
 
 export class ThreadCatalogOps {
@@ -516,6 +517,7 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.clearGoal(descendantId);
           this.clearSubagentBudget(descendantId);
+          await this.collaboration.deleteTranscriptArtifact(descendantId);
           this.core.history.deleteThread(descendantId);
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);

@@ -10,8 +10,10 @@ import type { SubagentBudgetLedger,SubagentBudgetRecord } from '../persistence/S
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationWaitResult,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
+import { removeSubagentTranscript,subagentTranscriptPath,writeSubagentTranscript } from './SubagentTranscriptArtifact';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
+import { renderTranscript,type TranscriptPayloadReader } from './TranscriptRenderer';
 import type { TurnLifecycle } from './TurnLifecycle';
 
 export interface StagedContextEvidence {
@@ -42,6 +44,8 @@ export class SubagentCollaboration {
   private readonly ephemeralSpawnEdges = new Map<ThreadId, { sessionId: string; parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
+  /** Written transcript artifacts, keyed by Thread and terminal Turn, so repeated idle waits do not re-render. */
+  private readonly transcriptArtifacts = new Map<string, string>();
   constructor(
     private readonly core: ThreadCore,
     private readonly catalog: SubagentCatalog,
@@ -65,6 +69,9 @@ export class SubagentCollaboration {
       this.mailbox.delete(threadId);
       this.pendingSubagentActivities.delete(threadId);
       this.collaborationActivity.delete(threadId);
+      for (const key of this.transcriptArtifacts.keys()) {
+        if (key.startsWith(`${threadId}:`)) this.transcriptArtifacts.delete(key);
+      }
     }
   }
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[] {
@@ -437,15 +444,12 @@ export class SubagentCollaboration {
         agent.parentThreadId === senderThreadId
         && (agent.status === 'pendingInit' || agent.status === 'running')
       ))) {
-        return {
-          reason: 'idle',
-          updates: agents.flatMap((agent) => (
-            agent.status === 'completed' || agent.status === 'interrupted' || agent.status === 'errored'
-              ? [this.collaborationTerminalOutcome(agent.threadId, agent.taskPath, agent.status)]
-              : []
-          )),
-          agents,
-        };
+        const updates: CollaborationTerminalOutcome[] = [];
+        for (const agent of agents) {
+          if (agent.status !== 'completed' && agent.status !== 'interrupted' && agent.status !== 'errored') continue;
+          updates.push(await this.collaborationTerminalOutcome(agent.threadId, agent.taskPath, agent.status));
+        }
+        return { reason: 'idle', updates, agents };
       }
 
       const state = this.collaborationActivityState(senderThreadId);
@@ -535,33 +539,36 @@ export class SubagentCollaboration {
         tokenBudget: budget?.tokenBudget ?? null,
       };
     }
-  private collaborationWaitResult(
+  private async collaborationWaitResult(
       senderThreadId: ThreadId,
       reason: CollaborationWaitResult['reason'],
       activities: readonly PendingSubagentActivity[],
-    ): CollaborationWaitResult {
+    ): Promise<CollaborationWaitResult> {
+      const updates: CollaborationTerminalOutcome[] = [];
+      for (const activity of activities) {
+        if (activity.kind === 'started') continue;
+        updates.push(await this.collaborationTerminalOutcome(
+          activity.agentThreadId,
+          activity.agentPath,
+          activity.kind === 'errored' ? 'errored' : activity.kind,
+          activity.agentTurnId,
+        ));
+      }
       return {
         reason,
-        updates: activities.flatMap((activity) => activity.kind === 'started'
-          ? []
-          : [this.collaborationTerminalOutcome(
-              activity.agentThreadId,
-              activity.agentPath,
-              activity.kind === 'errored' ? 'errored' : activity.kind,
-              activity.agentTurnId,
-            )]),
+        updates,
         agents: this.listCollaborationAgents(senderThreadId),
       };
     }
-  private collaborationTerminalOutcome(
+  private async collaborationTerminalOutcome(
       threadId: ThreadId,
       taskPath: string,
       status: CollaborationTerminalOutcome['status'],
       turnId?: TurnId,
-    ): CollaborationTerminalOutcome {
-      const terminalTurn = turnId === undefined
-        ? this.core.allTurns(threadId).at(-1)
-        : this.core.readTurn(threadId, turnId);
+    ): Promise<CollaborationTerminalOutcome> {
+      // One history read serves both the result text and the transcript projection.
+      const turns = this.core.allTurns(threadId);
+      const terminalTurn = turnId === undefined ? turns.at(-1) : turns.find((turn) => turn.id === turnId);
       const result = terminalTurn?.items
         .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
           ? [item.text.trim()]
@@ -574,6 +581,73 @@ export class SubagentCollaboration {
         status,
         result: result || null,
         error: terminalTurn?.error?.message ?? null,
+        transcriptPath: await this.materializeTranscriptArtifact(threadId, turns),
+      };
+    }
+
+  /**
+   * Write the child's account layer next to its result — the same path and the
+   * same renderer for collaboration Subagents and isolated-Skill children, as
+   * the Delegation Contract requires of every executor form.
+   *
+   * A12: best-effort. An unwritable artifact logs and yields a null path,
+   * because losing the account must never cost the delegator the result. The
+   * write overwrites by path, so a repeat after a crash converges; the memo
+   * only avoids re-rendering while nothing new has been persisted.
+   */
+  async materializeTranscriptArtifact(
+      threadId: ThreadId,
+      readTurns?: readonly Turn[],
+    ): Promise<string | null> {
+      const taskPath = this.taskPathForThread(threadId);
+      if (!taskPath) return null;
+      const turns = readTurns ?? this.core.allTurns(threadId);
+      const key = `${threadId}:${turns.at(-1)?.id ?? 'none'}`;
+      const written = this.transcriptArtifacts.get(key);
+      if (written !== undefined) return written;
+      try {
+        const thread = this.core.requireThread(threadId).thread;
+        const path = subagentTranscriptPath(thread.cwd, taskPath, threadId);
+        await writeSubagentTranscript(path, await renderTranscript(
+          turns,
+          this.transcriptReader(threadId),
+          {
+            detail: 'brief',
+            subject: {
+              threadId,
+              taskPath,
+              role: thread.agentRole,
+              nickname: thread.agentNickname,
+              status: this.collaborationView(threadId).status,
+              cwd: thread.cwd,
+            },
+          },
+        ));
+        this.transcriptArtifacts.set(key, path);
+        return path;
+      } catch (error) {
+        console.warn(`[agent] Subagent transcript artifact was not written for ${taskPath}`, error);
+        return null;
+      }
+    }
+
+  /** Best-effort removal, called from the Thread-deletion descendant cascade. */
+  async deleteTranscriptArtifact(threadId: ThreadId): Promise<void> {
+      const taskPath = this.taskPathForThread(threadId);
+      if (!taskPath) return;
+      try {
+        const thread = this.core.requireThread(threadId).thread;
+        await removeSubagentTranscript(subagentTranscriptPath(thread.cwd, taskPath, threadId));
+      } catch (error) {
+        console.warn(`[agent] Subagent transcript artifact was not removed for ${taskPath}`, error);
+      }
+    }
+
+  private transcriptReader(threadId: ThreadId): TranscriptPayloadReader {
+      return {
+        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
+        readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
+        readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
       };
     }
 

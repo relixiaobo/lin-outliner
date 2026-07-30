@@ -261,6 +261,8 @@ export interface CollaborationTerminalOutcome {
   readonly threadId: ThreadId;
   readonly status: 'interrupted' | 'completed' | 'errored';
   readonly result: string | null;
+  /** Account layer: the materialized transcript, or null when the write failed (A12). */
+  readonly transcriptPath: string | null;
   readonly error: string | null;
 }
 
@@ -752,6 +754,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
+  /** Account layer for a delegated child. Best-effort (A12): null when the artifact could not be written. */
+  async materializeSubagentTranscript(threadId: ThreadId): Promise<string | null> { return this.collaboration.materializeTranscriptArtifact(threadId); }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;

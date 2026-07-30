@@ -641,11 +641,13 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
           : [])
         .filter(Boolean)
         .join('\n\n');
+      const transcriptPath = await threadService.materializeSubagentTranscript(spawned.thread.id);
       return {
         threadId: spawned.thread.id,
         agentRole: spawned.thread.agentRole ?? (readOnlyIsolated ? 'explorer' : 'worker'),
         status: completed.status,
         ...(result ? { result } : {}),
+        ...(transcriptPath ? { transcriptPath } : {}),
         ...(completed.error?.message ? { error: completed.error.message } : {}),
       };
     },

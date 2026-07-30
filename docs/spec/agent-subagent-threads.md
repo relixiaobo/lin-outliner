@@ -270,9 +270,54 @@ pruning); readability is a property of the read surface, not the store: at
 terminal state the host materializes a bounded, self-contained transcript
 projection consumed through the existing file tools. No dedicated reading tool
 is added (tool-count vigilance: new tools require that no composition of
-existing capabilities covers the need). Queued: `subagent-transcript-artifact`
-(after `threadservice-decomposition`); the human account surface (task panel
-transcripts, Model Interactions) is shipped.
+existing capabilities covers the need). Shipped (#458), with the human account
+surface (task panel transcripts, Model Interactions) already shipped. The
+mechanism is specified below.
+
+### Account layer: the transcript artifact and the operator dump
+
+**One faithful renderer.** `thread/TranscriptRenderer.ts` is the ONLY faithful
+projection of canonical Turns into readable text, and it is the authority every
+later faithful-text need routes through. It is a pure function over Turns plus an
+injected payload reader — it imports no store — and renders per Turn a header
+(ordinal, status, duration, model, usage) followed by the Items in canonical
+order: user and steering input verbatim, assistant text, reasoning summaries,
+tool calls as `name(args) -> output`, and evidence/reset/compaction as one-line
+markers. Two detail levels: `brief` (the artifact) and `full`, which adds Item
+ids, payload digests, per-provider-call usage, and raw reasoning for forensics.
+Every field is bounded by the persistence caps (`MAX_PERSISTED_*`) with an
+explicit `[truncated N bytes]` marker, so the projection is bounded exactly where
+the canonical record is bounded and a reader can tell a short answer from a cut
+one.
+
+**Compaction's summary is exempt on purpose.** `deterministicSummary` in
+`context/ContextCompaction.ts` is lossy by contract — one line per Item, clamped
+to a context budget, for a provider audience that must forget detail. The two
+must not be unified: this renderer keeps whatever the store kept, that one must
+shrink.
+
+**Artifact.** At a child's terminal state the host writes
+`<child cwd>/subagent-transcripts/<task-path-with-dashes>-<thread-id suffix>.md`.
+Children copy the parent's `cwd`, so the parent reads it with the existing
+`file_read` / `file_grep` and no capability is widened. The Thread-id suffix is
+load-bearing: a task path is unique only within a session, and sibling sessions
+share one workspace `cwd`. The path is derived, never random, so re-materializing
+a child always overwrites the same file and a repeat after a crash converges.
+Writing is best-effort per A12: a failed write logs and yields
+`transcriptPath: null`, because losing the account must never cost the delegator
+the result or the Turn. Isolated-Skill children take the identical path and
+renderer — the contract applies uniformly to every executor form. Thread deletion
+removes the artifact in the same descendant cascade that drops history,
+rollouts, and payloads. Artifacts are disposable: canonical truth stays in the
+rollout log and the payload store.
+
+**Operator dump.** `bun run agent:dump <userDataDir> <threadId> [--brief]`
+prints the same projection at `full` detail for ANY Thread in ANY state,
+including one still running, so forensics is a command instead of a hand-written
+parser. It is read-only by construction: the Thread's rollout JSONL is the only
+file touched (via the non-repairing `RolloutStore.readSnapshot`, so it never
+truncates a torn tail another process owns), and the projection is rebuilt in a
+throwaway in-memory database rather than opening the app's SQLite files.
 
 **3. Receipt (internalized, never user-facing).** What the delegation
 consumed. The token budget is a system fail-safe — a circuit breaker sized at
@@ -290,7 +335,8 @@ defense-in-depth, not a product journey: child Threads are composer-less and
 user control on them is interrupt-only (PM ruling 2026-07-30, recorded in
 `docs/plans/agent-subagent-interaction.md`), so the supported recovery paths
 for an exhausted child are parent respawn/synthesis and the transcript
-artifact, not in-child continuation; exhaustion gates the admission of NEW
+artifact (which is why its write must not depend on the child's budget or
+liveness), not in-child continuation; exhaustion gates the admission of NEW
 work only and never destroys or hides produced artifacts; and the contract
 applies uniformly to every executor form — an executor that cannot yield all
 three layers is not complete.

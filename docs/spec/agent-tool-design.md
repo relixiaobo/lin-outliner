@@ -199,6 +199,16 @@ terminal event rather than whichever Turn is newest at delivery time. When the t
 is already idle, it returns immediately with terminal outcomes so a later parent Turn
 can still recover completed work.
 
+Every terminal outcome also carries a nullable `transcriptPath`, and the tool
+description directs the model to read or grep that file with the existing file
+tools to verify or debug a reported result. Isolated-Skill result envelopes carry
+the same `transcriptPath` line. No reading tool is added for the account layer:
+`file_read` / `file_grep` already cover it, and the path stays readable after the
+child stops or exhausts its budget. A null path means only that the artifact
+could not be written — the result is unaffected. The artifact's contents,
+naming, and lifecycle are specified in
+[`agent-subagent-threads.md`](agent-subagent-threads.md).
+
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill
