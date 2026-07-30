@@ -358,9 +358,15 @@ before any directional/security-sensitive build.
   exhausted senders cannot spawn, typed `SubagentBudgetExhaustedError` with soft/hard handling
   per caller, accrual inside the completion mutex incl. failure paths, atomic mailbox snapshot,
   steering never gated, budget visibility in `wait_agent`/`list_agents`, user bright line.
-  PR B: the kernel consults a `remainingTokenBudget` port before each model call, 80%
-  soft-landing steering notice, graceful mid-Turn settle — the incident's actual failure mode
-  (586k tokens in one child Turn). See `docs/plans/subagent-budget-propagation.md`.
+  PR B (claimable): the kernel consults a `remainingTokenBudget` port before each model call,
+  80% soft-landing steering notice, graceful mid-Turn settle — the incident's actual failure
+  mode (586k tokens in one child Turn). PR C (PM-ratified 2026-07-30, ordered behind
+  `threadservice-decomposition`): budget conservation — one tree pool per root-most spawner
+  (subtree spend <= root grant by construction, retiring the min() patch and the
+  grandchild-evasion residual), depth-2 and spawn-count-16 admission gates (legibility
+  constants, not settings), and renderer translation of budget failures (user surfaces never
+  show token numbers — the user-irrelevance boundary). See
+  `docs/plans/subagent-budget-propagation.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient

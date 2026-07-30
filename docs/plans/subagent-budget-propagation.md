@@ -1,8 +1,9 @@
 # Subagent Budget Propagation — spawn-time token budgets over the existing Goal mechanism
 
-Shape: **(b) a SET of two independent complete features, each its own PR.**
-PR A is buildable now; PR B is ordered behind `native-turn-kernel` (genuine
-dependency: its enforcement point is the kernel's model-call boundary).
+Shape: **(b) a SET of three independent complete features, each its own PR.**
+PR A shipped (#446). PR B is ordered behind `native-turn-kernel` (shipped —
+claimable). PR C is ordered behind `threadservice-decomposition` (it touches
+`spawnChild` and the ledger, which that PR's stage 3 relocates).
 
 Motivation (2026-07-29 incident): one research fan-out burned ~1.5M input
 tokens with no forward pressure — a single child Turn reached 586k input with
@@ -73,8 +74,9 @@ asymmetric:
 
 ## Non-goals
 
-- No subtree/aggregate budgets (a parent budget covering grandchildren):
-  double-counting semantics are not worth the complexity now. Per-child only.
+- No reservation/escrow sub-pools (nested carve-outs with refund semantics);
+  PR C's single tree pool with optional per-child caps is the whole
+  conservation model.
 - No per-Role/Skill defaults yet (data-driven follow-up once the Goal usage
   ledger has a few weeks of distribution); launch carries the single global
   default from the Sizing policy.
@@ -251,6 +253,47 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
    goal flips after commit); ThreadService integration test for the
    PR A + PR B interplay.
 
+## Design — PR C: budget conservation + structural gates (after `threadservice-decomposition`)
+
+One complete feature: close the mint. PR A/B bound the SLOPE of runaway spend
+(per-child breakers, mid-Turn stop); PR C bounds the TOTAL by construction and
+adds the two legibility gates, superseding the min(default, spawner-remaining)
+patch.
+
+1. **Tree pool (conservation).** The ledger re-keys from per-child records to
+   ONE pool per root-most spawning thread: when an unbudgeted thread first
+   spawns, it receives the pool record (default 1,500,000; the pool covers
+   DESCENDANT usage only — the spawner's own user-driven Turns never debit or
+   gate against it, preserving the bright line). Every descendant resolves its
+   pool by walking `parentThreadId` to the nearest pool holder; accrual debits
+   the pool; `assertSubagentBudgetAvailable` reads the pool. By induction,
+   subtree spend <= the root grant regardless of tree shape — the
+   grandchild-evasion residual disappears and the min() patch retires.
+   `max_total_tokens` on spawn becomes an optional PER-CHILD CAP within the
+   pool (a child refuses further non-user work once its own contribution
+   reaches the cap) — no sub-pools, no refunds. `CollaborationAgentView`
+   fields are reinterpreted without schema change: `tokenBudget` = pool total,
+   `tokensUsed` = pool spent (per-child contribution stays internal); spec and
+   tool descriptions updated to match.
+2. **Structural gates (legibility, admission-time, constants not settings):**
+   spawn refuses when the child would exceed depth 2 (taskPath segments:
+   `/root/a/b` is the deepest allowed spawner=a, child=b... concretely: a
+   thread at depth 2 cannot spawn) or when the spawner's lifetime spawn count
+   would exceed 16 (counted from spawn edges, A11-style). Both refusals use
+   `SubagentBudgetExhaustedError`-adjacent typed errors with actionable
+   messages naming the limit. Constants live beside the ledger; changing them
+   is a one-line diff plus a PM nod.
+3. **User-visible copy translation (renderer).** Wherever a budget-typed
+   failure reaches a user surface (mid-Turn interrupted error text from PR B,
+   automation failure records), the renderer maps it to translated copy
+   (task reached its resource limit; results preserved) — token numbers never
+   render. Model-facing text unchanged.
+4. **Tests:** conservation (N children share one pool; pool exhaustion refuses
+   across the whole tree; spawner's own user Turns unaffected), per-child cap
+   within pool, depth refusal at 2, count refusal at 16, view
+   reinterpretation, copy mapping. Real run: a two-level fan-out sharing one
+   pool, exhaustion mid-tree, user bright line intact.
+
 ## Verification
 
 - PR A: `bun run typecheck`; `test:core` (new: GoalExtension spawn wiring,
@@ -281,4 +324,6 @@ ON by default. Isolated-Skill children take the same default (resolved).
 - [ ] PR A real-run: exceed, refusal, user bright line
 - [ ] PR B (after native-turn-kernel): budget port + kernel check + 80%
       soft-landing steering notice + tests
+- [ ] PR C (after threadservice-decomposition): tree-pool conservation +
+      depth-2/count-16 gates + renderer copy translation + tests
 - [ ] PR B real-run: mid-Turn interruption
