@@ -73,9 +73,10 @@ asymmetric:
 - No new `TurnStatus`, no protocol-surface change beyond the two schema
   additions named below.
 - No cost/currency budgets — tokens only, matching `ThreadGoal`.
-- No change to Goal semantics at all: `GoalStore`, `GoalExtension`, the
-  continuation chain, and the child's goal tooling are untouched (the ledger
-  is a sibling table, not a Goal).
+- No change to Goal semantics: `GoalStore`, the continuation chain, and the
+  child's goal tooling are untouched (the ledger is a sibling table, not a
+  Goal). Sole allowance: `GoalExtension.onThreadIdle` catches the typed
+  exhaustion error to record an accurate deferral reason (diagnostic-only).
 
 ## Current state (verified facts)
 
@@ -158,16 +159,34 @@ are visible to the parent.
    never gated (bright line; test), and a user Turn on an exhausted child
    still runs with the ledger continuing to tally. Per A12 this is an
    admission-boundary invariant — fail-closed is correct here.
-4. **Visibility** (`ThreadService.listCollaborationAgents` +
+4. **Concurrency & failure-path contract** (gate pass 2 rulings, normative):
+   accrual runs INSIDE the completion `threadMutex` callback before
+   `activeTurns.delete`/idle status, so admission racers always see
+   post-accrual state; failure finalize paths (`failActiveTurn`) accrue
+   recorded usage too (hard-crash in-flight loss is a documented residual,
+   shrunk by PR B); the mailbox is snapshot+deleted synchronously BEFORE the
+   admission await and re-inserted at the head on refusal; steering an ACTIVE
+   child Turn is never gated (the sanctioned overshoot mitigation) — the gate
+   guards new-work admission only; `SubagentBudgetExhaustedError` propagates
+   typed (own module) — `GoalExtension.onThreadIdle` catches it to defer with
+   the real message (narrow diagnostic-only Goal-file allowance) and
+   `AutomationDispatcher` marks the run failed with the accurate message;
+   an exhausted budgeted sender cannot spawn, and a budgeted spawner's
+   children default to `min(globalDefault, spawner remaining)` (subtree
+   accounting stays deferred; residual documented). The ledger shares the
+   goals.sqlite connection, lives with the host-owned stores (not
+   `extensions/goal/`), accrues only for child threads, and derives its write
+   target from the record's location.
+5. **Visibility** (`ThreadService.listCollaborationAgents` +
    `collaborationWaitResult`): populate `tokensUsed`/`tokenBudget` from the
    budget ledger (0/null when absent). No renderer work required.
-5. **Global default** (`agentSettings.ts` runtime settings): new
+6. **Global default** (`agentSettings.ts` runtime settings): new
    `subagentTokenBudget: number | null` with default `1_500_000`; `null`
    disables. Applied in `spawnCollaborationAgent` when the spawn carries no
    `max_total_tokens` — uniformly for collaboration AND isolated-Skill
    children (one breaker, no special cases). The spawn parameter overrides;
    the setting is the floor of the decision ladder.
-6. **Spec** (same PR): `docs/spec/agent-subagent-threads.md` gains a "Budgets"
+7. **Spec** (same PR): `docs/spec/agent-subagent-threads.md` gains a "Budgets"
    subsection (sizing policy, spawn parameter, default, Goal reuse,
    admission-gate rule, bright line); `docs/spec/agent-tool-design.md`
    collaboration table row updated.
