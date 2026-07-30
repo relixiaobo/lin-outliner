@@ -95,22 +95,21 @@
    breadcrumb.css); no full box outline on the surface. */
 
 /* Pane drag-to-reorder: live arrangement preview. While a pane header drag is
-   active (.pane-dragging), panes slide — pure transform, set inline by
-   WorkspacePanelSurface from geometry frozen at dragstart — to the positions
-   they would occupy if the drop landed now; the drop then commits the array
-   order and drops the transforms in the same frame (FLIP), so nothing jumps.
-   The divider hairlines fade so the moving arrangement reads as one row.
-   Reduced motion still previews positions, just without the slide animation. */
-.workspace-canvas.pane-dragging .outline-panel-surface {
+   active (.pane-dragging), panes AND the divider slots between them slide —
+   pure transforms, set inline by WorkspaceCanvas from geometry frozen at
+   dragstart — to the positions they would occupy if the drop landed now; the
+   drop then commits the array order and drops the transforms in the same
+   frame (FLIP), so nothing jumps. The dividers ride along to the previewed
+   boundaries, so the row keeps its separators throughout the drag. Reduced
+   motion still previews positions, just without the slide animation. */
+.workspace-canvas.pane-dragging .outline-panel-surface,
+.workspace-canvas.pane-dragging .panel-resize-slot {
   transition: transform var(--motion-layout);
 }
 
-.workspace-canvas.pane-dragging .panel-resize-slot {
-  opacity: 0;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .workspace-canvas.pane-dragging .outline-panel-surface {
+  .workspace-canvas.pane-dragging .outline-panel-surface,
+  .workspace-canvas.pane-dragging .panel-resize-slot {
     transition: none;
   }
 }

@@ -848,8 +848,8 @@ The user reorders panes by dragging a pane's breadcrumb path row (hover title
 "Drag to reorder panes"). Feedback is a **live arrangement preview**: while the
 drag is active, every pane slides — pure CSS transform, no DOM move, so pane
 content never reloads or loses scroll — to the position it would occupy if the
-drop landed now, and the divider hairlines fade so the moving arrangement reads
-as one row. Geometry is frozen at dragstart and the insertion index derives
+drop landed now, and the divider hairlines slide along to the previewed
+boundaries. Geometry is frozen at dragstart and the insertion index derives
 from the pointer X against the frozen pane midpoints (monotonic in X, so the
 preview cannot oscillate as panes slide under the cursor). Hovering one of the
 dragged pane's own boundaries previews as "everything stays put"; cancelling

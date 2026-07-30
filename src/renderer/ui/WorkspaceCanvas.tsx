@@ -144,10 +144,12 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     setPanelDropIndex(null);
   };
-  // Per-pane translateX for the would-be arrangement: replay movePanelToIndex's
-  // permutation over the frozen geometry and hand each pane the delta between
-  // its previewed and original left edge.
-  const previewOffsets = (() => {
+  // translateX deltas for the would-be arrangement: replay movePanelToIndex's
+  // permutation over the frozen geometry. Panes get the delta between their
+  // previewed and original left edge; each divider slot gets the delta to the
+  // boundary between the previewed neighbours, so the hairlines ride along
+  // instead of cutting through (or vanishing under) the sliding panes.
+  const preview = (() => {
     const layout = dragLayoutRef.current;
     if (!layout || !dragPanelId || panelDropIndex === null) return null;
     const from = layout.ids.indexOf(dragPanelId);
@@ -157,14 +159,21 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     if (from < panelDropIndex) target -= 1;
     target = Math.max(0, Math.min(target, order.length));
     order.splice(target, 0, dragPanelId);
-    const offsets = new Map<string, number>();
+    const panes = new Map<string, number>();
+    const slots: number[] = [];
     let x = layout.lefts[0];
-    for (const id of order) {
+    order.forEach((id, position) => {
       const index = layout.ids.indexOf(id);
-      offsets.set(id, x - layout.lefts[index]);
-      x += layout.widths[index] + layout.gap;
-    }
-    return offsets;
+      panes.set(id, x - layout.lefts[index]);
+      x += layout.widths[index];
+      if (position < order.length - 1) {
+        // Original slot `position` sits at the right edge of original pane
+        // `position`; its preview boundary starts right after this pane.
+        slots.push(x - (layout.lefts[position] + layout.widths[position]));
+      }
+      x += layout.gap;
+    });
+    return { panes, slots };
   })();
 
   return (
@@ -186,7 +195,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             active={props.activePanelId === panel.id}
             onActivate={() => props.onActivatePanel(panel)}
             panel={panel}
-            previewOffset={previewOffsets?.get(panel.id) ?? null}
+            previewOffset={preview?.panes.get(panel.id) ?? null}
             size={panel.size}
           >
             {panel.view.kind === 'outliner' ? (
@@ -255,7 +264,12 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             )}
           </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (
-            <div className="panel-resize-slot">
+            <div
+              className="panel-resize-slot"
+              style={preview?.slots[panelIndex]
+                ? { transform: `translateX(${preview.slots[panelIndex]}px)` }
+                : undefined}
+            >
               <ResizeHandle
                 className="panel-resize-handle"
                 label={t.shell.workspace.resizePanelsLabel}
