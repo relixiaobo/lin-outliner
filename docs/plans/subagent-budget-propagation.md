@@ -9,7 +9,13 @@ tokens with no forward pressure — a single child Turn reached 586k input with
 neither the parent nor the user able to see or stop it. The budget mechanism
 (`ThreadGoal.tokenBudget` → `budgetLimited`) and the fan-out mechanism
 (`spawn_agent`) both exist and are wired to nothing in common. This plan
-connects them; it introduces **no new concepts**.
+connects the POLICY, but review of the first implementation (PR #446, gate
+2026-07-30) proved that reusing `ThreadGoal` as the budget carrier is wrong:
+an active Goal enrolls the child in `onThreadIdle` auto-continuation (the
+runaway the feature exists to prevent), squats the single Goal slot the
+child's own `create_goal` tool needs, and lets the child lift the breaker by
+completing/replacing the Goal. The budget is therefore its own small
+host-owned ledger; the Goal mechanism stays untouched.
 
 ## Sizing policy (PM-ratified 2026-07-30)
 
@@ -42,9 +48,10 @@ asymmetric:
 ## Goal
 
 1. `collaboration.spawn_agent` accepts an optional token budget; spawning
-   creates a child `ThreadGoal` carrying it. Child usage already flows into the
-   Goal after every Turn; exhaustion flips it to `budgetLimited` through the
-   existing store logic, unchanged.
+   records it in a host-owned per-thread budget ledger (NOT a `ThreadGoal` —
+   see Motivation). Usage is tallied into the ledger at the same
+   per-Turn commit point that feeds `goals.addUsage`; exhaustion is derived
+   (`tokensUsed >= tokenBudget`).
 2. A `budgetLimited` child refuses further **non-user** Turn admission with a
    typed error the parent model sees; the human bright line stays — a
    user-triggered Turn is never budget-gated.
@@ -66,8 +73,9 @@ asymmetric:
 - No new `TurnStatus`, no protocol-surface change beyond the two schema
   additions named below.
 - No cost/currency budgets — tokens only, matching `ThreadGoal`.
-- No change to GoalStore semantics, the continuation chain, or renderer Goal
-  UI beyond what the added fields imply.
+- No change to Goal semantics at all: `GoalStore`, `GoalExtension`, the
+  continuation chain, and the child's goal tooling are untouched (the ledger
+  is a sibling table, not a Goal).
 
 ## Current state (verified facts)
 
@@ -93,6 +101,19 @@ asymmetric:
   `nickname`, `role`, `status` (`ThreadService.ts:309-316`), mirrored in
   `collaborationAgentViewSchema` (`tools.ts`) used by `list_agents` and the
   post-#444 `wait_agent` output.
+- **Why the budget must not be a Goal** (verified, PR #446 review):
+  `GoalExtension.onThreadIdle` starts a continuation Turn for ANY thread whose
+  Goal is `active` (`GoalExtension.ts:70-84`) — a host-created active budget
+  Goal makes every idle child restart itself until the budget exhausts;
+  `GoalStore.create` throws on an existing unfinished Goal (single slot), so a
+  pre-created budget Goal breaks the child's own `create_goal` tool; and
+  `update_goal 'complete'` + `create_goal` without `token_budget` replaces the
+  Goal and silently removes the breaker.
+- Turn-admission refusals are `ThreadBusyError`, which `tryStartTurnIfIdle`
+  converts to a soft `null` for feature callers (goal continuation,
+  automations); a plain `Error` there permanently fails automation runs.
+- `sendCollaborationMessage` drains the child's mailbox BEFORE admission — any
+  gate that throws after the drain loses the queued messages.
 - Mid-Turn usage exists in memory: `PiEventNormalizer.usage`
   (`MutableTurnUsage`) accumulates per assistant `message_end`
   (`PiTurnExecutor.ts:655+`), but nothing reads it before Turn completion.
@@ -109,26 +130,37 @@ are visible to the parent.
    to `collaborationAgentViewSchema` (required fields; `tokensUsed` is 0 and
    `tokenBudget` null when no Goal exists). Update the `spawn_agent` and
    `wait_agent` descriptions to state the budget contract in one sentence each.
-2. **Spawn wiring** (`ThreadService.spawnCollaborationAgent`,
-   `ToolRuntime` spawn handler): validate `max_total_tokens` as a positive
-   safe integer; after child creation, call the Goal extension's `create` with
-   objective `Subagent task: ${taskName}` and the budget. Applies to
-   `childKind: 'collaboration'` spawns; isolated-Skill children may pass one
-   too (same code path) but no caller sets it in this PR.
-3. **Admission gate** (`ThreadService`, the single Turn-admission choke point
-   used by followup/send/steer/continuation/automation triggers): if the
-   target Thread's Goal is `budgetLimited` AND the trigger is NOT
-   `{ kind: 'user' }`, refuse admission with error
+2. **Budget ledger + spawn wiring**: a `thread_budgets` table beside the
+   goals table in `goals.sqlite` (`threadId`, `tokenBudget`, `tokensUsed`),
+   owned by a small `SubagentBudgetLedger` (sibling of `GoalStore`; ephemeral
+   threads mirror in memory like `GoalExtension.ephemeralGoals`). Spawn
+   (`spawnChild`, one validation site) records the budget for the child;
+   `ThreadService.executeActiveTurn` tallies `totalTokens` into the ledger at
+   the same commit point as `goals.addUsage`. Thread deletion removes the
+   record (join the existing descendant-teardown list). The child has NO tool
+   surface over the ledger — the breaker is host-imposed and child-unliftable;
+   the child's own `create_goal`/`update_goal` behave exactly as on main.
+   Applies uniformly to collaboration and isolated-Skill children.
+3. **Admission gate** (`ThreadService`, the single Turn-admission choke
+   point): if the target Thread HAS a budget-ledger record (only host-budgeted
+   children ever do — root threads and self-made Goals are structurally out of
+   scope), the record is exhausted, AND the trigger is NOT `{ kind: 'user' }`,
+   refuse admission with a typed `SubagentBudgetExhaustedError` carrying
    `Subagent token budget exhausted (<used> of <budget> tokens); the child
    refuses new work. Interrupt, review its output, or spawn a fresh child.`
-   The refusal surfaces through the existing tool-error path so the parent
-   model reads it verbatim. Per A12 this is an admission-boundary invariant —
-   fail-closed is correct here. A user-triggered Turn on the child is never
-   gated (bright line; add a test).
+   Refusal semantics preserve the existing soft-refusal invariant:
+   `tryStartTurnIfIdle` converts it to `null` exactly like `ThreadBusyError`
+   (automations stay pending; goal continuation simply does not run), while
+   the collaboration paths (`followupCollaborationTask`,
+   `sendCollaborationMessage`) surface the message verbatim to the parent as
+   a tool error. `sendCollaborationMessage` checks the gate BEFORE draining
+   the mailbox so queued messages survive a refusal. A user-triggered Turn is
+   never gated (bright line; test), and a user Turn on an exhausted child
+   still runs with the ledger continuing to tally. Per A12 this is an
+   admission-boundary invariant — fail-closed is correct here.
 4. **Visibility** (`ThreadService.listCollaborationAgents` +
    `collaborationWaitResult`): populate `tokensUsed`/`tokenBudget` from the
-   Goal extension (0/null when absent). No renderer work required — the Goal
-   pane already reflects `goal/updated`.
+   budget ledger (0/null when absent). No renderer work required.
 5. **Global default** (`agentSettings.ts` runtime settings): new
    `subagentTokenBudget: number | null` with default `1_500_000`; `null`
    disables. Applied in `spawnCollaborationAgent` when the spawn carries no
@@ -164,17 +196,16 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
 
 1. **Port** (`runtime/types.ts`): optional
    `remainingTokenBudget?: () => number | null` on `TurnExecutionContext` —
-   `null` = unlimited; computed by ThreadService as
-   `tokenBudget - goal.tokensUsed` at Turn start (committed usage; the
-   in-flight Turn's own usage is the kernel's to add).
+   `null` = unlimited; computed by ThreadService from the budget ledger as
+   `tokenBudget - tokensUsed` at Turn start (committed usage; the in-flight
+   Turn's own usage is the kernel's to add).
 2. **Kernel check** (`kernel/kernel.ts`, start of each iteration before
    projection): if `remaining !== null` and
    `normalizer-accumulated turn usage >= remaining`, stop: settle the Turn as
    `'interrupted'` with error
    `Token budget exhausted mid-Turn (<total> of <budget> tokens)` — reusing
-   the existing interrupted path (no new `TurnStatus`). The subsequent
-   `addUsage` commit flips the Goal to `budgetLimited`, and PR A's gate takes
-   over from there. The first model call is never blocked (a fresh Turn with
+   the existing interrupted path (no new `TurnStatus`). The subsequent ledger
+   commit marks the record exhausted, and PR A's gate takes over from there. The first model call is never blocked (a fresh Turn with
    an already-exhausted budget is PR A's admission gate's job, not the
    kernel's).
 3. **Soft landing at 80%**: the same per-call check, on first crossing 80%
