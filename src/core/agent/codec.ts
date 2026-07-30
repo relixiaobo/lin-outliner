@@ -226,7 +226,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       break;
     case 'commandExecution':
       exactKeys(record, [
-        'type', 'id', 'provenance', 'command', 'cwd', 'processId', 'status', 'commandActions',
+        'type', 'id', 'provenance', 'command', 'description', 'cwd', 'processId', 'status', 'commandActions',
         'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef',
       ], 'item');
       result = {
@@ -237,6 +237,8 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        // `?? null` so Threads persisted before the field existed still decode.
+        description: nullableString(record.description ?? null, 'item.description', true),
         commandActions: arrayValue(record.commandActions, 'item.commandActions').map(decodeCommandAction),
         aggregatedOutput: nullableString(record.aggregatedOutput, 'item.aggregatedOutput', true),
         exitCode: nullableInteger(record.exitCode, 'item.exitCode'),

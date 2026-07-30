@@ -44,13 +44,19 @@ function dynamic(
   };
 }
 
-function shell(command: string, status: ItemExecutionStatus = 'completed', id = 'command-1'): ThreadToolItem {
+function shell(
+  command: string,
+  status: ItemExecutionStatus = 'completed',
+  id = 'command-1',
+  description: string | null = null,
+): ThreadToolItem {
   return {
     ...base(id),
     type: 'commandExecution',
     status,
     outputRef: null,
     command,
+    description,
     cwd: '/w',
     processId: null,
     commandActions: [],
@@ -179,6 +185,37 @@ describe('a tool with no usable argument degrades to an honest generic', () => {
       server: 'files', tool: 'read', arguments: {}, pluginId: null, result: null,
       error: null, durationMs: null,
     }, labels)).toBe('Used files.read');
+  });
+});
+
+describe('a command row says what it does, not how the shell was invoked', () => {
+  test('the caller description wins, so identical heredocs stop being identical', () => {
+    const heredoc = "python3 - <<'PY'\nprint(1)\nPY";
+    expect(summarizeThreadToolItem(shell(heredoc, 'completed', 'c-1', 'Inspect EPUB archive contents'), labels))
+      .toBe('Inspect EPUB archive contents');
+    expect(summarizeThreadToolItem(shell(heredoc, 'completed', 'c-2', 'Extract chapter titles'), labels))
+      .toBe('Extract chapter titles');
+    // Same shell text, two different rows — the defect from the reported run.
+    expect(summarizeThreadToolItem(shell(heredoc, 'completed', 'c-1', 'Inspect EPUB archive contents'), labels))
+      .not.toBe(summarizeThreadToolItem(shell(heredoc, 'completed', 'c-2', 'Extract chapter titles'), labels));
+  });
+
+  test('a described command still annotates its outcome', () => {
+    expect(summarizeThreadToolItem(shell('false', 'failed', 'c-1', 'Check the build'), labels))
+      .toBe('Check the build · failed');
+  });
+
+  test('without a description the fallback spends its budget on the operative text', () => {
+    expect(summarizeThreadToolItem(shell('npm test'), labels)).toBe('Ran "npm test"');
+    expect(summarizeThreadToolItem(shell("python3 - <<'PY'\nprint(1)\nPY"), labels))
+      .toBe('Ran "python3 -"');
+    expect(summarizeThreadToolItem(shell('cd /Users/x/.lin-outliner-codex-3/agent && swift build'), labels))
+      .toBe('Ran "swift build"');
+    expect(summarizeThreadToolItem(shell("cd '/tmp/with space' && ls -la"), labels))
+      .toBe('Ran "ls -la"');
+    // Paths under the Thread's own working directory render relative to it.
+    expect(summarizeThreadToolItem(shell('/w/scripts/build.sh --release'), labels))
+      .toBe('Ran "scripts/build.sh --release"');
   });
 });
 

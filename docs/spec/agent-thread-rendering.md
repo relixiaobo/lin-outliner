@@ -46,7 +46,18 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
   explanation. A failure that never produced an exit code — a timeout, a kill —
   keeps a null code and says only that the command failed; the renderer never
-  borrows a plausible code the shell did not report. Every other tool failure
+  borrows a plausible code the shell did not report.
+- a command row is labelled by the **caller's own description** of the command
+  when there is one. The `bash` contract already requires a one-line account in
+  active voice, so the transcript states intent rather than shell syntax, and
+  three identical `python3 - <<'PY'` heredocs read as three different acts. The
+  shell text is always one expand away. `description` is optional on the Item;
+  Items persisted before it existed decode with a null description rather than
+  failing. When it is absent the row falls back to the command text with the
+  parts that are provably not the point removed — a heredoc body, a leading
+  `cd X &&`, and the Thread working directory prefix — so the label's length
+  budget is spent on the operative text. The renderer does not otherwise try to
+  interpret shell syntax. Every other tool failure
   surfaces its own message, or, when it has none, states plainly that it failed
   without one; failure prose is never presented under a neutral result heading
 - a tool row keeps its own tool-type icon in every terminal state, so a broken

@@ -21,7 +21,9 @@ catalog.
 
 ## Shape
 
-Shape **(b): two independent complete features, each its own PR.**
+Shape **(b): two independent complete features.** Both shipped in the
+run-presentation status PR at the PM's call (2026-07-30) rather than as separate
+releases — see each section.
 
 - **PR 1 — one vocabulary, with subjects.** Single rows stop printing raw tool
   identifiers and join the human activity vocabulary that groups already use;
@@ -164,29 +166,43 @@ From a real run (`node_read` → `file_glob` ×3 → `file_read` → `python3` �
 
 ### PR 2 — command legibility
 
-The mechanism is `commandActions`, PM-ratified 2026-07-30: the layer that ran
-the command reports what it did, instead of the renderer guessing from shell
-syntax.
+The PM ratified "the layer that ran the command reports what it did, instead of
+the renderer guessing from shell syntax" (2026-07-30), choosing `commandActions`
+as the vehicle. Implementation found a **better source for the same principle**,
+and took it:
 
-- **Producer.** The command tool layer fills `commandActions` where it can
-  legitimately say what a command was — `PiTurnExecutor.ts:882` currently hard-codes
-  `[]`. `interpretCommandResult` (`agentLocalTools.ts:1804-1830`) already
-  classifies search / find / diff commands, so that classification becomes the
-  first `CommandAction` producer rather than being thrown away after building an
-  error string.
-- **Consumer.** `summarizeThreadToolItem` prefers `commandActions` over
-  `firstLine(item.command)`: a reported action renders as the act (`Ran "swift
-  build"`, `Searched for "epub"`), and only a command with no reported action
-  falls back to the raw text.
-- **Fallback quality still matters**, because not every command will report an
-  action: the raw-text path shortens paths (`~`, then basename) and truncates
-  end-weighted rather than head-weighted, so `cd /Users/…/x && swift build` stops
-  spending its whole budget on the prefix (V7).
-- No protocol shape change (see Collision Result).
+- **The caller already writes the sentence.** The `bash` tool's contract asks
+  for a "clear, concise description of what this command does in active voice"
+  (`agentLocalTools.ts:602-610`), and `normalizeBashParams` already validates it
+  (`:1548`). It was then dropped on the floor —
+  `PiTurnExecutor.ts:870-886` built the Item from the same `args` and never read
+  `description`. This beats `commandActions` on the plan's own terms: it is the
+  author's statement of intent, not a classification reconstructed from the
+  command string, and `interpretCommandResult` could never have distinguished
+  three `python3 - <<'PY'` heredocs at all.
+- **Protocol.** `CommandExecutionThreadItem` gains
+  `description: string | null`, decoded with `record.description ?? null` so
+  Threads persisted before the field decode with `null` instead of failing —
+  additive, no dev-data wipe. `commandActions` stays as it was; this plan does
+  not fill it, and a later pass may retire it.
+- **Consumer.** The description is the row's label when present; the shell text
+  stays one expand away in Arguments.
+- **Fallback**, since `description` is optional in the schema: the command text
+  with the parts that are provably not the point removed — a heredoc body, a
+  leading `cd X &&`, the Thread working-directory prefix. It does not attempt to
+  understand the command (V6/V7).
 
 ## Open questions
 
-None. The PM ratified the command mechanism (`commandActions`, not renderer-side
-shell heuristics) and the two-subjects-then-elide summary shape on 2026-07-30.
-Node-subject titling is recorded above as a decided local, following the
-existing node-reference precedent.
+None blocking. The PM ratified caller-reported command legibility (not
+renderer-side shell heuristics) and the two-subjects-then-elide summary shape on
+2026-07-30. Node-subject titling is a decided local, following the existing
+node-reference precedent.
+
+One thing to watch after this ships: `description` is **optional** in the `bash`
+schema, so how often rows actually get it is a live-run question, not a
+static one. The tool description already instructs the caller to supply it and
+the fallback is now decent either way; if real runs show it frequently missing,
+the cheap next move is making it `required` in `BASH_PARAMETERS` rather than
+reviving shell parsing. `commandActions` remains declared, decoded, and unused —
+a later pass should either fill it or retire it, but nothing depends on it now.

@@ -33,6 +33,7 @@ async function seedMixedStatusToolTurn(page: Page): Promise<void> {
         type: 'commandExecution',
         provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
         command,
+        description: null,
         cwd: '/mock/workspace',
         processId: null,
         status,

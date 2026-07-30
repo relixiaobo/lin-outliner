@@ -935,7 +935,10 @@ function toolItemAct(
   const running = item.status === 'inProgress';
   switch (item.type) {
     case 'commandExecution': {
-      const command = quoteSubject(firstLine(item.command));
+      // The caller's own description is the only thing that can tell three
+      // `python3 - <<'PY'` heredocs apart; the shell text stays one expand away.
+      if (item.description) return item.description;
+      const command = quoteSubject(commandDisplayText(item.command, item.cwd));
       return running ? labels.runningCommand({ command }) : labels.ranCommand({ command });
     }
     case 'fileChange': {
@@ -1645,6 +1648,26 @@ function reasoningGist(text: string): string {
 
 function firstLine(text: string): string {
   return text.split('\n').map((line) => line.trim()).find(Boolean) ?? text;
+}
+
+/**
+ * Fallback for a command whose caller gave no description. It does not try to
+ * understand the command — it only removes the parts that are provably not the
+ * point, so the 72-character budget is spent on the operative text:
+ *
+ *   `cd /long/path && swift build`     → `swift build`
+ *   `python3 - <<'PY' … PY`            → `python3 -`
+ *   `<threadCwd>/scripts/build.sh`     → `scripts/build.sh`
+ */
+function commandDisplayText(command: string, cwd: string): string {
+  let text = firstLine(command);
+  const heredoc = text.indexOf('<<');
+  if (heredoc > 0) text = text.slice(0, heredoc).trim();
+  // A leading `cd X &&` is scaffolding for the command that follows it.
+  const chained = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*(.+)$/.exec(text);
+  if (chained?.[1]) text = chained[1].trim();
+  const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`;
+  return cwd ? text.split(prefix).join('') : text;
 }
 
 function quoteSubject(value: string): string {

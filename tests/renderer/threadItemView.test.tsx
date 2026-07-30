@@ -275,6 +275,7 @@ function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandEx
     status: 'completed',
     outputRef: null,
     command: 'npm test',
+    description: null,
     cwd: '/workspace',
     processId: null,
     commandActions: [],

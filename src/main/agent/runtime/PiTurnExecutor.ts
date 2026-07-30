@@ -876,6 +876,12 @@ function startedToolItem(
         typeof input.command === 'string' ? input.command : JSON.stringify(boundedJsonValue(args)),
         MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
       ),
+      // The bash contract already asks the caller to describe the command in
+      // active voice, and `normalizeBashParams` already validates it — it was
+      // simply never carried to the transcript.
+      description: typeof input.description === 'string' && input.description.trim()
+        ? boundedText(input.description.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
+        : null,
       cwd: boundedText(typeof input.cwd === 'string' ? input.cwd : context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
       processId: null,
       status: 'inProgress',

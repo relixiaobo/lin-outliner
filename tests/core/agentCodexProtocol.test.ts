@@ -131,6 +131,7 @@ const allItems: readonly ThreadItem[] = [
     id: 'item-5',
     provenance: { ...itemProvenance, originItemId: 'item-5' },
     command: 'bun run typecheck',
+    description: 'Typecheck the project',
     cwd: '/tmp/project',
     processId: null,
     status: 'completed',
@@ -395,6 +396,19 @@ describe('Codex Agent Core protocol codec', () => {
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.provenance)).toBe(true);
     }
+  });
+
+  test('reads a command Item persisted before it carried a description', () => {
+    // The field is additive: Threads already on disk decode with a null
+    // description rather than failing, so no dev-data wipe is needed.
+    const legacy = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'commandExecution')!,
+    )) as Record<string, unknown>;
+    delete legacy.description;
+
+    const decoded = decodeThreadItemJson(JSON.stringify(legacy));
+    expect(decoded.type).toBe('commandExecution');
+    expect((decoded as Extract<typeof decoded, { type: 'commandExecution' }>).description).toBeNull();
   });
 
   test('keeps context evidence references, cursors, and acceptance time strict', () => {
