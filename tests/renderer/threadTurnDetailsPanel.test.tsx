@@ -37,6 +37,30 @@ afterEach(() => {
 });
 
 describe('ThreadTurnDetailsPanel', () => {
+  test('translates a budget interruption without rendering token counts', async () => {
+    const base = detailsResponse('thread-budget', 'turn-budget', 'budget-marker');
+    const detail: ThreadTurnDetailsReadResponse = {
+      ...base,
+      turn: {
+        ...base.turn,
+        status: 'interrupted',
+        error: { message: 'Token budget exhausted mid-Turn (1234 of 1000 tokens)' },
+      },
+    };
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/turn/details/read') return detail;
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render('thread-budget', 'turn-budget');
+    await flush();
+    expect(rendered.document.body.textContent).toContain(
+      'Task reached the system resource limit. Results have been preserved.',
+    );
+    expect(rendered.document.body.textContent).not.toContain('1234');
+    expect(rendered.document.body.textContent).not.toContain('1000 tokens');
+  });
+
   test('renders the typed activity timeline and copies the complete model interaction', async () => {
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const detail = detailsResponse('thread-a', 'turn-a', 'fresh-a');

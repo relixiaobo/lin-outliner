@@ -317,9 +317,11 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Budgeted child non-user Turns expose a Turn-start ledger snapshot (`budget`, `used`) to
-the native kernel; explicit user Turns expose the same port as unlimited and omit the
-warning callback. The first model call is never blocked. At every later model-call
+Covered descendant non-user Turns expose a Turn-start shared-pool snapshot (`budget`,
+`used`) to the native kernel. When a per-child contribution cap has less remaining, the
+same port carries that tighter snapshot. Pool-holder Turns are outside their own pool;
+explicit descendant user Turns expose the port as unlimited and omit the warning
+callback while still accruing on completion. The first model call is never blocked. At every later model-call
 boundary, before draining steering or emitting the next `turn_start`, the executor adds
 the normalizer's accumulated `totalTokens` to that snapshot. Reaching the Turn-start
 remainder interrupts only genuinely outstanding model work, such as completed tool

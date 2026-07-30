@@ -1071,6 +1071,7 @@ commandPalette: {
       openSettings: '打开服务商设置',
       turnFailed: '本轮失败',
       turnInterrupted: '本轮已中断',
+      resourceLimitReached: '任务达到系统资源上限，成果已保全。',
       reconnecting: ({ attempt, maxRetries }) => `正在重新连接 ${attempt}/${maxRetries}`,
       copiedFromFork: '派生历史',
       openSubagentThread: ({ id }) => `打开子智能体线程 ${id}`,

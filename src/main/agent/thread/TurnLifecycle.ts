@@ -12,7 +12,7 @@ import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdm
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
-import type { SubagentBudgetLedger,SubagentBudgetRecord } from '../persistence/SubagentBudgetLedger';
+import type { SubagentBudgetLedger,SubagentBudgetMember,SubagentBudgetPool } from '../persistence/SubagentBudgetLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
 import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
@@ -47,6 +47,10 @@ interface TurnLifecycleCollaboration {
   flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; queueChildTurnActivity(thread: Thread, turn: Turn): void;
 }
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId): Promise<void>; }
+export interface ResolvedSubagentBudget {
+  readonly member: SubagentBudgetMember | null;
+  readonly pool: SubagentBudgetPool | null;
+}
 export class TurnLifecycle {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>(); private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
   constructor(
@@ -513,10 +517,43 @@ export class TurnLifecycle {
       if (response.autoResolved) throw new Error('Only the host may auto-resolve request_user_input');
       await this.resolveUserInput(response);
     }
-  assertSubagentBudgetAvailable(threadId: ThreadId): SubagentBudgetRecord | null {
-      const budget = this.subagentBudgets.read(threadId);
-      if (!budget || budget.tokensUsed < budget.tokenBudget) return budget;
-      throw new SubagentBudgetExhaustedError(budget.tokensUsed, budget.tokenBudget);
+  resolveSubagentBudget(threadId: ThreadId): ResolvedSubagentBudget | null {
+      const thread = this.core.requireThread(threadId).thread;
+      const member = this.subagentBudgets.readMember(threadId);
+      const visited = new Set<ThreadId>([threadId]);
+      let parentThreadId = thread.parentThreadId;
+      while (parentThreadId !== null && !visited.has(parentThreadId)) {
+        visited.add(parentThreadId);
+        const pool = this.subagentBudgets.readPool(parentThreadId);
+        if (pool) return { member, pool };
+        parentThreadId = this.core.requireThread(parentThreadId).thread.parentThreadId;
+      }
+      return member ? { member, pool: null } : null;
+    }
+  assertSubagentBudgetAvailable(threadId: ThreadId): ResolvedSubagentBudget | null {
+      const budget = this.resolveSubagentBudget(threadId);
+      this.assertResolvedSubagentBudgetAvailable(budget);
+      return budget;
+    }
+  assertSubagentSpawnBudgetAvailable(threadId: ThreadId): ResolvedSubagentBudget | null {
+      const budget = this.assertSubagentBudgetAvailable(threadId);
+      const ownedPool = this.subagentBudgets.readPool(threadId);
+      if (ownedPool && ownedPool.tokensUsed >= ownedPool.tokenBudget) {
+        throw new SubagentBudgetExhaustedError(ownedPool.tokensUsed, ownedPool.tokenBudget);
+      }
+      return budget ?? (ownedPool ? { member: null, pool: ownedPool } : null);
+    }
+  private assertResolvedSubagentBudgetAvailable(budget: ResolvedSubagentBudget | null): void {
+      if (budget?.pool && budget.pool.tokensUsed >= budget.pool.tokenBudget) {
+        throw new SubagentBudgetExhaustedError(budget.pool.tokensUsed, budget.pool.tokenBudget);
+      }
+      if (
+        budget?.member?.tokenCap !== null
+        && budget?.member?.tokenCap !== undefined
+        && budget.member.tokensUsed >= budget.member.tokenCap
+      ) {
+        throw new SubagentBudgetExhaustedError(budget.member.tokensUsed, budget.member.tokenCap);
+      }
     }
   async acceptAndLaunch(
       request: InternalTurnStartRequest,
@@ -769,10 +806,7 @@ export class TurnLifecycle {
       let thrown: Error | null = null;
       const initialTurn = this.core.readTurn(active.threadId, active.turnId)!;
       const thread = this.core.requireThread(active.threadId).thread;
-      const budget = thread.parentThreadId === null
-        ? null
-        : this.subagentBudgets.read(active.threadId);
-      const turnBudget = budget ? { ...budget } : null;
+      const turnBudget = this.subagentBudgetSnapshot(active.threadId);
       const hidden = this.core.hiddenEphemeralThreads.has(active.threadId);
       const resourceObservation = this.resourceOps.createResourceObservation(active.threadId, true);
       const createdOutputResources: ThreadResourceReference[] = [];
@@ -946,8 +980,26 @@ export class TurnLifecycle {
       execution: Turn['execution'],
     ): void {
       if (active.budgetUsageAccrued || thread.parentThreadId === null) return;
-      this.subagentBudgets.addUsage(active.threadId, execution.usage.totalTokens);
+      const budget = this.resolveSubagentBudget(active.threadId);
+      if (!budget?.member) return;
+      this.subagentBudgets.addUsage(active.threadId, budget.pool?.poolThreadId ?? null, execution.usage.totalTokens);
       active.budgetUsageAccrued = true;
+    }
+  private subagentBudgetSnapshot(threadId: ThreadId): { readonly tokenBudget: number; readonly tokensUsed: number } | null {
+      const budget = this.resolveSubagentBudget(threadId);
+      const poolRemaining = budget?.pool
+        ? budget.pool.tokenBudget - budget.pool.tokensUsed
+        : Number.POSITIVE_INFINITY;
+      const capRemaining = budget?.member?.tokenCap === null || budget?.member?.tokenCap === undefined
+        ? Number.POSITIVE_INFINITY
+        : budget.member.tokenCap - budget.member.tokensUsed;
+      if (!Number.isFinite(poolRemaining) && !Number.isFinite(capRemaining)) return null;
+      if (capRemaining <= poolRemaining && budget?.member?.tokenCap !== null && budget?.member?.tokenCap !== undefined) {
+        return { tokenBudget: budget.member.tokenCap, tokensUsed: budget.member.tokensUsed };
+      }
+      return budget?.pool
+        ? { tokenBudget: budget.pool.tokenBudget, tokensUsed: budget.pool.tokensUsed }
+        : null;
     }
   private persistExecutionContextEvidence(
       active: ActiveTurn,

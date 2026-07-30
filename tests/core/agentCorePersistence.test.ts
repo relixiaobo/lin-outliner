@@ -464,31 +464,44 @@ describe('Agent Core persistence', () => {
     goals.close();
   });
 
-  test('persists host-owned Subagent budgets beside independent Goal state', async () => {
+  test('persists one host-owned Subagent pool with independent member contributions', async () => {
     const root = await tempRoot();
     const goalsPath = join(root, 'goals.sqlite');
     const goalsDatabase = testDatabase(goalsPath);
     const goals = new GoalStore(goalsPath, goalsDatabase);
     const budgets = new SubagentBudgetLedger(goalsDatabase);
-    const persistentThreadId = uuidV7(3100);
-    const ephemeralThreadId = uuidV7(3200);
+    const persistentPoolId = uuidV7(3100);
+    const persistentChildId = uuidV7(3200);
+    const persistentSiblingId = uuidV7(3300);
+    const ephemeralPoolId = uuidV7(3400);
+    const ephemeralChildId = uuidV7(3500);
 
-    goals.create(persistentThreadId, 'Child-owned Goal', null, 10);
-    budgets.create(persistentThreadId, 100, false);
-    budgets.addUsage(persistentThreadId, 40);
-    budgets.create(ephemeralThreadId, 50, true);
-    budgets.addUsage(ephemeralThreadId, 10);
-    expect(goals.read(persistentThreadId)?.goal.objective).toBe('Child-owned Goal');
-    expect(budgets.read(persistentThreadId)).toMatchObject({ tokenBudget: 100, tokensUsed: 40 });
-    expect(budgets.read(ephemeralThreadId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
+    goals.create(persistentChildId, 'Child-owned Goal', null, 10);
+    budgets.createPool(persistentPoolId, 100, false);
+    budgets.createMember(persistentChildId, persistentPoolId, 60, false);
+    budgets.createMember(persistentSiblingId, persistentPoolId, null, false);
+    budgets.addUsage(persistentChildId, persistentPoolId, 40);
+    budgets.addUsage(persistentSiblingId, persistentPoolId, 10);
+    budgets.createPool(ephemeralPoolId, 50, true);
+    budgets.createMember(ephemeralChildId, ephemeralPoolId, null, true);
+    budgets.addUsage(ephemeralChildId, ephemeralPoolId, 10);
+    expect(goals.read(persistentChildId)?.goal.objective).toBe('Child-owned Goal');
+    expect(budgets.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
+    expect(budgets.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
+    expect(budgets.readMember(persistentSiblingId)).toMatchObject({ tokenCap: null, tokensUsed: 10 });
+    expect(budgets.readPool(ephemeralPoolId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
     goals.close();
 
     const reopenedDatabase = testDatabase(goalsPath);
     const reopened = new SubagentBudgetLedger(reopenedDatabase);
-    expect(reopened.read(persistentThreadId)).toMatchObject({ tokenBudget: 100, tokensUsed: 40 });
-    expect(reopened.read(ephemeralThreadId)).toBeNull();
-    expect(reopened.clear(persistentThreadId)).toBe(true);
-    expect(reopened.read(persistentThreadId)).toBeNull();
+    expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
+    expect(reopened.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
+    expect(reopened.readPool(ephemeralPoolId)).toBeNull();
+    expect(reopened.clearThread(persistentChildId)).toBe(true);
+    expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
+    expect(reopened.clearThread(persistentPoolId)).toBe(true);
+    expect(reopened.readPool(persistentPoolId)).toBeNull();
+    expect(reopened.readMember(persistentSiblingId)).toBeNull();
     reopenedDatabase.close();
   });
 });

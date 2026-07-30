@@ -25,6 +25,9 @@ function htmlTitle(text: string): string | null {
 
 export function threadErrorMessage(raw: string): string {
   const trimmed = raw.trim().replace(/^Error:\s*/iu, '').replace(/^Proxy error:\s*/iu, '');
+  if (isSubagentResourceLimitError(trimmed)) {
+    return 'Task reached the system resource limit. Results have been preserved.';
+  }
   const directMessage = parsedPayloadMessage(trimmed);
   if (directMessage) return truncate(directMessage, ERROR_PREVIEW_MAX);
 
@@ -45,4 +48,16 @@ export function threadErrorMessage(raw: string): string {
   if (title) return truncate(title, 120);
   if (trimmed.startsWith('<')) return 'Server returned an HTML error page';
   return truncate(trimmed, ERROR_PREVIEW_MAX);
+}
+
+export function userFacingAgentError(raw: string, resourceLimitMessage: string): string {
+  const trimmed = raw.trim().replace(/^Error:\s*/iu, '').replace(/^Proxy error:\s*/iu, '');
+  return isSubagentResourceLimitError(trimmed)
+    ? resourceLimitMessage
+    : threadErrorMessage(trimmed);
+}
+
+function isSubagentResourceLimitError(message: string): boolean {
+  return /^Token budget exhausted mid-Turn \(\d+ of \d+ tokens\)$/iu.test(message)
+    || /^Subagent token budget exhausted \(\d+ of \d+ tokens\);/iu.test(message);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { threadErrorMessage } from '../../src/renderer/agent/threadErrorMessage';
+import { threadErrorMessage, userFacingAgentError } from '../../src/renderer/agent/threadErrorMessage';
 
 describe('threadErrorMessage', () => {
   test('extracts a readable message from a provider JSON error', () => {
@@ -16,5 +16,18 @@ describe('threadErrorMessage', () => {
 
   test('bounds unstructured errors', () => {
     expect(threadErrorMessage(`Error: ${'x'.repeat(400)}`)).toBe(`${'x'.repeat(280)}...`);
+  });
+
+  test('translates budget failures without exposing token counts', () => {
+    const translated = '任务达到系统资源上限，成果已保全。';
+    for (const raw of [
+      'Token budget exhausted mid-Turn (1234 of 1000 tokens)',
+      'Subagent token budget exhausted (1500001 of 1500000 tokens); the child refuses new work. '
+        + 'Interrupt, review its output, or spawn a fresh child.',
+    ]) {
+      const rendered = userFacingAgentError(raw, translated);
+      expect(rendered).toBe(translated);
+      expect(rendered).not.toMatch(/\d/u);
+    }
   });
 });
