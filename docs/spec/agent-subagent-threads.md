@@ -219,3 +219,45 @@ epoch, no evidence for an unchanged registry, and appended added/changed/removed
 for an existing conversation. Compaction validates and checkpoints the announced Role
 identities; `/clear` causes a fresh baseline on the next ordinary admission. The catalog
 informs model selection but never widens the parent's capability ceiling.
+
+## Delegation Contract
+
+Every delegated unit of work — a collaboration Subagent, an isolated-Skill
+child, and any future executor form — owes its delegator three products. Each
+has fixed access economics and a fixed currency per audience. New
+subagent-adjacent designs are evaluated against this contract first: name the
+layer, then obey its economics.
+
+**1. Result (pushed, free to the delegator).** The conclusion. Delivered in
+the terminal outcome (`wait_agent` / `CollaborationTerminalOutcome.result`,
+isolated-Skill result envelopes) without the delegator asking. Shipped
+(#444, #446).
+
+**2. Account (pulled, reader-pays).** The process behind the conclusion, as a
+readable projection. Access consumes the READER's context, never the child's
+budget, and never depends on the child being alive or under budget —
+verification must be possible exactly when results are most suspect. Canonical
+storage stays envelope/content-addressed (cache-stable bytes, ownership copy,
+pruning); readability is a property of the read surface, not the store: at
+terminal state the host materializes a bounded, self-contained transcript
+projection consumed through the existing file tools. No dedicated reading tool
+is added (tool-count vigilance: new tools require that no composition of
+existing capabilities covers the need). Queued: `subagent-transcript-artifact`
+(after `threadservice-decomposition`); the human account surface (task panel
+transcripts, Model Interactions) is shipped.
+
+**3. Receipt (internalized, never user-facing).** What the delegation
+consumed. The token budget is a system fail-safe — a circuit breaker sized at
+definitely-anomalous, not an allocation: humans never see or set token
+numbers; user surfaces speak time/status first and money at most; model-facing
+surfaces stay token-denominated as system internals. Enforcement lives where
+the resource is consumed (Turn admission today; the model-call boundary via
+the kernel budget port next; tree-pool conservation with depth/count
+legibility gates after). Shipped: per-child ledger, admission gate, bright
+line (#446). Queued: budget plan PRs B and C.
+
+Cross-cutting rules: the user bright line (a human-triggered Turn is never
+gated) holds across all three layers; exhaustion gates the admission of NEW
+work only and never destroys or hides produced artifacts; and the contract
+applies uniformly to every executor form — an executor that cannot yield all
+three layers is not complete.
