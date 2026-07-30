@@ -40,6 +40,7 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
+  McpToolIcon,
   NodeCreateToolIcon,
   NodeDeleteToolIcon,
   NodeEditToolIcon,
@@ -1010,7 +1011,7 @@ function toolIcon(item: ThreadToolItem): ReactNode {
     }
     case 'webSearch': return <WebSearchToolIcon size={ICON_SIZE.menu} />;
     case 'collabAgentToolCall': return <AgentIcon size={ICON_SIZE.menu} />;
-    case 'mcpToolCall': return <GenericToolIcon size={ICON_SIZE.menu} />;
+    case 'mcpToolCall': return <McpToolIcon size={ICON_SIZE.menu} />;
     case 'dynamicToolCall': return dynamicToolIcon(item);
     default: return assertNever(item);
   }

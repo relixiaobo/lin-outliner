@@ -73,6 +73,25 @@ against the current file. The recommended choices are spelled out under
 |---|---|---|---|---|
 | G5 | "Remove tag" drawn as `CloseIcon` (X) in the TagBar context menu, but tag-delete drawn as `TrashIcon` in AppliedTag — adjacent surfaces, same noun ("tag"), different glyph | TagBar `Remove` → `CloseIcon`; AppliedTag trashed badge → `TrashIcon` | codify the rule **X = detach/dismiss a transient chip or close UI; Trash = destroy persisted data**, then re-audit. "Remove tag" detaches the tag from a node (not destroying the tag entity) → X is correct; **no glyph change**, document the rule in `icons.ts` and leave AppliedTag's trashed-state Trash as-is | TagBar `removeTitle`: `tags/TagBar.tsx:121`; AppliedTag trashed: `tags/AppliedTag.tsx:31`; AppliedTag detach X: `tags/AppliedTag.tsx:63` |
 
+#### Tier 0 — agent tool-row glyphs (**already shipped elsewhere — do not redo**)
+
+These four were found while reworking the agent tool-row copy and were fixed in
+that PR at the PM's call (2026-07-30), because the new wording made each
+mismatch user-visible in the same row. They are recorded here so this plan —
+which otherwise owns every glyph choice — does not re-open them. The rest of
+this plan is untouched by that change.
+
+| # | Collision | Was | Now | Why it moved |
+|---|---|---|---|---|
+| G13 | File create vs file delete were one stroke apart at 14px, for two actions where one is destructive | `FileWriteToolIcon = FilePlus2`, `FileDeleteToolIcon = FileMinus` | `FileDeleteToolIcon = FileX` | Matches `NodeDeleteToolIcon = ListX`, so file and Node deletion agree, and stays inside the file-silhouette family. **Open for this plan:** G5's rule is "X = detach/dismiss, Trash = destroy persisted data" — deleting a file *is* destroying persisted data, so a later pass may want `Trash2` for both file and Node delete. Flagged, not settled. |
+| G14 | `web_fetch` drew a document, and the row's own wording now says "Fetched `<url>`" | `WebFetchToolIcon = ScrollText` | `WebFetchToolIcon = CloudDownload` | The scroll carried no network meaning and echoed `FileReadToolIcon = FileText` two rows away. `Globe2` stays with `web_search`. |
+| G15 | A connected MCP tool and an unmappable tool rendered identically, and can co-occur in one transcript | both `Wrench` | `McpToolIcon = Plug`; `GenericToolIcon = Wrench` kept for the unknown fallback | This is G2's principle applied one level up: G2 pinned the *unknown* fallback, but MCP was never unknown. |
+| G16 | `skill` drew an abstract glyph that did not read as a skill | `SkillIcon = Shapes` | `SkillIcon = GraduationCap` | Taste call, PM-approved: a learned capability. Distinct from `Plug` (connected) and `Puzzle` (unused). |
+
+Guarded by `tests/renderer/threadToolIcons.test.ts`: every glyph a tool row can
+show must be distinct, delete must not be a `Minus`, and fetch must not reuse
+the file-read glyph.
+
 #### Tier 3 — alias collisions to watch (low / non-user-facing)
 
 | # | Collision | Current | Proposed glyph | file:line |

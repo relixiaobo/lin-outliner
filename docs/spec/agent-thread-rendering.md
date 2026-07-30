@@ -79,6 +79,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - terminal status is **one** idiom for every tool kind — the act, then the
   outcome as an annotation (`Read intro.xhtml · failed`) — rather than a
   per-kind failure sentence. A scanning user learns the pattern once
+- every tool a row can show resolves to a **distinct** glyph, judged at the
+  14px the transcript actually renders: opposite actions never differ by a
+  single stroke (file delete is an X, not a minus beside create's plus), a
+  connected MCP tool never wears the unknown-tool fallback glyph, and a fetched
+  page is not drawn as a document. Glyph choices app-wide remain
+  `docs/plans/icon-semantics.md`'s; these tool-row rows are recorded there
 - a counted activity group summarizes mixed outcomes, so it is **not** painted by
   its worst member: its glyph and its activity phrase stay neutral, and only the
   appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")
