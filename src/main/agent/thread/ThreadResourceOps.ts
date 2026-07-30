@@ -1,39 +1,39 @@
-import { lstat, realpath, stat } from 'node:fs/promises';
+import { lstat,realpath,stat } from 'node:fs/promises';
 import { decodeTurn } from '../../../core/agent/codec';
 import type {
-  Thread,
-  ThreadAttachmentContent,
-  ThreadContextPayloadReference,
-  ThreadContextReadRequest,
-  ThreadContextReadResponse,
-  ThreadId,
-  ThreadItemOutputReadRequest,
-  ThreadItemOutputReadResponse,
-  ThreadItemOutputReference,
-  ThreadResourceReference,
-  ThreadTurnDetailsReadRequest,
-  ThreadTurnDetailsReadResponse,
-  ThreadUserContent,
-  TurnDiagnosticsPayloadReference,
+Thread,
+ThreadAttachmentContent,
+ThreadContextPayloadReference,
+ThreadContextReadRequest,
+ThreadContextReadResponse,
+ThreadId,
+ThreadItemOutputReadRequest,
+ThreadItemOutputReadResponse,
+ThreadItemOutputReference,
+ThreadResourceReference,
+ThreadTurnDetailsReadRequest,
+ThreadTurnDetailsReadResponse,
+ThreadUserContent,
+TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
 import {
-  createManagedAttachmentObservation,
-  type ManagedAttachmentObservation,
+createManagedAttachmentObservation,
+type ManagedAttachmentObservation,
 } from '../capabilities/agentAttachmentMaterialization';
 import {
-  assertContextPayloadDependencies,
-  itemContextPayloadReferences,
-  itemResourceReferences,
-  resourceReferenceKey,
+assertContextPayloadDependencies,
+itemContextPayloadReferences,
+itemResourceReferences,
+resourceReferenceKey,
 } from '../context/contextDependencies';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
 import {
-  referencesSameResourceFile,
+referencesSameResourceFile,
 } from '../persistence/ToolPayloadStore';
 import type {
-  ResolvedThreadAttachmentFile,
-  ResolvedThreadResourceFile,
-  ThreadUserContentResolutionContext,
+ResolvedThreadAttachmentFile,
+ResolvedThreadResourceFile,
+ThreadUserContentResolutionContext,
 } from '../ThreadService';
 import { ThreadCore } from './ThreadCore';
 

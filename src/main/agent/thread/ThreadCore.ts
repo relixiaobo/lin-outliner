@@ -1,31 +1,29 @@
 import {
-  createHostRootTurnAdmissionBarrierSnapshot,
-  createThreadAdmissionBarrierSnapshot,
-  type HostRootTurnAdmissionBarrierSnapshot,
-  type ThreadAdmissionBarrierSnapshot,
-} from '../../../core/agent/extensions';
-import {
-  decodeAgentCoreRecordedNotification,
-  decodeAgentCoreTransientNotification,
-  decodeTurn,
+decodeAgentCoreRecordedNotification,
+decodeAgentCoreTransientNotification,
+decodeTurn,
 } from '../../../core/agent/codec';
+import {
+createHostRootTurnAdmissionBarrierSnapshot,
+createThreadAdmissionBarrierSnapshot,
+type HostRootTurnAdmissionBarrierSnapshot,
+type ThreadAdmissionBarrierSnapshot,
+} from '../../../core/agent/extensions';
 import type {
-  AgentCoreNotification,
-  AgentCoreRecordedNotification,
-  AgentCoreTransientNotification,
-  Thread,
-  ThreadId,
-  Turn,
-  TurnId,
+AgentCoreNotification,
+AgentCoreRecordedNotification,
+AgentCoreTransientNotification,
+ThreadId,
+Turn
 } from '../../../core/agent/protocol';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { applyThreadItemDelta } from '../itemDelta';
-import { KeyedMutex, Mutex } from '../Mutex';
-import { RollbackHookRecoveryQueue } from '../RollbackHookRecoveryQueue';
+import { KeyedMutex,Mutex } from '../Mutex';
 import { RolloutStore } from '../persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from '../persistence/ThreadHistoryProjectionStore';
-import { ThreadMetadataStore, type ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
+import { ThreadMetadataStore,type ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../persistence/ToolPayloadStore';
+import { RollbackHookRecoveryQueue } from '../RollbackHookRecoveryQueue';
 export interface EphemeralThreadState {
   record: ThreadCatalogRecord;
   turns: Turn[];
