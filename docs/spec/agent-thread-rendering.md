@@ -58,10 +58,17 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   Thread and preview only a disposable scratch copy; Add to Today sends the same typed
   identity to a main-only ingest seam, which reauthorizes ownership and returns asset
   metadata without accepting or returning a managed path
-- local paths in tool arguments and results use the shared inline-file reference
-  affordance; absolute paths link directly, while relative values in path-bearing
-  JSON fields resolve against the Thread working directory. URL text is not
-  treated as a local path, and main-process preview checks remain authoritative
+- local paths in tool arguments and results retain the surrounding terminal-style
+  code rendering: no file icon, resting background, independent wrapping, or
+  ordinary-click navigation. Holding the platform primary modifier reveals the
+  path link affordance, and Cmd/Ctrl-click follows the global new-pane navigation
+  meaning; keyboard focus plus Enter opens in the current pane. The shared
+  inline-file hover preview, right-click context menu, and title tooltip still
+  attach through the same delegation attributes. Absolute paths link directly,
+  while relative values in path-bearing JSON fields resolve against the Thread
+  working directory; glob checks apply only outside declared path fields. Glob
+  expressions and URL text are not treated as concrete local paths, and
+  main-process preview checks remain authoritative
 - collaboration Items and Subagent activity link directly to their canonical
   child Thread
 - Memory used by an answer renders through the ordinary inline Node-reference

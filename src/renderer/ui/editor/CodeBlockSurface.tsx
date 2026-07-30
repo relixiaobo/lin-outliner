@@ -2,15 +2,18 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useT } from '../../i18n/I18nProvider';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { highlightCode, plainCodeHtml } from './shikiHighlighter';
+import { highlightCode, plainCodeHtml, type CodeDecoration } from './shikiHighlighter';
 
 interface ReadOnlyCodeBlockProps {
   className?: string;
   code: string;
   copyLabel?: string;
+  decorations?: readonly CodeDecoration[];
   language?: string;
   showLanguageLabel?: boolean;
 }
+
+const EMPTY_CODE_DECORATIONS: readonly CodeDecoration[] = [];
 
 export function useCodeBlockCopy(code: string) {
   const [copied, setCopied] = useState(false);
@@ -73,6 +76,7 @@ export function ReadOnlyCodeBlock({
   className,
   code,
   copyLabel,
+  decorations = EMPTY_CODE_DECORATIONS,
   language = 'text',
   showLanguageLabel = true,
 }: ReadOnlyCodeBlockProps) {
@@ -81,13 +85,17 @@ export function ReadOnlyCodeBlock({
   useEffect(() => {
     let cancelled = false;
     setHtml(plainCodeHtml(code));
-    void highlightCode(code, language).then((next) => {
-      if (!cancelled) setHtml(next);
-    });
+    void highlightCode(code, language, decorations)
+      .then((next) => {
+        if (!cancelled) setHtml(next);
+      })
+      .catch(() => {
+        if (!cancelled) setHtml(plainCodeHtml(code));
+      });
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, decorations, language]);
 
   return (
     <ReadOnlyCodeShell
@@ -98,27 +106,6 @@ export function ReadOnlyCodeBlock({
       showLanguageLabel={showLanguageLabel}
     >
       <div dangerouslySetInnerHTML={{ __html: html }} />
-    </ReadOnlyCodeShell>
-  );
-}
-
-export function PlainReadOnlyCodeBlock({
-  children,
-  className,
-  code,
-  copyLabel,
-  language = 'text',
-  showLanguageLabel = false,
-}: ReadOnlyCodeBlockProps & { children: ReactNode }) {
-  return (
-    <ReadOnlyCodeShell
-      className={className}
-      code={code}
-      copyLabel={copyLabel}
-      language={language}
-      showLanguageLabel={showLanguageLabel}
-    >
-      <pre>{children}</pre>
     </ReadOnlyCodeShell>
   );
 }

@@ -3,7 +3,9 @@ import {
   bundledLanguagesAlias,
   createHighlighter,
   type BundledLanguage,
+  type DecorationItem,
   type Highlighter,
+  type ShikiTransformer,
 } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import { normalizeCodeLanguage } from './codeLanguages';
@@ -15,6 +17,8 @@ export {
   type CodeLanguageOption,
 } from './codeLanguages';
 
+export type CodeDecoration = DecorationItem;
+
 // Dual-theme highlight: Shiki emits `--shiki-light` / `--shiki-dark` CSS custom
 // properties per token (via `defaultColor: false`) instead of baking one theme's
 // colors as inline `color`. CSS then resolves which variable wins under
@@ -24,6 +28,11 @@ export {
 const THEMES = { light: 'github-light', dark: 'github-dark' } as const;
 const THEME_NAMES = [THEMES.light, THEMES.dark];
 const PLAIN = 'text';
+const NON_FOCUSABLE_PRE_TRANSFORMER: ShikiTransformer = {
+  pre(element) {
+    element.properties.tabindex = -1;
+  },
+};
 
 // Loaded eagerly so the most common blocks highlight without a flash. Other
 // bundled languages load lazily on first use via `highlightCode`.
@@ -80,11 +89,25 @@ export function isKnownCodeLanguage(language: string | undefined | null): boolea
   return id in bundledLanguages || id in bundledLanguagesAlias;
 }
 
-export async function highlightCode(code: string, language: string | undefined | null): Promise<string> {
+export async function highlightCode(
+  code: string,
+  language: string | undefined | null,
+  decorations: readonly CodeDecoration[] = [],
+): Promise<string> {
   const id = normalizeCodeLanguage(language);
-  if (!id || id === PLAIN) return plainCodeHtml(code);
-
+  if ((!id || id === PLAIN) && decorations.length === 0) return plainCodeHtml(code);
   const highlighter = await getHighlighter();
+  const options = {
+    themes: THEMES,
+    defaultColor: false as const,
+    decorations: [...decorations],
+  };
+  const plainOptions = {
+    ...options,
+    transformers: [NON_FOCUSABLE_PRE_TRANSFORMER],
+  };
+  if (!id || id === PLAIN) return highlighter.codeToHtml(code, { lang: PLAIN, ...plainOptions });
+
   if (!loadedLangs.has(id) && !failedLangs.has(id)) {
     try {
       await highlighter.loadLanguage(id as BundledLanguage);
@@ -93,7 +116,7 @@ export async function highlightCode(code: string, language: string | undefined |
       failedLangs.add(id);
     }
   }
-  if (!loadedLangs.has(id)) return plainCodeHtml(code);
+  if (!loadedLangs.has(id)) return highlighter.codeToHtml(code, { lang: PLAIN, ...plainOptions });
 
-  return highlighter.codeToHtml(code, { lang: id, themes: THEMES, defaultColor: false });
+  return highlighter.codeToHtml(code, { lang: id, ...options });
 }

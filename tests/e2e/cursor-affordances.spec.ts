@@ -27,6 +27,8 @@ const inlineNativeAffordanceCssProperties = new Set([
 const pointerCursorSelectors = new Set([
   '.inline-ref:hover',
   '.row-editor .inline-ref:hover',
+  // Tool paths become genuine content links only while the primary modifier is held.
+  ':root.is-primary-modifier-pressed .thread-tool-path-reference:hover',
 ]);
 const helpCursorSelectors = new Map([
   ['src/renderer/styles/outliner.css|.field-value-hint', 'Field-value validation hint uses a native title tooltip.'],

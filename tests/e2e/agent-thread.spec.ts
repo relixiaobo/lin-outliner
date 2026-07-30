@@ -1772,7 +1772,7 @@ test.describe('canonical agent Thread surface', () => {
             provenance: provenance(toolId),
             namespace: 'node',
             tool: 'read',
-            arguments: { node_id: 'node-alpha', file_path: 'notes.md' },
+            arguments: { node_id: 'node-alpha', file_path: 'notes with spaces.md' },
             status: 'completed',
             contentItems: [{ type: 'json', value: { title: 'Alpha' } }],
             success: true,
@@ -1881,12 +1881,45 @@ test.describe('canonical agent Thread surface', () => {
 
     const commandPaths = command.locator('xpath=..').locator('.thread-tool-path-reference');
     await expect(commandPaths).toHaveCount(1);
-    await expect(commandPaths).toHaveAttribute('data-inline-ref-path', '/mock/workspace');
+    await expect(commandPaths).toHaveAttribute('data-tool-path', '/mock/workspace');
     const nodeTool = page.getByRole('button', { name: 'Used node.read' });
     await nodeTool.click();
     const relativePath = nodeTool.locator('xpath=..').locator('.thread-tool-path-reference');
-    await expect(relativePath).toHaveAttribute('data-inline-ref-path', '/mock/workspace/notes.md');
+    await expect(relativePath).toHaveAttribute('data-tool-path', '/mock/workspace/notes with spaces.md');
+    await expect(relativePath).toHaveAttribute('data-inline-ref-kind', 'local-file');
+    await expect(relativePath).toHaveAttribute('data-inline-ref-path', '/mock/workspace/notes with spaces.md');
+    await expect(relativePath).toHaveAttribute('data-inline-ref-entry-kind', 'file');
+    await expect(relativePath).toHaveAttribute('title', 'notes with spaces.md');
+    await expect(relativePath).not.toHaveAttribute('aria-label', /.+/);
+    await expect(relativePath).not.toHaveClass(/inline-ref/);
+    await expect(relativePath.locator('.inline-ref-file-icon')).toHaveCount(0);
+    await expect(relativePath).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(relativePath).toHaveCSS('cursor', 'auto');
+    await expect(relativePath).toHaveCSS('white-space', 'pre');
+
+    const panels = page.locator('.outline-panel-surface');
+    const panelCount = await panels.count();
     await relativePath.click();
+    await expect(panels).toHaveCount(panelCount);
+    await expect(page.locator('.outline-panel-surface.is-file-preview')).toHaveCount(0);
+
+    await relativePath.focus();
+    await page.keyboard.press('Enter');
+    await expect(panels).toHaveCount(panelCount);
+    await expect(page.locator('.outline-panel-surface.active-panel.is-file-preview'))
+      .toContainText('Mock preview text.');
+
+    await relativePath.hover();
+    await page.keyboard.down('Meta');
+    await expect(page.locator('html')).toHaveClass(/is-primary-modifier-pressed/);
+    await expect(relativePath).toHaveCSS('cursor', 'pointer');
+    await expect(relativePath).toHaveCSS('text-decoration-line', 'underline');
+    await page.keyboard.up('Meta');
+    await expect(page.locator('html')).not.toHaveClass(/is-primary-modifier-pressed/);
+    await expect(relativePath).toHaveCSS('cursor', 'auto');
+
+    await relativePath.click({ modifiers: ['Meta'] });
+    await expect(panels).toHaveCount(panelCount + 1);
     await expect(page.locator('.outline-panel-surface.active-panel.is-file-preview'))
       .toContainText('Mock preview text.');
 
@@ -1901,7 +1934,7 @@ test.describe('canonical agent Thread surface', () => {
       '```',
       '',
       '```tool node.read',
-      JSON.stringify({ node_id: 'node-alpha', file_path: 'notes.md' }, null, 2),
+      JSON.stringify({ node_id: 'node-alpha', file_path: 'notes with spaces.md' }, null, 2),
       '```',
       '',
       '```tool-result',
