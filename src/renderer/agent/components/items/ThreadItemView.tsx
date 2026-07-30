@@ -595,25 +595,41 @@ function ToolItemDisclosure({
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const detail = toolDetail(item, t, onOpenThread, threadId);
-  const [fullOutput, setFullOutput] = useState<string | null | undefined>(undefined);
+  const outputRefId = item.outputRef?.id ?? null;
+  const itemRef = useRef(item);
+  itemRef.current = item;
+  const [loadedOutput, setLoadedOutput] = useState<{
+    readonly outputRefId: string;
+    readonly text: string | null;
+  } | null>(null);
+  const outputLoaded = loadedOutput?.outputRefId === outputRefId;
   const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
+  const holdAnchorUntilSettled = expandState.holdAnchorUntilSettled;
   useEffect(() => {
-    if (!expanded || !item.outputRef || fullOutput !== undefined) return undefined;
+    if (!expanded || !outputRefId || outputLoaded) return undefined;
     let cancelled = false;
-    const anchorHold = outputAnchorHoldRef.current;
-    void onReadOutput(item)
-      .then((text) => {
-        if (!cancelled) setFullOutput(text);
-      })
-      .finally(() => {
-        anchorHold?.settle();
-        if (outputAnchorHoldRef.current === anchorHold) outputAnchorHoldRef.current = null;
-      });
+    const anchorHold = outputAnchorHoldRef.current ?? holdAnchorUntilSettled();
+    outputAnchorHoldRef.current = anchorHold;
+    const settleAnchorHold = () => {
+      anchorHold?.settle();
+      if (outputAnchorHoldRef.current === anchorHold) outputAnchorHoldRef.current = null;
+    };
+    void onReadOutput(itemRef.current)
+      .then(
+        (text) => {
+          if (!cancelled) setLoadedOutput({ outputRefId, text });
+        },
+        () => {
+          if (!cancelled) setLoadedOutput({ outputRefId, text: null });
+        },
+      )
+      .finally(settleAnchorHold);
     return () => {
       cancelled = true;
+      settleAnchorHold();
     };
-  }, [expanded, fullOutput, item, onReadOutput]);
-  const output = fullOutput ?? detail.output;
+  }, [expanded, holdAnchorUntilSettled, onReadOutput, outputLoaded, outputRefId]);
+  const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -622,8 +638,8 @@ function ToolItemDisclosure({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => {
           expandState.toggle(disclosureId, expanded, event.currentTarget);
-          if (!expanded && item.outputRef && fullOutput === undefined) {
-            outputAnchorHoldRef.current = expandState.holdAnchorUntilSettled();
+          if (!expanded && outputRefId && !outputLoaded) {
+            outputAnchorHoldRef.current = holdAnchorUntilSettled();
           }
         }}
       >
@@ -649,7 +665,9 @@ function ToolItemDisclosure({
                 code={output}
                 copyLabel={t.agent.thread.item.copyOutput}
                 cwd={threadCwd}
-                language={fullOutput ? outputLanguage(fullOutput) : detail.outputLanguage}
+                language={outputLoaded && loadedOutput.text
+                  ? outputLanguage(loadedOutput.text)
+                  : detail.outputLanguage}
               />
             </ToolDetailSection>
           ) : null}

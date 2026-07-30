@@ -2539,17 +2539,13 @@ test.describe('canonical agent Thread surface', () => {
       const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
       return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
     })).toBeLessThanOrEqual(2);
-    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
-
-    const showMore = page.getByRole('button', { name: 'Show more' });
-    await expect(showMore).toBeVisible();
-    const disclosureTop = await showMore.evaluate((element) => element.getBoundingClientRect().top);
-    await showMore.click();
-    const showLess = page.getByRole('button', { name: 'Show less' });
-    await expect(showLess).toBeVisible();
-    await expect.poll(() => showLess.evaluate((element, expectedTop) => (
-      Math.abs(element.getBoundingClientRect().top - expectedTop)
-    ), disclosureTop)).toBeLessThanOrEqual(2);
+    const sendAnchorSpacer = page.locator('.thread-send-anchor-spacer');
+    await expect(sendAnchorSpacer).toHaveCount(1);
+    const initialSpacerHeight = await sendAnchorSpacer.evaluate((element) => (
+      element.getBoundingClientRect().height
+    ));
+    expect(initialSpacerHeight).toBeGreaterThan(0);
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
     const anchoredTop = await transcript.evaluate((element) => element.scrollTop);
 
     const live = await page.evaluate(async () => {
@@ -2591,8 +2587,14 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     await expect(page.getByText('Streaming anchored evidence 36.')).toBeVisible();
+    await expect.poll(async () => (
+      await sendAnchorSpacer.count() === 0
+        ? 0
+        : sendAnchorSpacer.evaluate((element) => element.getBoundingClientRect().height)
+    )).toBeLessThan(initialSpacerHeight);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(anchoredTop - 2);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(anchoredTop + 2);
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Jump to latest' }).click();
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
@@ -2760,6 +2762,66 @@ test.describe('canonical agent Thread surface', () => {
     const turns = page.locator('.thread-transcript-turns');
     await expect(turns).toHaveAttribute('data-virtualized', 'true');
     await expect.poll(() => page.locator('[data-thread-turn-row]').count()).toBeLessThan(45);
+    const compensationAnchor = await transcript.evaluate(async (element) => {
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      element.scrollTop = Math.max(1, maximum - 80);
+      element.dispatchEvent(new Event('scroll'));
+      for (let frame = 0; frame < 16; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      const viewportTop = element.getBoundingClientRect().top;
+      const rows = Array.from(element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'));
+      const anchor = rows.find((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.top <= viewportTop && bounds.bottom > viewportTop;
+      });
+      const growthRow = rows.filter((row) => row.getBoundingClientRect().bottom <= viewportTop - 200).at(-1);
+      const anchorTurnId = anchor?.dataset.threadTurnRow;
+      const growthTurnId = growthRow?.dataset.threadTurnRow;
+      if (!anchor || !anchorTurnId || !growthRow || !growthTurnId) {
+        throw new Error('Missing virtual compensation rows');
+      }
+      growthRow.querySelector<HTMLElement>('.thread-turn')?.style.setProperty('content-visibility', 'visible');
+      const result = {
+        anchorTurnId,
+        growthTurnId,
+        offset: anchor.getBoundingClientRect().top - viewportTop,
+        scrollTop: element.scrollTop,
+      };
+      const growthProbe = document.createElement('div');
+      growthProbe.dataset.virtualGrowthProbe = 'true';
+      growthProbe.style.height = '180px';
+      growthRow.append(growthProbe);
+      return result;
+    });
+    const compensationRow = page.locator(
+      `[data-thread-turn-row="${compensationAnchor.anchorTurnId}"]`,
+    );
+    await expect.poll(() => compensationRow.evaluate((element, expectedOffset) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      return Math.abs(
+        element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - expectedOffset,
+      );
+    }, compensationAnchor.offset)).toBeLessThanOrEqual(2);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(compensationAnchor.scrollTop + 160);
+    await page.locator(
+      `[data-thread-turn-row="${compensationAnchor.growthTurnId}"]`,
+    ).evaluate((element) => {
+      element.querySelector('[data-virtual-growth-probe]')?.remove();
+    });
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(compensationAnchor.scrollTop - 2);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeLessThan(compensationAnchor.scrollTop + 2);
+    await expect.poll(() => compensationRow.evaluate((element, expectedOffset) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      return Math.abs(
+        element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - expectedOffset,
+      );
+    }, compensationAnchor.offset)).toBeLessThanOrEqual(2);
     await transcript.evaluate((element) => {
       const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
       const top = Math.max(1, Math.min(480, Math.floor(maximum / 2)));
@@ -2806,7 +2868,97 @@ test.describe('canonical agent Thread surface', () => {
       const actualOffset = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       return Math.abs(actualOffset - expectedOffset);
     }, readingAnchor.offset)).toBeLessThanOrEqual(2);
+
+    const savedNearBottom = await transcript.evaluate((element) => {
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      element.scrollTop = Math.max(1, maximum - 80);
+      element.dispatchEvent(new Event('scroll'));
+      return element.scrollTop;
+    });
+    const originalViewport = page.viewportSize();
+    if (!originalViewport) throw new Error('Missing viewport');
+    await createNewThread(page);
+    await page.setViewportSize({
+      height: originalViewport.height + 240,
+      width: originalViewport.width,
+    });
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-select')
+      .filter({ hasText: 'Long history' })
+      .click();
+    await expect(page.locator('.thread-dock-title')).toContainText('Long history');
+    await expect.poll(() => transcript.evaluate((element) => {
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      return Math.abs(element.scrollTop - maximum);
+    })).toBeLessThanOrEqual(2);
+    const clampedRestore = await transcript.evaluate((element) => ({
+      maximum: Math.max(0, element.scrollHeight - element.clientHeight),
+      top: element.scrollTop,
+    }));
+    expect(clampedRestore.maximum).toBeGreaterThan(0);
+    expect(clampedRestore.maximum).toBeLessThan(savedNearBottom);
+    expect(Math.abs(clampedRestore.top - clampedRestore.maximum)).toBeLessThanOrEqual(2);
+    await page.setViewportSize(originalViewport);
   });
+});
+
+test('restores the reader position when turn/start rejects', async ({ page }) => {
+  await openMockedApp(page, { agentTurnStartReject: 'Mock turn/start rejection' });
+  await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000fc01';
+    const itemId = '01910000-0000-7000-8000-00000000fc02';
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [{
+          id: itemId,
+          type: 'agentMessage',
+          provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+          text: Array.from({ length: 100 }, (_, index) => `Rejected send evidence ${index + 1}.`).join('\n\n'),
+          phase: 'final_answer',
+          memoryCitation: null,
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    });
+  });
+
+  const transcript = page.locator('.thread-transcript');
+  await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  const savedTop = await transcript.evaluate((element) => {
+    const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+    element.scrollTop = Math.max(1, Math.floor(maximum / 2));
+    element.dispatchEvent(new Event('scroll'));
+    return element.scrollTop;
+  });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Keep my reading position when this fails.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.locator('.thread-inline-error')).toContainText('Mock turn/start rejection');
+  await expect(composer).toHaveText('Keep my reading position when this fails.');
+  await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(savedTop - 2);
+  await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+    .toBeLessThan(savedTop + 2);
+  await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
 });
 
 test('aborts an in-flight pathless upload when its Thread is left', async ({ page }) => {

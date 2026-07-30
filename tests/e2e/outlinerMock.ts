@@ -53,6 +53,8 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
   agentTurnFailure?: boolean | string;
+  /** Rejects turn/start before accepting a Turn. */
+  agentTurnStartReject?: boolean | string;
   /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
   attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
@@ -2154,6 +2156,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }) as T;
         }
         if (method === 'turn/start') {
+          if (options.agentTurnStartReject) {
+            throw new Error(typeof options.agentTurnStartReject === 'string'
+              ? options.agentTurnStartReject
+              : 'Mock turn/start rejection');
+          }
           const thread = threadById(String(input.threadId));
           const turnId = nextCanonicalId();
           const userItemId = nextCanonicalId();

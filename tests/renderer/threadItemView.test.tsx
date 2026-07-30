@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { DocumentProjection } from '../../src/core/types';
-import type { UserMessageThreadItem } from '../../src/core/agent/protocol';
-import { ThreadItemView } from '../../src/renderer/agent/components/items/ThreadItemView';
+import type {
+  CommandExecutionThreadItem,
+  ThreadItem,
+  UserMessageThreadItem,
+} from '../../src/core/agent/protocol';
+import {
+  ThreadItemView,
+  type ThreadDisclosureState,
+  type ThreadToolItem,
+} from '../../src/renderer/agent/components/items/ThreadItemView';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
 
@@ -66,7 +74,62 @@ describe('ThreadItemView user message presentation', () => {
   });
 });
 
-function renderItem(item: UserMessageThreadItem): { readonly document: Document } {
+describe('ThreadItemView tool output disclosure', () => {
+  test('keeps one read across item identity updates and settles a rejected read', async () => {
+    let rejectRead: ((error: Error) => void) | null = null;
+    let readCount = 0;
+    let holdCount = 0;
+    let settleCount = 0;
+    const item = commandItem();
+    const rendered = renderItem(item, {
+      holdAnchorUntilSettled: () => {
+        holdCount += 1;
+        let settled = false;
+        return {
+          settle: () => {
+            if (settled) return;
+            settled = true;
+            settleCount += 1;
+          },
+        };
+      },
+      onReadToolOutput: () => {
+        readCount += 1;
+        return new Promise<string | null>((_resolve, reject) => {
+          rejectRead = reject;
+        });
+      },
+    });
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-tool-toggle');
+    expect(toggle).not.toBeNull();
+    act(() => toggle?.click());
+    await flush();
+    expect(readCount).toBe(1);
+    expect(holdCount).toBe(1);
+    expect(settleCount).toBe(0);
+
+    rendered.rerender({ ...item, status: 'completed' });
+    await flush();
+    expect(readCount).toBe(1);
+    expect(settleCount).toBe(0);
+
+    rejectRead?.(new Error('output unavailable'));
+    await flush();
+    expect(readCount).toBe(1);
+    expect(settleCount).toBe(1);
+  });
+});
+
+interface RenderItemOptions {
+  readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
+}
+
+function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
+  readonly document: Document;
+  readonly rerender: (nextItem: ThreadItem) => void;
+} {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   Object.assign(window, {
     getComputedStyle: () => ({ lineHeight: '26px' }),
@@ -88,29 +151,81 @@ function renderItem(item: UserMessageThreadItem): { readonly document: Document 
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
-  act(() => root.render(
-    <I18nProvider>
-      <ThreadItemView
-        agentResponseTail={null}
-        canEditUserMessage={false}
-        defaultReasoningExpanded={false}
-        expandState={{ isExpanded: () => false, toggle: () => undefined }}
-        index={buildIndex(emptyProjection())}
-        item={item}
-        onDisclosureToggle={() => undefined}
-        onEditUserMessage={async () => undefined}
-        onOpenNodeReference={() => undefined}
-        onOpenThread={async () => undefined}
-        onReadToolOutput={async () => null}
-        showMessageActions={false}
-        streaming={false}
-        threadCwd="/workspace"
-        threadId="thread-1"
-      />
-    </I18nProvider>,
-  ));
+  const holdAnchorUntilSettled = options.holdAnchorUntilSettled ?? (() => null);
+  const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
+  const render = (nextItem: ThreadItem) => act(() => root.render(
+      <I18nProvider>
+        <ThreadItemProbe
+          holdAnchorUntilSettled={holdAnchorUntilSettled}
+          item={nextItem}
+          onReadToolOutput={onReadToolOutput}
+        />
+      </I18nProvider>,
+    ));
+  render(item);
   mounted.push(() => act(() => root.unmount()));
-  return { document };
+  return { document, rerender: render };
+}
+
+function ThreadItemProbe({
+  holdAnchorUntilSettled,
+  item,
+  onReadToolOutput,
+}: {
+  readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly item: ThreadItem;
+  readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <ThreadItemView
+      agentResponseTail={null}
+      canEditUserMessage={false}
+      defaultReasoningExpanded={false}
+      expandState={{
+        holdAnchorUntilSettled,
+        isExpanded: () => expanded,
+        toggle: (_id, currentlyExpanded) => setExpanded(!currentlyExpanded),
+      }}
+      index={buildIndex(emptyProjection())}
+      item={item}
+      onDisclosureToggle={() => undefined}
+      onEditUserMessage={async () => undefined}
+      onOpenNodeReference={() => undefined}
+      onOpenThread={async () => undefined}
+      onReadToolOutput={onReadToolOutput}
+      showMessageActions={false}
+      streaming={false}
+      threadCwd="/workspace"
+      threadId="thread-1"
+    />
+  );
+}
+
+function commandItem(): CommandExecutionThreadItem {
+  return {
+    id: 'tool-1',
+    provenance: {
+      originThreadId: 'thread-1',
+      originTurnId: 'turn-1',
+      originItemId: 'tool-1',
+    },
+    type: 'commandExecution',
+    status: 'inProgress',
+    outputRef: {
+      id: 'a'.repeat(64),
+      mimeType: 'text/plain',
+      byteLength: 64,
+      summary: 'Full command output',
+    },
+    command: 'printf test',
+    cwd: '/workspace',
+    processId: 'process-1',
+    commandActions: [],
+    aggregatedOutput: 'Loading output',
+    exitCode: null,
+    durationMs: null,
+  };
 }
 
 function image(id: string, name: string) {

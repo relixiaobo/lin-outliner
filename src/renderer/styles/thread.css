@@ -370,7 +370,7 @@
   isolation: isolate;
   display: inline-flex;
   max-width: calc(100% - 2 * var(--space-8));
-  min-height: 28px;
+  min-height: var(--control-size-xl);
   align-items: center;
   gap: var(--space-3);
   overflow: hidden;

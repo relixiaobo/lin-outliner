@@ -459,18 +459,23 @@ so a concurrently loaded history page cannot be mistaken for the new send.
 Steering an existing active Turn keeps the bottom-follow path. The renderer does
 not insert an optimistic user message or alter notification order.
 A temporary renderer-only tail spacer gives the new message enough scroll runway
-to reach the top before response content exists. It carries no document state and
-is removed when the reader jumps or scrolls back to the latest content.
+to reach the top before response content exists. It carries no document state,
+shrinks as real response content replaces that runway, and is removed when no
+runway remains or the reader jumps to the latest content. Spacer-only runway does
+not count as unread content for the Jump to latest control.
 
 Each Thread keeps an ephemeral scroll snapshot across Thread switches. Returning
-to a Thread restores its prior position only after loaded content can reach that
-offset, without replacing the saved snapshot with an empty-history clamp; user
-scrolling takes ownership and cancels the pending restore. A followed Thread
-continues at the bottom. Threads above forty Turns reuse the established
+to a Thread waits for non-empty loaded history, then restores the prior position
+or the nearest reachable offset when viewport or history changes made the exact
+offset unavailable; empty history never replaces the saved snapshot with a top
+clamp. User scrolling takes ownership and cancels the pending restore. A failed
+send restores the pre-send position and follow state. A followed Thread continues
+at the bottom. Threads above forty Turns reuse the established
 measured-row virtual transcript with viewport overscan; terminal offscreen Turns
 do not remain mounted. When a row fully above the viewport replaces an estimate
-with a measurement, its height delta is applied to `scrollTop` in the same frame,
-so the visible reading position and disclosure anchors remain stable. Measurements
+with a measurement, its height delta is applied after the virtual container
+commits the corresponding total-height change, so browser clamping cannot discard
+the compensation and the visible reading position remains stable. Measurements
 ignore subtrees currently skipped by `content-visibility: auto`, preventing its
 intrinsic fallback size from entering the measured-height cache. The same
 content-visibility containment applies from a Turn's first render through its
