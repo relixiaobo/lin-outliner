@@ -367,6 +367,19 @@ before any directional/security-sensitive build.
   constants, not settings), and renderer translation of budget failures (user surfaces never
   show token numbers — the user-irrelevance boundary). See
   `docs/plans/subagent-budget-propagation.md`.
+- **subagent-transcript-artifact** (P2, `draft` *(no plan file yet)* — **PM-ratified design
+  2026-07-30; full plan authored by main after `threadservice-decomposition` merges** (it touches
+  the terminal-outcome path that decomposition stage 3 relocates)) — the Delegation Contract's
+  account layer for model and operator readers, zero new tools. Ratified constraints: ONE
+  faithful turn→text renderer as the sole authority (anti-parallel-copy clause; compaction's
+  lossy `deterministicSummary` explicitly exempt — different contract, documented why), with two
+  ports: (a) eager bounded transcript artifact at child terminal state (truncation reuses
+  `MAX_PERSISTED_*` caps; path delivered via `CollaborationTerminalOutcome.transcriptPath`;
+  cleanup rides descendant teardown; eager-over-lazy justified: immutable-at-terminal beats
+  micro-thrift), read by the parent model through existing file tools, reader-pays, independent
+  of child liveness or budget; (b) a stateless `bun run agent:dump` stdout projection (any
+  thread, any state, incl. diagnostics) for debugging agents and humans — forensics becomes a
+  command, not hand-written parsers (A11). Applies uniformly to isolated-Skill children.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
