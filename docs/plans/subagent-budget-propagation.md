@@ -240,12 +240,14 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
    an already-exhausted budget is PR A's admission gate's job, not the
    kernel's).
 3. **Soft landing at 80%**: the same per-call check, on first crossing 80%
-   of the budget, triggers `onBudgetWarning()` (a `TurnExecutionContext`
-   callback beside the port); ThreadService delivers ONE budget notice through
-   the EXISTING steering path — a real, canonical, diagnostics-captured
-   steering input: `[Budget notice] ~80% of the token budget is consumed
-   (<used> of <budget>). Synthesize your findings and conclude now.` Once per
-   Turn; no new mechanism, no synthetic non-canonical messages.
+   of the budget, triggers `onBudgetWarning(actuals)` (a
+   `TurnExecutionContext` callback beside the port); ThreadService delivers
+   ONE budget notice through the EXISTING steering path — a real, canonical,
+   diagnostics-captured steering input carrying ACTUAL figures (never the
+   reconstructed threshold): `[Budget notice] ~80% of the token budget is
+   consumed (<used> of <budget>). Synthesize your findings and conclude now.`
+   Once per Turn. The callback is ADVISORY under A12: its delivery failure is
+   caught, logged, and never changes turn status.
 4. **Diagnostics**: the settle records a normal interrupted outcome; no new
    activity type. The budget numbers appear in the error string only.
 5. **Tests**: kernel unit test with a scripted gateway (two calls, budget
