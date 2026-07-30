@@ -52,7 +52,10 @@ import {
   resolveUserSkillInvocation,
 } from '../../src/main/agent/capabilities/agentSkills';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
-import { subagentTranscriptPath } from '../../src/main/agent/thread/SubagentTranscriptArtifact';
+import {
+  subagentTranscriptPath,
+  subagentTranscriptRoot,
+} from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -2568,6 +2571,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: clock,
     });
     await service.initialize();
@@ -2903,6 +2907,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: () => 1_720_000_000_000,
     });
     await service.initialize();
@@ -3140,6 +3145,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       extensions,
       resolveUserContent: async (_content, context) => {
         const written = await stores.payloads.writeResourceWithStatus(
@@ -6573,6 +6579,7 @@ async function openFixture(
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: clock,
       extensions,
       ...options,
@@ -6679,8 +6686,9 @@ async function recordCollaborationSpawnBoundary(
   });
 }
 
+
 describe('subagent transcript artifact', () => {
-  test('materializes the child transcript and carries its path in the terminal outcome', async () => {
+  test('appends the child account under userData and reports its path in the outcome', async () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'transcript_child');
 
@@ -6692,15 +6700,18 @@ describe('subagent transcript artifact', () => {
     const outcome = terminal.updates[0]!;
     expect(outcome).toMatchObject({ taskPath: '/root/transcript_child', status: 'completed', result: 'Done' });
     expect(outcome.transcriptPath).toBe(subagentTranscriptPath(
-      fixture.root,
-      '/root/transcript_child',
+      transcriptRootFor(fixture),
       spawned.child.thread.id,
     ));
+    // The account is app-owned: nothing lands in the workspace the child shares
+    // with its parent, so git and workspace search never see a transcript.
+    expect(await readdir(fixture.root)).not.toContain('subagent-transcripts');
+
     const transcript = await readFile(outcome.transcriptPath!, 'utf8');
-    expect(transcript).toContain('threadId: ' + spawned.child.thread.id);
+    expect(transcript).toContain(`threadId: ${spawned.child.thread.id}`);
     expect(transcript).toContain('taskPath: /root/transcript_child');
-    expect(transcript).toContain('status: completed');
-    expect(transcript).toContain('### User');
+    expect(transcript).toContain(`parentThreadId: ${spawned.root.id}`);
+    expect(transcript).toContain('## Turn 1 — completed');
     expect(transcript).toContain('Complete the delegated task');
     expect(transcript).toContain('### Assistant (final_answer)');
     expect(transcript).toContain('Done');
@@ -6708,30 +6719,74 @@ describe('subagent transcript artifact', () => {
     await finishTranscriptRoot(fixture, spawned);
   });
 
-  test('rewrites one artifact per child instead of accumulating files', async () => {
+  test('appends a followup Turn without rewriting the bytes already on disk', async () => {
     const fixture = await createFixture();
-    const spawned = await spawnTranscriptChild(fixture, 'idempotent_child');
+    const spawned = await spawnTranscriptChild(fixture, 'growing_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const afterFirstTurn = await readFile(path, 'utf8');
 
-    const terminal = await fixture.service.waitForCollaborationActivity(
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'growing_child-followup');
+    await fixture.service.followupCollaborationTask(
       spawned.root.id,
       spawned.rootTurn.turn.id,
+      'growing_child-followup',
+      'growing_child',
+      'Also check the second case',
     );
-    const idle = await fixture.service.waitForCollaborationActivity(
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+
+    const afterSecondTurn = await readFile(path, 'utf8');
+    expect(afterSecondTurn.startsWith(afterFirstTurn)).toBe(true);
+    expect(afterSecondTurn).toContain('## Turn 1 — completed');
+    expect(afterSecondTurn).toContain('## Turn 2 — completed');
+    expect(afterSecondTurn).toContain('Also check the second case');
+    // Exactly one header, so the append never re-emitted the preamble.
+    expect(afterSecondTurn.match(/# Agent Thread transcript/g)).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('rebuilds the whole artifact when the file disagrees with the cursor', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'rebuilt_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const expected = await readFile(path, 'utf8');
+
+    // Truncate behind the cursor's back — the shape a crash mid-append leaves.
+    await writeFile(path, 'clobbered', 'utf8');
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'rebuilt_child-followup');
+    await fixture.service.followupCollaborationTask(
       spawned.root.id,
       spawned.rootTurn.turn.id,
+      'rebuilt_child-followup',
+      'rebuilt_child',
+      'Second pass',
     );
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
 
-    expect(idle.reason).toBe('idle');
-    expect(idle.updates[0]!.transcriptPath).toBe(terminal.updates[0]!.transcriptPath);
-    expect(await readdir(join(fixture.root, 'subagent-transcripts'))).toHaveLength(1);
+    const rebuilt = await readFile(path, 'utf8');
+    expect(rebuilt).not.toContain('clobbered');
+    expect(rebuilt.startsWith(expected.slice(0, expected.indexOf('## Turn 1')))).toBe(true);
+    expect(rebuilt).toContain('## Turn 1 — completed');
+    expect(rebuilt).toContain('## Turn 2 — completed');
+    expect(rebuilt.match(/# Agent Thread transcript/g)).toHaveLength(1);
 
     await finishTranscriptRoot(fixture, spawned);
   });
 
   test('delivers the outcome with a null path when the artifact cannot be written (A12)', async () => {
     const fixture = await createFixture();
-    // Occupy the artifact directory name with a file so the write must fail.
-    await writeFile(join(fixture.root, 'subagent-transcripts'), 'not a directory', 'utf8');
+    // Occupy the artifact directory name with a file so every write must fail.
+    mkdirSync(join(fixture.root, 'app-data'), { recursive: true });
+    await writeFile(transcriptRootFor(fixture), 'not a directory', 'utf8');
     const spawned = await spawnTranscriptChild(fixture, 'unwritable_child');
 
     const terminal = await fixture.service.waitForCollaborationActivity(
@@ -6749,21 +6804,55 @@ describe('subagent transcript artifact', () => {
     await finishTranscriptRoot(fixture, spawned);
   });
 
-  test('removes the artifact when the Thread is deleted', async () => {
+  test('keeps delivering the result when a payload read throws under the account (A12)', async () => {
     const fixture = await createFixture();
-    const spawned = await spawnTranscriptChild(fixture, 'deleted_child');
+    fixture.stores.payloads.readTextReference = async () => { throw new Error('payload store is unavailable'); };
+    const spawned = await spawnTranscriptChild(fixture, 'throwing_reader_child');
+
     const terminal = await fixture.service.waitForCollaborationActivity(
       spawned.root.id,
       spawned.rootTurn.turn.id,
     );
-    const path = terminal.updates[0]!.transcriptPath!;
-    expect(await readFile(path, 'utf8')).toContain('taskPath: /root/deleted_child');
+
+    expect(terminal.updates[0]).toMatchObject({ status: 'completed', result: 'Done' });
+    expect(terminal.updates[0]!.transcriptPath).not.toBeNull();
 
     await finishTranscriptRoot(fixture, spawned);
-    await fixture.service.deleteThread(spawned.root.id);
+  });
 
-    expect(await readdir(join(fixture.root, 'subagent-transcripts'))).toEqual([]);
+  test('does not resurrect the artifact when deletion races the parked parent wait', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'deleted_child');
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    expect(await readFile(path, 'utf8')).toContain('taskPath: /root/deleted_child');
+
+    // Deletion's stop cascade wakes this parked wait; nothing it does may write.
+    const parked = fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await fixture.service.deleteThread(spawned.root.id);
+    await parked.catch(() => undefined);
+
+    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
     await fixture.service.close();
+  });
+
+  test('sweeps transcripts whose Thread no longer exists at startup', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'swept_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await finishTranscriptRoot(fixture, spawned);
+    await fixture.service.close();
+
+    const root = transcriptRootFor(fixture);
+    const orphan = subagentTranscriptPath(root, '019fb2da-0000-7000-8000-00000000dead');
+    await writeFile(orphan, '# orphaned transcript\n', 'utf8');
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+
+    const remaining = await readdir(root);
+    expect(remaining).not.toContain('019fb2da-0000-7000-8000-00000000dead.md');
+    expect(remaining).toContain(`${spawned.child.thread.id}.md`);
+    await reopened.service.close();
   });
 
   test('lets the parent verify a reported claim by grepping the transcript with the existing file tools', async () => {
@@ -6775,7 +6864,8 @@ describe('subagent transcript artifact', () => {
     );
     const outcome = terminal.updates[0]!;
 
-    // The parent's own capability set, unchanged: no account-layer tool, no widened path.
+    // The parent's own capability set, unchanged: no account-layer tool, and an
+    // absolute path outside the workspace needs no permission widening.
     const tools = createLocalTools({ localRoot: fixture.root, scratchRoot: join(fixture.root, 'agent-scratch') });
     const grep = await executeTool(tools, 'file_grep', 'verify-claim', {
       pattern: outcome.result!,
@@ -6816,9 +6906,9 @@ describe('subagent transcript artifact', () => {
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
-    const path = await fixture.service.materializeSubagentTranscript(child.thread.id);
+    const path = await fixture.service.subagentTranscriptPath(child.thread.id);
 
-    expect(path).toBe(subagentTranscriptPath(fixture.root, child.taskPath, child.thread.id));
+    expect(path).toBe(subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id));
     const transcript = await readFile(path!, 'utf8');
     expect(transcript).toContain(`taskPath: ${child.taskPath}`);
     expect(transcript).toContain('Review the pending change');
@@ -6829,6 +6919,11 @@ describe('subagent transcript artifact', () => {
     await fixture.service.close();
   });
 });
+
+/** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
+function transcriptRootFor(fixture: Fixture): string {
+  return subagentTranscriptRoot(join(fixture.root, 'app-data'));
+}
 
 async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{
   root: Awaited<ReturnType<ThreadService['startThread']>>['thread'];
@@ -6857,6 +6952,7 @@ async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise
   await fixture.executor.waitUntilWaiting(1);
   fixture.executor.finish(1);
   await fixture.service.waitForIdle(child.thread.id);
+  await fixture.service.flushSubagentTranscript(child.thread.id);
   return { root, rootTurn, child };
 }
 
@@ -6866,4 +6962,5 @@ async function finishTranscriptRoot(
 ): Promise<void> {
   fixture.executor.finish(0);
   await fixture.service.waitForIdle(spawned.root.id);
+  await fixture.service.close();
 }

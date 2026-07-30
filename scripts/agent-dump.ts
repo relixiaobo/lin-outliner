@@ -6,7 +6,7 @@
  * Forensics as a command instead of a hand-written parser. It works for ANY
  * Thread in ANY state — root, Subagent, isolated Skill, completed, errored, or
  * still running — because it projects whatever the canonical log has persisted
- * so far. It shares ONE renderer with the terminal transcript artifact
+ * so far. It shares ONE renderer with the transcript artifact
  * (`thread/TranscriptRenderer.ts`), so the operator and the parent model can
  * never be reading two different truths.
  *
@@ -55,7 +55,6 @@ async function main(argv: readonly string[]): Promise<number> {
     const transcript = await renderTranscript(
       allTurns(history, threadId),
       {
-        readContext: (ref) => payloads.readContext(threadId, ref),
         readOutput: (ref) => payloads.readTextReference(threadId, ref),
         readDiagnostics: (ref) => payloads.readTurnDiagnostics(threadId, ref),
       },
@@ -118,4 +117,14 @@ function bunSqliteAdapter(database: Database): SqliteDatabase {
   };
 }
 
-process.exitCode = await main(process.argv.slice(2));
+/**
+ * Every failure exits through here rather than an unhandled rejection: a
+ * malformed thread id and a torn rollout are this CLI's PRIMARY forensic
+ * inputs, and a stack trace on those is a broken tool, not a diagnosis.
+ */
+try {
+  process.exitCode = await main(process.argv.slice(2));
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n${USAGE}\n`);
+  process.exitCode = 2;
+}

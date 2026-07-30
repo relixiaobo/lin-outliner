@@ -2,10 +2,10 @@
  * TranscriptRenderer — the single faithful Turn -> text projection.
  *
  * AUTHORITY. This module is the ONLY faithful renderer of canonical Turns into
- * readable text. Every later faithful-text need — the terminal transcript
- * artifact, the `agent:dump` operator CLI, any forensics export — routes here
- * instead of growing a second copy. A parallel renderer is exactly what makes
- * two disagreeing "truths" about one Thread possible.
+ * readable text. Every later faithful-text need — the transcript artifact, the
+ * `agent:dump` operator CLI, any forensics export — routes here instead of
+ * growing a second copy. A parallel renderer is exactly what makes two
+ * disagreeing "truths" about one Thread possible.
  *
  * EXEMPTION (do not unify). `deterministicSummary` in
  * `context/ContextCompaction.ts` is LOSSY BY CONTRACT: one line per Item,
@@ -14,6 +14,11 @@
  * the store kept, for a reader that pulls detail on demand. Merging them would
  * force one of the two contracts to break, so they stay separate on purpose.
  *
+ * ONE TURN IS THE UNIT. `renderTurn` renders exactly one Turn and reads only
+ * that Turn's payloads; `renderTranscript` composes it. The artifact appends one
+ * completed Turn at a time and never re-renders history, so the unit of
+ * rendering has to be the unit of appending.
+ *
  * PURITY. Turns plus a payload reader are injected; this module imports no
  * store and performs no I/O of its own. Bounds reuse the persistence caps
  * (`MAX_PERSISTED_*`), so the projection is bounded exactly where the canonical
@@ -21,8 +26,6 @@
  */
 import type {
   DynamicToolCallThreadItem,
-  ThreadContextPayload,
-  ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadUserContent,
@@ -30,15 +33,23 @@ import type {
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
-import { historyToolArguments, historyToolIdentity, toolItemVisibleOutputText } from '../context/ContextProjector';
+import {
+  dynamicToolImageIdentity,
+  historyToolArguments,
+  historyToolIdentity,
+  toolItemVisibleOutputText,
+} from '../context/ContextProjector';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
   MAX_PERSISTED_TOOL_OUTPUT_CHARS,
 } from '../runtime/PiTurnExecutor';
 
-/** Injected read surface. Every reference resolves through the caller's store. */
+/**
+ * Injected read surface. It carries only what rendering actually calls: context
+ * payloads render as one-line markers built from Item fields, so no
+ * `readContext` member belongs here.
+ */
 export interface TranscriptPayloadReader {
-  readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   /** Optional: `full` detail renders per-provider-call usage when available. */
   readDiagnostics?(ref: TurnDiagnosticsPayloadReference): Promise<TurnDiagnosticsPayload | null>;
@@ -56,11 +67,16 @@ export type TranscriptDetail = 'brief' | 'full';
 export interface TranscriptSubject {
   readonly threadId?: string;
   readonly taskPath?: string | null;
+  readonly parentThreadId?: string | null;
   readonly role?: string | null;
   readonly nickname?: string | null;
-  readonly model?: string | null;
-  readonly status?: string | null;
   readonly cwd?: string | null;
+}
+
+export interface RenderTurnOptions {
+  readonly detail?: TranscriptDetail;
+  /** 1-based position of this Turn among the Thread's completed Turns. */
+  readonly ordinal: number;
 }
 
 export interface RenderTranscriptOptions {
@@ -71,60 +87,50 @@ export interface RenderTranscriptOptions {
 /** Free text is persisted unbounded; cap it at the tool-output bound for parity. */
 const MAX_TRANSCRIPT_TEXT_CHARS = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
 
-export async function renderTranscript(
-  turns: readonly Turn[],
-  reader: TranscriptPayloadReader,
-  options: RenderTranscriptOptions = {},
-): Promise<string> {
-  const detail = options.detail ?? 'brief';
-  const lines: string[] = [
-    '# Agent Thread transcript',
-    '',
-    'Faithful projection of the canonical Turns of one Thread, bounded per field.',
-    'Each entry is a heading, then metadata lines, then verbatim content:',
-    'a heading that appears inside content is content, not structure.',
-    '',
-    ...subjectLines(options.subject, turns.length, detail),
-  ];
-
-  for (const [index, turn] of turns.entries()) {
-    lines.push('', ...await turnLines(turn, index + 1, turns.length, reader, detail));
-  }
-
-  if (turns.length === 0) lines.push('', 'No Turns are persisted for this Thread yet.');
-  return `${lines.join('\n').trimEnd()}\n`;
-}
-
-function subjectLines(
+/**
+ * The once-per-file preamble. It deliberately carries no Turn count and no
+ * Thread status: the file grows after this block is written, so anything that
+ * changes over the child's life would be stale the moment the next Turn lands.
+ */
+export function renderTranscriptHeader(
   subject: TranscriptSubject | undefined,
-  turnCount: number,
-  detail: TranscriptDetail,
-): string[] {
+  detail: TranscriptDetail = 'brief',
+): string {
   const entries: Array<[string, string | null | undefined]> = [
     ['threadId', subject?.threadId],
     ['taskPath', subject?.taskPath],
+    ['parentThreadId', subject?.parentThreadId],
     ['role', subject?.role],
     ['nickname', subject?.nickname],
-    ['model', subject?.model],
-    ['status', subject?.status],
     ['cwd', subject?.cwd],
   ];
-  return [
+  return `${[
+    '# Agent Thread transcript',
+    '',
+    'Faithful projection of the canonical Turns of one Thread, bounded per field.',
+    'Appended one completed Turn at a time; a Turn still running is not here yet.',
+    'Each entry is a heading, then metadata lines, then verbatim content:',
+    'a heading that appears inside content is content, not structure.',
+    '',
     ...entries.flatMap(([key, value]) => (value ? [`${key}: ${value}`] : [])),
-    `turns: ${turnCount}`,
     `detail: ${detail}`,
-  ];
+  ].join('\n')}\n`;
 }
 
-async function turnLines(
+/**
+ * One Turn, as an appendable block. It leads with a blank line and ends with a
+ * newline, so concatenating blocks — by append or by `renderTranscript` —
+ * produces identical bytes either way.
+ */
+export async function renderTurn(
   turn: Turn,
-  ordinal: number,
-  total: number,
   reader: TranscriptPayloadReader,
-  detail: TranscriptDetail,
-): Promise<string[]> {
+  options: RenderTurnOptions,
+): Promise<string> {
+  const detail = options.detail ?? 'brief';
   const lines = [
-    `## Turn ${ordinal}/${total} — ${turn.status}`,
+    '',
+    `## Turn ${options.ordinal} — ${turn.status}`,
     `trigger: ${triggerLabel(turn)}`,
     `duration: ${turn.durationMs === null ? 'unknown' : `${turn.durationMs}ms`}`,
     `model: ${turn.execution.modelProvider}/${turn.execution.model} (${turn.execution.reasoningEffort})`,
@@ -138,7 +144,22 @@ async function turnLines(
   if (detail === 'full') lines.push(...await providerCallLines(turn, reader));
 
   for (const item of turn.items) lines.push('', ...await itemLines(item, reader, detail));
-  return lines;
+  return `${lines.join('\n')}\n`;
+}
+
+/** Whole-Thread rendering: byte-identical to the header plus one append per Turn. */
+export async function renderTranscript(
+  turns: readonly Turn[],
+  reader: TranscriptPayloadReader,
+  options: RenderTranscriptOptions = {},
+): Promise<string> {
+  const detail = options.detail ?? 'brief';
+  let text = renderTranscriptHeader(options.subject, detail);
+  for (const [index, turn] of turns.entries()) {
+    text += await renderTurn(turn, reader, { detail, ordinal: index + 1 });
+  }
+  if (turns.length === 0) text += '\nNo Turns are persisted for this Thread yet.\n';
+  return text;
 }
 
 function triggerLabel(turn: Turn): string {
@@ -284,15 +305,11 @@ function dynamicTextOutput(item: DynamicToolCallThreadItem): string | null {
   return parts.length > 0 ? parts.join('\n') : null;
 }
 
+/** The identity line the provider sees, from the provider's own helper — never a copy of it. */
 function imageOutputLines(item: DynamicToolCallThreadItem): string[] {
-  return (item.contentItems ?? []).flatMap((part) => {
-    if (part.type !== 'image') return [];
-    const ref = 'promptImage' in part ? part.promptImage : part.source.ref;
-    const source = part.source.kind === 'localFile' ? part.source.path : part.source.ref.fileName;
-    const alt = part.alt?.trim().replace(/\s+/g, ' ');
-    const label = alt && alt !== source ? `${alt} (${source})` : alt || source;
-    return [`[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes]`];
-  });
+  return (item.contentItems ?? []).flatMap((part) => (part.type === 'image'
+    ? [dynamicToolImageIdentity(part, 'promptImage' in part ? part.promptImage : part.source.ref)]
+    : []));
 }
 
 function cursorLabel(cursor: { readonly turnId: string; readonly itemId: string }): string {

@@ -270,7 +270,7 @@ pruning); readability is a property of the read surface, not the store: at
 terminal state the host materializes a bounded, self-contained transcript
 projection consumed through the existing file tools. No dedicated reading tool
 is added (tool-count vigilance: new tools require that no composition of
-existing capabilities covers the need). Shipped (#458), with the human account
+existing capabilities covers the need). Shipped (#460), with the human account
 surface (task panel transcripts, Model Interactions) already shipped. The
 mechanism is specified below.
 
@@ -278,17 +278,22 @@ mechanism is specified below.
 
 **One faithful renderer.** `thread/TranscriptRenderer.ts` is the ONLY faithful
 projection of canonical Turns into readable text, and it is the authority every
-later faithful-text need routes through. It is a pure function over Turns plus an
-injected payload reader — it imports no store — and renders per Turn a header
-(ordinal, status, duration, model, usage) followed by the Items in canonical
-order: user and steering input verbatim, assistant text, reasoning summaries,
-tool calls as `name(args) -> output`, and evidence/reset/compaction as one-line
+later faithful-text need routes through. `renderTurn` renders exactly one Turn
+and reads only that Turn's payloads; `renderTranscript` composes it and is
+byte-identical to a header plus one append per Turn — the unit of rendering is
+the unit of appending, by construction. Both are pure over Turns plus an
+injected payload reader (no store imports, no I/O). Per Turn: a header
+(ordinal, status, duration, model, usage) then the Items in canonical order —
+user and steering input verbatim, assistant text, reasoning summaries, tool
+calls as `name(args) -> output`, and evidence/reset/compaction as one-line
 markers. Two detail levels: `brief` (the artifact) and `full`, which adds Item
 ids, payload digests, per-provider-call usage, and raw reasoning for forensics.
 Every field is bounded by the persistence caps (`MAX_PERSISTED_*`) with an
-explicit `[truncated N bytes]` marker, so the projection is bounded exactly where
-the canonical record is bounded and a reader can tell a short answer from a cut
-one.
+explicit `[truncated N bytes]` marker, so the projection is bounded exactly
+where the canonical record is bounded and a reader can tell a short answer from
+a cut one. Tool-image identity comes from `ContextProjector`'s
+`dynamicToolImageIdentity` — the same line the provider sees, never a second
+copy of it.
 
 **Compaction's summary is exempt on purpose.** `deterministicSummary` in
 `context/ContextCompaction.ts` is lossy by contract — one line per Item, clamped
@@ -296,20 +301,54 @@ to a context budget, for a provider audience that must forget detail. The two
 must not be unified: this renderer keeps whatever the store kept, that one must
 shrink.
 
-**Artifact.** At a child's terminal state the host writes
-`<child cwd>/subagent-transcripts/<task-path-with-dashes>-<thread-id suffix>.md`.
-Children copy the parent's `cwd`, so the parent reads it with the existing
-`file_read` / `file_grep` and no capability is widened. The Thread-id suffix is
-load-bearing: a task path is unique only within a session, and sibling sessions
-share one workspace `cwd`. The path is derived, never random, so re-materializing
-a child always overwrites the same file and a repeat after a crash converges.
-Writing is best-effort per A12: a failed write logs and yields
-`transcriptPath: null`, because losing the account must never cost the delegator
-the result or the Turn. Isolated-Skill children take the identical path and
-renderer — the contract applies uniformly to every executor form. Thread deletion
-removes the artifact in the same descendant cascade that drops history,
-rollouts, and payloads. Artifacts are disposable: canonical truth stays in the
-rollout log and the payload store.
+**Artifact: app-owned, append-only.** The file is
+`<userData>/subagent-transcripts/<threadId>.md`. Storage is app-owned and never
+the workspace — git never sees a transcript, so there is no gitignore to
+maintain, no workspace `file_glob`/`file_grep` noise, and no path by which a
+secret echoed into a tool output becomes a committed file. The parent still
+reads it with the existing `file_read` / `file_grep`: the capability layer
+resolves absolute paths, so an app-owned location costs no new tool and no
+permission change. The Thread id alone names the file — globally unique and
+derivable from the Thread record, so cleanup and tooling can always reconstruct
+the path.
+
+The artifact is extended once per **completed** child Turn, at the child's
+turn-completion point, and never on the parent's read path. A completed Turn is
+immutable in the event-sourced store, which is what makes the append cursor
+monotonic and dissolves two whole problem classes: nothing cached can go stale
+because history is never re-rendered, and a concurrent reader sees a
+whole-Turn prefix rather than a torn file. A Turn still running is simply not in
+the file yet; steering and messages remain the live-interaction surface.
+Appends are serialized per child so Turns land in completion order.
+
+**Recovery.** The in-session cursor records how many Turns were appended and how
+many bytes that produced. When the cursor is cold (process restart mid-child) or
+disagrees with the file's size, the artifact is rebuilt once from the completed
+Turns through `atomicWriteFile` (tmp+rename, so readers see old-or-new and never
+a partial file) and appending resumes. Artifacts stay disposable and rebuildable:
+canonical truth is the rollout log and the payload store.
+
+**Contract surface.** `CollaborationTerminalOutcome.transcriptPath` carries the
+absolute path, and `wait_agent` stays result-first: it renders nothing, and only
+reports whether the artifact is on disk after waiting on the child's own append
+chain. Isolated-Skill children use the identical location, renderer, and write
+model, and their result envelope carries the same path — the contract applies
+uniformly to every executor form.
+
+**A12, end to end.** Every step the account performs — spawn-edge lookup, Turn
+reads, payload reads, and the write — sits inside the best-effort guard, not
+just the write. An account failure logs, leaves `transcriptPath` null, and never
+fails the Turn, the outcome delivery, or the Skill result.
+
+**Lifecycle.** `ThreadCatalogOps.deleteThread`'s descendant cascade removes the
+artifact, and two guards close the deletion race (deletion's stop cascade wakes
+the parent's parked `wait_agent`): materialization skips when the Thread is in
+`core.stoppingThreads`, and the cascade drains the child's append chain and
+removes the file only after coordination-state teardown, so no in-flight append
+can land behind the removal. At startup an orphan sweep deletes any transcript
+whose Thread id has no Thread record (A11: the work queue is derived from disk,
+so an interrupted sweep resumes for free). Accumulation here is an app-retention
+concern; git is never involved.
 
 **Operator dump.** `bun run agent:dump <userDataDir> <threadId> [--brief]`
 prints the same projection at `full` detail for ANY Thread in ANY state,
@@ -317,17 +356,10 @@ including one still running, so forensics is a command instead of a hand-written
 parser. It is read-only by construction: the Thread's rollout JSONL is the only
 file touched (via the non-repairing `RolloutStore.readSnapshot`, so it never
 truncates a torn tail another process owns), and the projection is rebuilt in a
-throwaway in-memory database rather than opening the app's SQLite files.
-
-**3. Receipt (internalized, never user-facing).** What the delegation
-consumed. The token budget is a system fail-safe — a circuit breaker sized at
-definitely-anomalous, not an allocation: humans never see or set token
-numbers; user surfaces speak time/status first and money at most; model-facing
-surfaces stay token-denominated as system internals. Enforcement lives where
-the resource is consumed (Turn admission today; the model-call boundary via
-the kernel budget port next; tree-pool conservation with depth/count
-legibility gates after). Shipped: per-child ledger, admission gate, bright
-line (#446). Queued: budget plan PRs B and C.
+throwaway in-memory database rather than opening the app's SQLite files. A
+top-level guard routes every failure — invalid Thread ids and corrupt rollouts
+above all, since those are the CLI's primary forensic inputs — through the
+usage/exit-2 path instead of an unhandled-rejection stack trace.
 
 Cross-cutting rules: the user bright line (a human-triggered Turn is never
 gated) holds across all three layers — as an ADMISSION-LEVEL invariant and

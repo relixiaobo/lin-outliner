@@ -12,7 +12,12 @@ import type {
 import {
   MAX_PERSISTED_TOOL_OUTPUT_CHARS,
 } from '../../src/main/agent/runtime/PiTurnExecutor';
-import { renderTranscript, type TranscriptPayloadReader } from '../../src/main/agent/thread/TranscriptRenderer';
+import {
+  renderTranscript,
+  renderTranscriptHeader,
+  renderTurn,
+  type TranscriptPayloadReader,
+} from '../../src/main/agent/thread/TranscriptRenderer';
 
 const THREAD_ID = 'thread-child';
 const TURN_ID = 'turn-child-1';
@@ -24,9 +29,9 @@ describe('transcript renderer', () => {
       subject: {
         threadId: THREAD_ID,
         taskPath: '/root/audit',
+        parentThreadId: 'thread-parent',
         role: 'worker',
         nickname: 'Auditor',
-        status: 'completed',
         cwd: '/w',
       },
     });
@@ -34,19 +39,19 @@ describe('transcript renderer', () => {
     expect(rendered).toBe(`# Agent Thread transcript
 
 Faithful projection of the canonical Turns of one Thread, bounded per field.
+Appended one completed Turn at a time; a Turn still running is not here yet.
 Each entry is a heading, then metadata lines, then verbatim content:
 a heading that appears inside content is content, not structure.
 
 threadId: thread-child
 taskPath: /root/audit
+parentThreadId: thread-parent
 role: worker
 nickname: Auditor
-status: completed
 cwd: /w
-turns: 1
 detail: brief
 
-## Turn 1/1 — completed
+## Turn 1 — completed
 trigger: subagent (parent thread-parent)
 duration: 500ms
 model: anthropic/test-model (medium)
@@ -155,7 +160,7 @@ Two files: a.ts and b.ts.
 
     const rendered = await renderTranscript([running], reader());
 
-    expect(rendered).toContain('## Turn 1/1 — inProgress');
+    expect(rendered).toContain('## Turn 1 — inProgress');
     expect(rendered).toContain('duration: unknown');
     expect(rendered).toContain('### Tool file_grep — inProgress');
   });
@@ -170,15 +175,27 @@ Two files: a.ts and b.ts.
 
     const rendered = await renderTranscript([failed], reader());
 
-    expect(rendered).toContain('## Turn 1/1 — failed');
+    expect(rendered).toContain('## Turn 1 — failed');
     expect(rendered).toContain('error: Provider refused [provider_error] — HTTP 400');
     expect(rendered).toContain('[Items were not loaded at projection time: itemsView=summary]');
+  });
+
+  test('composes byte-identically to a header plus one append per Turn', async () => {
+    const subject = { threadId: THREAD_ID, taskPath: '/root/audit' };
+    const turns = [completedTurn(), turnWith([bashItem(BASH_OUTPUT)])];
+
+    const composed = await renderTranscript(turns, reader(), { subject });
+
+    let appended = renderTranscriptHeader(subject);
+    for (const [index, turn] of turns.entries()) {
+      appended += await renderTurn(turn, reader(), { ordinal: index + 1 });
+    }
+    expect(composed).toBe(appended);
   });
 
   test('states that no Turns are persisted rather than emitting an empty file', async () => {
     const rendered = await renderTranscript([], reader(), { subject: { threadId: THREAD_ID } });
 
-    expect(rendered).toContain('turns: 0');
     expect(rendered).toContain('No Turns are persisted for this Thread yet.');
   });
 });
@@ -189,7 +206,6 @@ function reader(outputs: Readonly<Record<string, string>> = {}): TranscriptPaylo
     ...Object.entries(outputs).map(([id, text]) => [outputReference(id, text).id, text] as const),
   ]);
   return {
-    readContext: async () => null,
     readOutput: async (ref: ThreadItemOutputReference) => byId.get(ref.id) ?? null,
     readDiagnostics: async () => diagnosticsPayload(),
   };

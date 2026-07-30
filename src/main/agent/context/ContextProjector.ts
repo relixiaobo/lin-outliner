@@ -1038,7 +1038,7 @@ async function projectedToolOutputText(
   return text;
 }
 
-function dynamicToolImageIdentity(
+export function dynamicToolImageIdentity(
   part: Extract<NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number], { type: 'image' }>,
   ref: ThreadResourceReference,
 ): string {

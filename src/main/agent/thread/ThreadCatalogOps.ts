@@ -517,7 +517,6 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.clearGoal(descendantId);
           this.clearSubagentBudget(descendantId);
-          await this.collaboration.deleteTranscriptArtifact(descendantId);
           this.core.history.deleteThread(descendantId);
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
@@ -538,6 +537,11 @@ export class ThreadCatalogOps {
           }
           this.clearThreadCoordinationState(subtree.threadIds);
         });
+        // After coordination-state teardown, so no append the cascade raced can
+        // land behind the removal and resurrect a transcript the user deleted.
+        for (const descendantId of [...subtree.threadIds].reverse()) {
+          await this.collaboration.deleteTranscriptArtifact(descendantId);
+        }
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
