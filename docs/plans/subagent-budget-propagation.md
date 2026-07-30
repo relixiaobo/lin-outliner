@@ -11,6 +11,34 @@ neither the parent nor the user able to see or stop it. The budget mechanism
 (`spawn_agent`) both exist and are wired to nothing in common. This plan
 connects them; it introduces **no new concepts**.
 
+## Sizing policy (PM-ratified 2026-07-30)
+
+The budget is a **circuit breaker, not an allocation**. Empirical basis: local
+usage data (legitimate subagent threads span 12k-432k totalTokens — a 35x
+range, median 94k; the incident runaway at 682k sits only 1.6x above the
+heaviest legitimate task), so no tight default can separate normal from
+anomalous without false-killing real work. Industry evidence agrees: systems
+that set tight per-subagent caps collect "my task died producing nothing" bug
+reports (Claude Code issues #78460/#25569), while generous totals with
+turn/spawn bounds go unremarked. An under-budget failure (task death) is far
+worse UX than an over-budget one (bounded spend); the policy is therefore
+asymmetric:
+
+- **Global default 1,500,000 tokens, ON by default** (~3x the heaviest
+  observed legitimate thread; worst case a runaway burns a few dollars before
+  breaking). An opt-in breaker protects nobody — the 2026-07-29 incident had
+  no one asking for budgets.
+- **Soft landing before hard stop**: at 80% consumption the child receives one
+  budget notice as a real steering input ("synthesize findings and conclude
+  now") — converting task death into early completion. The hard stop is for
+  children that ignore it.
+- **Decision ladder**: explicit user directive in the prompt > parent model's
+  per-spawn `max_total_tokens` > (future, data-driven) Role/Skill defaults >
+  the global default. Launch ships the ladder's ends only.
+- Budget measures `totalTokens` (includes cacheRead — work volume, not billed
+  cost); the 1.5M default absorbs that inflation. CacheRead down-weighting is
+  a deferred, data-informed follow-up.
+
 ## Goal
 
 1. `collaboration.spawn_agent` accepts an optional token budget; spawning
@@ -30,9 +58,11 @@ connects them; it introduces **no new concepts**.
 
 - No subtree/aggregate budgets (a parent budget covering grandchildren):
   double-counting semantics are not worth the complexity now. Per-child only.
-- No default budget in runtime settings in this plan (deferred, PM-decidable
-  later; the spawn parameter is optional and absent means unlimited, exactly
-  today's behavior).
+- No per-Role/Skill defaults yet (data-driven follow-up once the Goal usage
+  ledger has a few weeks of distribution); launch carries the single global
+  default from the Sizing policy.
+- No cacheRead down-weighting in the budget measure at launch (deferred,
+  data-informed).
 - No new `TurnStatus`, no protocol-surface change beyond the two schema
   additions named below.
 - No cost/currency budgets — tokens only, matching `ThreadGoal`.
@@ -99,9 +129,16 @@ are visible to the parent.
    `collaborationWaitResult`): populate `tokensUsed`/`tokenBudget` from the
    Goal extension (0/null when absent). No renderer work required — the Goal
    pane already reflects `goal/updated`.
-5. **Spec** (same PR): `docs/spec/agent-subagent-threads.md` gains a "Budgets"
-   subsection (spawn parameter, Goal reuse, admission-gate rule, bright line);
-   `docs/spec/agent-tool-design.md` collaboration table row updated.
+5. **Global default** (`agentSettings.ts` runtime settings): new
+   `subagentTokenBudget: number | null` with default `1_500_000`; `null`
+   disables. Applied in `spawnCollaborationAgent` when the spawn carries no
+   `max_total_tokens` — uniformly for collaboration AND isolated-Skill
+   children (one breaker, no special cases). The spawn parameter overrides;
+   the setting is the floor of the decision ladder.
+6. **Spec** (same PR): `docs/spec/agent-subagent-threads.md` gains a "Budgets"
+   subsection (sizing policy, spawn parameter, default, Goal reuse,
+   admission-gate rule, bright line); `docs/spec/agent-tool-design.md`
+   collaboration table row updated.
 
 Not touched in PR A (tripwire): `src/main/agent/runtime/kernel/**` and
 `src/main/agent/runtime/PiTurnExecutor.ts` (the loop surface the tripwire
@@ -140,9 +177,16 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
    over from there. The first model call is never blocked (a fresh Turn with
    an already-exhausted budget is PR A's admission gate's job, not the
    kernel's).
-3. **Diagnostics**: the settle records a normal interrupted outcome; no new
+3. **Soft landing at 80%**: the same per-call check, on first crossing 80%
+   of the budget, triggers `onBudgetWarning()` (a `TurnExecutionContext`
+   callback beside the port); ThreadService delivers ONE budget notice through
+   the EXISTING steering path — a real, canonical, diagnostics-captured
+   steering input: `[Budget notice] ~80% of the token budget is consumed
+   (<used> of <budget>). Synthesize your findings and conclude now.` Once per
+   Turn; no new mechanism, no synthetic non-canonical messages.
+4. **Diagnostics**: the settle records a normal interrupted outcome; no new
    activity type. The budget numbers appear in the error string only.
-4. **Tests**: kernel unit test with a scripted gateway (two calls, budget
+5. **Tests**: kernel unit test with a scripted gateway (two calls, budget
    exhausted after the first → exactly one provider call, Turn interrupted,
    goal flips after commit); ThreadService integration test for the
    PR A + PR B interplay.
@@ -163,15 +207,18 @@ model-call boundary; building it pre-kernel would mean one more stream-wrapper
 
 ## Open questions
 
-Non-blocking, deferred by design: (a) a runtime-settings default budget for
-all spawns (PM decision, separate fast-track if wanted); (b) surfacing
-budget state in the subagent task panel UI beyond the Goal pane (renderer
-polish, fast-track); (c) whether isolated-Skill invocations should default to
-a budget once (a) exists.
+Non-blocking, deferred by design: (a) per-Role/Skill defaults once the Goal
+ledger has real distribution data; (b) surfacing budget state in the subagent
+task panel UI beyond the Goal pane (renderer polish, fast-track);
+(c) cacheRead down-weighting in the budget measure. Former open question on a
+global default was resolved by the 2026-07-30 Sizing policy: shipped in PR A,
+ON by default. Isolated-Skill children take the same default (resolved).
 
 ## Checklist
 
-- [ ] PR A: schema + spawn wiring + admission gate + visibility + spec + tests
+- [ ] PR A: schema + spawn wiring + admission gate + visibility + global
+      default (1.5M, ON, null disables) + spec + tests
 - [ ] PR A real-run: exceed, refusal, user bright line
-- [ ] PR B (after native-turn-kernel): budget port + kernel check + tests
+- [ ] PR B (after native-turn-kernel): budget port + kernel check + 80%
+      soft-landing steering notice + tests
 - [ ] PR B real-run: mid-Turn interruption
