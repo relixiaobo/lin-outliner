@@ -370,15 +370,21 @@ before any directional/security-sensitive build.
   constants, not settings), and renderer translation of budget failures (user surfaces never
   show token numbers — the user-irrelevance boundary). See
   `docs/plans/subagent-budget-propagation.md`.
-- **subagent-transcript-artifact** (P2, `draft` — **plan complete 2026-07-30, main-authored,
-  claimable now**) — the Delegation Contract's account layer, zero new tools: ONE faithful
+- **subagent-transcript-artifact** (P2, `in-progress` — cc, PR #460 **returned to draft at
+  the 2026-07-30 gate**: 8 findings, 6 CONFIRMED; PM ratified a redesign baseline recorded in
+  the PR comment) — the Delegation Contract's account layer, zero new tools: ONE faithful
   turn→text renderer (`thread/TranscriptRenderer.ts`, sole authority with anti-parallel-copy
   clause; compaction's lossy summary exempt by contract) behind two ports — the terminal
-  artifact (bounded file at child terminal state, path via
-  `CollaborationTerminalOutcome.transcriptPath`, A12 best-effort, cleanup rides descendant
-  teardown, isolated-Skill parity) read by the parent model with existing file tools
-  (reader-pays, liveness/budget-independent), and the stateless `bun run agent:dump` stdout
-  projection for debugging agents and humans (A11: forensics as a command). Touches
+  artifact read by the parent model with existing file tools (reader-pays,
+  liveness/budget-independent), and the stateless `bun run agent:dump` stdout projection for
+  debugging agents and humans (A11: forensics as a command). **Ratified redesign deltas (the
+  Claude Code pattern; five findings dissolve structurally):** transcript lives under
+  `userData`, never the workspace cwd; append-only materialization per *completed* child turn
+  (immutable in the event-sourced store — no rewrite, no memo), driven by turn completion, not
+  the parent's `wait_agent` path; `wait_agent` stays result-first with `transcriptPath` as an
+  absolute app-owned reference (capability layer already resolves absolute paths,
+  `agentCapabilities.ts:391`); deletion race-free against the wait resume it triggers. cc
+  redrafts the one-pager against this baseline; plan file updated on ratification. Touches
   package.json (infrastructure — the PR is the coordinated change). See
   `docs/plans/subagent-transcript-artifact.md`.
 - **agent-subagent-interaction** (P2, `draft` — cc-2, plan merged #454 after gate review;
@@ -723,6 +729,11 @@ anything.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
+- **scripts-typecheck-coverage** (P3, *fast-track, no plan file*) — `scripts/` sits outside
+  tsconfig `include`, so nothing typechecks `scripts/agent-dump.ts` or its hand-rolled
+  `bunSqliteAdapter` (surfaced by the #460 gate; repo-wide gap, not #460's blocker). Fix = a
+  `tsconfig.scripts.json` (or widened `include`) wired into `bun run typecheck`, plus whatever
+  the first real check surfaces.
 
 ## Recently completed
 
