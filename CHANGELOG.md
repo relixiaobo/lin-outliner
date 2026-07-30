@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **pi-ai import containment (PR #447, codex-2, fast-track)** — routed all
+  `pi-ai` type imports in the context/policy layers through the two sanctioned
+  chokepoints (`kernel/types` for the type vocabulary; `piModels` for the few
+  runtime functions non-transport files need, e.g.
+  `getSupportedThinkingLevels`). Import-lines-only diff across 12 files; the
+  `pi-ai` importer list now equals the transport allowlist exactly, so a future
+  transport swap touches only gateway/transport files. **Gate (main):**
+  mechanical diff-shape check, completion-criterion command, typecheck,
+  1528 core / 781 renderer tests.
+
 - **Native turn kernel (PR #445, codex-2)** — replaced `@earendil-works/pi-agent-core`
   (dependency deleted) with a Tenon-owned turn kernel under
   `src/main/agent/runtime/kernel/`: a pure loop over four ports (`ModelGateway`
