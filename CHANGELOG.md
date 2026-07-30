@@ -10,6 +10,19 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Added
+
+- **Pane reorder by dragging breadcrumbs (PR #452, cc)** — with several panes
+  open, a pane's breadcrumbs become its drag handle ("Drag to reorder panes"):
+  dragging shows a live arrangement preview — panes and divider hairlines slide
+  to the order the drop would produce — and releasing commits it. Cancelling
+  (Escape / drop outside) slides the preview back. The commit reaches the
+  screen as CSS `order` over a stable pane DOM order, so embedded file previews
+  (PDF/EPUB/URL) keep their scroll position and in-page state across a reorder,
+  and pane content is pointer-shielded during the drag so previews cannot
+  swallow it. Sizes, per-pane history, and the active pane are untouched; the
+  agent-visible pane `order` renumbers to match.
+
 ### Internal
 
 - **ThreadService decomposition (PR #451, codex-2)** — the 4,502-line god

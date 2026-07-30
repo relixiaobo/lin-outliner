@@ -19,7 +19,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449) |
+| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
@@ -703,6 +703,32 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **pane-reorder**
+  (`cc/pane-reorder`, PR #452, cc, merged 2026-07-30, fast-track) — split
+  panes reorder by dragging a pane's breadcrumbs (multi-pane only; the handle
+  is the crumb content, fit-content so the rest of the header stays
+  window-drag). Feedback is a live arrangement preview: panes and divider
+  hairlines slide — pure CSS transform against dragstart-frozen geometry, with
+  the insertion index derived from pointer X against frozen midpoints
+  (monotonic, so the preview cannot oscillate) — and the drop commits through
+  the shared `listWithItemMovedToIndex` helper (also backing the sidebar's
+  `pinNodeAtIndex`), so preview and commit agree structurally. The committed
+  order lands as CSS `order` over stable pane DOM order (first-seen registry),
+  so embedded iframe/webview preview content never remounts; pane content is
+  pointer-shielded while a drag is active. Cancel slides back through a 200ms
+  settle window. Spec updated in the same change
+  (`docs/spec/workspace-layout.md`).
+  **Gate (main):** `/code-review` (medium, adversarial verify) yielded 8
+  verified findings — webview/iframe drag dead zone, preview remount on
+  commit, no-op drop fallthrough, window-drag region loss, breadcrumb tooltip
+  leak, missing mid-drag abort path, false spec cancel-slide claim,
+  triplicated reorder arithmetic — all addressed in `df3bcedf` (one
+  deliberate decline recorded: click-with-drift on crumbs starts a drag, per
+  the sidebar pinned-row precedent). Verified on the PR head with typecheck,
+  797 renderer tests, the 24-test workspace-layout E2E suite (incl. new
+  pointer-shield and no-remount assertions), `docs:check`, and light/dark
+  visual verification of the split header and mid-drag state.
 
 - **agent-deck-click-refocus**
   (`cc/agent-deck-click-refocus`, PR #449, cc, merged 2026-07-30, fast-track) —
