@@ -11,7 +11,6 @@ import {
   type ModelToolSchemaContribution,
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
-import type { ReasoningEffort } from '../../../core/agent/configuration';
 import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
@@ -89,6 +88,10 @@ export class ToolRuntime {
       ...capabilityTools,
       ...(this.importService ? [this.createDataImportTool()] : []),
       ...this.createControlTools(context),
+      ...this.service.collaborationToolContributions({
+        threadId: context.thread.id,
+        turnId: context.turn.id,
+      }),
       ...dynamicTools,
     ];
     const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
@@ -187,66 +190,6 @@ export class ToolRuntime {
           throw new Error('update_goal.status must be blocked or complete');
         }
         return this.service.updateGoalForTurn(threadId, turnId, status);
-      }),
-      collaborationTool('spawn_agent', 'Spawn Subagent', async (itemId, params) => {
-        const input = record(params, 'collaboration.spawn_agent');
-        const result = await this.service.spawnCollaborationAgent({
-          senderThreadId: threadId,
-          senderTurnId: turnId,
-          parentItemId: itemId,
-          taskName: requiredString(input.task_name, 'task_name'),
-          message: requiredString(input.message, 'message'),
-          ...(optionalString(input.agent_type) === undefined ? {} : { role: optionalString(input.agent_type) }),
-          ...(optionalString(input.model) === undefined ? {} : { model: optionalString(input.model) }),
-          ...(optionalReasoningEffort(input.reasoning_effort) === undefined
-            ? {}
-            : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
-          ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
-          ...(input.max_total_tokens === undefined ? {} : { maxTotalTokens: input.max_total_tokens as number }),
-        });
-        return {
-          task_name: result.taskPath,
-          thread_id: result.thread.id,
-          nickname: result.thread.agentNickname,
-        };
-      }),
-      collaborationTool('send_message', 'Send Subagent Message', async (_itemId, params) => {
-        const input = record(params, 'collaboration.send_message');
-        return this.service.sendCollaborationMessage(
-          threadId,
-          turnId,
-          requiredString(input.target, 'target'),
-          requiredString(input.message, 'message'),
-        );
-      }),
-      collaborationTool('followup_task', 'Follow Up Subagent', async (itemId, params) => {
-        const input = record(params, 'collaboration.followup_task');
-        return this.service.followupCollaborationTask(
-          threadId,
-          turnId,
-          itemId,
-          requiredString(input.target, 'target'),
-          requiredString(input.message, 'message'),
-        );
-      }),
-      collaborationTool('wait_agent', 'Wait for Subagents', async (_itemId, _params, signal) => {
-        return this.service.waitForCollaborationActivity(
-          threadId,
-          turnId,
-          signal,
-        );
-      }),
-      collaborationTool('list_agents', 'List Subagents', async (_itemId, params) => {
-        const input = record(params, 'collaboration.list_agents');
-        return this.service.listCollaborationAgents(threadId, optionalString(input.path_prefix));
-      }),
-      collaborationTool('interrupt_agent', 'Interrupt Subagent', async (_itemId, params) => {
-        const input = record(params, 'collaboration.interrupt_agent');
-        return this.service.interruptCollaborationAgent(
-          threadId,
-          turnId,
-          requiredString(input.target, 'target'),
-        );
       }),
     ];
   }
@@ -472,24 +415,6 @@ function coreTool(
   };
 }
 
-function collaborationTool(
-  name: string,
-  label: string,
-  execute: (itemId: string, params: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
-): AgentTool {
-  const canonical = `collaboration.${name}`;
-  const contract = modelToolContract(canonical);
-  if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${canonical}`);
-  return {
-    name: `collaboration__${name}`,
-    label,
-    description: contract.description,
-    parameters: contract.inputSchema as TSchema,
-    executionMode: 'sequential',
-    execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
-  };
-}
-
 function toolResult(value: unknown): AgentToolResult<JsonValue> {
   const details = jsonValue(value);
   return {
@@ -548,15 +473,6 @@ function optionalPositiveInteger(value: unknown, path: string): number | undefin
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`${path} must be a positive integer`);
   return value as number;
-}
-
-function optionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
-  const normalized = optionalString(value);
-  if (!normalized) return undefined;
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)) {
-    throw new Error(`Unknown reasoning_effort: ${normalized}`);
-  }
-  return normalized as ReasoningEffort;
 }
 
 function jsonValue(value: unknown): JsonValue {

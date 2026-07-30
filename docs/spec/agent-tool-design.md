@@ -25,6 +25,12 @@ duplicates another, an extension uses an unsupported action kind, or provider
 encoding would collide. Flat provider names use `namespace__name`; tool-name
 components cannot contain the separator, making the mapping reversible.
 
+Domain-owned tool handlers are contributed by their owning modules; `runtime/`
+only distributes those contributions through the same assembly seam used by
+extensions. `SubagentCollaboration` owns the collaboration handlers, and future
+command families such as browser control land in their domain module and
+contribute tools through this seam rather than adding domain logic to runtime.
+
 ## Canonical Catalog
 
 ### Outline

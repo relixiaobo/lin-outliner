@@ -1,10 +1,13 @@
-import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
-import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
+import type { TSchema } from 'typebox';
+import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
+import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
+import { modelToolContract } from '../../../core/agent/tools';
 import { contextPayloadReferenceKey,itemContextPayloadReferences,itemOutputReferences,itemResourceReferences,outputReferenceKey,resourceReferenceKey } from '../context/contextDependencies';
 import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
 import type { SubagentBudgetLedger,SubagentBudgetRecord } from '../persistence/SubagentBudgetLedger';
+import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationWaitResult,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
@@ -69,6 +72,75 @@ export class SubagentCollaboration {
   }
   hasPendingActivities(threadId: ThreadId): boolean {
     return this.pendingSubagentActivities.has(threadId);
+  }
+  collaborationToolContributions(turn: {
+    threadId: ThreadId;
+    turnId: string;
+  }): readonly AgentTool[] {
+    const threadId = turn.threadId;
+    const turnId = turn.turnId;
+    return [
+      collaborationTool('spawn_agent', 'Spawn Subagent', async (itemId, params) => {
+        const input = record(params, 'collaboration.spawn_agent');
+        const result = await this.spawnCollaborationAgent({
+          senderThreadId: threadId,
+          senderTurnId: turnId,
+          parentItemId: itemId,
+          taskName: requiredString(input.task_name, 'task_name'),
+          message: requiredString(input.message, 'message'),
+          ...(optionalString(input.agent_type) === undefined ? {} : { role: optionalString(input.agent_type) }),
+          ...(optionalString(input.model) === undefined ? {} : { model: optionalString(input.model) }),
+          ...(optionalReasoningEffort(input.reasoning_effort) === undefined
+            ? {}
+            : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
+          ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
+          ...(input.max_total_tokens === undefined ? {} : { maxTotalTokens: input.max_total_tokens as number }),
+        });
+        return {
+          task_name: result.taskPath,
+          thread_id: result.thread.id,
+          nickname: result.thread.agentNickname,
+        };
+      }),
+      collaborationTool('send_message', 'Send Subagent Message', async (_itemId, params) => {
+        const input = record(params, 'collaboration.send_message');
+        return this.sendCollaborationMessage(
+          threadId,
+          turnId,
+          requiredString(input.target, 'target'),
+          requiredString(input.message, 'message'),
+        );
+      }),
+      collaborationTool('followup_task', 'Follow Up Subagent', async (itemId, params) => {
+        const input = record(params, 'collaboration.followup_task');
+        return this.followupCollaborationTask(
+          threadId,
+          turnId,
+          itemId,
+          requiredString(input.target, 'target'),
+          requiredString(input.message, 'message'),
+        );
+      }),
+      collaborationTool('wait_agent', 'Wait for Subagents', async (_itemId, _params, signal) => {
+        return this.waitForCollaborationActivity(
+          threadId,
+          turnId,
+          signal,
+        );
+      }),
+      collaborationTool('list_agents', 'List Subagents', async (_itemId, params) => {
+        const input = record(params, 'collaboration.list_agents');
+        return this.listCollaborationAgents(threadId, optionalString(input.path_prefix));
+      }),
+      collaborationTool('interrupt_agent', 'Interrupt Subagent', async (_itemId, params) => {
+        const input = record(params, 'collaboration.interrupt_agent');
+        return this.interruptCollaborationAgent(
+          threadId,
+          turnId,
+          requiredString(input.target, 'target'),
+        );
+      }),
+    ];
   }
   materializePendingActivityItems(threadId: ThreadId, turnId: TurnId, activities: readonly PendingSubagentActivity[]): ThreadItem[] {
     return activities.map((activity) => subagentActivityItem(threadId, turnId, activity));
@@ -787,6 +859,63 @@ function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must be non-empty`);
   return normalized;
+}
+
+function collaborationTool(
+  name: string,
+  label: string,
+  execute: (itemId: string, params: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
+): AgentTool {
+  const canonical = `collaboration.${name}`;
+  const contract = modelToolContract(canonical);
+  if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${canonical}`);
+  return {
+    name: `collaboration__${name}`,
+    label,
+    description: contract.description,
+    parameters: contract.inputSchema as TSchema,
+    executionMode: 'sequential',
+    execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
+  };
+}
+
+function toolResult(value: unknown): AgentToolResult<JsonValue> {
+  const details = jsonValue(value);
+  return {
+    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
+    details,
+  };
+}
+
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be an object`);
+  return value as Record<string, unknown>;
+}
+
+function requiredString(value: unknown, path: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${path} must be a non-empty string`);
+  return value.trim();
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function optionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
+  const normalized = optionalString(value);
+  if (!normalized) return undefined;
+  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)) {
+    throw new Error(`Unknown reasoning_effort: ${normalized}`);
+  }
+  return normalized as ReasoningEffort;
+}
+
+function jsonValue(value: unknown): JsonValue {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
+  } catch {
+    return String(value);
+  }
 }
 
 function subagentActivityItem(
