@@ -94,7 +94,7 @@ afterEach(async () => {
 });
 
 describe('provider config startup reconcile (Part A)', () => {
-  test('normalizes the nullable global Subagent token budget', async () => {
+  test('normalizes nullable runtime integer settings within the safe range', async () => {
     expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
 
     await updateAgentRuntimeSettings({ subagentTokenBudget: 250_000 });
@@ -113,6 +113,20 @@ describe('provider config startup reconcile (Part A)', () => {
       await writeProviderFileRaw({ agent: { subagentTokenBudget }, providers: [] });
       expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
     }
+
+    await writeProviderFileRaw({
+      agent: {
+        providerTimeoutMs: Number.MAX_SAFE_INTEGER + 1,
+        providerMaxRetries: Number.MAX_SAFE_INTEGER + 1,
+        providerMaxRetryDelayMs: Number.MAX_SAFE_INTEGER + 1,
+      },
+      providers: [],
+    });
+    expect(await getAgentRuntimeSettings()).toMatchObject({
+      providerTimeoutMs: null,
+      providerMaxRetries: null,
+      providerMaxRetryDelayMs: 60_000,
+    });
   });
 
   test('stores image generation defaults separately from provider connection rows', async () => {

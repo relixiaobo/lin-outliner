@@ -160,10 +160,13 @@ These tools operate on child Threads as specified in
 positive safe integer and uses it ahead of the runtime-wide `subagentTokenBudget`
 setting. That setting defaults to `1,500,000`, accepts `null` to disable the default,
 and applies uniformly to collaboration and isolated Skill children through their shared
-spawn boundary. Enabled budgets create a Goal before the child starts.
+spawn boundary. Enabled budgets create a host-owned ledger entry before the child starts;
+they do not occupy or modify the child's Goal slot.
 Collaboration views returned by `list_agents` and `wait_agent` include `tokensUsed` and
-nullable `tokenBudget`. Once that Goal is `budgetLimited`, new non-user Turn admission is
-rejected while explicit user Turn admission remains available.
+nullable `tokenBudget`. Once ledger usage reaches the budget, new non-user Turn admission
+is rejected while explicit user Turn admission remains available. Idle-only feature
+callers receive a soft refusal, and collaboration tool callers receive the complete
+typed exhaustion error.
 
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,

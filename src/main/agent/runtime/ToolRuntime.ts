@@ -190,7 +190,6 @@ export class ToolRuntime {
       }),
       collaborationTool('spawn_agent', 'Spawn Subagent', async (itemId, params) => {
         const input = record(params, 'collaboration.spawn_agent');
-        const maxTotalTokens = optionalPositiveInteger(input.max_total_tokens, 'max_total_tokens');
         const result = await this.service.spawnCollaborationAgent({
           senderThreadId: threadId,
           senderTurnId: turnId,
@@ -203,7 +202,7 @@ export class ToolRuntime {
             ? {}
             : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
           ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
-          ...(maxTotalTokens === undefined ? {} : { maxTotalTokens }),
+          ...(input.max_total_tokens === undefined ? {} : { maxTotalTokens: input.max_total_tokens as number }),
         });
         return {
           task_name: result.taskPath,

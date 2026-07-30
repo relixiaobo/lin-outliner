@@ -496,7 +496,7 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
-    subagentTokenBudget: normalizeNullablePositiveSafeInteger(
+    subagentTokenBudget: normalizeNullablePositiveInteger(
       input?.subagentTokenBudget,
       DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
     ),
@@ -527,13 +527,6 @@ function normalizeNullablePositiveInteger(value: unknown, fallback: number | nul
   return normalizeInteger(value, fallback, 1);
 }
 
-function normalizeNullablePositiveSafeInteger(value: unknown, fallback: number | null): number | null {
-  if (value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  const normalized = Math.floor(value);
-  return Number.isSafeInteger(normalized) && normalized >= 1 ? normalized : fallback;
-}
-
 function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | null): number | null {
   if (value === null) return null;
   return normalizeInteger(value, fallback, 0);
@@ -542,7 +535,7 @@ function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | 
 function normalizeInteger(value: unknown, fallback: number | null, min: number): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   const normalized = Math.floor(value);
-  return normalized >= min ? normalized : fallback;
+  return Number.isSafeInteger(normalized) && normalized >= min ? normalized : fallback;
 }
 
 async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {

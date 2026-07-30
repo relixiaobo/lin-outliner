@@ -82,22 +82,27 @@ the parent model's per-spawn `max_total_tokens`, future data-driven Role or Skil
 defaults, then the global default. The current runtime implements the ladder's explicit
 spawn override and global-default endpoints; Role and Skill defaults remain deferred.
 
-For every enabled budget, the host creates the child Goal before its first Turn with
-objective `Subagent task: <task_name>` and uses the existing Goal accounting to
-accumulate completed-Turn token usage. Isolated Skill Goals use their generated child
-task name in the same objective form.
+For every enabled budget, the host records a child-only entry in its
+`SubagentBudgetLedger` before the first Turn. Persistent entries live in the
+`thread_budgets` table beside Goals in `goals.sqlite`; ephemeral child entries live in
+memory. The ledger accumulates completed-Turn token usage and is deleted with the child
+Thread. It has no model-tool surface, so a child cannot remove or replace its breaker.
+The child's independent `create_goal` and `update_goal` tools retain their normal
+single-Goal semantics and never control this host-owned budget.
 
-Reaching or exceeding the total changes the Goal to `budgetLimited`. The single Turn
-admission boundary then rejects every new non-user trigger with the complete exhaustion
-error, including Subagent follow-up, Goal continuation, and host feature work. A
-renderer Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can always
-resume the child explicitly. The budget currently governs admission between Turns; it
-does not interrupt a Turn already in flight, and the completing Turn may overshoot the
-configured total.
+When ledger usage reaches or exceeds its total, the single Turn-admission boundary
+rejects every new non-user trigger with `SubagentBudgetExhaustedError`. Collaboration
+follow-up and message tools surface the complete error to the parent, while
+idle-only feature callers receive a soft refusal so automation runs stay pending. The
+mailbox is checked before it is drained, preserving queued messages after a refusal.
+A renderer Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can
+always resume the child explicitly; its usage continues to accrue. Root Threads and
+self-managed Goals have no ledger entry and are structurally outside this gate. The
+budget currently governs admission between Turns; it does not interrupt a Turn already
+in flight, and the completing Turn may overshoot the configured total.
 
 `list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
-`tokenBudget`. A child without a Goal reports `0` and `null`, respectively. Goal status
-continues to use the canonical Goal projection, including `budgetLimited`.
+`tokenBudget`. A child without a ledger entry reports `0` and `null`, respectively.
 
 ## History And Activity
 

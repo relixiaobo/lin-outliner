@@ -335,7 +335,7 @@ const collaborationTerminalOutcomeSchema = objectSchema({
 const collaborationToolContracts: readonly ModelToolContract[] = [
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' },
-    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. max_total_tokens overrides the Goal-backed runtime default, which refuses later non-user Turns after exhaustion.',
+    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. max_total_tokens overrides the host-owned runtime budget default, which refuses later non-user Turns after exhaustion.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: spawnAgentSchema,
@@ -364,7 +364,7 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
   },
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'wait_agent' },
-    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its Goal-backed tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work.',
+    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its host-owned ledger tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),
