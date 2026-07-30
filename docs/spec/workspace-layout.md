@@ -845,16 +845,19 @@ panels[2] -> next pane
 ```
 
 The user reorders panes by dragging a pane's breadcrumb path row (hover title
-"Drag to reorder panes") onto another pane: before/after resolves by the hovered
-pane's horizontal midpoint (the pane analogue of the sidebar's pinned-row
-reorder). Drop feedback is a neutral `--drop-line` insertion line at the target
-boundary plus a `--fill-2` landing wash over the adjacent half of the hovered
-pane — pane-scale feedback, per the design-system drag-and-drop contract.
-Hovering one of the dragged pane's own boundaries (a no-op drop) shows no
-feedback. The drop is a pure array permutation (`movePanelToIndex`) — ids,
-sizes, per-pane history, and the active pane are untouched. Reordering
-therefore also renumbers the pane `order` the agent sees in its user-view
-context.
+"Drag to reorder panes"). Feedback is a **live arrangement preview**: while the
+drag is active, every pane slides — pure CSS transform, no DOM move, so pane
+content never reloads or loses scroll — to the position it would occupy if the
+drop landed now, and the divider hairlines fade so the moving arrangement reads
+as one row. Geometry is frozen at dragstart and the insertion index derives
+from the pointer X against the frozen pane midpoints (monotonic in X, so the
+preview cannot oscillate as panes slide under the cursor). Hovering one of the
+dragged pane's own boundaries previews as "everything stays put"; cancelling
+(Escape / drop outside) slides the preview back. Reduced motion previews the
+positions without the slide animation. The drop commits a pure array
+permutation (`movePanelToIndex`) — ids, sizes, per-pane history, and the
+active pane are untouched. Reordering therefore also renumbers the pane
+`order` the agent sees in its user-view context.
 
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.

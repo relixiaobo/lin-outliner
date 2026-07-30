@@ -1,4 +1,4 @@
-import { Fragment, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
+import { Fragment, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
 import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
@@ -51,15 +51,29 @@ interface WorkspaceCanvasProps {
 export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
   const t = useT();
   const activePanels = props.panels;
-  // Pane drag-to-reorder: the insertion position (0..length) the hovered drop
-  // would land on, shown as a line at the matching pane boundary plus a landing
-  // wash on the hovered pane. Null when no pane drag hovers the canvas — or when
-  // the hovered boundary is one of the dragged pane's own (a no-op drop shows no
-  // feedback at all). The dragged pane's id travels in the drag's dataTransfer
-  // (WORKSPACE_PANEL_REORDER_MIME); dragPanelId mirrors it in state because
-  // dataTransfer payloads are unreadable during dragover.
+  // Pane drag-to-reorder with a live arrangement preview: while a pane header
+  // drag is active, every pane slides (pure CSS transform — no DOM move, so no
+  // iframe reloads, lost scroll, or content resets) to the position it would
+  // occupy if the drop landed now; the drop then commits the permutation in one
+  // step. All geometry is FROZEN at dragstart and the insertion index derives
+  // from clientX against the frozen pane midpoints, which is monotonic in X —
+  // the preview can never oscillate as panes slide under the cursor.
+  //
+  // panelDropIndex is the insertion position (0..length); null when no pane drag
+  // hovers the canvas or the hovered boundary is one of the dragged pane's own
+  // (a no-op drop previews as "everything stays put"). The dragged pane's id
+  // travels in the drag's dataTransfer (WORKSPACE_PANEL_REORDER_MIME);
+  // dragPanelId mirrors it in state because dataTransfer payloads are
+  // unreadable during dragover.
   const [panelDropIndex, setPanelDropIndex] = useState<number | null>(null);
   const [dragPanelId, setDragPanelId] = useState<string | null>(null);
+  const dragLayoutRef = useRef<{
+    ids: string[];
+    lefts: number[];
+    widths: number[];
+    mids: number[];
+    gap: number;
+  } | null>(null);
 
   const isPanelDrag = (event: ReactDragEvent<HTMLElement>) => (
     event.dataTransfer.types.includes(WORKSPACE_PANEL_REORDER_MIME)
@@ -71,10 +85,26 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData(WORKSPACE_PANEL_REORDER_MIME, panel.id);
           event.dataTransfer.setData('text/plain', '');
+          const surfaces = props.canvasRef.current
+            ?.querySelectorAll<HTMLElement>(':scope > .outline-panel-surface');
+          if (surfaces && surfaces.length === activePanels.length) {
+            const rects = [...surfaces].map((surface) => surface.getBoundingClientRect());
+            dragLayoutRef.current = {
+              ids: activePanels.map((activePanel) => activePanel.id),
+              lefts: rects.map((rect) => rect.left),
+              widths: rects.map((rect) => rect.width),
+              mids: rects.map((rect) => rect.left + rect.width / 2),
+              gap: rects.length > 1 ? Math.max(0, rects[1].left - rects[0].right) : 0,
+            };
+          } else {
+            dragLayoutRef.current = null;
+          }
           setDragPanelId(panel.id);
         },
-        // dragend fires on the source for drop AND cancel (Escape / drop outside).
+        // dragend fires on the source for drop AND cancel (Escape / drop
+        // outside) — cancel slides the preview back to the real order.
         onDragEnd: () => {
+          dragLayoutRef.current = null;
           setDragPanelId(null);
           setPanelDropIndex(null);
         },
@@ -82,34 +112,27 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
       }
       : undefined
   );
-  const updateDropIndex = (index: number) => {
-    const sourceIndex = activePanels.findIndex((panel) => panel.id === dragPanelId);
-    const noop = sourceIndex >= 0 && (index === sourceIndex || index === sourceIndex + 1);
-    setPanelDropIndex(noop ? null : index);
-  };
-  // Surface-level dragover: before/after the hovered pane by its horizontal
-  // midpoint (the pane analogue of the sidebar's pinned-row reorder).
-  const handlePanelDragOver = (panelIndex: number) => (event: ReactDragEvent<HTMLDivElement>) => {
+  // One canvas-level dragover (capture, MIME-gated) instead of per-surface
+  // handlers: the index needs only clientX + the frozen midpoints, and capture
+  // keeps pane drags away from content-level DnD (outliner rows) while every
+  // other drag falls through untouched.
+  const handleCanvasDragOver = (event: ReactDragEvent<HTMLElement>) => {
     if (!isPanelDrag(event)) return;
+    const layout = dragLayoutRef.current;
+    if (!layout || !dragPanelId) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
-    const rect = event.currentTarget.getBoundingClientRect();
-    const after = event.clientX - rect.left > rect.width / 2;
-    updateDropIndex(after ? panelIndex + 1 : panelIndex);
+    const index = layout.mids.filter((mid) => event.clientX > mid).length;
+    const sourceIndex = layout.ids.indexOf(dragPanelId);
+    const noop = sourceIndex >= 0 && (index === sourceIndex || index === sourceIndex + 1);
+    setPanelDropIndex(noop ? null : index);
   };
-  // Divider dragover: the resize slot IS the boundary between panelIndex and
-  // panelIndex + 1, so hovering it never flickers the line off.
-  const handleDividerDragOver = (panelIndex: number) => (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!isPanelDrag(event)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    updateDropIndex(panelIndex + 1);
-  };
-  const handlePanelDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+  const handleCanvasDrop = (event: ReactDragEvent<HTMLElement>) => {
     if (!isPanelDrag(event)) return;
     const panelId = event.dataTransfer.getData(WORKSPACE_PANEL_REORDER_MIME);
     const dropIndex = panelDropIndex;
+    dragLayoutRef.current = null;
     setDragPanelId(null);
     setPanelDropIndex(null);
     if (!panelId || dropIndex === null) return;
@@ -121,31 +144,49 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     setPanelDropIndex(null);
   };
-  // Boundary b paints as a line on pane b's left edge; the rightmost boundary
-  // (b === length) paints on the last pane's right edge.
-  const dropEdgeFor = (panelIndex: number): 'before' | 'after' | null => {
-    if (panelDropIndex === null) return null;
-    if (panelDropIndex === panelIndex) return 'before';
-    if (panelDropIndex === panelIndex + 1 && panelIndex === activePanels.length - 1) return 'after';
-    return null;
-  };
+  // Per-pane translateX for the would-be arrangement: replay movePanelToIndex's
+  // permutation over the frozen geometry and hand each pane the delta between
+  // its previewed and original left edge.
+  const previewOffsets = (() => {
+    const layout = dragLayoutRef.current;
+    if (!layout || !dragPanelId || panelDropIndex === null) return null;
+    const from = layout.ids.indexOf(dragPanelId);
+    if (from < 0) return null;
+    const order = layout.ids.filter((id) => id !== dragPanelId);
+    let target = panelDropIndex;
+    if (from < panelDropIndex) target -= 1;
+    target = Math.max(0, Math.min(target, order.length));
+    order.splice(target, 0, dragPanelId);
+    const offsets = new Map<string, number>();
+    let x = layout.lefts[0];
+    for (const id of order) {
+      const index = layout.ids.indexOf(id);
+      offsets.set(id, x - layout.lefts[index]);
+      x += layout.widths[index] + layout.gap;
+    }
+    return offsets;
+  })();
 
   return (
     <section
-      className={`workspace-canvas ${activePanels.length === 1 ? 'single-panel' : ''}`}
+      className={[
+        'workspace-canvas',
+        activePanels.length === 1 ? 'single-panel' : '',
+        dragPanelId ? 'pane-dragging' : '',
+      ].filter(Boolean).join(' ')}
       aria-label={t.shell.workspace.canvasAriaLabel}
       ref={props.canvasRef}
+      onDragOverCapture={handleCanvasDragOver}
+      onDropCapture={handleCanvasDrop}
       onDragLeave={handleCanvasDragLeave}
     >
       {activePanels.map((panel, panelIndex) => (
         <Fragment key={panel.id}>
           <WorkspacePanelSurface
             active={props.activePanelId === panel.id}
-            dropEdge={dropEdgeFor(panelIndex)}
             onActivate={() => props.onActivatePanel(panel)}
-            onPanelDragOver={handlePanelDragOver(panelIndex)}
-            onPanelDrop={handlePanelDrop}
             panel={panel}
+            previewOffset={previewOffsets?.get(panel.id) ?? null}
             size={panel.size}
           >
             {panel.view.kind === 'outliner' ? (
@@ -214,11 +255,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             )}
           </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (
-            <div
-              className="panel-resize-slot"
-              onDragOver={handleDividerDragOver(panelIndex)}
-              onDrop={handlePanelDrop}
-            >
+            <div className="panel-resize-slot">
               <ResizeHandle
                 className="panel-resize-handle"
                 label={t.shell.workspace.resizePanelsLabel}

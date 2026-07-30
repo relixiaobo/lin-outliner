@@ -94,52 +94,25 @@
 /* Active pane indication stays subtle + neutral (handled by header strength in
    breadcrumb.css); no full box outline on the surface. */
 
-/* Pane drag-to-reorder feedback, per the design-system drag-and-drop contract:
-   a neutral --drop-line insertion line at the boundary the dragged pane would land
-   on, PLUS a --fill-2 landing wash over the adjacent half of the hovered pane — a
-   2px line alone is too quiet at pane scale (PM feedback). Boundary i paints on
-   pane i's left edge; the rightmost boundary paints on the last pane's right edge.
-   Both are pure overlays — hovering a drag never reflows the panes — and neither
-   renders while the hovered boundary is one of the dragged pane's own (a no-op
-   drop shows no feedback; WorkspaceCanvas suppresses the state). */
-.outline-panel-surface.panel-drop-before::before,
-.outline-panel-surface.panel-drop-after::before {
-  position: absolute;
-  z-index: var(--z-resize);
-  top: 0;
-  bottom: 0;
-  width: 50%;
-  background: var(--fill-2);
-  content: "";
-  pointer-events: none;
+/* Pane drag-to-reorder: live arrangement preview. While a pane header drag is
+   active (.pane-dragging), panes slide — pure transform, set inline by
+   WorkspacePanelSurface from geometry frozen at dragstart — to the positions
+   they would occupy if the drop landed now; the drop then commits the array
+   order and drops the transforms in the same frame (FLIP), so nothing jumps.
+   The divider hairlines fade so the moving arrangement reads as one row.
+   Reduced motion still previews positions, just without the slide animation. */
+.workspace-canvas.pane-dragging .outline-panel-surface {
+  transition: transform var(--motion-layout);
 }
 
-.outline-panel-surface.panel-drop-before::before {
-  left: 0;
+.workspace-canvas.pane-dragging .panel-resize-slot {
+  opacity: 0;
 }
 
-.outline-panel-surface.panel-drop-after::before {
-  right: 0;
-}
-
-.outline-panel-surface.panel-drop-before::after,
-.outline-panel-surface.panel-drop-after::after {
-  position: absolute;
-  z-index: var(--z-resize);
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--drop-line);
-  content: "";
-  pointer-events: none;
-}
-
-.outline-panel-surface.panel-drop-before::after {
-  left: 0;
-}
-
-.outline-panel-surface.panel-drop-after::after {
-  right: 0;
+@media (prefers-reduced-motion: reduce) {
+  .workspace-canvas.pane-dragging .outline-panel-surface {
+    transition: none;
+  }
 }
 
 .outline-panel-close {

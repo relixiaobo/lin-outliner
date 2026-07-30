@@ -821,7 +821,8 @@ test.describe('workspace layout resizing', () => {
         dataTransfer,
       }));
     });
-    // Hovering the dragged pane's own half is a no-op drop: no line, no wash.
+    // Hovering the dragged pane's own half is a no-op drop: the preview keeps
+    // every pane in place (no transforms).
     await page.evaluate(() => {
       const source = document.querySelectorAll<HTMLElement>('.outline-panel-surface')[1];
       const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
@@ -835,8 +836,13 @@ test.describe('workspace layout resizing', () => {
         clientY: rect.top + rect.height / 2,
       }));
     });
-    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(0);
-    await expect(page.locator('.outline-panel-surface.panel-drop-after')).toHaveCount(0);
+    const surfaceTransforms = async () => page.evaluate(() => (
+      [...document.querySelectorAll<HTMLElement>('.outline-panel-surface')]
+        .map((surface) => surface.style.transform || '')
+        .join('|')
+    ));
+    await expect(page.locator('.workspace-canvas.pane-dragging')).toHaveCount(1);
+    await expect.poll(surfaceTransforms).not.toContain('translateX');
     await page.evaluate(() => {
       const target = document.querySelector<HTMLElement>('.outline-panel-surface');
       const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
@@ -850,8 +856,9 @@ test.describe('workspace layout resizing', () => {
         clientY: rect.top + rect.height / 2,
       }));
     });
-    // The neutral insertion line marks the target boundary before the drop.
-    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(1);
+    // The live preview slides both panes toward their would-be positions
+    // before the drop: the hovered pane shifts right, the dragged pane left.
+    await expect.poll(surfaceTransforms).toMatch(/^translateX\([\d.]+px\)\|translateX\(-[\d.]+px\)$/);
     await page.evaluate(() => {
       const target = document.querySelector<HTMLElement>('.outline-panel-surface');
       const dataTransfer = (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
@@ -867,10 +874,12 @@ test.describe('workspace layout resizing', () => {
       delete (window as Window & { __LIN_E2E_PANE_DRAG__?: DataTransfer }).__LIN_E2E_PANE_DRAG__;
     });
 
-    // Order swapped, indicator gone, and the new order is what persists.
+    // Order swapped, preview transforms dropped with the commit, and the new
+    // order is what persists.
     await expect(panels.nth(0).locator('.panel-title-editor')).toContainText('Schema');
     await expect(panels.nth(1).locator('.panel-title-editor')).toContainText(dayTitle);
-    await expect(page.locator('.outline-panel-surface.panel-drop-before')).toHaveCount(0);
+    await expect(page.locator('.workspace-canvas.pane-dragging')).toHaveCount(0);
+    await expect.poll(surfaceTransforms).not.toContain('translateX');
     await expect.poll(async () => page.evaluate((key) => {
       const raw = window.localStorage.getItem(key);
       if (!raw) return '';

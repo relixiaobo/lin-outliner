@@ -1,30 +1,24 @@
-import type { CSSProperties, DragEventHandler, ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
 
 interface WorkspacePanelSurfaceProps {
   active: boolean;
   children: ReactNode;
-  /** Which edge shows the pane-reorder insertion line while a pane drag hovers. */
-  dropEdge?: 'before' | 'after' | null;
   onActivate: () => void;
-  /** Pane-reorder drop wiring (WorkspaceCanvas). Attached in the CAPTURE phase so
-   *  a pane drag never reaches the content's own drag-and-drop handlers (outliner
-   *  rows, preview drop zones); the handlers gate on the pane MIME and let every
-   *  other drag fall through to the content untouched. */
-  onPanelDragOver?: DragEventHandler<HTMLDivElement>;
-  onPanelDrop?: DragEventHandler<HTMLDivElement>;
   panel: WorkspacePanelState;
+  /** Live pane-reorder preview (WorkspaceCanvas): translateX to the position
+   *  this pane would occupy if the active pane drag dropped now. Pure visual
+   *  offset — the DOM order never changes until the drop commits. */
+  previewOffset?: number | null;
   size: number;
 }
 
 export function WorkspacePanelSurface({
   active,
   children,
-  dropEdge,
   onActivate,
-  onPanelDragOver,
-  onPanelDrop,
   panel,
+  previewOffset,
   size,
 }: WorkspacePanelSurfaceProps) {
   const workspaceViewClass = `is-${panel.view.kind}`;
@@ -35,15 +29,12 @@ export function WorkspacePanelSurface({
         `is-${panel.type}`,
         workspaceViewClass,
         active ? 'active-panel' : '',
-        dropEdge === 'before' ? 'panel-drop-before' : '',
-        dropEdge === 'after' ? 'panel-drop-after' : '',
       ].filter(Boolean).join(' ')}
       onFocusCapture={onActivate}
       onPointerDownCapture={onActivate}
-      onDragOverCapture={onPanelDragOver}
-      onDropCapture={onPanelDrop}
       style={{
         '--panel-size': size,
+        ...(previewOffset ? { transform: `translateX(${previewOffset}px)` } : {}),
       } as CSSProperties}
     >
       {children}
