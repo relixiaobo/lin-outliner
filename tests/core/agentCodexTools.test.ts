@@ -44,7 +44,7 @@ describe('Codex Agent Core model-tool contract', () => {
       properties: {
         max_total_tokens: {
           type: 'number',
-          description: 'Optional total token budget for the child Thread. Omit to use the runtime default.',
+          description: 'Optional per-child token cap within the shared Subagent tree pool.',
         },
       },
       required: ['task_name', 'message'],
