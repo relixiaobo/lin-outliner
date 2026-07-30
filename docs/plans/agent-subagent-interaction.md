@@ -44,14 +44,29 @@ but replaces its row presentation; it must land after PR 1.
 
 ## Collision Result
 
-- `gh pr list` (2026-07-30): #451 (`codex-2/threadservice-decomposition`) is
-  an open non-draft PR decomposing `src/main/agent/ThreadService.ts` — PR 1's
-  small backend touches (activity flush points, `agentsStates` payload) and
-  PR 3's interrupt seam overlap that file's future shape. **Order this plan's
-  backend work after #451 merges** and write it against the decomposed
-  services. #450 (subagent budget PR B) touches kernel/budget paths, not this
-  UI surface; no conflict. #453 overlaps `ThreadItemView.tsx` (tool-path
-  links) — mechanical rebase only.
+Refreshed 2026-07-30 after the gate review (R2); #450 and #451 have merged.
+
+- **#451 (`threadservice-decomposition`) is merged:** this plan's backend
+  work is written directly against the decomposed services —
+  `src/main/agent/thread/SubagentCollaboration.ts` (activity flush,
+  `agentsStates` payload, wait/interrupt seams) and
+  `src/main/agent/thread/TurnLifecycle.ts` (Turn admission/finalization).
+  The defect inventory's `ThreadService.ts:NNN` citations stay pinned at
+  `7bd60a04` as evidence; implementation targets the current module layout.
+- **`subagent-transcript-artifact` (queued board item):** touches
+  `CollaborationTerminalOutcomeSchema` — PR 1's S5 fix consumes
+  `outcome.error`; the artifact work adds `transcriptPath`. Adjacent and
+  compatible; coordinate the schema edits with whoever lands second.
+- **#455 (`subagent-budget-propagation-pr-c`, draft):** its renderer
+  translation of budget-typed failure copy shares the failure-presentation
+  region with PR 1's S5 vocabulary; its user-irrelevance clause governs any
+  budget-shaped error these rows surface — time/status wording, never token
+  numbers (consistent with this plan's Non-goals).
+- **#456 (`toolruntime-handler-contribution`, draft):** relocates the
+  collaboration handlers this plan's backend touches ride on; land ordering
+  is flexible, whoever lands second rebases.
+- **#453 (`tool-path-modifier-click`):** overlaps `ThreadItemView.tsx` —
+  mechanical rebase only.
 - Renderer-only parts of PR 1/PR 2 can proceed regardless.
 - No infrastructure-ownership files. `src/core/agent/protocol.ts` changes
   (PR 1) are a coordinated protocol-adjacent change: flagged here for the
@@ -251,7 +266,10 @@ Ratified shape (Q1/Q2, PM 2026-07-30):
   card keeps status in the conversation where the delegation happened, and
   the list-row activity indicator (PR 2) covers cross-thread awareness; a
   global panel is a mostly-empty persistent surface and is reconsidered only
-  on demonstrated need.
+  on demonstrated need. That need already had its trial: a dock task panel
+  shipped in #160 (`f4c1555a`), was refactored (`4dbc37b7`), and was
+  dissolved in the IM-era rebuild for lack of pull — the strongest precedent
+  against resurrecting the surface speculatively.
 - **User interrupt (S14).** Each running child line, and the child Thread
   view header, exposes Stop. It calls the existing `interruptTurn` seam over
   a renderer→main request, extended to descendant Threads with explicit
@@ -266,6 +284,13 @@ Ratified shape (Q1/Q2, PM 2026-07-30):
   after Stop is a trust violation, and over-stopping is cheap because
   interrupted children keep their Threads for follow-up. There is no second
   global button — selective control is the per-child Stop on the card.
+- **Composer-less children are the product line (R1 ruling, PM 2026-07-30):**
+  user control on a child Thread is interrupt-only; recovery from an
+  exhausted or terminal child is parent respawn/synthesis plus the
+  transcript artifact (`subagent-transcript-artifact`, queued), and the
+  admission-level user bright line remains defense-in-depth, not an
+  in-product manual-continue journey (spec/budget wording aligned on main at
+  `45238fde`).
 
 ## Open questions
 
