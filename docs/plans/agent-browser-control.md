@@ -64,15 +64,27 @@ unrelated user tabs.
   #456's domain-handler contribution seam plus canonical tool-catalog
   byte-stability judge. Those changes are the implementation baseline, not
   outstanding collisions.
-- Draft PR #455 overlaps the future implementation in
+- Ready PR #455 overlaps the future implementation in
   `src/core/agent/tools.ts`, `ThreadService`, `TurnLifecycle`, and Agent specs,
   and deliberately changes collaboration tool descriptions. It must land or
   close before Browser Control implementation starts; the claiming dev then
-  rebases and records the post-#455 catalog bytes before making the intentional
-  `bash` catalog delta.
-- Draft PR #457 is plan-only in a different file, and Draft PR #458 is limited
-  to Thread renderer behavior and its owning spec. Neither overlaps this plan
-  revision or the Browser Control implementation surface.
+  rebases and records the post-#455 catalog bytes before making any intentional
+  Browser Control catalog delta.
+- Ready PR #460 now claims `subagent-transcript-artifact`. It overlaps the
+  future implementation in `src/core/agent/tools.ts`, `ThreadService`,
+  `SubagentCollaboration`, `ThreadCatalogOps`, Agent specs, and the catalog
+  snapshot. It must land or close before Browser Control implementation starts;
+  the later branch rebases and treats #460's snapshot as part of its catalog
+  baseline.
+- The three active UX plans have mixed claim state. Draft PR #458 claims
+  `agent-thread-scroll-follow`; its renderer-only scope does not overlap this
+  revision or the Browser Control backend. `agent-run-presentation-consistency`
+  and `agent-subagent-interaction` remain unclaimed. The latter's future
+  `SubagentCollaboration`, `TurnLifecycle`, and `ThreadCatalogOps` work overlaps
+  Browser lifecycle wiring, so implementation must repeat the open-PR scope
+  check before claiming code.
+- Draft PR #457 is plan-only in a different file and does not overlap this
+  revision.
 - Draft PR #459 owns this plan-only refresh. It changes only this file; it does
   not claim or modify runtime, protocol, tests, `docs/TASKS.md`, or
   `CHANGELOG.md`.
@@ -82,9 +94,12 @@ unrelated user tabs.
   prepared-execution port extension, Browser action kinds, Browser Pilot
   distribution, command provider, built-in skill, specs, and tests.
   `docs/TASKS.md` and `CHANGELOG.md` remain main-agent-owned.
-- This refresh reopens only Prepared Tool Execution and its stale runtime
-  references for PM approval. Ownership boundaries, command grammar, provider,
-  distribution, skill, and capability mapping retain their prior approval.
+- This refresh records only the PM-decided Prepared Tool Execution rewrite,
+  unclassified-command capability rule, deferred distribution evolution, launch
+  platform, sensitive-read default, conversational authorization, and stale
+  runtime/collision facts. Ownership boundaries, shell-safety grammar,
+  provider, distribution verification, skill packaging/availability, and
+  process policy retain their prior approval.
 
 ## Design
 
@@ -112,17 +127,22 @@ Tenon depends only on Browser Pilot's published 0.5 contracts:
 ### Prepared Tool Execution
 
 Prepared execution extends the domain-handler contribution seam established by
-#456. `SubagentCollaboration.collaborationToolContributions(...)` is the
-reference shape: an owning domain or command-family module binds its handlers to
-the Turn context and contributes them, while `ToolRuntime` only aggregates the
-contributions, matches them to the canonical registry, applies configuration and
-scope filters, and rejects identity or schema collisions. Browser preparation,
-execution, and projection logic never branches inside `ToolRuntime`.
+#456. The collaboration handlers now live in `SubagentCollaboration` and are
+exposed through `collaborationToolContributions(...)`; that is the reference
+shape. An owning domain or command-family module binds its handlers to the Turn
+context and contributes them, while `ToolRuntime` only aggregates the
+contributions, matches them to the canonical registry, applies configuration
+and scope filters, and rejects identity or schema collisions. Browser
+preparation, execution, and projection logic never branches inside
+`ToolRuntime`.
 
 The Tenon-owned kernel remains the tool runner. A contributed `AgentTool` may
 attach a `ToolExecutionContract`; a generic default contract adapts existing
-tools without changing their behavior. The Browser Pilot command family
-contributes the specialized contract used by its direct `bash` route.
+tools without changing their behavior. The Browser Pilot command-family module
+contributes its own prepared direct-`bash` handler and specialized contract to
+the Turn-scoped command router. The local-command module composes command-family
+handlers into the one canonical `bash` contribution; it does not absorb Browser
+policy or execution ownership.
 
 ```text
 domain/command module contributes AgentTool handler
@@ -132,7 +152,7 @@ domain/command module contributes AgentTool handler
        -> transient execution state
        -> durable arguments
        -> capability intent and execution policy
-  -> evaluate explicit blocks
+  -> decide(effect): enforce the safety floor, then explicit user blocks
   -> emit existing tool_execution_start with durable arguments
        -> PiEventNormalizer records the existing Item kind
        -> executionObserver records the diagnostic execution start
@@ -164,10 +184,10 @@ Every prepared call carries immutable, separately typed fields. `execution` is
 raw in-memory state used only by the contributed handler.
 `durableArguments` is the sole argument source for kernel events, Items,
 extension hooks, audit, history, Memory, diagnostics, payloads, and logs.
-`capabilityIntent` contains the normalized descriptors evaluated by the existing
-explicit-block engine. Optional execution policy remains owned by the concrete
-handler: process-backed calls use `ProcessExecutionPolicy`; other tools do not
-carry process fields.
+`capabilityIntent` contains the normalized descriptors evaluated by the normal
+`decide(effect)` path: the safety floor first, then explicit user blocks.
+Optional execution policy remains owned by the concrete handler: process-backed
+calls use `ProcessExecutionPolicy`; other tools do not carry process fields.
 
 `PiEventNormalizer` remains the sole translator from the existing kernel event
 stream into canonical tool Items, including the explicit no-Item policy for
@@ -254,8 +274,7 @@ It rejects before process spawn:
   multiple commands, or unquoted newlines;
 - alternate executable paths and aliases;
 - caller-supplied `--client-key` or `--human`;
-- `run_in_background: true`; and
-- commands or `net` subcommands absent from the pinned classification table.
+- `run_in_background: true`.
 
 Quoted arguments are literal argv, not shell source. They may contain dollar
 signs, shell metacharacters, and newlines, so direct argument workflows do not
@@ -275,16 +294,18 @@ shell. The Browser Pilot host note and `bash` description teach this exact
 Tenon transport. A pipeline attempt reaches the non-forwarding facade and
 returns the same corrective guidance.
 
-The parser does not validate Browser Pilot's command-specific flags or values;
-the CLI remains authoritative for those. It extracts only global structural
-options, command/subcommand identity, and file destinations that Tenon must
-constrain.
+The parser does not validate Browser Pilot's command-specific flags, values, or
+catalog membership; the CLI remains authoritative for those. It extracts only
+global structural options, command/subcommand identity, and file destinations
+that Tenon must constrain. A structurally valid direct `bp` command is eligible
+for the Browser provider even when its command or `net` subcommand has no pinned
+classification entry.
 
 The Agent `PATH` contains a Tenon-owned non-forwarding `bp` facade so
-`command -v bp` works as the upstream skill expects. Supported direct calls are
-intercepted and executed by the provider. If a compound shell command reaches
-the facade, it returns a fixed machine-readable error and never forwards to the
-raw binary. The verified raw binary is not added to `PATH`.
+`command -v bp` works as the upstream skill expects. Structurally valid direct
+calls are intercepted and executed by the provider. If a compound shell command
+reaches the facade, it returns a fixed machine-readable error and never forwards
+to the raw binary. The verified raw binary is not added to `PATH`.
 
 Full Access is not an OS sandbox: a hostile same-user process may search
 application resources. The supported Agent route is nevertheless deterministic,
@@ -295,7 +316,7 @@ through ordinary shell composition.
 
 The provider prepares one immutable `BrowserPilotCall` containing:
 
-- canonical command and optional `net` subcommand;
+- parsed command, optional `net` subcommand, and classification state;
 - transient argv and optional stdin, including free-form text and credentials;
 - a taint set derived from every free-form argument;
 - the resolved verified executable;
@@ -330,12 +351,18 @@ Add Browser-specific action kinds to the shared catalog:
 | `browser.sensitive_read` | Any result that may expose browser, account, page, file, cookie, command, or network context |
 | `browser.developer` | JavaScript evaluation and network inspection/interception |
 
-The provider supplies all applicable descriptors before execution; the generic
-capability evaluator applies existing explicit blocks and records the normalized
-intent. Every observation-bearing result carries both `browser.read` and
-`browser.sensitive_read`, including connect, page/content/capture inventory,
-recovery, and post-action page state. Version/help and the fixed result of
-`disconnect` are the only classified calls that do not carry sensitive read.
+For a classified command, the provider supplies its precise applicable
+descriptors before execution. Every observation-bearing result carries both
+`browser.read` and `browser.sensitive_read`, including connect,
+page/content/capture inventory, recovery, and post-action page state.
+Version/help and the fixed result of `disconnect` are the only classified calls
+that do not carry sensitive read.
+
+`browser.sensitive_read` remains allowed by default in Full Access and is
+narrowed only by an explicit user block; it adds no approval prompt. The normal
+`decide(effect)` path still applies the safety floor before those user blocks.
+This intentionally lets authenticated browser content reach the active model
+when the capability is not blocked.
 
 Browser Pilot cannot reliably distinguish ordinary interaction from a message,
 form submission, purchase, or other business effect. Until trustworthy semantic
@@ -346,10 +373,26 @@ it does not claim that every click actually sent a message. Either explicit
 block denies the call before spawn. Default Full Access still exposes the
 complete Browser Pilot surface, with no per-operation approval.
 
-Capability audit and `commandActions` are derived only from the normalized
-capability intent and sanitized durable command. An unknown Browser Pilot
-command fails closed; it never falls back to `shell.unknown` or the default
-shell provider.
+Catalog membership is not an admission gate. An unclassified command or `net`
+subcommand receives all five Browser action kinds as its worst-case
+classification, plus `external.message.send` because the set includes
+`browser.external_action`. The complete descriptor set goes through the same
+`decide(effect)` path as a known command: the safety floor and any matching
+explicit block can deny it; otherwise Full Access allows the pinned executable
+to run it.
+
+Capability audit and `commandActions` are derived only from that normalized
+intent and the sanitized durable command. Unclassified calls carry the durable
+marker `unclassified, worst-case classified` and a plain-language explanation
+that Tenon treated the command as capable of every Browser action. A block
+result explains that conservative classification and the matching rule without
+exposing transient arguments. An unclassified direct call never falls back to
+`shell.unknown` or the default shell provider.
+
+The pinned classification catalog remains the precision map for known commands,
+not an allowlist. Binary version and digest pinning remain unchanged supply-chain
+requirements. If the pinned `bp` binary does not support a structurally valid
+command, its structured CLI error is the authoritative failure.
 
 ### Identity And Lifecycle
 
@@ -410,12 +453,18 @@ plugin skill under `build/generated`, and sets executable permissions. Runtime
 code never downloads or repairs assets. Electron Builder copies the verified
 generated directory with `extraResources`.
 
+Deferred beyond 1.0: a signed-component inventory updater is the established
+evolution path only if the cadence of Browser Pilot releases proves manual
+manifest updates to be a recurring pain point. This feature does not build that
+updater; the checked-in pin and deterministic verification remain authoritative.
+
 Packaged Tenon resolves the executable only below `process.resourcesPath`.
 Source runs accept only the verified generated asset or one explicit absolute
 development override whose version and digest are checked. Missing, mismatched,
 unsupported, or partially staged assets make Browser Control unavailable as one
-unit. The first target is Browser Pilot's published Apple Silicon macOS asset;
-Intel macOS remains unsupported.
+unit. The initial release supports only Browser Pilot's published Apple Silicon
+macOS asset. Intel macOS is unsupported as an accepted launch constraint, not a
+missing fallback to discover or download at runtime.
 
 Bundle the exact complete upstream `browser-pilot` skill directory, including
 `SKILL.md`, `compatibility.json`, `agents/openai.yaml`, and all references.
@@ -446,9 +495,12 @@ isolated-skill Turn because parent ceilings and Role tool catalogs differ.
   extension, SDK, or MCP server.
 - The Agent uses `bp browsers` for passive setup inspection. It runs
   `bp connect` only after `browser_disconnected` or an explicit user request.
-- Chrome owns remote-debugging enablement and the visible Allow dialog. The
-  Agent reports structured remediation and waits instead of looping or claiming
-  authorization succeeded.
+- Chrome owns remote-debugging enablement and the visible Allow dialog. First
+  authorization remains conversation-only: the Agent reports structured
+  remediation and waits instead of looping or claiming authorization succeeded.
+  Tenon adds no onboarding card or Settings surface for this flow.
+- The initial release is available only on Apple Silicon macOS; Intel macOS is
+  not supported.
 - When several live Profiles match, the Agent inventories representative tabs,
   uses `profiles --identify` only when account-aware labels are necessary, and
   asks the user only when the intended Profile remains ambiguous.
@@ -527,10 +579,13 @@ src/main/agent/browserPilot/
   BrowserPilotLifecycle.ts
 ```
 
-The local-command owner delegates `bash` preparation/execution to the router and
-contributes that handler through the #456 seam. `agentCapabilities.ts` consumes
-prepared capability intent instead of reparsing Browser commands.
-`ToolRuntime.ts` remains assembly-only and contains no Browser conditionals.
+The Browser Pilot command-family owner binds its Turn-scoped provider and
+contributes its prepared direct-`bash` handler to the router, following the #456
+owner-contributes-handler pattern. The default shell provider contributes its
+sibling handler; the local-command module composes the router into one canonical
+`bash` `AgentTool` contribution. `agentCapabilities.ts` consumes prepared
+capability intent instead of reparsing Browser commands. `ToolRuntime.ts`
+remains assembly-only and contains no Browser conditionals.
 
 The optional execution contract extends the Tenon-owned `AgentTool`/kernel
 runner port in `runtime/kernel/types.ts` and the tool-runner code currently in
@@ -583,7 +638,14 @@ No URL Preview spec gains a Browser Control dependency.
   rejected shell construct; prove compound commands can reach only the
   non-forwarding facade.
 - Compare the pinned command/subcommand catalog with `bp --help` and
-  `bp net --help`; unknown inventory fails closed before spawn.
+  `bp net --help`; known entries retain exact mappings, while absent entries
+  receive the complete worst-case Browser descriptor set and execute only after
+  normal `decide(effect)`.
+- Prove an unclassified command carries the durable
+  `unclassified, worst-case classified` marker and understandable explanation,
+  every matching Browser or external-message block denies it before spawn, an
+  unblocked call reaches only the verified `bp` binary, and an unsupported
+  command returns `bp`'s structured error.
 - Verify each Browser action kind independently blocks its mapped commands and
   that `Action(external.message.send)` conservatively blocks every ambiguous
   `browser.external_action` before spawn while leaving Browser reads and control
@@ -624,10 +686,12 @@ No URL Preview spec gains a Browser Control dependency.
   adapter, Item/event golden, Turn diagnostics lifecycle suite, and full catalog
   byte-stability judge must remain green before Browser Pilot tests are
   considered.
-- Authenticated page content is intentionally available to the active model
-  when `browser.sensitive_read` is allowed. Durable projection prevents silent
-  raw retention but cannot remove content the Agent deliberately includes in
-  its response or writes to a file.
+- **Accepted sensitive-content risk:** Full Access allows
+  `browser.sensitive_read` by default, so authenticated page content is
+  intentionally available to the active model unless the user explicitly
+  blocks that action. Durable projection prevents silent raw retention but
+  cannot remove content the Agent deliberately includes in its response or
+  writes to a file.
 - The conservative `external.message.send` attachment intentionally blocks
   some non-messaging browser actions for users who configured that explicit
   block. This is preferable to silently bypassing an existing semantic block
@@ -636,11 +700,13 @@ No URL Preview spec gains a Browser Control dependency.
   permanent native manifest. Every version bump requires a coordinated catalog,
   projection, skill, asset, checksum, and compatibility review.
 - Browser authorization depends on supported Chrome remote-debugging UI and a
-  user Allow action Tenon cannot complete.
+  user Allow action Tenon cannot complete. Conversation-only remediation may be
+  less discoverable than onboarding UI; that tradeoff is accepted for launch.
 - Full Access cannot contain a hostile local process that searches packaged
   resources; the command provider secures Tenon's supported route, not the
   entire user account.
-- Native platform support is limited to Browser Pilot's published assets.
+- Apple Silicon macOS is the only launch platform. Intel macOS is explicitly
+  unsupported until a later release changes that accepted product constraint.
 
 ## Open Questions
 
