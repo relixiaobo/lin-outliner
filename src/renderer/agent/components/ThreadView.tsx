@@ -1475,6 +1475,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
             <ThreadProcessBlock
               expandState={expandState}
               hasFinalResponse={responseItem !== null}
+              index={index}
               items={block.items}
               key={`process:${block.items[0]?.id ?? turn.id}`}
               turn={turn}
@@ -1482,6 +1483,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
               {groupTurnItems(block.items).map((group) => group.kind === 'tools' ? (
                 <ThreadToolActivityGroup
                   expandState={expandState}
+                  index={index}
                   items={group.items}
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
@@ -1817,12 +1819,14 @@ function ThreadProcessBlock({
   children,
   expandState,
   hasFinalResponse,
+  index,
   items,
   turn,
 }: {
   readonly children: ReactNode;
   readonly expandState: ThreadDisclosureState;
   readonly hasFinalResponse: boolean;
+  readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
   readonly turn: Turn;
 }) {
@@ -1836,7 +1840,7 @@ function ThreadProcessBlock({
     && items.length > 0;
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
-  const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t);
+  const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t, index);
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
   return (
     <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
@@ -1906,6 +1910,7 @@ function threadProcessSummary(
   hasFinalResponse: boolean,
   liveElapsedMs: number | null,
   t: Messages,
+  index: DocumentIndex,
 ): string {
   if (turn.status === 'inProgress') {
     return liveElapsedMs !== null && liveElapsedMs >= 1_000
@@ -1921,9 +1926,9 @@ function threadProcessSummary(
   const tools = items.filter(isThreadToolItem);
   const reasoning = items.find((item): item is Extract<ThreadItem, { type: 'reasoning' }> => item.type === 'reasoning');
   const activity = tools.length === 1
-    ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity)
+    ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
-      ? summarizeThreadToolActivity(tools, t.agent.thread.activity)
+      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index)
       : '';
   if (reasoning) {
     if (activity) return `${t.agent.thinking.thought} · ${sentenceFragment(activity)}`;

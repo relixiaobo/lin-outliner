@@ -9,12 +9,9 @@ import type {
   ThreadItem,
   UserMessageThreadItem,
 } from '../../src/core/agent/protocol';
-import { en } from '../../src/core/i18n';
 import {
   ThreadItemView,
   ThreadToolActivityGroup,
-  summarizeThreadToolActivity,
-  summarizeThreadToolItem,
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
@@ -152,7 +149,7 @@ describe('ThreadItemView tool row status presentation', () => {
     const indicator = rendered.document.querySelector('.thread-disclosure-indicator');
     expect(indicator?.getAttribute('aria-hidden')).toBe('true');
     const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
-    expect(label?.title).toBe('Command failed · "npm test"');
+    expect(label?.title).toBe('Ran "npm test" · failed');
     expect(label?.textContent).toBe(label?.title);
   });
 
@@ -225,50 +222,51 @@ describe('ThreadItemView tool row status presentation', () => {
   });
 });
 
-describe('thread tool summaries', () => {
-  const labels = en.agent.thread.activity;
+describe('ThreadToolActivityGroup glyph', () => {
+  test('wears the shared tool glyph when every member agrees, the wrench when mixed', async () => {
+    const reads = renderGroup([
+      dynamic({ id: 'r-1', tool: 'file_read', args: { file_path: '/w/a.md' } }),
+      dynamic({ id: 'r-2', tool: 'file_read', args: { file_path: '/w/b.md' } }),
+    ]);
+    await flush();
+    const readGlyph = reads.document
+      .querySelector('.thread-tool-activity-toggle .thread-disclosure-status svg')?.outerHTML;
+    while (mounted.length > 0) mounted.pop()?.();
 
-  test('reads interrupted work as interrupted, never as past-tense success', () => {
-    expect(summarizeThreadToolItem(command({ status: 'interrupted' }), labels))
-      .toBe('Command interrupted · "npm test"');
-    expect(summarizeThreadToolItem({
-      ...base('mcp-1'),
-      type: 'mcpToolCall',
-      status: 'interrupted',
-      outputRef: null,
-      server: 'files',
-      tool: 'read',
-      arguments: {},
-      pluginId: null,
-      result: null,
-      error: null,
-      durationMs: null,
-    }, labels)).toBe('files.read interrupted');
-    expect(summarizeThreadToolItem({
-      ...base('search-1'),
-      type: 'webSearch',
-      status: 'interrupted',
-      outputRef: null,
-      query: 'tenon',
-      results: [],
-      error: null,
-    }, labels)).toBe('Web search interrupted · "tenon"');
-    expect(summarizeThreadToolItem({
-      ...base('file-2'),
-      type: 'fileChange',
-      status: 'interrupted',
-      outputRef: null,
-      changes: [{ path: '/workspace/a.ts', kind: 'update' }],
-    }, labels)).toBe('Interrupted changing 1 file');
-  });
+    const mixed = renderGroup([
+      dynamic({ id: 'r-1', tool: 'file_read', args: { file_path: '/w/a.md' } }),
+      command({ id: 'c-1' }),
+    ]);
+    await flush();
+    const mixedGlyph = mixed.document
+      .querySelector('.thread-tool-activity-toggle .thread-disclosure-status svg')?.outerHTML;
 
-  test('leaves a clean group summary untouched', () => {
-    expect(summarizeThreadToolActivity([
-      command({ id: 'command-1', status: 'completed' }),
-      command({ id: 'command-2', status: 'completed' }),
-    ], labels)).toBe('Ran 2 commands');
+    expect(readGlyph).toBeTruthy();
+    expect(mixedGlyph).toBeTruthy();
+    expect(readGlyph).not.toBe(mixedGlyph);
   });
 });
+
+function dynamic(overrides: {
+  readonly id?: string;
+  readonly namespace?: string | null;
+  readonly tool: string;
+  readonly args: Record<string, unknown>;
+  readonly status?: ItemExecutionStatus;
+}): ThreadToolItem {
+  return {
+    ...base(overrides.id ?? 'dynamic-1'),
+    type: 'dynamicToolCall',
+    status: overrides.status ?? 'completed',
+    outputRef: null,
+    namespace: overrides.namespace ?? null,
+    tool: overrides.tool,
+    arguments: overrides.args as never,
+    contentItems: null,
+    success: overrides.status === 'failed' ? false : true,
+    durationMs: 1,
+  };
+}
 
 function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandExecutionThreadItem {
   return {

@@ -62,6 +62,23 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   the finished children inside it. The indicator is decorative to assistive
   technology: the label text and `aria-expanded` carry the state, and the label
   exposes its untruncated text as a title
+- a tool row says **what the agent did**, in the user's terms, and never shows a
+  model-facing tool identifier for a tool the renderer can map: built-in tool
+  calls resolve to one shared activity vocabulary, and the identifier survives
+  only for an MCP or plugin tool where the name genuinely is the most
+  informative thing known. Single rows and counted groups derive their wording
+  from that same vocabulary, so a lone call and a group of one read alike
+- a row names its subject wherever the call carries one — the file's basename,
+  the Node's title (resolved like any Node reference, falling back to the id),
+  the search pattern or query, the fetched URL, the Skill — and a summary names
+  up to two subjects before eliding ("Read intro.xhtml, ch01.xhtml and 4 more"),
+  with the full list in the row's title. A subject phrase drops the redundant
+  noun, because the subject already supplies it. When only some of a bucket's
+  subjects are nameable, the summary counts instead of naming: a partly-named
+  summary would read as if the unnamed work never happened
+- terminal status is **one** idiom for every tool kind — the act, then the
+  outcome as an annotation (`Read intro.xhtml · failed`) — rather than a
+  per-kind failure sentence. A scanning user learns the pattern once
 - a counted activity group summarizes mixed outcomes, so it is **not** painted by
   its worst member: its glyph and its activity phrase stay neutral, and only the
   appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")

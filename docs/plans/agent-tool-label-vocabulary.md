@@ -25,7 +25,10 @@ Shape **(b): two independent complete features, each its own PR.**
 
 - **PR 1 — one vocabulary, with subjects.** Single rows stop printing raw tool
   identifiers and join the human activity vocabulary that groups already use;
-  both single rows and groups name their subject.
+  both single rows and groups name their subject. Ships inside the
+  run-presentation status PR at the PM's call (2026-07-30): the two change the
+  same two label functions, and shipping status visuals alone would have
+  released a row that is visually correct and verbally wrong.
 - **PR 2 — command legibility.** A command row says what ran, not the shell
   plumbing that ran it.
 
@@ -82,6 +85,19 @@ From a real run (`node_read` → `file_glob` ×3 → `file_read` → `python3` �
 - **V5 — `skill`, `web_fetch`, and MCP rows lose their one identifying
   argument.** Same cause as V4: no subject branch, so a skill invocation reads
   "Used a skill" rather than naming the skill.
+- **V10 — Failure has six different idioms.** `Command failed · "x"`,
+  `Failed to change 2 files`, `x failed`, `Web search failed · "q"` — one per
+  kind, so a scanning user re-learns the pattern per tool and never sees what a
+  failed call was *trying* to do.
+- **V11 — Collaboration rows leak their identifiers too.** `collabAgentToolCall`
+  goes through the same `namedToolSummary`, so the transcript reads `Used
+  spawn_agent` / `Used wait_agent`. Unlike MCP this is a **closed set** of six
+  tools, so there is no excuse for the identifier.
+- **V12 — `web_fetch` is described as a web search.** Both `web_fetch` and
+  `web_search` map to the single `web` kind, so fetching a page renders
+  "Searched the web for https://…".
+- **V13 — `node_create` would name the wrong thing.** Its only id-shaped
+  argument is `parent_id`; naming it would claim the parent was created.
 - **V6 — Command rows show shell plumbing.** `summarizeThreadToolItem` quotes
   `firstLine(item.command)` (`:864-871`), so a heredoc becomes **`Ran "python3 -
   <<'PY'"`** — the first line of a heredoc is pure syntax, and three different
@@ -130,7 +146,21 @@ From a real run (`node_read` → `file_glob` ×3 → `file_read` → `python3` �
   for node references and is preferable to showing a UUID.
 - `ThreadToolActivityGroup` passes the group's own kind glyph when every member
   shares one kind, and `GenericToolIcon` only for genuinely mixed groups (V8).
-- Every new phrase lands in `en.ts` + `zh-Hans.ts` in the same change.
+- One failure idiom replaces the six per-kind phrasings (V10): the act, then
+  the outcome as an annotation (`Read intro.xhtml · failed`). This *deletes*
+  eight i18n keys and adds two.
+- The six collaboration tools get real copy (V11) — "Started an agent", "Waited
+  for an agent" — since the set is closed.
+- `web_fetch` splits out of the `web` kind into its own "Fetched …" family
+  (V12), and `node_create` names nothing rather than naming its parent (V13).
+- A single `fileChange` names its paths too ("Changed a.ts, b.ts and 1 more"),
+  since the subjects were equally available there.
+- Where a subject phrase would be ungrammatical past one item — "Used the
+  dataviz, run skill" — the summary falls back to counting.
+- Every new phrase lands in `en.ts` + `zh-Hans.ts` in the same change, and the
+  whole matrix is pinned by an exhaustive copy table
+  (`tests/renderer/threadToolCopy.test.ts`) so a wording change is reviewed as a
+  diff of that table rather than found in a transcript.
 
 ### PR 2 — command legibility
 

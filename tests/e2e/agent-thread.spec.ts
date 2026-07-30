@@ -377,7 +377,10 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turn.getByText('Used memory')).toHaveCount(0);
     const process = turn.locator('.thread-process-block');
     await process.getByRole('button', { name: 'Worked for 1s' }).click();
-    await expect(process.locator('.thread-tool').filter({ hasText: 'node_read' })).toBeVisible();
+    // The row stays in the process, but says what it did rather than which tool
+    // was called.
+    await expect(process.locator('.thread-tool').filter({ hasText: 'Read' })).toBeVisible();
+    await expect(process).not.toContainText('node_read');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.mouse.move(0, 0);
     await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
@@ -1887,7 +1890,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(thought.locator('.thread-reasoning-gist')).toHaveCSS('font-weight', '400');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
     await expect(thoughtChevron).toHaveCSS('opacity', '0');
-    const activity = page.getByRole('button', { name: 'Ran a command · read a node' });
+    const activity = page.getByRole('button', { name: /^Ran a command · read / });
     const [thoughtBox, activityBox] = await Promise.all([thought.boundingBox(), activity.boundingBox()]);
     expect(thoughtBox).toBeTruthy();
     expect(activityBox).toBeTruthy();
@@ -1948,7 +1951,7 @@ test.describe('canonical agent Thread surface', () => {
     const commandPaths = command.locator('xpath=..').locator('.thread-tool-path-reference');
     await expect(commandPaths).toHaveCount(1);
     await expect(commandPaths).toHaveAttribute('data-tool-path', '/mock/workspace');
-    const nodeTool = page.getByRole('button', { name: 'Used node.read' });
+    const nodeTool = page.getByRole('button', { name: /^Read / });
     await nodeTool.click();
     const relativePath = nodeTool.locator('xpath=..').locator('.thread-tool-path-reference');
     await expect(relativePath).toHaveAttribute('data-tool-path', '/mock/workspace/notes with spaces.md');
