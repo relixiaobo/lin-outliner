@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Subagent token budgets, PR B: mid-Turn enforcement (PR #450, codex)** —
+  the kernel now consults a live budget view before every model call on
+  budgeted, non-user Turns (ThreadService supplies the committed ledger base;
+  the executor composes the normalizer's in-flight usage; user-triggered Turns
+  are never offered the port — the bright line holds mid-Turn). First crossing
+  of 80% delivers one canonical steering notice with actual figures
+  ("synthesize and conclude"), advisory under A12 (delivery failure logs and
+  continues). Exhaustion before outstanding model work settles the Turn
+  interrupted with ledger-total-of-budget figures; a terminal answer under
+  racing steering settles completed (overshoot accrues per PR A), undrained
+  steering is never falsely consumed, and the event cadence stays balanced.
+  Golden parity fixtures untouched (non-budgeted runs byte-identical).
+  **Gate (main):** high-effort review (7 verified defects, all fixed
+  same-day), plan tripwires, typecheck, 1554 core / 793 renderer tests.
+
 - **Subagent token budgets, PR A (PR #446, codex)** — spawn-time token budgets
   as a host-owned circuit breaker (PM-ratified sizing policy: breaker not
   allocation). Optional `max_total_tokens` on `spawn_agent`; global default

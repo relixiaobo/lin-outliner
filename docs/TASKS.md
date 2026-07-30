@@ -348,8 +348,8 @@ before any directional/security-sensitive build.
   per-stage commits). Sequencing: `subagent-budget-propagation` PR A lands FIRST (it touches
   lines stages 3-4 move), then this PR starts from a rebase on top of it. See
   `docs/plans/threadservice-decomposition.md`.
-- **subagent-budget-propagation** (P2, `in-progress` — PR A `done` 2026-07-30 as #446, codex;
-  **PR B claimable now**, kernel prerequisite met by #445) — spawn-time token budgets as a
+- **subagent-budget-propagation** (P2, `in-progress` — PR A `done` #446, PR B `done`
+  2026-07-30 as #450, codex; **PR C remains**, ordered behind `threadservice-decomposition`) — spawn-time token budgets as a
   host-owned circuit breaker. PR A shipped after three gate passes (18 findings across two
   review rounds, all fixed; the plan's original Goal-reuse design was replaced by the
   `thread_budgets` ledger in `persistence/SubagentBudgetLedger.ts` after review proved Goal
@@ -358,9 +358,12 @@ before any directional/security-sensitive build.
   exhausted senders cannot spawn, typed `SubagentBudgetExhaustedError` with soft/hard handling
   per caller, accrual inside the completion mutex incl. failure paths, atomic mailbox snapshot,
   steering never gated, budget visibility in `wait_agent`/`list_agents`, user bright line.
-  PR B (claimable): the kernel consults a `remainingTokenBudget` port before each model call,
-  80% soft-landing steering notice, graceful mid-Turn settle — the incident's actual failure
-  mode (586k tokens in one child Turn). PR C (PM-ratified 2026-07-30, ordered behind
+  PR B shipped after one gate round (7 verified findings fixed same-day — bright line restated
+  for the mid-Turn port, advisory warning under A12, steering×exhaustion orderings): the kernel
+  consults a live-composed `{budget, used}` port (ThreadService committed base + normalizer
+  in-flight usage) before each model call, one 80% soft-landing notice with actual figures,
+  terminal answers settle completed under racing steering, graceful mid-Turn interrupted settle
+  otherwise — closing the incident's actual failure mode (586k tokens in one child Turn). PR C (PM-ratified 2026-07-30, ordered behind
   `threadservice-decomposition`): budget conservation — one tree pool per root-most spawner
   (subtree spend <= root grant by construction, retiring the min() patch and the
   grandchild-evasion residual), depth-2 and spawn-count-16 admission gates (legibility
