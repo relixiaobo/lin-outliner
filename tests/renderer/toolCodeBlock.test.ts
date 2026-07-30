@@ -47,6 +47,21 @@ describe('tool code block file paths', () => {
     ]);
   });
 
+  test('keeps bracket and brace names navigable in declared path fields', () => {
+    const code = JSON.stringify({
+      file_path: 'src/app/[slug]/page.tsx',
+      paths: ['reports/Report [final].md', 'fixtures/{draft}/data.json'],
+      pattern: 'src/app/[slug]/*.tsx',
+    }, null, 2);
+    const ranges = toolPathRanges(code, 'json', '/workspace/project');
+
+    expect(pathRanges(code, ranges)).toEqual([
+      { text: 'src/app/[slug]/page.tsx', path: '/workspace/project/src/app/[slug]/page.tsx' },
+      { text: 'reports/Report [final].md', path: '/workspace/project/reports/Report [final].md' },
+      { text: 'fixtures/{draft}/data.json', path: '/workspace/project/fixtures/{draft}/data.json' },
+    ]);
+  });
+
   test('decorates the original encoded JSON text without rewriting it', () => {
     const code = '{"path":"C:\\\\Users\\\\dev\\\\report.md"}';
     const ranges = toolPathRanges(code, 'json', '/workspace/project');

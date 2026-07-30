@@ -1293,12 +1293,12 @@
   white-space: inherit;
 }
 
-.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover,
-.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover span {
+:root.is-primary-modifier-pressed .thread-tool-path-reference:hover,
+:root.is-primary-modifier-pressed .thread-tool-path-reference:hover span {
   color: var(--link);
 }
 
-.thread-tool-code-block.is-primary-modifier-pressed .thread-tool-path-reference:hover {
+:root.is-primary-modifier-pressed .thread-tool-path-reference:hover {
   cursor: pointer;
   text-decoration-line: underline;
   text-decoration-thickness: 1px;

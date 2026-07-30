@@ -1,11 +1,11 @@
 import {
   useEffect,
   useMemo,
-  useRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { ReadOnlyCodeBlock } from '../../ui/editor/CodeBlockSurface';
+import { inlineFilePreviewAttrs } from '../../ui/editor/inlineFilePreviewData';
 import type { CodeDecoration } from '../../ui/editor/shikiHighlighter';
 import { dispatchPreviewTargetOpen } from '../../ui/preview/previewEvents';
 import { wantsNewPaneFromClick } from '../../ui/shared';
@@ -31,7 +31,7 @@ const PATH_LINE_SUFFIX = /:(\d+)(?::\d+)?$/u;
 export function ToolCodeBlock({ code, copyLabel, cwd, language }: ToolCodeBlockProps) {
   const paths = useMemo(() => toolPathRanges(code, language, cwd), [code, cwd, language]);
   const decorations = useMemo(() => pathDecorations(paths), [paths]);
-  const blockRef = usePrimaryModifierClass(paths.length > 0);
+  usePrimaryModifierTracker(paths.length > 0);
 
   const openPath = (index: number, newPane: boolean) => {
     const target = paths[index];
@@ -49,10 +49,11 @@ export function ToolCodeBlock({ code, copyLabel, cwd, language }: ToolCodeBlockP
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const index = toolPathIndexFromTarget(event.target);
-    if (index === null || !wantsNewPaneFromClick(event)) return;
+    const newPane = wantsNewPaneFromClick(event);
+    if (index === null || !newPane) return;
     event.preventDefault();
     event.stopPropagation();
-    openPath(index, wantsNewPaneFromClick(event));
+    openPath(index, newPane);
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -69,7 +70,6 @@ export function ToolCodeBlock({ code, copyLabel, cwd, language }: ToolCodeBlockP
       className="thread-tool-code-block"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      ref={blockRef}
     >
       <ReadOnlyCodeBlock
         code={code}
@@ -135,7 +135,12 @@ function trimTrailingSentencePunctuation(value: string): string {
 
 function resolveToolPath(value: string, cwd: string, pathField: boolean): string | null {
   const candidate = value.trim();
-  if (!candidate || candidate.includes('\n') || looksLikeUrl(candidate) || looksLikeGlob(candidate)) return null;
+  if (
+    !candidate
+    || candidate.includes('\n')
+    || looksLikeUrl(candidate)
+    || (!pathField && looksLikeGlob(candidate))
+  ) return null;
   const withoutLocation = candidate.replace(PATH_LINE_SUFFIX, '');
   if (isAbsolutePath(withoutLocation)) return withoutLocation;
   if (withoutLocation.startsWith('~/')) {
@@ -215,19 +220,29 @@ function decodeJsonString(value: string): string {
 }
 
 function pathDecorations(paths: readonly ToolPathRange[]): CodeDecoration[] {
-  return paths.map((path, index) => ({
-    start: path.start,
-    end: path.end,
-    alwaysWrap: true,
-    properties: {
-      'aria-label': path.text,
-      'className': ['thread-tool-path-reference'],
-      'data-tool-path': path.path,
-      'data-tool-path-index': String(index),
-      'role': 'link',
-      'tabIndex': 0,
-    },
-  }));
+  return paths.map((path, index) => {
+    const entryKind = path.path.endsWith('/') ? 'directory' : 'file';
+    return {
+      start: path.start,
+      end: path.end,
+      alwaysWrap: true,
+      properties: {
+        ...inlineFilePreviewAttrs({
+          entryKind,
+          mimeType: entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
+          name: path.text,
+          path: path.path,
+          ref: path.text,
+        }),
+        'className': ['thread-tool-path-reference'],
+        'data-tool-path': path.path,
+        'data-tool-path-index': String(index),
+        'role': 'link',
+        'tabIndex': 0,
+        'title': path.text,
+      },
+    };
+  });
 }
 
 function toolPathIndexFromTarget(target: EventTarget | null): number | null {
@@ -238,24 +253,45 @@ function toolPathIndexFromTarget(target: EventTarget | null): number | null {
   return Number.isInteger(index) && index >= 0 ? index : null;
 }
 
-function usePrimaryModifierClass(enabled: boolean) {
-  const blockRef = useRef<HTMLDivElement | null>(null);
+const PRIMARY_MODIFIER_ROOT_CLASS = 'is-primary-modifier-pressed';
+let primaryModifierTrackerConsumers = 0;
+
+function usePrimaryModifierTracker(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return undefined;
-    const setPressed = (pressed: boolean) => {
-      blockRef.current?.classList.toggle('is-primary-modifier-pressed', pressed);
-    };
-    const sync = (event: KeyboardEvent) => setPressed(event.metaKey || event.ctrlKey);
-    const reset = () => setPressed(false);
-    window.addEventListener('keydown', sync);
-    window.addEventListener('keyup', sync);
-    window.addEventListener('blur', reset);
-    return () => {
-      setPressed(false);
-      window.removeEventListener('keydown', sync);
-      window.removeEventListener('keyup', sync);
-      window.removeEventListener('blur', reset);
-    };
+    acquirePrimaryModifierTracker();
+    return releasePrimaryModifierTracker;
   }, [enabled]);
-  return blockRef;
+}
+
+function acquirePrimaryModifierTracker(): void {
+  primaryModifierTrackerConsumers += 1;
+  if (primaryModifierTrackerConsumers !== 1) return;
+  window.addEventListener('keydown', syncPrimaryModifier);
+  window.addEventListener('keyup', syncPrimaryModifier);
+  window.addEventListener('pointerdown', syncPrimaryModifier);
+  window.addEventListener('pointermove', syncPrimaryModifier);
+  window.addEventListener('blur', resetPrimaryModifier);
+}
+
+function releasePrimaryModifierTracker(): void {
+  primaryModifierTrackerConsumers = Math.max(0, primaryModifierTrackerConsumers - 1);
+  if (primaryModifierTrackerConsumers !== 0) return;
+  window.removeEventListener('keydown', syncPrimaryModifier);
+  window.removeEventListener('keyup', syncPrimaryModifier);
+  window.removeEventListener('pointerdown', syncPrimaryModifier);
+  window.removeEventListener('pointermove', syncPrimaryModifier);
+  window.removeEventListener('blur', resetPrimaryModifier);
+  resetPrimaryModifier();
+}
+
+function syncPrimaryModifier(event: KeyboardEvent | PointerEvent): void {
+  document.documentElement.classList.toggle(
+    PRIMARY_MODIFIER_ROOT_CLASS,
+    event.metaKey || event.ctrlKey,
+  );
+}
+
+function resetPrimaryModifier(): void {
+  document.documentElement.classList.remove(PRIMARY_MODIFIER_ROOT_CLASS);
 }

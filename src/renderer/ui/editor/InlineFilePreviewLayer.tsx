@@ -174,6 +174,8 @@ export function InlineFilePreviewLayer() {
         hidePreview();
         return;
       }
+      const newPane = wantsNewPaneFromClick(event);
+      if (element.hasAttribute('data-tool-path') && !newPane) return;
       event.preventDefault();
       event.stopPropagation();
       const file = fileFromElement(element);
@@ -182,7 +184,7 @@ export function InlineFilePreviewLayer() {
         return;
       }
       dispatchPreviewTargetOpen({
-        newPane: wantsNewPaneFromClick(event),
+        newPane,
         target: previewTargetForInlineFile(file as InlineFileMenuFile),
       });
       hidePreview();

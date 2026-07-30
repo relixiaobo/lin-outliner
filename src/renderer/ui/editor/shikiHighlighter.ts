@@ -5,6 +5,7 @@ import {
   type BundledLanguage,
   type DecorationItem,
   type Highlighter,
+  type ShikiTransformer,
 } from 'shiki';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import { normalizeCodeLanguage } from './codeLanguages';
@@ -27,6 +28,11 @@ export type CodeDecoration = DecorationItem;
 const THEMES = { light: 'github-light', dark: 'github-dark' } as const;
 const THEME_NAMES = [THEMES.light, THEMES.dark];
 const PLAIN = 'text';
+const NON_FOCUSABLE_PRE_TRANSFORMER: ShikiTransformer = {
+  pre(element) {
+    element.properties.tabindex = -1;
+  },
+};
 
 // Loaded eagerly so the most common blocks highlight without a flash. Other
 // bundled languages load lazily on first use via `highlightCode`.
@@ -96,7 +102,11 @@ export async function highlightCode(
     defaultColor: false as const,
     decorations: [...decorations],
   };
-  if (!id || id === PLAIN) return highlighter.codeToHtml(code, { lang: PLAIN, ...options });
+  const plainOptions = {
+    ...options,
+    transformers: [NON_FOCUSABLE_PRE_TRANSFORMER],
+  };
+  if (!id || id === PLAIN) return highlighter.codeToHtml(code, { lang: PLAIN, ...plainOptions });
 
   if (!loadedLangs.has(id) && !failedLangs.has(id)) {
     try {
@@ -106,7 +116,7 @@ export async function highlightCode(
       failedLangs.add(id);
     }
   }
-  if (!loadedLangs.has(id)) return highlighter.codeToHtml(code, { lang: PLAIN, ...options });
+  if (!loadedLangs.has(id)) return highlighter.codeToHtml(code, { lang: PLAIN, ...plainOptions });
 
   return highlighter.codeToHtml(code, { lang: id, ...options });
 }

@@ -86,6 +86,31 @@ describe('InlineFilePreviewLayer routing', () => {
     }]);
   });
 
+  test('tool path references keep modifier-only click activation', async () => {
+    const rendered = render({});
+    const workspacePreviews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+    const chip = localFileChip(rendered.document);
+    chip.setAttribute('data-tool-path', '/workdir/report.md');
+    rendered.document.body.appendChild(chip);
+
+    await click(rendered, chip);
+    expect(workspacePreviews).toEqual([]);
+
+    await click(rendered, chip, { ctrlKey: true });
+    expect(workspacePreviews).toEqual([{
+      newPane: true,
+      target: {
+        kind: 'local-file',
+        path: '/workdir/report.md',
+        entryKind: 'file',
+        label: 'report.md',
+      },
+    }]);
+  });
+
 });
 
 function render(lin: LinStub): Rendered {
@@ -113,13 +138,17 @@ function localFileChip(document: Document): HTMLElement {
   return chip;
 }
 
-async function click(rendered: Rendered, target: Element | null) {
+async function click(
+  rendered: Rendered,
+  target: Element | null,
+  modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {},
+) {
   if (!target) throw new Error('Missing file chip');
   await act(async () => {
     const event = new rendered.window.Event('click', { bubbles: true, cancelable: true });
     Object.defineProperties(event, {
-      ctrlKey: { value: false },
-      metaKey: { value: false },
+      ctrlKey: { value: modifiers.ctrlKey ?? false },
+      metaKey: { value: modifiers.metaKey ?? false },
     });
     target.dispatchEvent(event);
   });

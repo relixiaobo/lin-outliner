@@ -85,9 +85,13 @@ export function ReadOnlyCodeBlock({
   useEffect(() => {
     let cancelled = false;
     setHtml(plainCodeHtml(code));
-    void highlightCode(code, language, decorations).then((next) => {
-      if (!cancelled) setHtml(next);
-    });
+    void highlightCode(code, language, decorations)
+      .then((next) => {
+        if (!cancelled) setHtml(next);
+      })
+      .catch(() => {
+        if (!cancelled) setHtml(plainCodeHtml(code));
+      });
     return () => {
       cancelled = true;
     };
@@ -102,27 +106,6 @@ export function ReadOnlyCodeBlock({
       showLanguageLabel={showLanguageLabel}
     >
       <div dangerouslySetInnerHTML={{ __html: html }} />
-    </ReadOnlyCodeShell>
-  );
-}
-
-export function PlainReadOnlyCodeBlock({
-  children,
-  className,
-  code,
-  copyLabel,
-  language = 'text',
-  showLanguageLabel = false,
-}: ReadOnlyCodeBlockProps & { children: ReactNode }) {
-  return (
-    <ReadOnlyCodeShell
-      className={className}
-      code={code}
-      copyLabel={copyLabel}
-      language={language}
-      showLanguageLabel={showLanguageLabel}
-    >
-      <pre>{children}</pre>
     </ReadOnlyCodeShell>
   );
 }
