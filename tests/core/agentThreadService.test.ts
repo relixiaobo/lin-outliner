@@ -5455,7 +5455,7 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('refuses a seventeenth lifetime spawn from one Thread', async () => {
+  test('refuses a seventeenth lifetime spawn after a child is deleted', async () => {
     const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 100 });
     const root = (await fixture.service.startThread({
       source: 'app',
@@ -5482,6 +5482,11 @@ describe('ThreadService', () => {
       children.push(child.thread.id);
       await fixture.executor.waitUntilWaiting(index + 1);
     }
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(children[0]!);
+    await fixture.service.deleteThread(children[0]!);
+    expect(fixture.stores.subagentBudgets.readSpawnCount(root.id)).toBe(16);
+
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-limit-refusal');
     await expect(fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
@@ -5490,12 +5495,12 @@ describe('ThreadService', () => {
       taskName: 'spawn_limit_16',
       message: 'This seventeenth child must be refused',
     })).rejects.toBeInstanceOf(SubagentSpawnLimitError);
-    expect(fixture.service.listCollaborationAgents(root.id)).toHaveLength(16);
+    expect(fixture.service.listCollaborationAgents(root.id)).toHaveLength(15);
 
-    for (let index = 0; index < children.length; index += 1) {
+    for (let index = 1; index < children.length; index += 1) {
       fixture.executor.finish(index + 1, completedExecutionResult(0));
     }
-    await Promise.all(children.map((threadId) => fixture.service.waitForIdle(threadId)));
+    await Promise.all(children.slice(1).map((threadId) => fixture.service.waitForIdle(threadId)));
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();

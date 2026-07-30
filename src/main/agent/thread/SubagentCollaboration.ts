@@ -188,7 +188,7 @@ export class SubagentCollaboration {
         result = await this.core.threadTreeMutex.run(async () => {
         if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
         const parent = this.core.requireThread(input.parentThreadId);
-        this.assertSpawnStructure(input.parentThreadId);
+        const nextSpawnCount = this.assertSpawnStructure(input.parentThreadId);
         const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
         const pool = inheritedBudget?.pool
           ?? this.subagentBudgets.readPool(input.parentThreadId)
@@ -240,6 +240,7 @@ export class SubagentCollaboration {
           ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
           ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
         });
+        this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
         return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
         });
       } catch (error) {
@@ -374,15 +375,20 @@ export class SubagentCollaboration {
       }
       return tokenBudget;
     }
-  private assertSpawnStructure(parentThreadId: ThreadId): void {
+  private assertSpawnStructure(parentThreadId: ThreadId): number {
       const parentTaskPath = this.taskPathForThread(parentThreadId) ?? '/root';
       const parentDepth = parentTaskPath.split('/').filter(Boolean).length - 1;
       if (parentDepth >= MAX_SUBAGENT_DEPTH) throw new SubagentDepthLimitError(MAX_SUBAGENT_DEPTH);
       const persistentCount = this.core.metadata.childEdges(parentThreadId).length;
       const ephemeralCount = this.ephemeralChildThreadIds(parentThreadId).length;
-      if (persistentCount + ephemeralCount >= MAX_SUBAGENT_SPAWNS_PER_THREAD) {
+      const spawnCount = Math.max(
+        this.subagentBudgets.readSpawnCount(parentThreadId),
+        persistentCount + ephemeralCount,
+      );
+      if (spawnCount >= MAX_SUBAGENT_SPAWNS_PER_THREAD) {
         throw new SubagentSpawnLimitError(MAX_SUBAGENT_SPAWNS_PER_THREAD);
       }
+      return spawnCount + 1;
     }
   async sendCollaborationMessage(
       senderThreadId: ThreadId,

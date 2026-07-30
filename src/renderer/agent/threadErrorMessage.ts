@@ -25,9 +25,6 @@ function htmlTitle(text: string): string | null {
 
 export function threadErrorMessage(raw: string): string {
   const trimmed = raw.trim().replace(/^Error:\s*/iu, '').replace(/^Proxy error:\s*/iu, '');
-  if (isSubagentResourceLimitError(trimmed)) {
-    return 'Task reached the system resource limit. Results have been preserved.';
-  }
   const directMessage = parsedPayloadMessage(trimmed);
   if (directMessage) return truncate(directMessage, ERROR_PREVIEW_MAX);
 

@@ -68,8 +68,10 @@ The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000`; `null` d
 the shared default. When a Thread with no ancestor pool first spawns, that Thread becomes
 the pool holder. Every descendant resolves the nearest holder by following
 `parentThreadId`, and every descendant Turn contributes `totalTokens` to that one pool.
-The holder's own Turns never debit or gate against the pool. Its own user work therefore
-remains available even after its delegated tree exhausts the pool.
+The holder's own Turns never debit or gate against the pool. The user-triggered Turn
+bright line is an admission-level defense-in-depth invariant, not a product journey:
+children have no composer, so recovery from exhaustion is parent respawn or synthesis
+plus the preserved transcript artifact.
 
 `collaboration.spawn_agent` also accepts optional `max_total_tokens` as a positive safe
 integer. It is a per-child cap on that Thread's own contribution inside the shared pool,
@@ -97,7 +99,8 @@ per covered descendant before that descendant's first Turn. Persistent rows live
 ephemeral rows mirror them in memory. The old per-child `thread_budgets` format is deleted,
 not migrated or read. Deleting a descendant removes only its member row and never refunds
 usage. Deleting the holder Thread deletes the complete Thread subtree and its pool plus
-all remaining member rows. The ledger has no model-tool surface; child Goals remain
+all remaining member rows. A separate lifetime spawn counter survives child deletion and
+is removed only with its spawner. The ledger has no model-tool surface; child Goals remain
 independent and cannot replace, remove, or raise these host-owned limits.
 
 When either the shared pool or the target child's local cap is exhausted, the single
@@ -115,9 +118,10 @@ snapshot is consumed and concurrently queued messages remain for the next Turn.
 Idle-only callers receive the typed refusal rather than a soft `null` result.
 `GoalExtension` records the complete error as its continuation deferral reason, while
 `AutomationDispatcher` marks the run failed with the same accurate model-facing message.
-A renderer Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can
-always resume a descendant explicitly; that descendant's usage still accrues to its
-member and shared pool. Self-managed Goals never control this gate.
+A renderer Turn carries `{ kind: 'user' }` and is never budget-gated; descendant usage
+still accrues to its member and shared pool. This is a defense-in-depth invariant only.
+User-facing recovery happens in the parent through respawn or synthesis and the preserved
+transcript artifact. Self-managed Goals never control this gate.
 
 Completion accrues usage inside the per-Thread mutex before the active Turn is removed
 or idle status is exposed, so racing admission observes the committed total. Failure
@@ -157,8 +161,9 @@ own Turns, so their kernel behavior and event cadence are unchanged.
 
 Spawn admission also enforces two fixed legibility limits: `/root/a/b` is the deepest
 task path, so a depth-2 Thread cannot spawn; and one Thread may create at most 16 direct
-children. The constants live beside the budget ledger. Both checks run inside the Thread
-tree mutex and throw distinct typed errors whose messages name the relevant limit.
+children across its lifetime. The durable count cannot be reset by deleting a child. The
+constants live beside the budget ledger. Both checks run inside the Thread tree mutex and
+throw distinct typed errors whose messages name the relevant limit.
 
 `list_agents` and the child tree returned by `wait_agent` expose shared-pool state:
 `tokenBudget` is the pool total and `tokensUsed` is total pool spend. Every descendant in
