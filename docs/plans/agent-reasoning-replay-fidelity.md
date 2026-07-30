@@ -50,13 +50,13 @@ the failure is intermittent but repeatable.
 
 ## Collision Result
 
-- Open PR #450 overlaps the intended runtime area: it changes
-  `PiTurnExecutor.ts` and the provider-call kernel for in-flight budget
-  enforcement.
-- Open PR #451 subsequently decomposes `ThreadService`; it does not define this
-  behavior, but main already requires #450 to land before #451 and rebase.
-- Main should schedule this work on top of the settled #450/#451 runtime shape
-  rather than implement it against their interim ownership boundaries.
+- PR #450 has merged its provider-call budget enforcement, and PR #451 has
+  merged the `ThreadService` decomposition. The implementation can now target
+  the settled `CanonicalContextProjector` / `PiTurnExecutor` boundary and
+  `TurnLifecycle` ownership directly.
+- Current open PRs #455 and #456 touch `SubagentCollaboration`; neither touches
+  context projection, `PiTurnExecutor`, or the provider-call kernel. PR #453 is
+  renderer-only and PR #454 is docs-only, so there is no active file collision.
 - The change does not require `src/core/commands.ts`, `src/core/types.ts`,
   `package.json`, or another infrastructure-ownership file.
 - This dev PR records only the design and does not edit main-owned
@@ -94,10 +94,18 @@ The next provider request should receive its signed native reasoning item and
 the associated tool call. No intermediate canonical projection may downgrade
 that reasoning to `output_text`.
 
+`PiTurnExecutor` currently asks `CanonicalContextProjector` to rebuild every
+provider request after the active `ItemRecorder` flushes. Preserve that
+canonical authority for durable messages and tool pairing, but let the
+projection boundary retain the current provider message's signed reasoning
+parts in memory for the same Turn. It must not persist those private parts or
+substitute the kernel transcript for canonical history.
+
 The provider-payload boundary owns the final compatibility decision. A signed
-reasoning item may be replayed only when the target identity matches; all other
-cases drop the reasoning part before serialization. The payload must contain no
-synthetic `[Reasoning]` assistant text produced by Tenon.
+reasoning item may be replayed only when the target identity and active Turn
+match; all other cases drop the reasoning part before serialization. The
+payload must contain no synthetic `[Reasoning]` assistant text produced by
+Tenon.
 
 ### Cross-turn Reconstruction
 
@@ -133,9 +141,11 @@ reader.
 
 ## Anticipated Files
 
-- The settled owner of provider projection under `src/main/agent/runtime/`
-- `src/main/agent/runtime/PiTurnExecutor.ts` if history reconstruction remains
-  there after #450/#451
+- `src/main/agent/context/ContextProjector.ts`
+- `src/main/agent/runtime/PiTurnExecutor.ts`
+- The narrow provider-projection type or kernel seam under
+  `src/main/agent/runtime/kernel/` only if the current in-memory provider
+  message cannot be retained inside `PiTurnExecutor`
 - `tests/core/agentPiTurnExecutor.test.ts` and focused runtime-kernel tests
 - `docs/spec/agent-model-runtime.md`
 
@@ -151,13 +161,15 @@ evidence disproves the request-boundary diagnosis.
 - Replaying a signature against a different provider, API, or model can cause a
   provider validation failure. Identity matching must fail closed by omitting
   the reasoning part.
-- Runtime refactoring in #450/#451 may move the implementation seam. Tests
-  should assert payload and canonical outcomes rather than private helper shape.
+- A projection change can accidentally make the kernel transcript a competing
+  history authority. Tests must prove that only same-Turn signed reasoning is
+  retained from memory while every durable message and tool pair still comes
+  from canonical Items.
 
 ## Open Questions
 
-None for product behavior. Main owns integration ordering after #450/#451 and
-may rename the final runtime owner while preserving these invariants.
+None for product behavior. Main may choose the narrowest in-memory handoff at
+the settled projection boundary while preserving these invariants.
 
 ## Verification
 
