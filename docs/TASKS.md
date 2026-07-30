@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -337,17 +337,17 @@ before any directional/security-sensitive build.
   for the type vocabulary, `piModels` for runtime functions — completion criterion: the `pi-ai`
   importer list equals the transport allowlist exactly). Still queued: `subagent-budget-propagation`
   PR B, the `agent-browser-control` plan revision, and the `Pi*` mechanical rename.
-- **threadservice-decomposition** (P2, `draft` — **PM-directed 2026-07-30; main-authored plan,
-  shape (a): ONE complete PR with four staged extractions**) — split the 4,375-line / 107-method
-  `ThreadService.ts` into four owned modules (`ThreadResourceOps`, `ThreadCatalogOps`,
-  `SubagentCollaboration`, `TurnLifecycle`) coordinated through one small shared `ThreadCore`
-  (single `KeyedMutex` by construction — the F2 lesson), behind a byte-compatible facade: zero
-  behavior change, `src/core/` and `runtime/` untouched, tests unmodified except import paths.
-  Normative state-ownership table with `field:line` references; mechanical tripwires at every
-  stage boundary (facade surface frozen, monotonic line-count decrease, mutex singularity,
-  per-stage commits). Sequencing: `subagent-budget-propagation` PR A lands FIRST (it touches
-  lines stages 3-4 move), then this PR starts from a rebase on top of it. See
-  `docs/plans/threadservice-decomposition.md`.
+- **threadservice-decomposition** (P2, `done` 2026-07-30; PR #451, codex-2) — the 4,502-line /
+  107-method `ThreadService.ts` split into four owned modules (`ThreadResourceOps`,
+  `ThreadCatalogOps`, `SubagentCollaboration`, `TurnLifecycle`) over one shared `ThreadCore`
+  holding the single `KeyedMutex` (the F2 lesson, now structural), behind a byte-compatible
+  850-line facade. Zero behavior change proven mechanically: facade API frozen (64/64), tests
+  entirely untouched (1554/0), five-file line budget met with 2 lines to spare on both the
+  original and the post-#450 rebase baselines, per-stage commits, `src/core/` and `runtime/`
+  diff-empty, real-run smoke (spawn/wait, mid-turn steering, /clear). Zero review findings —
+  the mechanical-judge gate design carried a 4,700-line move clean. Plan archived at
+  `docs/plans/archive/threadservice-decomposition.md`. **Unlocked:** budget PR C,
+  `subagent-transcript-artifact` plan, ToolRuntime handler-contribution plan.
 - **subagent-budget-propagation** (P2, `in-progress` — PR A `done` #446, PR B `done`
   2026-07-30 as #450, codex; **PR C remains**, ordered behind `threadservice-decomposition`) — spawn-time token budgets as a
   host-owned circuit breaker. PR A shipped after three gate passes (18 findings across two
