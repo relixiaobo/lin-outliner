@@ -2441,6 +2441,7 @@ function runtimeSelection() {
 function runtimeSettings() {
   return {
     additionalSkillDirectories: [],
+    subagentTokenBudget: 1_500_000,
     providerTimeoutMs: null,
     providerMaxRetries: null,
     providerMaxRetryDelayMs: 60_000,

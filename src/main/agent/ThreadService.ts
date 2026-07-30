@@ -213,6 +213,7 @@ export interface ThreadServiceOptions {
   readonly resolveRoleCatalog?: (
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
+  readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
 }
@@ -284,6 +285,7 @@ export interface SpawnChildThreadInput {
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
   readonly inheritedContext?: InheritedContextPayload;
+  readonly maxTotalTokens?: number;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
   readonly childKind?: 'collaboration' | 'isolatedSkill';
 }
@@ -430,6 +432,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resolveRoleCatalog: (
     cwd: string,
   ) => Promise<RoleCatalogContextPayload | null>;
+  private readonly resolveSubagentTokenBudget: () => Promise<number | null>;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -485,6 +488,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
+    this.resolveSubagentTokenBudget = async () => await options.resolveSubagentTokenBudget?.() ?? null;
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -2123,6 +2127,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
     this.requireActiveTurn(input.parentThreadId, input.parentTurnId);
+    const tokenBudget = await this.childTokenBudget(input.maxTotalTokens);
     let stagedThreadId: ThreadId | null = null;
     let result: SpawnChildThreadResult;
     try {
@@ -2157,6 +2162,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
         taskPath: input.taskPath,
       });
       stagedThreadId = thread.id;
+      if (tokenBudget !== null) {
+        await this.goals.create({
+          threadId: thread.id,
+          objective: `Subagent task: ${input.taskPath.split('/').at(-1) ?? 'subagent'}`,
+          tokenBudget,
+        });
+      }
       const stagedContextEvidence = input.inheritedContext
         ? [await this.copyInheritedContextToChild(input.parentThreadId, thread.id, input.inheritedContext)]
         : [];
@@ -2289,16 +2301,24 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...(input.role === undefined ? {} : { role: input.role }),
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+      ...(input.maxTotalTokens === undefined ? {} : { maxTotalTokens: input.maxTotalTokens }),
       ...(inheritedContext === null ? {} : { inheritedContext }),
     });
-    if (input.maxTotalTokens !== undefined) {
-      await this.goals.create({
-        threadId: result.thread.id,
-        objective: `Subagent task: ${input.taskName}`,
-        tokenBudget: input.maxTotalTokens,
-      }, result.turn.id);
-    }
     return result;
+  }
+
+  private async childTokenBudget(maxTotalTokens: number | undefined): Promise<number | null> {
+    if (maxTotalTokens !== undefined) {
+      if (!Number.isSafeInteger(maxTotalTokens) || maxTotalTokens < 1) {
+        throw new Error('max_total_tokens must be a positive integer');
+      }
+      return maxTotalTokens;
+    }
+    const configured = await this.resolveSubagentTokenBudget();
+    if (configured !== null && (!Number.isSafeInteger(configured) || configured < 1)) {
+      throw new Error('subagentTokenBudget must be a positive integer or null');
+    }
+    return configured;
   }
 
   async sendCollaborationMessage(

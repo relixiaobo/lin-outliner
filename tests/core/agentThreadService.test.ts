@@ -4982,6 +4982,125 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('applies the runtime default to collaboration and isolated children while explicit budgets override it', async () => {
+    let defaultReads = 0;
+    const fixture = await createFixture(undefined, {
+      resolveSubagentTokenBudget: () => {
+        defaultReads += 1;
+        return 1_500_000;
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with the configured breaker' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'default-budget-spawn');
+    const defaulted = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'default-budget-spawn',
+      taskName: 'defaulted',
+      message: 'Use the runtime default',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect((await fixture.service.request('goal/get', { threadId: defaulted.thread.id })).goal).toMatchObject({
+      objective: 'Subagent task: defaulted',
+      tokenBudget: 1_500_000,
+      tokensUsed: 0,
+    });
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'explicit-budget-spawn');
+    const explicit = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'explicit-budget-spawn',
+      taskName: 'explicit',
+      message: 'Override the runtime default',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect((await fixture.service.request('goal/get', { threadId: explicit.thread.id })).goal).toMatchObject({
+      objective: 'Subagent task: explicit',
+      tokenBudget: 7,
+      tokensUsed: 0,
+    });
+
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'isolated-budget-spawn',
+      skillName: 'research',
+      prompt: 'Use the same runtime breaker',
+      allowedTools: [],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    expect((await fixture.service.request('goal/get', { threadId: isolated.thread.id })).goal).toMatchObject({
+      objective: expect.stringContaining('Subagent task: skill_research_'),
+      tokenBudget: 1_500_000,
+      tokensUsed: 0,
+    });
+    expect(defaultReads).toBe(2);
+
+    for (const threadId of [defaulted.thread.id, explicit.thread.id, isolated.thread.id]) {
+      await fixture.service.request('goal/update', { threadId, status: 'complete' });
+    }
+    fixture.executor.finish(1);
+    fixture.executor.finish(2);
+    fixture.executor.finish(3);
+    await Promise.all([
+      fixture.service.waitForIdle(defaulted.thread.id),
+      fixture.service.waitForIdle(explicit.thread.id),
+      fixture.service.waitForIdle(isolated.thread.id),
+    ]);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('leaves children without a Goal when the runtime default is disabled', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate without a configured breaker' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'disabled-budget-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'disabled-budget-spawn',
+      taskName: 'unlimited',
+      message: 'Run without a Goal budget',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect((await fixture.service.request('goal/get', { threadId: child.thread.id })).goal).toBeNull();
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, tokensUsed: 0, tokenBudget: null },
+    ]);
+
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('gates exhausted Subagent budgets while preserving user Turn admission', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -5661,6 +5780,7 @@ async function createFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveRoleCatalog'
+    | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
@@ -5691,6 +5811,7 @@ async function openFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveRoleCatalog'
+    | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'

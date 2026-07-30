@@ -716,6 +716,7 @@ export type AgentCacheRetention = 'none' | 'short' | 'long';
 
 export interface AgentRuntimeSettings {
   additionalSkillDirectories: string[];
+  subagentTokenBudget: number | null;
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
@@ -725,6 +726,7 @@ export interface AgentRuntimeSettings {
 
 export interface AgentRuntimeSettingsInput {
   additionalSkillDirectories?: string[];
+  subagentTokenBudget?: number | null;
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;

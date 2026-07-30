@@ -65,10 +65,27 @@ ancestor blocked on an event routed to a different parent.
 ## Budgets
 
 `collaboration.spawn_agent` accepts an optional `max_total_tokens` positive safe
-integer. When present, the host creates the child Goal with objective `Subagent task:
-<task_name>` and uses the existing Goal accounting to accumulate completed-Turn token
-usage. Omitting the parameter creates no Goal and leaves the child unlimited, preserving
-the unbudgeted spawn behavior.
+integer. The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000` and
+applies when the spawn omits that parameter; `null` disables the default. An explicit
+spawn value takes precedence. The same default applies to collaboration and isolated
+Skill child Threads through their shared spawn boundary.
+
+The default is a circuit breaker, not a task allocation. Local usage spans roughly
+12k-432k total tokens for legitimate child work (94k median), while the observed runaway
+was 682k, so a tight cap would not reliably separate useful work from anomalies. The
+1.5M threshold is deliberately generous, around three times the heaviest observed
+legitimate child. Budget accounting uses `totalTokens`, including cache reads; no
+per-Role or per-Skill defaults alter the global setting.
+
+Budget decisions follow this precedence: an explicit user directive in the prompt,
+the parent model's per-spawn `max_total_tokens`, future data-driven Role or Skill
+defaults, then the global default. The current runtime implements the ladder's explicit
+spawn override and global-default endpoints; Role and Skill defaults remain deferred.
+
+For every enabled budget, the host creates the child Goal before its first Turn with
+objective `Subagent task: <task_name>` and uses the existing Goal accounting to
+accumulate completed-Turn token usage. Isolated Skill Goals use their generated child
+task name in the same objective form.
 
 Reaching or exceeding the total changes the Goal to `budgetLimited`. The single Turn
 admission boundary then rejects every new non-user trigger with the complete exhaustion
