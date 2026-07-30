@@ -235,7 +235,8 @@ export function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const label = summarizeThreadToolActivity(items, t.agent.thread.activity);
+  const segments = threadToolActivitySegments(items, t.agent.thread.activity);
+  const label = segments.map((segment) => segment.text).join(' · ');
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
       <ButtonControl
@@ -245,7 +246,18 @@ export function ThreadToolActivityGroup({
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, <GenericToolIcon size={ICON_SIZE.tiny} />)} />
-        <span className="thread-tool-activity-summary" title={label}>{label}</span>
+        <span className="thread-tool-activity-summary" title={label}>
+          {segments.flatMap((segment, index) => {
+            const text = segment.tone === 'neutral'
+              ? segment.text
+              : (
+                <span className={`thread-tool-activity-count-${segment.tone}`} key={`segment-${index}`}>
+                  {segment.text}
+                </span>
+              );
+            return index === 0 ? [text] : [' · ', text];
+          })}
+        </span>
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-activity-members">
@@ -997,10 +1009,27 @@ interface ToolActivityBucket {
   running: boolean;
 }
 
+export interface ToolActivitySegment {
+  readonly text: string;
+  readonly tone: 'neutral' | 'failed' | 'interrupted';
+}
+
 export function summarizeThreadToolActivity(
   items: readonly ThreadToolItem[],
   labels: Messages['agent']['thread']['activity'],
 ): string {
+  return threadToolActivitySegments(items, labels).map((segment) => segment.text).join(' · ');
+}
+
+/**
+ * The group summary is split so only the tally of what went wrong carries the
+ * status colour. Tinting the whole line red would say "all of this failed" when
+ * one call out of six did.
+ */
+export function threadToolActivitySegments(
+  items: readonly ThreadToolItem[],
+  labels: Messages['agent']['thread']['activity'],
+): readonly ToolActivitySegment[] {
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
   const add = (kind: ToolActivityKind, subject: string, running: boolean) => {
     const bucket = buckets.get(kind) ?? { subjects: new Set<string>(), running: false };
@@ -1046,19 +1075,28 @@ export function summarizeThreadToolActivity(
     }
   }
 
-  const fragments = TOOL_ACTIVITY_ORDER.flatMap((kind) => {
+  const segments: ToolActivitySegment[] = TOOL_ACTIVITY_ORDER.flatMap((kind) => {
     const bucket = buckets.get(kind);
     if (!bucket || bucket.subjects.size === 0) return [];
-    return [toolActivityPhrase(kind, bucket.subjects.size, bucket.running, labels)];
+    return [{
+      text: toolActivityPhrase(kind, bucket.subjects.size, bucket.running, labels),
+      tone: 'neutral' as const,
+    }];
   });
-  if (fragments.length === 0) fragments.push(labels.ranTools({ count: items.length }));
-  // A group whose colour says "failed" must say it in words too — colour alone
-  // is not a state (design-system patterns.md).
+  if (segments.length === 0) {
+    segments.push({ text: labels.ranTools({ count: items.length }), tone: 'neutral' });
+  }
+  // What went wrong is stated in words as well as colour — colour alone is not
+  // a state (design-system patterns.md).
   const failed = items.filter((item) => item.status === 'failed').length;
   const interrupted = items.filter((item) => item.status === 'interrupted').length;
-  if (failed > 0) fragments.push(labels.failedCount({ count: failed }));
-  if (interrupted > 0) fragments.push(labels.interruptedCount({ count: interrupted }));
-  return fragments.map((fragment, index) => index === 0 ? fragment : sentenceFragment(fragment)).join(' · ');
+  if (failed > 0) segments.push({ text: labels.failedCount({ count: failed }), tone: 'failed' });
+  if (interrupted > 0) {
+    segments.push({ text: labels.interruptedCount({ count: interrupted }), tone: 'interrupted' });
+  }
+  return segments.map((segment, index) => index === 0
+    ? segment
+    : { ...segment, text: sentenceFragment(segment.text) });
 }
 
 function toolActivityPhrase(

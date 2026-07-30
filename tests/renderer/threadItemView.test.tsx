@@ -155,7 +155,7 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
   });
 
-  test('names failed members in a group summary instead of relying on colour alone', async () => {
+  test('colours only the failure tally in a group summary, not the whole line', async () => {
     const items = [
       command({ id: 'command-1', status: 'completed' }),
       command({ id: 'command-2', status: 'failed' }),
@@ -166,8 +166,14 @@ describe('ThreadItemView tool row status presentation', () => {
 
     const group = rendered.document.querySelector('.thread-tool-activity-group');
     expect(group?.className).toContain('thread-tool-failed');
-    expect(group?.querySelector('.thread-tool-activity-summary')?.textContent)
-      .toBe('Ran 3 commands · 1 failed · 1 interrupted');
+    const summary = group?.querySelector('.thread-tool-activity-summary');
+    expect(summary?.textContent).toBe('Ran 3 commands · 1 failed · 1 interrupted');
+    // "Ran 3 commands" stays neutral — only the tally is tinted, so the row
+    // never reads as "all three failed".
+    expect(summary?.querySelector('.thread-tool-activity-count-failed')?.textContent).toBe('1 failed');
+    expect(summary?.querySelector('.thread-tool-activity-count-interrupted')?.textContent)
+      .toBe('1 interrupted');
+    expect(summary?.querySelectorAll('span')).toHaveLength(2);
   });
 });
 
