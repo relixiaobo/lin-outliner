@@ -118,10 +118,38 @@ have no ledger entry and are structurally outside this gate.
 Completion accrues usage inside the per-Thread mutex before the active Turn is removed
 or idle status is exposed, so racing admission observes the committed total. Failure
 finalization also accrues any execution usage already returned by the executor. A hard
-process crash can still lose usage that existed only in the in-flight process; the
-mid-Turn enforcement in the follow-up kernel change narrows that residual. The current
-budget does not otherwise interrupt a Turn already in flight, and the completing Turn
-may overshoot the configured total.
+process crash can still lose usage that existed only in the in-flight process.
+
+At a budgeted child non-user Turn's start, `ThreadService` captures the ledger's full
+budget and committed usage in the execution context. Explicit user Turns receive an
+unlimited (`null`) kernel port and no warning callback, preserving the bright-line
+override while still accruing their completed usage. The first provider call is always
+admitted; an already exhausted fresh non-user Turn belongs to the admission gate. Before
+every later provider projection, the executor adds the normalizer's accumulated Turn
+`totalTokens` to the captured usage. Reaching the Turn-start remainder settles genuinely
+outstanding model work as `interrupted` with `Token budget exhausted mid-Turn (<total> of
+<budget> tokens)`, where both values are the actual ledger total and full budget. Normal
+completion accounting then commits the same usage to the ledger, and the admission gate
+rejects later non-user Turns.
+
+The exhaustion check runs before steering is drained and before a new `turn_start` is
+emitted. If the preceding assistant message is terminal, the Turn remains `completed`
+and racing steering remains undelivered even when the budget was exhausted; overshoot
+still accrues. Only a boundary with outstanding model work can be interrupted, and every
+emitted kernel Turn boundary remains paired.
+
+On the first later-call boundary where Turn usage reaches 80% of the captured remainder,
+the host admits one steering input through the ordinary canonical steering path:
+`[Budget notice] ~80% of the token budget is consumed (<used> of <budget>). Synthesize
+your findings and conclude now.` The notice is a real `userMessage` Item, appears in
+diagnostics as steering, and reaches the next provider projection. It is emitted at most
+once per Turn; no private prompt overlay or synthetic non-canonical message carries it.
+The displayed values are the actual ledger total at the crossing and the full ledger
+budget, never reconstructed threshold values. Delivery failure is advisory: the kernel
+logs it and continues without changing Turn status. Diagnostics mark accepted steering
+as consumed only after the runtime drains it into a provider context. Root Threads and
+children without a budget entry provide neither execution port, so their kernel behavior
+and event cadence are unchanged.
 
 `list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
 `tokenBudget`. A child without a ledger entry reports `0` and `null`, respectively.

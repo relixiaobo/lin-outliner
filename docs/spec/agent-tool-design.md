@@ -173,7 +173,16 @@ accrue recorded usage before exposing an idle admission window. A budgeted spawn
 spawn after exhaustion; when it omits a child budget, the child receives the lower of the
 global default and the spawner's remaining budget (or the remaining budget alone when the
 global default is `null`). An explicit child budget still takes precedence because this
-contract does not provide aggregate subtree accounting.
+contract does not provide aggregate subtree accounting. A budgeted child's non-user Turns
+also carry their Turn-start ledger snapshot into the native kernel; explicit user Turns
+remain unlimited in flight while still accruing usage. The first model call is
+unconditional. Before later calls, and before steering drain or a new kernel Turn boundary,
+accumulated Turn usage at 80% of the starting remainder admits one canonical steering
+notice with actual ledger figures. Reaching the remainder interrupts only outstanding
+model work; a terminal answer remains completed and racing steering remains undelivered.
+Warning delivery failures log and degrade without changing Turn status. Completion then
+accrues usage normally, so the existing admission gate owns all later non-user work.
+Unlimited children and root Threads do not activate these kernel ports.
 
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,

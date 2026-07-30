@@ -124,10 +124,10 @@ export interface PiRuntimeSelection {
 }
 
 export interface PiAgentRuntime {
-  readonly state: Pick<AgentState, 'errorMessage'>;
+  readonly state: Pick<AgentState, 'errorMessage' | 'interruptionError'>;
   subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void;
   abort(): void;
-  steer(message: Message): void;
+  steer(message: Message, onDelivered?: () => void): void;
   prompt(message: Message): Promise<void>;
 }
 
@@ -285,6 +285,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         transformContext,
         sessionId: cacheAffinity,
         providerOptions,
+        remainingTokenBudget: context.remainingTokenBudget
+          ? () => {
+              const budget = context.remainingTokenBudget?.() ?? null;
+              return budget ? { ...budget, used: budget.used + normalizer.usage.totalTokens } : null;
+            }
+          : undefined,
+        onBudgetWarning: context.onBudgetWarning,
       });
       if (context.signal.aborted) {
         agent.abort();
@@ -299,22 +306,23 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted && agent) {
-          diagnostics.setSteeringDelivered(activityIndex, true);
-          try {
-            agent.steer(message);
-          } catch (error) {
-            diagnostics.setSteeringDelivered(activityIndex, false);
-            throw error;
-          }
+          agent.steer(message, () => diagnostics.setSteeringDelivered(activityIndex, true));
         }
       });
       await agent.prompt(prompt);
       await normalizer.flush();
-      if (context.signal.aborted || normalizer.stopReason === 'aborted') {
+      if (
+        context.signal.aborted
+        || normalizer.stopReason === 'aborted'
+        || agent.state.interruptionError
+      ) {
         diagnostics.finalizeOpenToolExecutions('interrupted');
         const persisted = await executionDetails(context, runtime, normalizer.usage, diagnostics);
         return {
           status: 'interrupted',
+          ...(agent.state.interruptionError
+            ? { error: { message: agent.state.interruptionError } }
+            : {}),
           execution: persisted.details,
           refreshDiagnostics: persisted.refresh,
         };

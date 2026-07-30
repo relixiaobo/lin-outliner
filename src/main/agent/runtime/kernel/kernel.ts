@@ -19,14 +19,24 @@ interface KernelContext {
   tools: AgentTool[];
 }
 
+export interface KernelRunResult {
+  readonly messages: Message[];
+  readonly interruptionError: string | null;
+}
+
+export interface KernelSteeringMessage {
+  readonly message: Message;
+  readonly onDelivered?: () => void;
+}
+
 export async function runKernel(
   prompts: Message[],
   initialContext: KernelContext,
   options: KernelAgentOptions,
   emit: KernelEventSink,
   signal: AbortSignal,
-  getSteeringMessages: () => Promise<Message[]>,
-): Promise<Message[]> {
+  getSteeringMessages: () => Promise<KernelSteeringMessage[]>,
+): Promise<KernelRunResult> {
   const newMessages: Message[] = [...prompts];
   const context: KernelContext = {
     ...initialContext,
@@ -39,31 +49,71 @@ export async function runKernel(
     await emit({ type: 'message_start', message: prompt });
     await emit({ type: 'message_end', message: prompt });
   }
+  const startingBudget = options.remainingTokenBudget?.() ?? null;
+  const turnAllowance = startingBudget
+    ? Math.max(0, startingBudget.budget - startingBudget.used)
+    : null;
 
-  let firstTurn = true;
+  let providerCallCount = 0;
+  let budgetWarningSent = false;
   let pendingMessages = await getSteeringMessages();
   let hasMoreToolCalls = true;
-  while (hasMoreToolCalls || pendingMessages.length > 0) {
-    if (!firstTurn) {
+  while (true) {
+    if (providerCallCount > 0) {
+      const actuals = options.remainingTokenBudget?.() ?? null;
+      const turnUsage = startingBudget && actuals
+        ? Math.max(0, actuals.used - startingBudget.used)
+        : null;
+      if (actuals && turnAllowance !== null && turnUsage !== null && turnUsage >= turnAllowance) {
+        if (hasMoreToolCalls) {
+          const interruptionError = `Token budget exhausted mid-Turn (${actuals.used} of ${actuals.budget} tokens)`;
+          await emit({ type: 'agent_end', messages: newMessages });
+          return { messages: newMessages, interruptionError };
+        }
+        break;
+      }
+
+      pendingMessages = await getSteeringMessages();
+      if (!hasMoreToolCalls && pendingMessages.length === 0) break;
+
+      if (
+        actuals
+        && turnAllowance !== null
+        && turnUsage !== null
+        && turnUsage >= Math.ceil(turnAllowance * 0.8)
+        && !budgetWarningSent
+        && options.onBudgetWarning
+      ) {
+        budgetWarningSent = true;
+        try {
+          await options.onBudgetWarning(actuals);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[agent] Budget warning delivery failed: ${message}`);
+        }
+        pendingMessages.push(...await getSteeringMessages());
+      }
+
       await emit({ type: 'turn_start' });
-    } else {
-      firstTurn = false;
     }
 
-    for (const message of pendingMessages) {
+    for (const steering of pendingMessages) {
+      const { message } = steering;
       await emit({ type: 'message_start', message });
       await emit({ type: 'message_end', message });
       context.messages.push(message);
       newMessages.push(message);
+      steering.onDelivered?.();
     }
     pendingMessages = [];
 
     const message = await streamAssistantResponse(context, options, signal, emit);
+    providerCallCount += 1;
     newMessages.push(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       await emit({ type: 'turn_end', message, toolResults: [] });
       await emit({ type: 'agent_end', messages: newMessages });
-      return newMessages;
+      return { messages: newMessages, interruptionError: null };
     }
 
     const toolCalls = message.content.filter((part): part is AgentToolCall => part.type === 'toolCall');
@@ -82,11 +132,10 @@ export async function runKernel(
     }
 
     await emit({ type: 'turn_end', message, toolResults });
-    pendingMessages = await getSteeringMessages();
   }
 
   await emit({ type: 'agent_end', messages: newMessages });
-  return newMessages;
+  return { messages: newMessages, interruptionError: null };
 }
 
 async function streamAssistantResponse(

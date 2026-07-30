@@ -87,6 +87,7 @@ export interface AgentState {
   readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: ReadonlySet<string>;
   readonly errorMessage?: string;
+  readonly interruptionError?: string;
 }
 
 export type KernelEvent =
@@ -128,6 +129,11 @@ export interface ProviderRetryLifecycleEvent {
   maxRetries: number;
 }
 
+export interface TokenBudgetUsage {
+  readonly budget: number;
+  readonly used: number;
+}
+
 export interface RetryPolicyOptions {
   requestRetryDelayMs?: (retryCount: number) => number;
   onProviderRetry?: (event: ProviderRetryLifecycleEvent) => void;
@@ -151,4 +157,6 @@ export interface KernelAgentOptions {
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;
   providerOptions?: SimpleStreamOptions;
+  remainingTokenBudget?: () => TokenBudgetUsage | null;
+  onBudgetWarning?: (actuals: TokenBudgetUsage) => Promise<void>;
 }

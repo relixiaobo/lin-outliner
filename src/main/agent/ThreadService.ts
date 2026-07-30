@@ -1888,7 +1888,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
-  async steerTurn(request: TurnSteerRequest): Promise<TurnSteerResponse> {
+  async steerTurn(
+    request: TurnSteerRequest,
+    deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
+  ): Promise<TurnSteerResponse> {
     return this.threadMutex.run(request.threadId, async () => {
       const existing = request.clientUserMessageId
         ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
@@ -1981,11 +1984,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         }
         const steered = { items: admittedItems, acceptedAt };
         if (active.steeringHandler) {
-          await this.enqueueSteeringDelivery(active, steered);
+          await this.enqueueSteeringDelivery(active, steered, deliveryFailureMode);
         } else {
           active.queuedSteering.push(steered);
         }
       } catch (error) {
+        if (deliveryFailureMode === 'advisory') throw error;
         this.failCommittedActiveTurn(active, error);
       }
       this.signalCollaborationActivity(request.threadId);
@@ -2761,6 +2765,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
     const thread = this.requireThread(active.threadId).thread;
+    const budget = thread.parentThreadId === null
+      ? null
+      : this.subagentBudgets.read(active.threadId);
+    const turnBudget = budget ? { ...budget } : null;
     const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     const resourceObservation = this.createResourceObservation(active.threadId, true);
     const createdOutputResources: ThreadResourceReference[] = [];
@@ -2833,6 +2841,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
           const queued = active.queuedSteering.splice(0);
           for (const input of queued) this.enqueueSteeringDelivery(active, input);
         },
+        ...(turnBudget ? {
+          remainingTokenBudget: () => initialTurn.provenance.trigger.kind === 'user'
+            ? null
+            : { budget: turnBudget.tokenBudget, used: turnBudget.tokensUsed },
+          ...(initialTurn.provenance.trigger.kind === 'user' ? {} : {
+            onBudgetWarning: (actuals: { readonly used: number; readonly budget: number }) => (
+              this.deliverSubagentBudgetWarning(active, actuals.used, actuals.budget)
+            ),
+          }),
+        } : {}),
       });
     } catch (error) {
       thrown = error instanceof Error ? error : new Error(String(error));
@@ -3049,17 +3067,37 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
-  private enqueueSteeringDelivery(active: ActiveTurn, input: SteeredTurnInput): Promise<void> {
+  private enqueueSteeringDelivery(
+    active: ActiveTurn,
+    input: SteeredTurnInput,
+    failureMode: 'fatal' | 'advisory' = 'fatal',
+  ): Promise<void> {
     const handler = active.steeringHandler;
     if (!handler) throw new Error('Steering handler is not registered');
-    active.steeringDelivery = active.steeringDelivery
-      .then(async () => {
-        if (!active.fatalError) await handler(input);
-      })
+    const delivery = active.steeringDelivery.then(async () => {
+      if (!active.fatalError) await handler(input);
+    });
+    active.steeringDelivery = delivery
       .catch((error) => {
-        this.failCommittedActiveTurn(active, error);
+        if (failureMode === 'fatal') this.failCommittedActiveTurn(active, error);
       });
-    return active.steeringDelivery;
+    return failureMode === 'advisory' ? delivery : active.steeringDelivery;
+  }
+
+  private async deliverSubagentBudgetWarning(
+    active: ActiveTurn,
+    used: number,
+    budget: number,
+  ): Promise<void> {
+    await this.steerTurn({
+      threadId: active.threadId,
+      expectedTurnId: active.turnId,
+      input: [{
+        type: 'text',
+        text: `[Budget notice] ~80% of the token budget is consumed (${used} of ${budget}). `
+          + 'Synthesize your findings and conclude now.',
+      }],
+    }, 'advisory');
   }
 
   private failCommittedActiveTurn(active: ActiveTurn, value: unknown): void {

@@ -20,6 +20,7 @@ import type {
   SkillCatalogContextPayload,
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
+import type { TokenBudgetUsage } from './kernel/types';
 
 export interface SteeredTurnInput {
   readonly items: readonly ThreadItem[];
@@ -74,6 +75,8 @@ export interface TurnExecutionContext {
   ): Promise<StagedContextCompaction | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
+  readonly remainingTokenBudget?: () => TokenBudgetUsage | null;
+  readonly onBudgetWarning?: (actuals: TokenBudgetUsage) => Promise<void>;
 }
 
 export interface TurnExecutionResult {

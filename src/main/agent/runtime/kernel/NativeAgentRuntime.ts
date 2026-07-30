@@ -1,4 +1,4 @@
-import { runKernel } from './kernel';
+import { runKernel, type KernelSteeringMessage } from './kernel';
 import { EMPTY_USAGE } from './types';
 import type {
   AgentEvent,
@@ -20,7 +20,7 @@ export class NativeAgentRuntime {
     event: AgentEvent,
     signal: AbortSignal,
   ) => Promise<void> | void>();
-  private steeringQueue: Message[] = [];
+  private steeringQueue: KernelSteeringMessage[] = [];
   private activeRun?: ActiveRun;
 
   constructor(private readonly options: KernelAgentOptions) {
@@ -34,6 +34,7 @@ export class NativeAgentRuntime {
       streamingMessage: undefined,
       pendingToolCalls: new Set(),
       errorMessage: undefined,
+      interruptionError: undefined,
     };
   }
 
@@ -46,8 +47,8 @@ export class NativeAgentRuntime {
     return () => this.listeners.delete(listener);
   }
 
-  steer(message: Message): void {
-    this.steeringQueue.push(message);
+  steer(message: Message, onDelivered?: () => void): void {
+    this.steeringQueue.push({ message, onDelivered });
   }
 
   abort(): void {
@@ -66,8 +67,9 @@ export class NativeAgentRuntime {
     this.mutableState.isStreaming = true;
     this.mutableState.streamingMessage = undefined;
     this.mutableState.errorMessage = undefined;
+    this.mutableState.interruptionError = undefined;
     try {
-      await runKernel(
+      const result = await runKernel(
         prompts,
         {
           systemPrompt: this.mutableState.systemPrompt,
@@ -79,6 +81,7 @@ export class NativeAgentRuntime {
         abortController.signal,
         async () => this.drainSteering(),
       );
+      this.mutableState.interruptionError = result.interruptionError ?? undefined;
     } catch (error) {
       await this.handleRunFailure(error, abortController.signal.aborted);
     } finally {
@@ -89,7 +92,7 @@ export class NativeAgentRuntime {
     }
   }
 
-  private drainSteering(): Message[] {
+  private drainSteering(): KernelSteeringMessage[] {
     const drained = this.steeringQueue;
     this.steeringQueue = [];
     return drained;

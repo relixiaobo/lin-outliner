@@ -610,7 +610,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.diagnosticsErrors).toEqual([failure]);
   });
 
-  test('can republish diagnostics after late steering delivery drains', async () => {
+  test('keeps late steering diagnostics undelivered when no provider call consumes it', async () => {
     const fixture = createContext();
     let steeringHandler: Parameters<TurnExecutionContext['onSteer']>[0] | null = null;
     const executor = new PiTurnExecutor({
@@ -657,6 +657,74 @@ describe('PiTurnExecutor event normalization', () => {
         type: 'acceptedInput',
         source: 'steering',
         itemIds: [steeringItemId],
+        consumedByCallIndex: null,
+      }),
+    ]));
+  });
+
+  test('marks steering diagnostics delivered when the native kernel consumes it', async () => {
+    const fixture = createContext();
+    const firstCallStarted = deferred<void>();
+    const firstStream = createAssistantMessageEventStream();
+    let providerCalls = 0;
+    let steeringHandler: Parameters<TurnExecutionContext['onSteer']>[0] | null = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, _providerContext, options = {}) => {
+          providerCalls += 1;
+          if (providerCalls === 1) {
+            queueMicrotask(async () => {
+              await options.onPayload?.({ model: model.id }, model);
+              firstCallStarted.resolve();
+            });
+            return firstStream;
+          }
+          const stream = createAssistantMessageEventStream();
+          const message = assistantMessage([{ type: 'text', text: 'after steering' }]);
+          queueMicrotask(async () => {
+            await options.onPayload?.({ model: model.id }, model);
+            stream.push({ type: 'done', reason: 'stop', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+    const execution = executor.execute({
+      ...fixture.context,
+      onSteer: (handler) => { steeringHandler = handler; },
+    });
+    await firstCallStarted.promise;
+    if (!steeringHandler) throw new Error('Expected steering handler registration.');
+    const acceptedAt = 1_720_000_000_150;
+    const steeringItemId = uuidV7(acceptedAt);
+    const steeringItem: ThreadItem = {
+      type: 'userMessage',
+      id: steeringItemId,
+      provenance: fixture.recorder.localProvenance(steeringItemId),
+      clientId: 'in-flight-steering',
+      acceptedAt,
+      content: [{ type: 'text', text: 'Use this in the next call' }],
+    };
+    await fixture.recorder.completedImmediately(steeringItem, acceptedAt);
+    await steeringHandler({ acceptedAt, items: [steeringItem] });
+    const firstMessage = assistantMessage([{ type: 'text', text: 'first response' }]);
+    firstStream.push({ type: 'done', reason: 'stop', message: firstMessage });
+    firstStream.end(firstMessage);
+
+    await expect(execution).resolves.toMatchObject({ status: 'completed' });
+
+    expect(providerCalls).toBe(2);
+    expect(fixture.diagnosticsPayloads[0]?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'acceptedInput',
+        source: 'steering',
+        itemIds: [steeringItemId],
+        consumedByCallIndex: 1,
       }),
     ]));
   });
@@ -2273,6 +2341,97 @@ describe('PiTurnExecutor provider payload', () => {
       { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
       { timeoutMs: 4_321, maxRetries: 0, maxRetryDelayMs: 75, cacheRetention: 'short' },
     ]);
+  });
+
+  test('maps kernel budget exhaustion to an interrupted Turn with recorded usage', async () => {
+    const fixture = createContext();
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      remainingTokenBudget: () => ({ budget: 10, used: 6 }),
+    };
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('budget_tool', 'Budget boundary tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: () => {
+          providerCalls += 1;
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'budget-call',
+                  name: 'budget_tool',
+                  arguments: {},
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'must not run' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({
+      status: 'interrupted',
+      error: { message: 'Token budget exhausted mid-Turn (13 of 10 tokens)' },
+      execution: { usage: { totalTokens: 7 } },
+    });
+    expect(providerCalls).toBe(1);
+  });
+
+  test('keeps an exhausted child user Turn unlimited across provider calls', async () => {
+    const fixture = createContext();
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      thread: {
+        ...fixture.context.thread,
+        parentThreadId: uuidV7(1_720_000_000_010),
+      },
+      remainingTokenBudget: () => null,
+    };
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('user_budget_tool', 'User budget override tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: () => {
+          providerCalls += 1;
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'user-budget-call',
+                  name: 'user_budget_tool',
+                  arguments: {},
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'user Turn complete' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({
+      status: 'completed',
+      execution: { usage: { totalTokens: 14 } },
+    });
+    expect(providerCalls).toBe(2);
   });
 
   test('matches the native kernel Item and diagnostics golden', async () => {

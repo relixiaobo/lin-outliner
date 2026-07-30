@@ -5109,9 +5109,129 @@ describe('ThreadService', () => {
     expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
       { threadId: child.thread.id, tokensUsed: 0, tokenBudget: null },
     ]);
+    expect(fixture.executor.contexts[0]?.remainingTokenBudget).toBeUndefined();
+    expect(fixture.executor.contexts[1]?.remainingTokenBudget).toBeUndefined();
 
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('delivers the soft landing canonically and lets the admission gate follow mid-Turn interruption', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate bounded work with a soft landing' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'mid-turn-budget-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'mid-turn-budget-spawn',
+      taskName: 'mid_turn_budget_child',
+      message: 'Use the complete in-flight budget',
+      maxTotalTokens: 10,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    const context = fixture.executor.contexts[1]!;
+    expect(context.remainingTokenBudget?.()).toEqual({ budget: 10, used: 0 });
+    expect(context.onBudgetWarning).toBeDefined();
+    await context.onBudgetWarning?.({ budget: 10, used: 9 });
+    const notice = '[Budget notice] ~80% of the token budget is consumed (9 of 10). '
+      + 'Synthesize your findings and conclude now.';
+    expect(fixture.executor.steered).toContain(notice);
+    expect(context.recorder.orderedItems()).toContainEqual(expect.objectContaining({
+      type: 'userMessage',
+      content: [{ type: 'text', text: notice }],
+    }));
+
+    const interruptionError = 'Token budget exhausted mid-Turn (10 of 10 tokens)';
+    fixture.executor.finish(1, {
+      ...completedExecutionResult(10),
+      status: 'interrupted',
+      error: { message: interruptionError },
+    });
+    await fixture.service.waitForIdle(child.thread.id);
+
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokensUsed: 10,
+      tokenBudget: 10,
+    });
+    expect((await fixture.service.readThread({
+      threadId: child.thread.id,
+      includeTurns: true,
+    })).thread.turns?.[0]).toMatchObject({
+      status: 'interrupted',
+      error: { message: interruptionError },
+      execution: { usage: { totalTokens: 10 } },
+    });
+    await expect(fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'mid-turn-budget-followup',
+      '/root/mid_turn_budget_child',
+      'Continue after the breaker opened',
+    )).rejects.toBeInstanceOf(SubagentBudgetExhaustedError);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('keeps a budgeted Turn alive when advisory warning steering delivery fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate work with a fallible budget notice' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'warning-failure-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'warning-failure-spawn',
+      taskName: 'warning_failure_child',
+      message: 'Continue even if the notice cannot reach the provider',
+      maxTotalTokens: 10,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    const context = fixture.executor.contexts[1]!;
+    fixture.executor.steeringFailure = new Error('budget notice projection failed');
+    await expect(context.onBudgetWarning?.({ budget: 10, used: 9 }))
+      .rejects.toThrow('budget notice projection failed');
+    expect(context.signal.aborted).toBe(false);
+
+    fixture.executor.finish(1, completedExecutionResult(9));
+    await fixture.service.waitForIdle(child.thread.id);
+    expect((await fixture.service.readThread({
+      threadId: child.thread.id,
+      includeTurns: true,
+    })).thread.turns?.[0]).toMatchObject({
+      status: 'completed',
+      execution: { usage: { totalTokens: 9 } },
+    });
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 10,
+      tokensUsed: 9,
+    });
+
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
@@ -5339,6 +5459,9 @@ describe('ThreadService', () => {
     });
     expect(userTurn.turn.provenance.trigger).toEqual({ kind: 'user' });
     await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget).toBeDefined();
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toBeNull();
+    expect(fixture.executor.contexts[2]?.onBudgetWarning).toBeUndefined();
     fixture.executor.finish(2, completedExecutionResult(3));
     await fixture.service.waitForIdle(child.thread.id);
     expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
