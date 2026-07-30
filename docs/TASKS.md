@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,7 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #445
+**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #448
+(`codex-3/thread-completion-layout-stability`) after main review (three
+findings, all fixed same-day), the focused Thread E2E suite, and light/dark
+visual verification — Turn completion no longer moves the response; see
+*Recently completed*. #445
 (`codex-2/native-turn-kernel`) after mechanical tripwire gate, golden-parity +
 judge-mutation suites, high-effort multi-agent review (10 findings, all fixed
 same-day), and a real-run smoke — the turn loop, retry policy, and error
@@ -665,6 +669,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **thread-completion-layout-stability**
+  (`codex-3/thread-completion-layout-stability`, PR #448, codex-3, merged
+  2026-07-30, plan-track implementation unit) — keeps an Agent Turn
+  geometrically stable across completion: a persistent user-message action
+  slot and one persistent response footer (generating indicator while live;
+  Copy, Continue in new chat, and Details when terminal), no empty process
+  timelines, symmetric divider spacing with and without visible process Items,
+  stable memoized Markdown block identity as the final streaming block seals,
+  and content-visibility containment from a Turn's first render. Design folded
+  into `docs/spec/agent-thread-rendering.md`; the plan is archived at
+  `docs/plans/archive/thread-completion-layout-stability.md`.
+  **Gate (main):** review independently verified the spacing arithmetic (4px
+  divider padding + 8px rule margin above; 12px timeline margin or Turn row
+  gap below) and the 26px slot/footer heights against the icon-button size;
+  three findings (indicator vertical centering, live-state context-menu
+  gating, spec line wrap) were fixed in `958a3e0d` with regression assertions.
+  Verified with typecheck, the focused Thread E2E suite (46 pass) on the PR
+  head, and light/dark visual verification of the live and completed states.
 
 - **agent-context-integrity PR2 — unified context composer**
   (`codex-3/agent-context-composer`, PR #441, codex-3, merged 2026-07-28,

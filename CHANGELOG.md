@@ -273,6 +273,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Thread completion layout stability (PR #448, codex-3)** — an Agent Turn no
+  longer shifts when its response moves from streaming to completed. The
+  user-message action slot and the response footer are reserved at one height
+  for the whole Turn lifecycle, so the generating indicator swaps to the
+  terminal Copy, Continue in new chat, and Details controls without moving the
+  answer. Empty process timelines no longer render, the process divider keeps
+  the same tokenized spacing above and below with or without visible process
+  Items, every Markdown block keeps its memoized component identity as the
+  final streaming block seals, and `content-visibility` containment applies
+  from a Turn's first render instead of arriving at terminalization.
+  **Gate (main):** review independently verified the spacing arithmetic and the
+  slot/footer heights against the token ladder; three findings (indicator
+  vertical centering, live-state context-menu gating, spec line wrap) were
+  fixed in `958a3e0d` with regression assertions. Verified with typecheck, the
+  focused Thread E2E suite (46 pass) on the PR head, and light/dark visual
+  verification of the live and completed states.
 - **Tag selector active-tag index (PR #427, codex)** — active tag
   definitions, normalized labels, hexadecimal-color penalties, exact-label
   lookup, and empty-query ordering are now cached once per renderer projection
