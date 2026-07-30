@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Api, Model } from '@earendil-works/pi-ai';
+import type { Api, Model } from '../runtime/kernel/types';
 import {
   INITIAL_CONTEXT_EPOCH_ID,
   providerCacheAffinityMaterial,

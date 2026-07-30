@@ -1,4 +1,4 @@
-import { getSupportedThinkingLevels, type Api, type Model } from '@earendil-works/pi-ai';
+import type { Api, Model } from '../runtime/kernel/types';
 import { parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { isLocalGatewayProviderId } from '../../../core/localGatewayProviders';
@@ -7,6 +7,7 @@ import { rankedModels, type AgentProviderRuntimeConfig } from './agentSettings';
 import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
+  getSupportedThinkingLevels,
   piFindModel,
   piProviders,
 } from '../../piModels';

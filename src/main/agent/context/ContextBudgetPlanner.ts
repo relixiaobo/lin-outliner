@@ -1,4 +1,4 @@
-import type { Api, Message, Model, Tool } from '@earendil-works/pi-ai';
+import type { Api, Message, Model, Tool } from '../runtime/kernel/types';
 
 const FALLBACK_CHARS_PER_TOKEN = 4;
 const MESSAGE_FRAMING_TOKENS = 12;
