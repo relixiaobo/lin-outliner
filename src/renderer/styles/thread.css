@@ -1361,19 +1361,28 @@
   color: var(--text-faint);
 }
 
+/* An individual row IS the failure, so glyph and label both carry the colour. A
+   GROUP row deliberately stays neutral — see the tally rules below. */
 .thread-tool-failed > .thread-tool-toggle .thread-disclosure-status,
-.thread-tool-failed > .thread-tool-toggle .thread-tool-label,
-.thread-tool-failed > .thread-tool-activity-toggle .thread-disclosure-status,
-.thread-tool-failed > .thread-tool-activity-toggle .thread-tool-activity-summary {
+.thread-tool-failed > .thread-tool-toggle .thread-tool-label {
   color: var(--status-danger);
 }
 
 /* Interrupted work did not error — it was cut off. A muted, deliberately
    un-alarming treatment, and the label wording carries the state. */
 .thread-tool-interrupted > .thread-tool-toggle .thread-disclosure-status,
-.thread-tool-interrupted > .thread-tool-toggle .thread-tool-label,
-.thread-tool-interrupted > .thread-tool-activity-toggle .thread-disclosure-status,
-.thread-tool-interrupted > .thread-tool-activity-toggle .thread-tool-activity-summary {
+.thread-tool-interrupted > .thread-tool-toggle .thread-tool-label {
+  color: var(--text-faint);
+}
+
+/* A group summarizes mixed outcomes, so only the tally of what went wrong is
+   coloured. Painting the whole line — or the group's glyph — would read as "all
+   of this failed" when one call out of six did. */
+.thread-tool-activity-summary .thread-tool-activity-count-failed {
+  color: var(--status-danger);
+}
+
+.thread-tool-activity-summary .thread-tool-activity-count-interrupted {
   color: var(--text-faint);
 }
 

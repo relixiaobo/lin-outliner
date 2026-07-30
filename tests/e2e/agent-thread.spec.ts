@@ -2157,12 +2157,23 @@ test.describe('canonical agent Thread surface', () => {
           };
         };
         const failedRow = row('failed');
+        const summary = document.querySelector('.thread-tool-activity-summary')!;
+        const tally = summary.querySelector('.thread-tool-activity-count-failed')!;
         return {
           completed: row('completed'),
           failed: failedRow,
           interrupted: row('interrupted'),
           statusDanger: token('--status-danger'),
           textFaint: token('--text-faint'),
+          textSoft: token('--text-soft'),
+          group: {
+            summaryColor: channels(getComputedStyle(summary).color).slice(0, 3),
+            glyphColor: channels(
+              getComputedStyle(document.querySelector('.thread-tool-activity-toggle .thread-disclosure-status')!).color,
+            ).slice(0, 3),
+            tallyColor: channels(getComputedStyle(tally).color).slice(0, 3),
+            tallyText: tally.textContent,
+          },
           failedLabelContrast: contrast(
             failedRow.labelColor,
             paintedBackground(document.querySelector('.thread-tool-failed.thread-tool')!),
@@ -2186,6 +2197,16 @@ test.describe('canonical agent Thread surface', () => {
       // the family to AA small-text is a design-system-wide recalibration
       // owned by docs/plans/dark-mode-contrast-pass.md, not by this row.
       expect(probe.failedLabelContrast).toBeGreaterThanOrEqual(3);
+
+      // A mixed-outcome group stays neutral apart from its tally: one failed
+      // call out of three must not paint the line, or the whole group reads as
+      // broken. The group glyph stays neutral for the same reason.
+      expect(probe.group.tallyText).toBe('1 failed');
+      expect(probe.group.tallyColor).toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.summaryColor).not.toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.summaryColor).toEqual(probe.textSoft.slice(0, 3));
+      expect(probe.group.glyphColor).not.toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.glyphColor).toEqual(probe.textFaint.slice(0, 3));
 
       // The tint has to survive interaction — the chevron swap used to erase it.
       await page.locator('.thread-tool-failed.thread-tool .thread-tool-toggle').hover();

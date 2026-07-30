@@ -11,7 +11,7 @@ const threadCss = await Bun.file('src/renderer/styles/thread.css').text();
 describe('thread tool row status CSS guards', () => {
   test('tints failed rows instead of giving the status slot its own pill', () => {
     expect(threadCss).toMatch(
-      /\.thread-tool-failed > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-failed > \.thread-tool-toggle \.thread-tool-label,[\s\S]*?color:\s*var\(--status-danger\);/,
+      /\.thread-tool-failed > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-failed > \.thread-tool-toggle \.thread-tool-label \{\s*color:\s*var\(--status-danger\);/,
     );
     expect(threadCss).not.toMatch(/\.thread-tool-failed[^{]*\{[^}]*border-radius:\s*var\(--radius-pill\)/);
     expect(threadCss).not.toMatch(/\.thread-tool-failed[^{]*\{[^}]*background:/);
@@ -20,8 +20,21 @@ describe('thread tool row status CSS guards', () => {
 
   test('gives interrupted rows a muted treatment of their own', () => {
     expect(threadCss).toMatch(
-      /\.thread-tool-interrupted > \.thread-tool-toggle \.thread-disclosure-status,[\s\S]*?color:\s*var\(--text-faint\);/,
+      /\.thread-tool-interrupted > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-interrupted > \.thread-tool-toggle \.thread-tool-label \{\s*color:\s*var\(--text-faint\);/,
     );
+  });
+
+  test('colours only the tally in a group summary, never the whole line or its glyph', () => {
+    expect(threadCss).toMatch(
+      /\.thread-tool-activity-summary \.thread-tool-activity-count-failed \{\s*color:\s*var\(--status-danger\);/,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-tool-activity-summary \.thread-tool-activity-count-interrupted \{\s*color:\s*var\(--text-faint\);/,
+    );
+    // A mixed-outcome group must not be painted wholesale by its worst member.
+    for (const status of ['failed', 'interrupted']) {
+      expect(threadCss).not.toContain(`.thread-tool-${status} > .thread-tool-activity-toggle`);
+    }
   });
 
   test('scopes every status rule to the row own toggle so groups never restyle members', () => {

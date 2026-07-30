@@ -59,10 +59,16 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   it persists through hover, focus, and expansion instead of being swapped away
   by the disclosure chevron. A running row likewise keeps its spinner through
   hover, focus, and expansion, and a group only ever animates its own glyph, not
-  the finished children inside it. A counted activity group names its failed and
-  interrupted members in the summary. The indicator is decorative to assistive
+  the finished children inside it. The indicator is decorative to assistive
   technology: the label text and `aria-expanded` carry the state, and the label
   exposes its untruncated text as a title
+- a counted activity group summarizes mixed outcomes, so it is **not** painted by
+  its worst member: its glyph and its activity phrase stay neutral, and only the
+  appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")
+  carries status colour — the failed count in `--status-danger`, the interrupted
+  count muted. Colouring the whole line would say every call in the group failed
+  when one of them did. The group's own status class still drives the running
+  spinner, and each member row inside carries its own status treatment
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the
   full text, while copied Turns use the same full result
