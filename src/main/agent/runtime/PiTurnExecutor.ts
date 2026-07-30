@@ -8,19 +8,17 @@ import type {
   AgentEvent,
   AgentState,
   AgentTool,
-  KernelAgentOptions,
-} from './kernel/types';
-import type { AgentRuntimeSettings } from '../../../core/types';
-import type {
   Api,
   AssistantMessage,
   Context,
+  KernelAgentOptions,
   Message,
   Model,
   TextContent,
   Usage,
   UserMessage,
-} from '@earendil-works/pi-ai';
+} from './kernel/types';
+import type { AgentRuntimeSettings } from '../../../core/types';
 import type {
   ContextCompactionThreadItem,
   ContextCursor,

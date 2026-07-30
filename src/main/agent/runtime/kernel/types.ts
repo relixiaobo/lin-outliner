@@ -18,15 +18,23 @@ import type { ModelGateway } from './ModelGateway';
 
 export type {
   Api,
+  AssistantImages,
   AssistantMessage,
   AssistantMessageEvent,
   AssistantMessageEventStream,
   Context,
+  ImageContent,
+  ImagesContext,
   Message,
   Model,
+  ProviderResponse,
   SimpleStreamOptions,
+  TextContent,
+  Tool,
+  ToolCall,
   ToolResultMessage,
   Usage,
+  UserMessage,
 } from '@earendil-works/pi-ai';
 
 export type StreamFn = (

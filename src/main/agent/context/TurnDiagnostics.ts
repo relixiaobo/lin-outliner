@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import type { AgentEvent, AgentState } from '../runtime/kernel/types';
 import type {
+  AgentEvent,
+  AgentState,
   Api,
   Context,
   Message,
@@ -8,7 +9,7 @@ import type {
   ProviderResponse,
   SimpleStreamOptions,
   Tool,
-} from '@earendil-works/pi-ai';
+} from '../runtime/kernel/types';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   JsonValue,

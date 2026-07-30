@@ -12,6 +12,7 @@ import {
   type MutableModels,
   type SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
+export { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';

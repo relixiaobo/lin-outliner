@@ -1,4 +1,4 @@
-import type { ToolCall } from '@earendil-works/pi-ai';
+import type { ToolCall } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
 import {
   evaluateAgentToolCapability,

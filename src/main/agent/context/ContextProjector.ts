@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolResultMessage,
   UserMessage,
-} from '@earendil-works/pi-ai';
+} from '../runtime/kernel/types';
 import type {
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
