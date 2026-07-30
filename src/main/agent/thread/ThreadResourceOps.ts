@@ -14,9 +14,7 @@ import type {
   ThreadTurnDetailsReadRequest,
   ThreadTurnDetailsReadResponse,
   ThreadUserContent,
-  Turn,
   TurnDiagnosticsPayloadReference,
-  TurnId,
 } from '../../../core/agent/protocol';
 import {
   createManagedAttachmentObservation,
@@ -29,41 +27,29 @@ import {
   resourceReferenceKey,
 } from '../context/contextDependencies';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
-import { KeyedMutex } from '../Mutex';
-import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import {
   referencesSameResourceFile,
-  ToolPayloadStore,
 } from '../persistence/ToolPayloadStore';
 import type {
   ResolvedThreadAttachmentFile,
   ResolvedThreadResourceFile,
   ThreadUserContentResolutionContext,
 } from '../ThreadService';
-
-export interface ThreadResourceCore {
-  readonly payloads: ToolPayloadStore;
-  readonly threadMutex: KeyedMutex;
-  requireThread(threadId: ThreadId): ThreadCatalogRecord;
-  allTurns(threadId: ThreadId): Turn[];
-  readTurn(threadId: ThreadId, turnId: TurnId): Turn | null;
-}
+import { ThreadCore } from './ThreadCore';
 
 export class ThreadResourceOps {
   private readonly detachedResourceObservations = new Map<string, {
     readonly observation: ManagedAttachmentObservation;
     readonly path: Promise<string | null>;
   }>();
-
   constructor(
-    private readonly core: ThreadResourceCore,
+    private readonly core: ThreadCore,
     private readonly attachmentScratchRoot: string,
     private readonly resolveUserContent: (
       content: readonly ThreadUserContent[],
       context: ThreadUserContentResolutionContext,
     ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>,
   ) {}
-
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> {
     const turn = this.core.readTurn(request.threadId, request.turnId);
     if (!turn) return { output: null };
@@ -75,7 +61,6 @@ export class ThreadResourceOps {
     if (text === null) return { output: null };
     return { output: { ref: item.outputRef, text } };
   }
-
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> {
     const turn = this.core.readTurn(request.threadId, request.turnId);
     if (!turn) return { context: null };
@@ -88,7 +73,6 @@ export class ThreadResourceOps {
     assertContextPayloadDependencies(item, payload);
     return { context: { ref: item.payloadRef, payload } };
   }
-
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
     const thread = this.core.requireThread(request.threadId).thread;
     const turn = this.core.readTurn(request.threadId, request.turnId);
@@ -105,7 +89,6 @@ export class ThreadResourceOps {
     }
     return { thread, turn, diagnostics: { ref, payload } };
   }
-
   async beginAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
@@ -116,7 +99,6 @@ export class ThreadResourceOps {
     this.core.requireThread(input.threadId);
     return this.core.payloads.beginResourceUpload(input);
   }
-
   async appendAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
@@ -131,7 +113,6 @@ export class ThreadResourceOps {
       input.bytes,
     );
   }
-
   async finishAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
@@ -140,7 +121,6 @@ export class ThreadResourceOps {
     this.core.requireThread(input.threadId);
     return this.core.payloads.finishResourceUpload(input.threadId, input.attachmentId, input.uploadId);
   }
-
   async abortAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
@@ -148,7 +128,6 @@ export class ThreadResourceOps {
   }): Promise<void> {
     await this.core.payloads.abortResourceUpload(input.threadId, input.attachmentId, input.uploadId);
   }
-
   async writeThreadResource(
     threadId: ThreadId,
     bytes: Uint8Array,
@@ -158,7 +137,6 @@ export class ThreadResourceOps {
     this.core.requireThread(threadId);
     return this.core.payloads.writeResource(threadId, bytes, mimeType, fileName);
   }
-
   async writeThreadResourceWithStatus(
     threadId: ThreadId,
     bytes: Uint8Array,
@@ -177,7 +155,6 @@ export class ThreadResourceOps {
     this.core.requireThread(threadId);
     return this.core.payloads.useResourcePath(threadId, ref, use);
   }
-
   async readThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
@@ -185,7 +162,6 @@ export class ThreadResourceOps {
     this.core.requireThread(threadId);
     return this.core.payloads.readResource(threadId, ref);
   }
-
   async readReferencedThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
@@ -198,7 +174,6 @@ export class ThreadResourceOps {
     }
     return this.core.payloads.readResource(threadId, ref);
   }
-
   async discardUnreferencedThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
@@ -211,7 +186,6 @@ export class ThreadResourceOps {
       return this.core.payloads.deleteResource(threadId, ref);
     });
   }
-
   async resolveAttachmentFile(
     threadId: ThreadId,
     attachmentId: string,
@@ -265,7 +239,6 @@ export class ThreadResourceOps {
     // Managed copies remain available to Preview/Open/Reveal until scratch TTL cleanup.
     return { attachment, entryKind, path: canonicalPath, stats: fileStats };
   }
-
   async resolveThreadResourceFile(
     threadId: ThreadId,
     ref: ThreadResourceReference,
@@ -340,7 +313,6 @@ export class ThreadResourceOps {
     this.detachedResourceObservations.delete(key);
     await entry.observation.dispose();
   }
-
   createResourceObservation(
     threadId: ThreadId,
     stableProviderPath = false,
@@ -355,28 +327,23 @@ export class ThreadResourceOps {
       stableProviderPath ? { stableWorkspaceKey: threadId } : {},
     );
   }
-
   threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
   }
-
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
   }
-
   threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => (
       turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
     ));
   }
-
   threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => [
       ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
       ...(item.type === 'contextEvidence' || item.type === 'contextCompaction' ? item.outputRefs : []),
     ]));
   }
-
   async resolveAdmissionContent(
     content: readonly ThreadUserContent[],
     thread: Thread,
@@ -398,7 +365,6 @@ export class ThreadResourceOps {
       throw error;
     }
   }
-
   async discardUnreferencedCreatedResources(
     threadId: ThreadId,
     resources: readonly ThreadResourceReference[],
