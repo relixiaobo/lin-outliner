@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Subagent token budgets, PR A (PR #446, codex)** — spawn-time token budgets
+  as a host-owned circuit breaker (PM-ratified sizing policy: breaker not
+  allocation). Optional `max_total_tokens` on `spawn_agent`; global default
+  1,500,000 tokens ON by default (`subagentTokenBudget` runtime setting, null
+  disables); children of budgeted spawners default to min(default, spawner
+  remaining) and exhausted senders cannot spawn. Budgets live in a host-owned
+  `thread_budgets` ledger (`persistence/SubagentBudgetLedger.ts`, shared
+  goals.sqlite connection) — deliberately NOT a ThreadGoal, so no
+  auto-continuation enrollment, no Goal-slot collision, and the child cannot
+  lift its breaker. Exhausted children refuse non-user Turn admission with a
+  typed `SubagentBudgetExhaustedError` (goal continuation defers with the real
+  reason; automations fail with the accurate message; parents read it verbatim
+  from collaboration tools); steering an in-flight Turn is never gated; usage
+  accrues inside the completion mutex including failure paths; the mailbox is
+  snapshot-atomic across admission; `wait_agent`/`list_agents` report
+  `tokensUsed`/`tokenBudget`; user-triggered Turns are never gated. **Gate
+  (main):** three passes — two high-effort multi-agent reviews (18 verified
+  findings, all fixed; the first round overturned the plan's own Goal-reuse
+  design), tripwires, typecheck, 1544 core / 781 renderer tests, live
+  dev-userData verification incl. idle-child no-restart and bright-line
+  scenarios.
+
 - **pi-ai import containment (PR #447, codex-2, fast-track)** — routed all
   `pi-ai` type imports in the context/policy layers through the two sanctioned
   chokepoints (`kernel/types` for the type vocabulary; `piModels` for the few

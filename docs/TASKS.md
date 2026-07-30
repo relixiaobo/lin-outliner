@@ -348,17 +348,19 @@ before any directional/security-sensitive build.
   per-stage commits). Sequencing: `subagent-budget-propagation` PR A lands FIRST (it touches
   lines stages 3-4 move), then this PR starts from a rebase on top of it. See
   `docs/plans/threadservice-decomposition.md`.
-- **subagent-budget-propagation** (P2, `draft` — **PM-directed 2026-07-29; main-authored plan,
-  shape (b): two complete PRs**) — connect the existing Goal budget mechanism
-  (`ThreadGoal.tokenBudget` → `budgetLimited`, `GoalStore.ts:123-132`) to the existing fan-out
-  mechanism (`spawn_agent`), introducing no new concepts. PR A (claimable now): optional
-  `max_total_tokens` on spawn → child Goal; `budgetLimited` children refuse non-user Turn
-  admission with a typed error; `tokensUsed`/`tokenBudget` join `CollaborationAgentView` so
-  `list_agents`/`wait_agent` report them; user-triggered Turns are never gated (bright line).
-  PR B (ordered behind `native-turn-kernel`): the kernel consults a `remainingTokenBudget` port
-  before each model call and settles an in-flight Turn when exhausted — the 2026-07-29 incident's
-  actual failure mode (586k tokens in one child Turn). See
-  `docs/plans/subagent-budget-propagation.md`.
+- **subagent-budget-propagation** (P2, `in-progress` — PR A `done` 2026-07-30 as #446, codex;
+  **PR B claimable now**, kernel prerequisite met by #445) — spawn-time token budgets as a
+  host-owned circuit breaker. PR A shipped after three gate passes (18 findings across two
+  review rounds, all fixed; the plan's original Goal-reuse design was replaced by the
+  `thread_budgets` ledger in `persistence/SubagentBudgetLedger.ts` after review proved Goal
+  reuse enrolled children in auto-continuation): `max_total_tokens` on spawn, global default
+  1.5M ON (`subagentTokenBudget`, null disables), min(default, spawner-remaining) child caps,
+  exhausted senders cannot spawn, typed `SubagentBudgetExhaustedError` with soft/hard handling
+  per caller, accrual inside the completion mutex incl. failure paths, atomic mailbox snapshot,
+  steering never gated, budget visibility in `wait_agent`/`list_agents`, user bright line.
+  PR B: the kernel consults a `remainingTokenBudget` port before each model call, 80%
+  soft-landing steering notice, graceful mid-Turn settle — the incident's actual failure mode
+  (586k tokens in one child Turn). See `docs/plans/subagent-budget-propagation.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
