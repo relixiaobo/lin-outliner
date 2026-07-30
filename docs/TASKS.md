@@ -19,7 +19,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
+| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445) |
@@ -31,7 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #448
+**In flight (2026-07-30).** Open PR queue: empty. Recently merged: #449
+(`cc/agent-deck-click-refocus`, fast-track) after main review — unclaimed
+thread-view clicks now hand focus back to the composer; see *Recently
+completed*. #448
 (`codex-3/thread-completion-layout-stability`) after main review (three
 findings, all fixed same-day), the focused Thread E2E suite, and light/dark
 visual verification — Turn completion no longer moves the response; see
@@ -669,6 +672,26 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-deck-click-refocus**
+  (`cc/agent-deck-click-refocus`, PR #449, cc, merged 2026-07-30, fast-track) —
+  the agent panel adopts the terminal focus model: a mouse click in the thread
+  view that nothing claims hands focus back to the composer, so transcript
+  blank space and one-shot actions (copy, fork, disclosure toggles, details)
+  never strand focus outside the input. A click is claimed by a typing surface,
+  a link or node reference, a non-collapsed text selection, or any surface that
+  installs its own focus target within one frame of the click (self-focusing
+  popovers, dialogs, the inline message editor); keyboard-activated clicks pass
+  through untouched and an active `request_user_input` suspends the hand-back.
+  Decision logic is a pure module (`src/renderer/agent/composerRefocus.ts`)
+  with unit tests; ThreadView adds a single root `onClick` and no new state.
+  Spec updated in the same change (`docs/spec/agent-thread-rendering.md`).
+  **Gate (main):** review verified the fail-safe failure direction (unlisted
+  focusables read as claimed → no refocus, never focus theft), the bubble-order
+  rAF race against the plan popover's self-focus, and the menu focus-restore
+  claim; clean test-merge with `main`, typecheck, and 793 renderer tests
+  (12 new) on the merged state. Merged on PM ratification; no separate visual
+  pass.
 
 - **thread-completion-layout-stability**
   (`codex-3/thread-completion-layout-stability`, PR #448, codex-3, merged

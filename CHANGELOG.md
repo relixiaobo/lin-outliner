@@ -273,6 +273,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent panel focus hand-back (PR #449, cc, fast-track)** — a mouse click in
+  the thread view that nothing claims now returns focus to the composer
+  ("terminal model"), so transcript blank space and one-shot actions (copy,
+  fork, disclosure toggles, details) no longer strand focus outside the input.
+  A click keeps focus where the browser put it when it targets a typing
+  surface, a link or node reference, or a text selection kept for copying, and
+  defers to any surface that installs its own focus target within a frame of
+  the click (self-focusing popovers, dialogs, the inline message editor).
+  Keyboard-activated clicks are never intercepted, and an active
+  `request_user_input` suspends the hand-back. **Gate (main):** review verified
+  the decision module's fail-safe failure direction (unlisted focusables read
+  as claimed → no refocus, never focus theft), the rAF ordering against the
+  plan popover's self-focus, and the menu focus-restore claim; clean test-merge
+  with `main`, typecheck, and 793 renderer tests (12 new) on the merged state.
 - **Thread completion layout stability (PR #448, codex-3)** — an Agent Turn no
   longer shifts when its response moves from streaming to completed. The
   user-message action slot and the response footer are reserved at one height
