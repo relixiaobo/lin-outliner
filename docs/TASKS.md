@@ -370,19 +370,26 @@ before any directional/security-sensitive build.
   constants, not settings), and renderer translation of budget failures (user surfaces never
   show token numbers — the user-irrelevance boundary). See
   `docs/plans/subagent-budget-propagation.md`.
-- **subagent-transcript-artifact** (P2, `draft` *(no plan file yet)* — **PM-ratified design
-  2026-07-30; full plan authored by main after `threadservice-decomposition` merges** (it touches
-  the terminal-outcome path that decomposition stage 3 relocates)) — the Delegation Contract's
-  account layer for model and operator readers, zero new tools. Ratified constraints: ONE
-  faithful turn→text renderer as the sole authority (anti-parallel-copy clause; compaction's
-  lossy `deterministicSummary` explicitly exempt — different contract, documented why), with two
-  ports: (a) eager bounded transcript artifact at child terminal state (truncation reuses
-  `MAX_PERSISTED_*` caps; path delivered via `CollaborationTerminalOutcome.transcriptPath`;
-  cleanup rides descendant teardown; eager-over-lazy justified: immutable-at-terminal beats
-  micro-thrift), read by the parent model through existing file tools, reader-pays, independent
-  of child liveness or budget; (b) a stateless `bun run agent:dump` stdout projection (any
-  thread, any state, incl. diagnostics) for debugging agents and humans — forensics becomes a
-  command, not hand-written parsers (A11). Applies uniformly to isolated-Skill children.
+- **subagent-transcript-artifact** (P2, `draft` — **plan complete 2026-07-30, main-authored,
+  claimable now**) — the Delegation Contract's account layer, zero new tools: ONE faithful
+  turn→text renderer (`thread/TranscriptRenderer.ts`, sole authority with anti-parallel-copy
+  clause; compaction's lossy summary exempt by contract) behind two ports — the terminal
+  artifact (bounded file at child terminal state, path via
+  `CollaborationTerminalOutcome.transcriptPath`, A12 best-effort, cleanup rides descendant
+  teardown, isolated-Skill parity) read by the parent model with existing file tools
+  (reader-pays, liveness/budget-independent), and the stateless `bun run agent:dump` stdout
+  projection for debugging agents and humans (A11: forensics as a command). Touches
+  package.json (infrastructure — the PR is the coordinated change). See
+  `docs/plans/subagent-transcript-artifact.md`.
+- **toolruntime-handler-contribution** (P2, `draft` — **plan complete 2026-07-30,
+  main-authored, claimable now**) — collaboration tool handler bodies move verbatim from
+  `runtime/ToolRuntime.ts` into `thread/SubagentCollaboration.ts` via the SAME contribution
+  seam extensions already use; ToolRuntime becomes pure dispatch/assembly and the budget plan's
+  spawn-handler carve-out retires ("runtime/ has no domain logic" becomes structural). The
+  load-bearing deliverable is the catalog byte-stability guard (tool order/content feeds the
+  stable provider prefix — snapshot recorded on main first, judge validated by deliberate
+  mutation), making catalog drift impossible for this and every future contribution migration
+  (the browser-control landing zone). See `docs/plans/toolruntime-handler-contribution.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
