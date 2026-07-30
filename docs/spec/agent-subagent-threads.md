@@ -62,6 +62,70 @@ because those are the Threads whose terminal transitions are delivered to that
 sender. Descendant status remains visible, but a detached grandchild cannot leave an
 ancestor blocked on an event routed to a different parent.
 
+## Budgets
+
+`collaboration.spawn_agent` accepts an optional `max_total_tokens` positive safe
+integer. The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000` and
+applies when the spawn omits that parameter; `null` disables the default. An explicit
+spawn value takes precedence. The same default applies to collaboration and isolated
+Skill child Threads through their shared spawn boundary.
+
+When the spawner itself has a budget entry, an omitted child budget is capped at the
+spawner's remaining committed budget: `min(globalDefault, parentRemaining)`. If the
+global default is `null`, the child still inherits `parentRemaining`. An explicit
+`max_total_tokens` remains authoritative and is not capped by the parent; budgets are
+per child rather than aggregate subtree accounting. An exhausted budgeted Thread cannot
+spawn another child.
+
+The default is a circuit breaker, not a task allocation. Local usage spans roughly
+12k-432k total tokens for legitimate child work (94k median), while the observed runaway
+was 682k, so a tight cap would not reliably separate useful work from anomalies. The
+1.5M threshold is deliberately generous, around three times the heaviest observed
+legitimate child. Budget accounting uses `totalTokens`, including cache reads; no
+per-Role or per-Skill defaults alter the global setting.
+
+Budget decisions follow this precedence: an explicit user directive in the prompt,
+the parent model's per-spawn `max_total_tokens`, future data-driven Role or Skill
+defaults, then the global default. The current runtime implements the ladder's explicit
+spawn override and global-default endpoints; Role and Skill defaults remain deferred.
+
+For every enabled budget, the host records a child-only entry in its
+`SubagentBudgetLedger` before the first Turn. Persistent entries live in the
+`thread_budgets` table beside Goals in `goals.sqlite`; ephemeral child entries live in
+memory. The ledger accumulates completed-Turn token usage and is deleted with the child
+Thread. It has no model-tool surface, so a child cannot remove or replace its breaker.
+The child's independent `create_goal` and `update_goal` tools retain their normal
+single-Goal semantics and never control this host-owned budget.
+
+When ledger usage reaches or exceeds its total, the single Turn-admission boundary
+rejects every new non-user trigger with `SubagentBudgetExhaustedError`. Collaboration
+follow-up and message tools surface the complete error to the parent. Steering an
+already-active Turn remains unconditional; the gate protects new-work admission only,
+so a parent can still steer an overshooting child to conclude.
+
+`followup_task` snapshots and removes the current mailbox synchronously before awaiting
+admission. Messages queued during that await remain in a new mailbox entry. If admission
+is refused, the snapshot is prepended to the new entry; if admission succeeds, only the
+snapshot is consumed and concurrently queued messages remain for the next Turn.
+
+Idle-only callers receive the typed refusal rather than a soft `null` result.
+`GoalExtension` records the complete error as its continuation deferral reason, while
+`AutomationDispatcher` marks the run failed with the same accurate message. A renderer
+Turn carries `{ kind: 'user' }` and is never budget-gated, so a human can always resume
+the child explicitly; its usage continues to accrue. Root Threads and self-managed Goals
+have no ledger entry and are structurally outside this gate.
+
+Completion accrues usage inside the per-Thread mutex before the active Turn is removed
+or idle status is exposed, so racing admission observes the committed total. Failure
+finalization also accrues any execution usage already returned by the executor. A hard
+process crash can still lose usage that existed only in the in-flight process; the
+mid-Turn enforcement in the follow-up kernel change narrows that residual. The current
+budget does not otherwise interrupt a Turn already in flight, and the completing Turn
+may overshoot the configured total.
+
+`list_agents` and the child tree returned by `wait_agent` expose `tokensUsed` and
+`tokenBudget`. A child without a ledger entry reports `0` and `null`, respectively.
+
 ## History And Activity
 
 Spawning records a `collabAgentToolCall` in the sender and a

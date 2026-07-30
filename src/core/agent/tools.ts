@@ -297,6 +297,7 @@ const automationUpdateToolSchema: JsonSchema = {
 const spawnAgentSchema = objectSchema({
   task_name: stringSchema('Lowercase task name using letters, digits, and underscores.'),
   message: stringSchema('Initial plain-text task for the new Subagent.'),
+  max_total_tokens: numberSchema('Optional total token budget for the child Thread. Omit to use the runtime default.'),
   fork_turns: stringSchema('Use none, all, or a positive integer string. Defaults to all.'),
   agent_type: stringSchema('Agent Role override. Omit unless explicitly requested.'),
   model: stringSchema('Model override. Omit unless an explicit override is needed.'),
@@ -319,7 +320,9 @@ const collaborationAgentViewSchema = objectSchema({
   nickname: { type: ['string', 'null'] },
   role: { type: ['string', 'null'] },
   status: enumSchema(['pendingInit', 'running', 'interrupted', 'completed', 'errored']),
-}, ['taskPath', 'threadId', 'parentThreadId', 'nickname', 'role', 'status']);
+  tokensUsed: { type: 'number' },
+  tokenBudget: { type: ['number', 'null'] },
+}, ['taskPath', 'threadId', 'parentThreadId', 'nickname', 'role', 'status', 'tokensUsed', 'tokenBudget']);
 
 const collaborationTerminalOutcomeSchema = objectSchema({
   taskPath: stringSchema('Canonical child task path.'),
@@ -332,7 +335,7 @@ const collaborationTerminalOutcomeSchema = objectSchema({
 const collaborationToolContracts: readonly ModelToolContract[] = [
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' },
-    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn.',
+    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. max_total_tokens overrides the host-owned runtime budget default, which refuses later non-user Turns after exhaustion.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: spawnAgentSchema,
@@ -361,7 +364,7 @@ const collaborationToolContracts: readonly ModelToolContract[] = [
   },
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'wait_agent' },
-    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Synthesize completed results instead of repeating covered work.',
+    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports its host-owned ledger tokensUsed and tokenBudget state. Synthesize completed results instead of repeating covered work.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),

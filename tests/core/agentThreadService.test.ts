@@ -22,9 +22,14 @@ import type {
 } from '../../src/core/agent/protocol';
 import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
-import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
+import {
+  ThreadService,
+  type ThreadServiceStores,
+} from '../../src/main/agent/ThreadService';
+import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudgetExhaustedError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
+import { SubagentBudgetLedger } from '../../src/main/agent/persistence/SubagentBudgetLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
@@ -4310,13 +4315,25 @@ describe('ThreadService', () => {
     await fixture.service.waitForIdle(isolated.thread.id);
 
     expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
-      { threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' },
+      {
+        threadId: child.thread.id,
+        taskPath: '/root/worker',
+        status: 'completed',
+        tokensUsed: 0,
+        tokenBudget: null,
+      },
     ]);
     const collaborationResult = await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
     expect(collaborationResult).toMatchObject({
       reason: 'terminal',
       updates: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
-      agents: [{ threadId: child.thread.id, taskPath: '/root/worker', status: 'completed' }],
+      agents: [{
+        threadId: child.thread.id,
+        taskPath: '/root/worker',
+        status: 'completed',
+        tokensUsed: 0,
+        tokenBudget: null,
+      }],
     });
     expect(fixture.executor.contexts[0]!.recorder.orderedItems().some((item) => (
       item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id
@@ -4488,24 +4505,30 @@ describe('ThreadService', () => {
       task_name: 'helper',
       message: 'Inspect the runtime',
       fork_turns: 'none',
+      max_total_tokens: 7,
     });
     await fixture.executor.waitUntilWaiting(1);
     expect(spawned.details).toMatchObject({ task_name: '/root/helper' });
+    const childId = (spawned.details as { thread_id: string }).thread_id;
+    expect(fixture.stores.subagentBudgets.read(childId)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 0,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: childId })).goal).toBeNull();
     const listed = await executeTool(tools, 'collaboration__list_agents', 'list-item', {});
     expect(listed.details).toMatchObject({
-      result: [{ taskPath: '/root/helper', status: 'running' }],
+      result: [{ taskPath: '/root/helper', status: 'running', tokensUsed: 0, tokenBudget: 7 }],
       capabilityAudit: { behavior: 'allow' },
     });
     await executeTool(tools, 'update_goal', 'goal-update', { status: 'complete' });
 
     fixture.executor.finish(1);
-    const childId = (spawned.details as { thread_id: string }).thread_id;
     await fixture.service.waitForIdle(childId);
     const waited = await executeTool(tools, 'collaboration__wait_agent', 'wait-item', {});
     expect(waited.details).toMatchObject({
       reason: 'terminal',
       updates: [{ threadId: childId, status: 'completed', result: 'Done' }],
-      agents: [{ threadId: childId, status: 'completed' }],
+      agents: [{ threadId: childId, status: 'completed', tokensUsed: 7, tokenBudget: 7 }],
       capabilityAudit: { behavior: 'allow' },
     });
     fixture.executor.finish(0);
@@ -4960,6 +4983,835 @@ describe('ThreadService', () => {
     expect(fixture.executor.contexts).toHaveLength(1);
     expect((await fixture.service.request('goal/get', { threadId: thread.id })).goal?.status)
       .toBe('budgetLimited');
+    await fixture.service.close();
+  });
+
+  test('applies the runtime default to collaboration and isolated children while explicit budgets override it', async () => {
+    let defaultReads = 0;
+    const fixture = await createFixture(undefined, {
+      resolveSubagentTokenBudget: () => {
+        defaultReads += 1;
+        return 1_500_000;
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with the configured breaker' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'default-budget-spawn');
+    const defaulted = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'default-budget-spawn',
+      taskName: 'defaulted',
+      message: 'Use the runtime default',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.stores.subagentBudgets.read(defaulted.thread.id)).toMatchObject({
+      tokenBudget: 1_500_000,
+      tokensUsed: 0,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: defaulted.thread.id })).goal).toBeNull();
+    const childGoal = await fixture.service.createGoalForTurn(
+      defaulted.thread.id,
+      defaulted.turn.id,
+      'Child-owned work',
+    );
+    expect(childGoal.goal).toMatchObject({ objective: 'Child-owned work', tokenBudget: null });
+    await fixture.service.updateGoalForTurn(defaulted.thread.id, defaulted.turn.id, 'complete');
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'explicit-budget-spawn');
+    const explicit = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'explicit-budget-spawn',
+      taskName: 'explicit',
+      message: 'Override the runtime default',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.stores.subagentBudgets.read(explicit.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 0,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: explicit.thread.id })).goal).toBeNull();
+
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'isolated-budget-spawn',
+      skillName: 'research',
+      prompt: 'Use the same runtime breaker',
+      allowedTools: [],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    expect(fixture.stores.subagentBudgets.read(isolated.thread.id)).toMatchObject({
+      tokenBudget: 1_500_000,
+      tokensUsed: 0,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: isolated.thread.id })).goal).toBeNull();
+    expect(defaultReads).toBe(2);
+
+    fixture.executor.finish(1, completedExecutionResult(3));
+    fixture.executor.finish(2, completedExecutionResult(3));
+    fixture.executor.finish(3, completedExecutionResult(3));
+    await Promise.all([
+      fixture.service.waitForIdle(defaulted.thread.id),
+      fixture.service.waitForIdle(explicit.thread.id),
+      fixture.service.waitForIdle(isolated.thread.id),
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.executor.contexts).toHaveLength(4);
+    expect(fixture.stores.subagentBudgets.read(defaulted.thread.id)?.tokensUsed).toBe(3);
+    expect(fixture.stores.subagentBudgets.read(explicit.thread.id)?.tokensUsed).toBe(3);
+    expect(fixture.stores.subagentBudgets.read(isolated.thread.id)?.tokensUsed).toBe(3);
+    await fixture.service.deleteThread(explicit.thread.id);
+    expect(fixture.stores.subagentBudgets.read(explicit.thread.id)).toBeNull();
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('leaves children without a budget ledger when the runtime default is disabled', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate without a configured breaker' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'disabled-budget-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'disabled-budget-spawn',
+      taskName: 'unlimited',
+      message: 'Run without a host budget',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect((await fixture.service.request('goal/get', { threadId: child.thread.id })).goal).toBeNull();
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toBeNull();
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, tokensUsed: 0, tokenBudget: null },
+    ]);
+
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('caps an omitted grandchild budget at its spawner remaining budget', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 100 });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate nested bounded work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'budgeted-parent-spawn');
+    const parent = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'budgeted-parent-spawn',
+      taskName: 'budgeted_parent',
+      message: 'Spend most of the parent budget',
+      maxTotalTokens: 10,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(parent.thread.id);
+
+    await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'budgeted-parent-followup',
+      '/root/budgeted_parent',
+      'Delegate the remaining work',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    const parentTurnId = fixture.executor.contexts[2]!.turn.id;
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'default-grandchild-spawn');
+    const defaulted = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: parent.thread.id,
+      senderTurnId: parentTurnId,
+      parentItemId: 'default-grandchild-spawn',
+      taskName: 'default_grandchild',
+      message: 'Inherit the remaining budget',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    expect(fixture.stores.subagentBudgets.read(defaulted.thread.id)).toMatchObject({
+      tokenBudget: 3,
+      tokensUsed: 0,
+    });
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'explicit-grandchild-spawn');
+    const explicit = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: parent.thread.id,
+      senderTurnId: parentTurnId,
+      parentItemId: 'explicit-grandchild-spawn',
+      taskName: 'explicit_grandchild',
+      message: 'Use the explicit override',
+      maxTotalTokens: 20,
+    });
+    await fixture.executor.waitUntilWaiting(4);
+    expect(fixture.stores.subagentBudgets.read(explicit.thread.id)).toMatchObject({
+      tokenBudget: 20,
+      tokensUsed: 0,
+    });
+
+    fixture.executor.finish(3, completedExecutionResult(1));
+    fixture.executor.finish(4, completedExecutionResult(1));
+    await Promise.all([
+      fixture.service.waitForIdle(defaulted.thread.id),
+      fixture.service.waitForIdle(explicit.thread.id),
+    ]);
+    fixture.executor.finish(2, completedExecutionResult(1));
+    await fixture.service.waitForIdle(parent.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('inherits spawner remaining budget when the global default is disabled', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate nested work without a global default' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'null-default-parent-spawn');
+    const parent = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'null-default-parent-spawn',
+      taskName: 'null_default_parent',
+      message: 'Use an explicit parent budget',
+      maxTotalTokens: 10,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(parent.thread.id);
+
+    await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'null-default-parent-followup',
+      '/root/null_default_parent',
+      'Delegate the remaining work',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    const parentTurnId = fixture.executor.contexts[2]!.turn.id;
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'null-default-grandchild-spawn');
+    const grandchild = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: parent.thread.id,
+      senderTurnId: parentTurnId,
+      parentItemId: 'null-default-grandchild-spawn',
+      taskName: 'inherited_grandchild',
+      message: 'Inherit the bounded parent remainder',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    expect(fixture.stores.subagentBudgets.read(grandchild.thread.id)).toMatchObject({
+      tokenBudget: 3,
+      tokensUsed: 0,
+    });
+
+    fixture.executor.finish(3, completedExecutionResult(1));
+    await fixture.service.waitForIdle(grandchild.thread.id);
+    fixture.executor.finish(2, completedExecutionResult(1));
+    await fixture.service.waitForIdle(parent.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('gates exhausted Subagent budgets while preserving user Turn admission', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate bounded work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'invalid-budget-spawn');
+    for (const maxTotalTokens of [0, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(fixture.service.spawnCollaborationAgent({
+        senderThreadId: root.id,
+        senderTurnId: rootTurn.turn.id,
+        parentItemId: 'invalid-budget-spawn',
+        taskName: 'invalid_budget',
+        message: 'Do not start',
+        maxTotalTokens,
+      })).rejects.toThrow('max_total_tokens must be a positive integer');
+    }
+    expect(fixture.service.listCollaborationAgents(root.id)).toEqual([]);
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'budget-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'budget-spawn',
+      taskName: 'bounded_child',
+      message: 'Complete bounded work',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 0,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: child.thread.id })).goal).toBeNull();
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, status: 'running', tokensUsed: 0, tokenBudget: 7 },
+    ]);
+
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(child.thread.id);
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 7,
+    });
+    expect(await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id)).toMatchObject({
+      reason: 'terminal',
+      agents: [{ threadId: child.thread.id, status: 'completed', tokensUsed: 7, tokenBudget: 7 }],
+    });
+
+    const exhaustedError = 'Subagent token budget exhausted (7 of 7 tokens); the child refuses new work. '
+      + 'Interrupt, review its output, or spawn a fresh child.';
+    const refusal = await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'budget-followup',
+      '/root/bounded_child',
+      'Do more work',
+    ).then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(SubagentBudgetExhaustedError);
+    expect((refusal as Error).message).toBe(exhaustedError);
+    await expect(fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/bounded_child',
+      'Send more work',
+    )).rejects.toThrow(exhaustedError);
+    await expect(fixture.service.tryStartTurnIfIdle({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'Automation work must fail accurately' }],
+      trigger: { kind: 'feature', feature: 'automation', ref: 'failed-budget-run' },
+    })).rejects.toBeInstanceOf(SubagentBudgetExhaustedError);
+    expect(fixture.executor.contexts).toHaveLength(2);
+
+    const userTurn = await fixture.service.startRendererTurn({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'User explicitly resumes this child' }],
+    });
+    expect(userTurn.turn.provenance.trigger).toEqual({ kind: 'user' });
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2, completedExecutionResult(3));
+    await fixture.service.waitForIdle(child.thread.id);
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 10,
+    });
+    expect((await fixture.service.request('goal/get', { threadId: child.thread.id })).goal).toBeNull();
+    expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
+      { threadId: child.thread.id, status: 'completed', tokensUsed: 10, tokenBudget: 7 },
+    ]);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('commits completing usage before exposing an idle admission window', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Race a bounded child completion' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'completion-race-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'completion-race-spawn',
+      taskName: 'completion_race_child',
+      message: 'Exhaust the budget',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let enterCompletionWindow!: () => void;
+    let releaseCompletionWindow!: () => void;
+    const completionWindowEntered = new Promise<void>((resolve) => {
+      enterCompletionWindow = resolve;
+    });
+    const completionWindowRelease = new Promise<void>((resolve) => {
+      releaseCompletionWindow = resolve;
+    });
+    let completionWindowOpen = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (
+        completionWindowOpen
+        && threadId === child.thread.id
+        && notification.type === 'thread/status/changed'
+        && notification.status.type === 'idle'
+      ) {
+        completionWindowOpen = false;
+        enterCompletionWindow();
+        await completionWindowRelease;
+      }
+      return append(threadId, notification, recordedAt);
+    };
+
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await completionWindowEntered;
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 7,
+    });
+    const refused = fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'completion-race-followup',
+      '/root/completion_race_child',
+      'This admission must observe committed usage',
+    ).then(() => null, (error: unknown) => error);
+    releaseCompletionWindow();
+    expect(await refused).toBeInstanceOf(SubagentBudgetExhaustedError);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('allows steering an active exhausted child but refuses its own spawn', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Steer a bounded child' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'steering-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'steering-spawn',
+      taskName: 'steering_child',
+      message: 'Complete bounded work',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(child.thread.id);
+
+    const userTurn = await fixture.service.startRendererTurn({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'Resume this child explicitly' }],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/steering_child',
+      'Conclude the active Turn now',
+    );
+    expect(fixture.executor.steered).toContain('Conclude the active Turn now');
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'exhausted-sender-spawn');
+    await expect(fixture.service.spawnCollaborationAgent({
+      senderThreadId: child.thread.id,
+      senderTurnId: userTurn.turn.id,
+      parentItemId: 'exhausted-sender-spawn',
+      taskName: 'forbidden_grandchild',
+      message: 'Do not evade the parent budget',
+      maxTotalTokens: 100,
+    })).rejects.toThrow('Subagent token budget exhausted (7 of 7 tokens)');
+    expect(fixture.service.listCollaborationAgents(child.thread.id)).toEqual([]);
+
+    fixture.executor.finish(2, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('records the complete exhaustion reason when Goal continuation is deferred', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate a child with its own Goal' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'goal-deferral-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'goal-deferral-spawn',
+      taskName: 'goal_deferral_child',
+      message: 'Work toward a child-owned Goal',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await fixture.service.createGoalForTurn(
+      child.thread.id,
+      child.turn.id,
+      'Continue child-owned work',
+    );
+
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(child.thread.id);
+    expect(fixture.executor.contexts).toHaveLength(2);
+    expect(fixture.stores.goals.readDeferral(child.thread.id)?.reason).toBe(
+      'Subagent token budget exhausted (7 of 7 tokens); the child refuses new work. '
+      + 'Interrupt, review its output, or spawn a fresh child.',
+    );
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('accrues recorded execution usage when completion finalization fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Observe failed child finalization' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'failure-accrual-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'failure-accrual-spawn',
+      taskName: 'failure_accrual_child',
+      message: 'Return usage before finalization fails',
+      maxTotalTokens: 5,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let rejectCompletion = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (rejectCompletion && threadId === child.thread.id && notification.type === 'turn/completed') {
+        rejectCompletion = false;
+        throw new Error('simulated completion finalization failure');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+    fixture.executor.finish(1, completedExecutionResult(5));
+    await fixture.service.waitForIdle(child.thread.id);
+
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 5,
+      tokensUsed: 5,
+    });
+    expect(fixture.service.readThread({ threadId: child.thread.id, includeTurns: true }).thread.turns?.[0])
+      .toMatchObject({
+        status: 'failed',
+        execution: { usage: { totalTokens: 5 } },
+      });
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('does not apply the Subagent gate to a root Thread self-managed Goal', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    fixture.stores.goals.create(root.id, 'Root-owned bounded work', 1);
+    fixture.stores.goals.addUsage(root.id, 1, 0);
+    expect(fixture.stores.goals.read(root.id)?.goal.status).toBe('budgetLimited');
+    expect(fixture.stores.subagentBudgets.read(root.id)).toBeNull();
+
+    const turn = await fixture.service.tryStartTurnIfIdle({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Run root automation work' }],
+      trigger: { kind: 'feature', feature: 'automation', ref: 'root-budget-run' },
+    });
+    expect(turn).not.toBeNull();
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('prepends a mailbox snapshot when exhaustion wins the admission race', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate queued work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'mailbox-budget-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'mailbox-budget-spawn',
+      taskName: 'mailbox_child',
+      message: 'Complete initial work',
+      maxTotalTokens: 10,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(3));
+    await fixture.service.waitForIdle(child.thread.id);
+
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/mailbox_child',
+      'Queued before exhaustion',
+    );
+    let enterBarrier!: () => void;
+    let releaseBarrier!: () => void;
+    const barrierEntered = new Promise<void>((resolve) => {
+      enterBarrier = resolve;
+    });
+    const barrierRelease = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const barrier = fixture.service.withThreadAdmissionBarrier(child.thread.id, async () => {
+      enterBarrier();
+      await barrierRelease;
+    });
+    await barrierEntered;
+
+    const refused = fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'mailbox-budget-followup',
+      '/root/mailbox_child',
+      'Rejected while exhausted',
+    );
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/mailbox_child',
+      'Queued during admission',
+    );
+    fixture.stores.subagentBudgets.addUsage(child.thread.id, 7);
+    const refusal = refused.then(() => null, (error: unknown) => error);
+    releaseBarrier();
+    await barrier;
+    expect(await refusal).toBeInstanceOf(SubagentBudgetExhaustedError);
+
+    fixture.stores.subagentBudgets.clear(child.thread.id);
+    await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'mailbox-after-refusal',
+      '/root/mailbox_child',
+      'Accepted after test ledger removal',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    const admittedText = fixture.executor.contexts[2]!.turn.items.flatMap((item) => item.type === 'userMessage'
+      ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
+      : []);
+    expect(admittedText).toEqual([
+      'Queued before exhaustion',
+      'Queued during admission',
+      'Accepted after test ledger removal',
+    ]);
+
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('retains messages queued while a mailbox snapshot is admitted', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate concurrent mailbox work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'mailbox-success-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'mailbox-success-spawn',
+      taskName: 'mailbox_success_child',
+      message: 'Complete initial work',
+      maxTotalTokens: 20,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/mailbox_success_child',
+      'Queued before admission',
+    );
+
+    let enterBarrier!: () => void;
+    let releaseBarrier!: () => void;
+    const barrierEntered = new Promise<void>((resolve) => {
+      enterBarrier = resolve;
+    });
+    const barrierRelease = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const barrier = fixture.service.withThreadAdmissionBarrier(child.thread.id, async () => {
+      enterBarrier();
+      await barrierRelease;
+    });
+    await barrierEntered;
+    const firstFollowup = fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'mailbox-success-followup',
+      '/root/mailbox_success_child',
+      'Admit the snapshot',
+    );
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      rootTurn.turn.id,
+      '/root/mailbox_success_child',
+      'Queued during admission',
+    );
+    releaseBarrier();
+    await barrier;
+    await firstFollowup;
+    await fixture.executor.waitUntilWaiting(2);
+    const firstInput = fixture.executor.contexts[2]!.turn.items.flatMap((item) => item.type === 'userMessage'
+      ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
+      : []);
+    expect(firstInput).toEqual(['Queued before admission', 'Admit the snapshot']);
+
+    fixture.executor.finish(2, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'mailbox-success-next-followup',
+      '/root/mailbox_success_child',
+      'Admit the next snapshot',
+    );
+    await fixture.executor.waitUntilWaiting(3);
+    const secondInput = fixture.executor.contexts[3]!.turn.items.flatMap((item) => item.type === 'userMessage'
+      ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
+      : []);
+    expect(secondInput).toEqual(['Queued during admission', 'Admit the next snapshot']);
+
+    fixture.executor.finish(3, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('mirrors ephemeral child budgets in memory and clears them with the Thread tree', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate ephemeral work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'ephemeral-budget-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'ephemeral-budget-spawn',
+      taskName: 'ephemeral_child',
+      message: 'Use an in-memory breaker',
+      maxTotalTokens: 7,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(7));
+    await fixture.service.waitForIdle(child.thread.id);
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toMatchObject({
+      tokenBudget: 7,
+      tokensUsed: 7,
+    });
+
+    await fixture.service.deleteThread(root.id);
+    expect(fixture.stores.subagentBudgets.read(child.thread.id)).toBeNull();
     await fixture.service.close();
   });
 
@@ -5551,6 +6403,7 @@ async function createFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveRoleCatalog'
+    | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
@@ -5581,6 +6434,7 @@ async function openFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveRoleCatalog'
+    | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
@@ -5611,11 +6465,13 @@ function createStores(root: string): ThreadServiceStores {
   const statePath = join(root, 'agent', 'state.sqlite');
   const historyPath = join(root, 'agent', 'thread_history.sqlite');
   const goalsPath = join(root, 'agent', 'goals.sqlite');
+  const goalsDatabase = database(goalsPath);
   return {
     metadata: new ThreadMetadataStore(statePath, database(statePath)),
     history: new ThreadHistoryProjectionStore(historyPath, database(historyPath)),
     rollout: new RolloutStore(join(root, 'agent', 'rollouts')),
-    goals: new GoalStore(goalsPath, database(goalsPath)),
+    goals: new GoalStore(goalsPath, goalsDatabase),
+    subagentBudgets: new SubagentBudgetLedger(goalsDatabase),
     payloads: new ToolPayloadStore(join(root, 'agent', 'payloads')),
   };
 }

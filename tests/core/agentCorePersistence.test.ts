@@ -8,6 +8,7 @@ import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensi
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
+import { SubagentBudgetLedger } from '../../src/main/agent/persistence/SubagentBudgetLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -428,6 +429,34 @@ describe('Agent Core persistence', () => {
     expect(replacement.goal.tokensUsed).toBe(0);
     expect(() => goals.deferContinuation(threadId, first.generation, 'stale', 16)).toThrow('stale');
     goals.close();
+  });
+
+  test('persists host-owned Subagent budgets beside independent Goal state', async () => {
+    const root = await tempRoot();
+    const goalsPath = join(root, 'goals.sqlite');
+    const goalsDatabase = testDatabase(goalsPath);
+    const goals = new GoalStore(goalsPath, goalsDatabase);
+    const budgets = new SubagentBudgetLedger(goalsDatabase);
+    const persistentThreadId = uuidV7(3100);
+    const ephemeralThreadId = uuidV7(3200);
+
+    goals.create(persistentThreadId, 'Child-owned Goal', null, 10);
+    budgets.create(persistentThreadId, 100, false);
+    budgets.addUsage(persistentThreadId, 40);
+    budgets.create(ephemeralThreadId, 50, true);
+    budgets.addUsage(ephemeralThreadId, 10);
+    expect(goals.read(persistentThreadId)?.goal.objective).toBe('Child-owned Goal');
+    expect(budgets.read(persistentThreadId)).toMatchObject({ tokenBudget: 100, tokensUsed: 40 });
+    expect(budgets.read(ephemeralThreadId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
+    goals.close();
+
+    const reopenedDatabase = testDatabase(goalsPath);
+    const reopened = new SubagentBudgetLedger(reopenedDatabase);
+    expect(reopened.read(persistentThreadId)).toMatchObject({ tokenBudget: 100, tokensUsed: 40 });
+    expect(reopened.read(ephemeralThreadId)).toBeNull();
+    expect(reopened.clear(persistentThreadId)).toBe(true);
+    expect(reopened.read(persistentThreadId)).toBeNull();
+    reopenedDatabase.close();
   });
 });
 

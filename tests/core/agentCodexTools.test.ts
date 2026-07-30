@@ -38,8 +38,20 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(modelToolContract('codex_app.automation_update')?.description).toContain(
       'Never use shell sleep or polling',
     );
+    const collaborationSpawn = modelToolContract('collaboration.spawn_agent');
+    expect(collaborationSpawn?.description).toContain('max_total_tokens');
+    expect(collaborationSpawn?.inputSchema).toMatchObject({
+      properties: {
+        max_total_tokens: {
+          type: 'number',
+          description: 'Optional total token budget for the child Thread. Omit to use the runtime default.',
+        },
+      },
+      required: ['task_name', 'message'],
+    });
     const collaborationWait = modelToolContract('collaboration.wait_agent');
     expect(collaborationWait?.description).toContain('Block without polling');
+    expect(collaborationWait?.description).toContain('tokensUsed and tokenBudget');
     expect(collaborationWait?.description).toContain('Synthesize completed results');
     expect(collaborationWait?.inputSchema).toEqual({
       type: 'object',
@@ -47,7 +59,29 @@ describe('Codex Agent Core model-tool contract', () => {
       required: [],
       additionalProperties: false,
     });
-    expect(JSON.stringify(collaborationWait?.outputSchema)).toContain('updates');
+    expect(collaborationWait?.outputSchema).toMatchObject({
+      properties: {
+        agents: {
+          items: {
+            properties: {
+              tokensUsed: { type: 'number' },
+              tokenBudget: { type: ['number', 'null'] },
+            },
+            required: [
+              'taskPath',
+              'threadId',
+              'parentThreadId',
+              'nickname',
+              'role',
+              'status',
+              'tokensUsed',
+              'tokenBudget',
+            ],
+          },
+        },
+        updates: {},
+      },
+    });
   });
 
   test('round-trips canonical and flat provider encodings without aliases', () => {

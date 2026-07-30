@@ -202,6 +202,7 @@ export class ToolRuntime {
             ? {}
             : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
           ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
+          ...(input.max_total_tokens === undefined ? {} : { maxTotalTokens: input.max_total_tokens as number }),
         });
         return {
           task_name: result.taskPath,

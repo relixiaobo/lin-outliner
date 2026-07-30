@@ -156,6 +156,25 @@ standing authorization are specified in
 These tools operate on child Threads as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+`collaboration.spawn_agent` accepts optional `max_total_tokens`; the host validates a
+positive safe integer and uses it ahead of the runtime-wide `subagentTokenBudget`
+setting. That setting defaults to `1,500,000`, accepts `null` to disable the default,
+and applies uniformly to collaboration and isolated Skill children through their shared
+spawn boundary. Enabled budgets create a host-owned ledger entry before the child starts;
+they do not occupy or modify the child's Goal slot.
+Collaboration views returned by `list_agents` and `wait_agent` include `tokensUsed` and
+nullable `tokenBudget`. Once ledger usage reaches the budget, new non-user Turn admission
+is rejected while explicit user Turn admission and steering of an active Turn remain
+available. `followup_task` atomically removes its mailbox snapshot before awaiting
+admission, preserves concurrently queued messages, and prepends the snapshot again if
+admission is refused. Goal continuation records the complete typed refusal as a deferral;
+automation dispatch records it as a failed run. Completion and failure finalization
+accrue recorded usage before exposing an idle admission window. A budgeted spawner cannot
+spawn after exhaustion; when it omits a child budget, the child receives the lower of the
+global default and the spawner's remaining budget (or the remaining budget alone when the
+global default is `null`). An explicit child budget still takes precedence because this
+contract does not provide aggregate subtree accounting.
+
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,
 and returns for terminal child activity or steering. Its structured result batches

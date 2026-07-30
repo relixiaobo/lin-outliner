@@ -42,6 +42,7 @@ const {
   getProviderRuntimeConfig,
   reconcileProviderConfig,
   setActiveProvider,
+  updateAgentRuntimeSettings,
   updateImageGenerationSettings,
   upsertProviderConfig,
   ensureProviderConfig,
@@ -93,6 +94,41 @@ afterEach(async () => {
 });
 
 describe('provider config startup reconcile (Part A)', () => {
+  test('normalizes nullable runtime integer settings within the safe range', async () => {
+    expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
+
+    await updateAgentRuntimeSettings({ subagentTokenBudget: 250_000 });
+    expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(250_000);
+
+    await updateAgentRuntimeSettings({ subagentTokenBudget: null });
+    expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBeNull();
+
+    await writeProviderFileRaw({
+      agent: { subagentTokenBudget: 12.9 },
+      providers: [],
+    });
+    expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(12);
+
+    for (const subagentTokenBudget of [0, Number.MAX_SAFE_INTEGER + 1, 'invalid']) {
+      await writeProviderFileRaw({ agent: { subagentTokenBudget }, providers: [] });
+      expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
+    }
+
+    await writeProviderFileRaw({
+      agent: {
+        providerTimeoutMs: Number.MAX_SAFE_INTEGER + 1,
+        providerMaxRetries: Number.MAX_SAFE_INTEGER + 1,
+        providerMaxRetryDelayMs: Number.MAX_SAFE_INTEGER + 1,
+      },
+      providers: [],
+    });
+    expect(await getAgentRuntimeSettings()).toMatchObject({
+      providerTimeoutMs: null,
+      providerMaxRetries: null,
+      providerMaxRetryDelayMs: 60_000,
+    });
+  });
+
   test('stores image generation defaults separately from provider connection rows', async () => {
     await updateImageGenerationSettings({ defaultModel: 'google/gemini-3.1-flash-image' });
 

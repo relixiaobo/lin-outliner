@@ -8,7 +8,8 @@ import type {
   UpdateGoalInput,
   UpdateGoalResponse,
 } from '../../../../core/agent/goal';
-import type { AgentCoreRecordedNotification, Thread, ThreadId, TurnId } from '../../../../core/agent/protocol';
+import type { AgentCoreRecordedNotification, Thread, ThreadId, Turn, TurnId } from '../../../../core/agent/protocol';
+import { isSubagentBudgetExhaustedError } from '../../SubagentBudgetExhaustedError';
 import { GoalStore, type GoalRecord } from './GoalStore';
 
 type NotificationPublisher = (notification: AgentCoreRecordedNotification) => Promise<void>;
@@ -73,11 +74,18 @@ export class GoalExtension implements AgentCoreExtension {
     if (!thread.ephemeral && this.store.readDeferral(thread.id)) {
       this.store.clearDeferral(thread.id);
     }
-    const turn = await this.host.tryStartTurnIfIdle({
-      threadId: thread.id,
-      input: [{ type: 'text', text: `Continue working toward the active Goal: ${record.goal.objective}` }],
-      trigger: { kind: 'feature', feature: 'goal_continuation', ref: String(record.generation) },
-    });
+    let turn: Turn | null;
+    try {
+      turn = await this.host.tryStartTurnIfIdle({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `Continue working toward the active Goal: ${record.goal.objective}` }],
+        trigger: { kind: 'feature', feature: 'goal_continuation', ref: String(record.generation) },
+      });
+    } catch (error) {
+      if (!isSubagentBudgetExhaustedError(error)) throw error;
+      if (!thread.ephemeral) this.store.deferContinuation(thread.id, record.generation, error.message);
+      return;
+    }
     if (!turn && !thread.ephemeral) {
       this.store.deferContinuation(thread.id, record.generation, 'Thread was not idle at continuation admission');
     }

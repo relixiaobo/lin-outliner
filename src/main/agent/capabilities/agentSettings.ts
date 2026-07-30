@@ -122,6 +122,7 @@ const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
+  subagentTokenBudget: 1_500_000,
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
@@ -495,6 +496,10 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
+    subagentTokenBudget: normalizeNullablePositiveInteger(
+      input?.subagentTokenBudget,
+      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
+    ),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(
@@ -530,7 +535,7 @@ function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | 
 function normalizeInteger(value: unknown, fallback: number | null, min: number): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   const normalized = Math.floor(value);
-  return normalized >= min ? normalized : fallback;
+  return Number.isSafeInteger(normalized) && normalized >= min ? normalized : fallback;
 }
 
 async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {

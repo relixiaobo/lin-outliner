@@ -8,6 +8,7 @@ import type {
   AutomationRun,
 } from '../../../core/agent/automation';
 import type { ThreadService } from '../ThreadService';
+import { isSubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
 import { AutomationStore } from './AutomationStore';
 import { AutomationWorktree } from './AutomationWorktree';
 
@@ -133,6 +134,11 @@ export class AutomationDispatcher {
       await this.changed(dispatched);
       return dispatched;
     } catch (error) {
+      if (isSubagentBudgetExhaustedError(error)) {
+        const failed = this.options.store.markFailed(current.id, error.message, this.now());
+        await this.changed(failed);
+        return failed;
+      }
       let recoveredAfterFailure: AutomationRun | null;
       try {
         recoveredAfterFailure = await this.recoverAcceptedTurn(current);
