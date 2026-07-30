@@ -333,24 +333,26 @@ function UserMessageItem({
               onDisclosureToggle,
             )}
           </div>
-          {showMessageActions ? (
-            <div className="thread-message-actions">
-              {canEditUserMessage && textEditable ? (
-                <IconButton
-                  icon={PencilIcon}
+          <div className="thread-message-actions-slot">
+            {showMessageActions ? (
+              <div className="thread-message-actions">
+                {canEditUserMessage && textEditable ? (
+                  <IconButton
+                    icon={PencilIcon}
+                    iconSize={ICON_SIZE.menu}
+                    label={t.agent.message.editMessage}
+                    onClick={() => setEditing(true)}
+                    variant="message"
+                  />
+                ) : null}
+                <ThreadMessageCopyButton
                   iconSize={ICON_SIZE.menu}
-                  label={t.agent.message.editMessage}
-                  onClick={() => setEditing(true)}
-                  variant="message"
+                  label={t.agent.message.copyMessage}
+                  text={copyText}
                 />
-              ) : null}
-              <ThreadMessageCopyButton
-                iconSize={ICON_SIZE.menu}
-                label={t.agent.message.copyMessage}
-                text={copyText}
-              />
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </>
       )}
     </article>

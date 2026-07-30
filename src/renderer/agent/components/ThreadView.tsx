@@ -1056,7 +1056,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') onOpenTurnDetails(turn);
   }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
-  const responseTail = turn.status === 'inProgress' || standaloneContextBoundary ? null : (
+  const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
@@ -1115,11 +1115,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
         const item = block.item;
         return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
       })}
-      {turn.status === 'inProgress' ? <ThreadStreamingIndicator /> : null}
       {responseItem === null && responseTail ? (
         <article
           className="thread-item thread-agent-message thread-agent-message-response"
-          onContextMenu={handleResponseContextMenu}
+          onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
         >
           {responseTail}
         </article>
@@ -1149,58 +1148,63 @@ function ThreadResponseTail({
   const t = useT();
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted';
   const errorText = turn.error ? threadErrorMessage(turn.error.message) : '';
   return (
     <>
-      {errorText ? (
+      {!streaming && errorText ? (
         <div className="thread-response-error" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
           <span>{errorText}</span>
         </div>
       ) : null}
-      {interrupted ? (
+      {!streaming && interrupted ? (
         <div className="thread-response-stopped">
           <StopIcon aria-hidden size={ICON_SIZE.menu} />
           <span>{t.agent.thread.turnInterrupted}</span>
         </div>
       ) : null}
-      <div className="thread-message-actions thread-response-actions">
-        <ThreadMessageCopyButton
-          iconSize={ICON_SIZE.menu}
-          label={t.agent.message.copyMessage}
-          onCopy={onCopy}
-          text=""
-        />
-        <IconButton
-          icon={GitForkIcon}
-          iconSize={ICON_SIZE.menu}
-          label={t.agent.thread.continueInNewChat}
-          onClick={() => void onContinueInNewChat()}
-          variant="message"
-        />
-        <span className="thread-response-details-anchor">
-          <IconButton
-            icon={InfoIcon}
-            iconSize={ICON_SIZE.menu}
-            label={t.agent.message.details}
-            onBlur={() => setUsageHoverOpen(false)}
-            onClick={(event) => {
-              setUsageHoverOpen(false);
-              event.currentTarget.blur();
-              onOpenDetails();
-            }}
-            onFocus={() => setUsageHoverOpen(true)}
-            onMouseEnter={() => setUsageHoverOpen(true)}
-            onMouseLeave={() => setUsageHoverOpen(false)}
-            ref={detailsButtonRef}
-            title=""
-            variant="message"
-          />
-          {usageHoverOpen ? (
-            <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
-          ) : null}
-        </span>
+      <div className="thread-response-footer">
+        {streaming ? <ThreadStreamingIndicator /> : (
+          <div className="thread-message-actions thread-response-actions">
+            <ThreadMessageCopyButton
+              iconSize={ICON_SIZE.menu}
+              label={t.agent.message.copyMessage}
+              onCopy={onCopy}
+              text=""
+            />
+            <IconButton
+              icon={GitForkIcon}
+              iconSize={ICON_SIZE.menu}
+              label={t.agent.thread.continueInNewChat}
+              onClick={() => void onContinueInNewChat()}
+              variant="message"
+            />
+            <span className="thread-response-details-anchor">
+              <IconButton
+                icon={InfoIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.message.details}
+                onBlur={() => setUsageHoverOpen(false)}
+                onClick={(event) => {
+                  setUsageHoverOpen(false);
+                  event.currentTarget.blur();
+                  onOpenDetails();
+                }}
+                onFocus={() => setUsageHoverOpen(true)}
+                onMouseEnter={() => setUsageHoverOpen(true)}
+                onMouseLeave={() => setUsageHoverOpen(false)}
+                ref={detailsButtonRef}
+                title=""
+                variant="message"
+              />
+              {usageHoverOpen ? (
+                <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
+              ) : null}
+            </span>
+          </div>
+        )}
       </div>
     </>
   );
@@ -1452,7 +1456,7 @@ function ThreadProcessBlock({
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
   const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t);
-  const timelineVisible = !collapsible || expanded;
+  const timelineVisible = items.length > 0 && (!collapsible || expanded);
   return (
     <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
       {terminalResponseOwnsStatus ? null : collapsible ? (
