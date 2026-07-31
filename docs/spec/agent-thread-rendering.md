@@ -167,16 +167,21 @@ described in the past — it never falls through to the live `Working` label —
 and when a Turn is **blocked on the user** (`waitingOnUserInput`) the line says
 so, the spinner stops, and the elapsed clock freezes: waiting for an answer is
 not work, and a timer that keeps counting says the agent is still busy. Exactly
-one element owns a Turn's terminal status: with no final response the divider
-states it and the synthetic response tail renders actions only, and when the
-response tail owns it the divider is suppressed but the timeline still keeps a
-neutral, status-free header rather than becoming an unlabelled list of rows.
+one element owns a Turn's terminal status, and something always does: the
+divider states it when there is no final response **and a process block
+actually renders**, and the synthetic response tail then shows actions only.
+A Turn with no process Items renders no process block at all, so there the tail
+keeps the status. When the tail owns it the divider is suppressed, but the
+timeline still keeps a neutral, status-free header rather than becoming an
+unlabelled list of rows.
 Counted activity reports finished and in-flight work separately — "Read 5 files
 · reading 1", never one present-tense count covering work that has already
-finished. A live reasoning disclosure stays open while it is the tail of a
-running Turn, so a newly arriving Item cannot snap it shut and shift the layout
-under the reader, and the empty placeholder carries the same classes as the
-populated one so the first token does not restyle the element. The reconnect
+finished. A reasoning disclosure that opened by default **latches** open: the default is
+otherwise recomputed each render from live state, so a newly arriving Item
+retracted it and snapped the disclosure shut mid-run, shifting the layout under
+the reader. An explicit collapse is recorded and still wins over the latch. The
+empty placeholder carries the same classes as the populated one so the first
+token does not restyle the element. The reconnect
 banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
 the Thread list reloads, so it cannot outlive the attempt it describes.
 

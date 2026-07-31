@@ -1418,6 +1418,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
   const contentBlocks = groupTurnContent(turn);
+  // `groupTurnContent` omits the process block entirely for a Turn with no
+  // process Items, so "no response Item" alone does not mean a divider exists
+  // to own the terminal status.
+  const hasProcessBlock = contentBlocks.some((block) => block.kind === 'process');
   const editUserMessage = useCallback(
     (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
     [onEditUserMessage, turn],
@@ -1450,9 +1454,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
-      // With no response Item the process divider already states the terminal
-      // status, so the synthetic tail must not repeat it a line below.
-      statusOwnedElsewhere={responseItem === null}
+      // The process divider states the terminal status when there is no
+      // response Item — but only if a process block renders at all. Without
+      // one, suppressing it here would erase the status from the Turn.
+      statusOwnedElsewhere={responseItem === null && hasProcessBlock}
       turn={turn}
     />
   );
@@ -1460,7 +1465,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
       canEditUserMessage={canEditUserMessage && showMessageActions}
-      defaultReasoningExpanded={reasoningDefaultExpanded(turn, item)}
+      defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
       expandState={expandState}
       index={index}
       item={item}
@@ -2095,17 +2100,6 @@ function lastAgentResponse(turn: Turn): Extract<ThreadItem, { type: 'agentMessag
     if (item?.type === 'agentMessage' && item.phase !== 'commentary') return item;
   }
   return null;
-}
-
-/**
- * A live reasoning Item stays open while it is the tail of a running Turn.
- * `isSoloResultlessReasoning` flips to false the instant any newer Item lands,
- * which snapped an open disclosure shut mid-run and shifted the layout under
- * the reader.
- */
-function reasoningDefaultExpanded(turn: Turn, item: ThreadItem): boolean {
-  if (turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id) return true;
-  return isSoloResultlessReasoning(turn, item);
 }
 
 function isSoloResultlessReasoning(turn: Turn, item: ThreadItem): boolean {

@@ -549,6 +549,13 @@ function ReasoningDisclosure({
   readonly parts: readonly string[];
   readonly streaming: boolean;
 }) {
+  // Latch the default open. `isExpanded` falls back to the default on every
+  // render, so a default derived from live state (streaming, or being the
+  // Turn's only process Item) retracts the moment a newer Item lands — which
+  // snapped an open disclosure shut mid-run and shifted the layout under the
+  // reader. An explicit collapse is stored as `false` and still wins.
+  const openedByDefault = useRef(false);
+  if (defaultExpanded || streaming) openedByDefault.current = true;
   const t = useT();
   const text = parts.join('\n\n');
   const trimmed = text.trim();
@@ -559,7 +566,7 @@ function ReasoningDisclosure({
       ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
       : null;
   }
-  const expanded = expandState.isExpanded(disclosureId, defaultExpanded || streaming);
+  const expanded = expandState.isExpanded(disclosureId, openedByDefault.current);
   const gist = expanded ? '' : reasoningGist(trimmed);
   return (
     <div className="thread-item thread-reasoning">

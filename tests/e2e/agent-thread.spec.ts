@@ -2253,6 +2253,52 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('Turn interrupted')).toHaveCount(2);
   });
 
+  test('states an interrupted Turn that produced nothing at all', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c401';
+      const userId = '01910000-0000-7000-8000-00000000c402';
+      // Interrupted before any process Item existed: no tool call, no
+      // reasoning, no response. `groupTurnContent` renders no process block at
+      // all here, so there is no divider to own the status.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: userId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userId },
+            clientId: null,
+            content: [{ type: 'text', text: 'Stop right away.' }],
+            acceptedAt: 1,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'interrupted',
+          error: null,
+          startedAt: 1,
+          completedAt: 5,
+          durationMs: 4,
+        },
+      });
+    });
+
+    await expect(page.locator('.thread-process-block')).toHaveCount(0);
+    // The status must still be stated — by the response tail, since nothing
+    // else can.
+    await expect(page.getByText('Turn interrupted')).toHaveCount(1);
+  });
+
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
     await createNewThread(page);
     await seedMixedStatusToolTurn(page);
