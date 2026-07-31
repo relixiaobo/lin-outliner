@@ -478,7 +478,15 @@ before any directional/security-sensitive build.
   demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
   the standing "task contract meta doc" idea is folded here rather than written separately.
   PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 2 and
-  PR 3 are both claimable now that PR 1 has landed. The plan's stale
+  PR 3 are both claimable now that PR 1 has landed — **whoever claims them starts from
+  the plan's "PR 1 landed" section**, which records the seams they attach to
+  (`subagentPresentation.ts` projection, the divider now co-owned with #463, the
+  `latestTurnByThread` fallback, the settled protocol shapes) and the integration
+  warning that extraction refactors in the divider region merge silently wrong.
+  Two standing constraints for those PRs: **#467 (plan-progress pill) is the live
+  collision for PR 3** — same parent process block, second claimant rebases; and the
+  codec clean cut means **every clone wipes `~/.lin-outliner-*` dev userData** before
+  running any branch off this point. The plan's stale
   `ThreadService.ts:NNNN` citations (they predated #451's decomposition and reached past
   EOF) were repaired on the #466 branch — each relocated to `thread/TurnLifecycle.ts`,
   `thread/SubagentCollaboration.ts`, or `thread/ThreadCatalogOps.ts` and revalidated

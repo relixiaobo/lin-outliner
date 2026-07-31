@@ -12,7 +12,10 @@ live delegation surface plus user control — the human-facing half of the
 Delegation Contract's "Account" product
 (`docs/spec/agent-subagent-threads.md`, Delegation Contract §2).
 
-All `file:line` references are against `main` at `8c40d637`.
+All `file:line` references are against `main` at `72a38285` (PR 1 landed).
+Prefer the symbol names in "PR 1 landed" below over the line numbers here — the
+line numbers have already rotted twice, once through #451's decomposition and
+once through #463's extraction.
 
 ## Non-goals
 
@@ -44,18 +47,24 @@ but replaces its row presentation; it must land after PR 1.
 
 ## Collision Result
 
-Refreshed 2026-07-31 before the PR 1 claim. #451, #455, #456, and the
-Subagent transcript artifact (#460) have merged; all pre-decomposition backend
+Refreshed 2026-07-31 after the PR 1 merge (#466). #451, #455, #456, #460,
+#463, #464, and PR 1 itself have all merged; all pre-decomposition backend
 evidence below is relocated to its current owner.
 
-- **#463 (`process-state-truthfulness`, draft):** real adjacency in
-  `ThreadView.tsx`, i18n, renderer tests, and E2E. #463 owns the generic process
-  divider states, duration/boundary rules, and `TurnLifecycle` finalization.
-  PR 1 owns only the `wait_agent`-exclusive bottleneck derivation and copy in
-  that region. It does not change `waitingOnUserInput` presentation.
-- **#464 (`red-e2e-on-main`, draft):** currently claims attachment-preview and
-  material-surface CSS. No confirmed overlap. If its bisect reaches
-  `thread.css`, the selectors are separate and the second branch rebases.
+- **#463 (`process-state-truthfulness`) is merged, and PR 1 was integrated on
+  top of it** — see "PR 1 landed" for the resulting shared shape. #463 owns the
+  generic process divider states, duration/boundary rules, and `TurnLifecycle`
+  finalization; PR 1 owns only the `wait_agent`-exclusive bottleneck derivation
+  and copy in that region, and does not change `waitingOnUserInput`
+  presentation. **PR 2 and PR 3 inherit this adjacency**: the process divider
+  is now co-owned, so a change there must say which of the two concerns it is
+  touching.
+- **#467 (`cc-2/plan-progress-pill`, open Draft) is the live collision for
+  PR 3.** It adds a pill to the same parent process block PR 3 puts its
+  delegation card in. Whichever claims second rebases; check `gh pr list`
+  before starting PR 3.
+- **#464 (`red-e2e-on-main`) is merged:** `test:e2e` is a clean gate signal
+  again, so an E2E failure on a PR 2/PR 3 branch is that branch's own.
 - **#455 (`subagent-budget-propagation-pr-c`) is merged:** its user-irrelevance
   boundary governs S5. A terminal Subagent activity carries the canonical
   `TurnError`; renderer classification uses the closed `Turn.error.code` set
@@ -166,7 +175,56 @@ evidence below is relocated to its current owner.
 
 ## Design
 
+### PR 1 landed — what PR 2 and PR 3 build on
+
+Shipped in #466 (merged 2026-07-31). The full behavior lives in
+`docs/spec/agent-thread-rendering.md` and `docs/spec/agent-subagent-threads.md`;
+this section records only the seams PR 2 and PR 3 attach to, by symbol name
+rather than line number.
+
+- **`src/renderer/agent/subagentPresentation.ts` is the projection module.**
+  `projectSubagentsForTurn(turn, threadsById, latestTurnByThread)` returns a
+  `SubagentTurnProjection` — `items` (the collapsed Item list the transcript
+  actually renders), `byThreadId`, and `activeThreadIds`.
+  `presentationFromSnapshot` builds the same `SubagentPresentation` from a
+  persisted `agentsStates` entry. **PR 3 replaces the row presentation, not
+  this projection** — take the delegation card's per-child lines from
+  `byThreadId` and keep the rows as the post-hoc fallback.
+- **The transcript renders projected Items, not raw Turn Items.** `ThreadView`
+  computes `contentBlocks = groupTurnContent({ ...turn, items: subagents.items })`.
+  Anything deriving from "the Turn's Items" in this region must decide
+  deliberately whether it means canonical or projected; `hasProcessBlock` means
+  projected, because that is what reaches the reader.
+- **The process divider is co-owned with #463.**
+  `threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t, index,
+  subagents, blockedOnUser)` carries both concerns, and #463's extracted
+  `threadProcessNeutralHeader(turn, items, t, index, subagents)` takes the
+  projection too. **Integration warning for PR 2/PR 3:** when #466 merged, git
+  auto-merged this branch's edit *into* the body #463 had extracted into a new
+  helper, without carrying the parameter — a clean textual merge that did not
+  compile. Extraction refactors in this region merge silently wrong; after any
+  rebase here, trust `bun run typecheck`, not the absence of conflict markers.
+- **`threadStore` keeps `latestTurnByThread`**, maintained on both
+  `turn/started` and `turn/completed` and cleared by reload omission, rollback,
+  and subtree deletion. It is the live fallback when child history is unloaded.
+  PR 2's Thread Details children section can read child status from it without
+  loading each child's history.
+- **The protocol shapes are settled.** `agentsStates` values are
+  `{status, taskPath, nickname, role}`; `subAgentActivity` carries `error`
+  (the child's exact terminal `TurnError`). Both are exact-key decoded in
+  `src/core/agent/codec.ts` — a pre-release clean cut with no legacy reader, so
+  **wipe `~/.lin-outliner-*` dev userData before running any branch off this
+  point**.
+- **Constraints PR 2 and PR 3 must preserve.** No token quantities on any user
+  surface (visible text, title, accessible text, Turn copy, Turn Details);
+  failures classified only by `Turn.error.code`, never by message text; raw
+  collaboration output stays out of user surfaces; child Threads stay
+  composer-less.
+
 ### PR 1 — status truth in the parent transcript
+
+*Implemented in #466 and folded into `docs/spec/`. Kept here for the design
+rationale; read the section above for what it left behind to build on.*
 
 **One presentation row per child, driven by live state.** The canonical
 Items stay append-only; the renderer builds a per-Turn *presentation
