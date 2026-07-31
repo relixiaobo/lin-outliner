@@ -2,6 +2,15 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "browser-pilot",
+      "name": "browser-pilot",
+      "description": "Drive the user's real Chrome tabs from the command line: browse signed-in sites, read pages, fill forms, and operate web apps.",
+      "repository": "https://github.com/relixiaobo/browser-pilot",
+      "subdirectory": "plugin/skills/browser-pilot",
+      "trackingRef": "skill-stable",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
       "id": "data-analysis",
       "name": "data-analysis",
       "description": "Profile, query, verify, visualize, and report on files or databases with reproducible analysis workflows.",

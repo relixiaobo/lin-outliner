@@ -635,7 +635,7 @@ describe('managed skill service', () => {
     expect(catalog.error).toEqual({ code: 'invalid_catalog' });
   });
 
-  test('accepts the repository catalog as the six optional Linlab recommendations', async () => {
+  test('accepts the checked-in catalog as the shipped recommendations', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
     github.catalog = JSON.parse(await readFile(
@@ -650,7 +650,10 @@ describe('managed skill service', () => {
 
     const catalog = await service.loadCatalog();
     expect(catalog.status).toBe('fresh');
+    // The real file, parsed by the real loader. Every recommendation is
+    // optional and installed explicitly; this pins what we actually publish.
     expect(catalog.entries.map((entry) => entry.name)).toEqual([
+      'browser-pilot',
       'data-analysis',
       'document',
       'feed-processing',
@@ -658,6 +661,14 @@ describe('managed skill service', () => {
       'presentation',
       'spreadsheet',
     ]);
+    // browser-pilot is the one entry that is not a Linlab skill: it tracks a
+    // separate project on its own branch, which is exactly the shape a
+    // third-party recommendation takes.
+    expect(catalog.entries.find((entry) => entry.name === 'browser-pilot')).toMatchObject({
+      repository: 'https://github.com/relixiaobo/browser-pilot',
+      subdirectory: 'plugin/skills/browser-pilot',
+      trackingRef: 'skill-stable',
+    });
   });
 
   test('throttles the ambient update check on lastCheckedAt but never an explicit one', async () => {
