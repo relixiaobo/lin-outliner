@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/plan-progress-pill` | plan-progress pill — Draft PR #467 (shipped tool-row-status-visuals #461, process-state-truthfulness #463) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
-| Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-subagent-status-truth` | subagent status truth — PR #466 ready for gate (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-reasoning-replay-fidelity` | reasoning replay fidelity — PR #465 ready for gate (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -479,6 +479,24 @@ before any directional/security-sensitive build.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
+- **agent-skill-library-settings** (P2, `draft` — main-authored 2026-07-31 at the PM's
+  request, **unclaimed**; shape (b): three complete PRs) — Skill settings are split by
+  *provenance*, which is an implementation detail: `AgentSettingsView.tsx:980-1010`
+  renders the managed panel and then a second list filtered
+  `source !== 'managed'`, while `ManagedSkillsSettings.tsx` keeps catalog browse and a
+  GitHub URL field as permanent page furniture — four or five top-level groups where
+  there should be one list and a `+`. Two enable mechanisms coexist
+  (`agentSkills.ts:588` excludes managed from `disabledSkills`), and
+  `additionalSkillDirectories` (`core/types.ts:718`, honored at `main.ts:483/567/667`)
+  has **no renderer surface at all**, so adding a local Skill directory is unreachable
+  from the app. **PR 1** one library + `+` acquisition panel + local-directory pointing
+  (never copying) + one enable predicate over two writers; **PR 2** (after PR 1)
+  surfaces available updates outside the Skills page via a throttled `lastCheckedAt`
+  check and a nav badge — no auto-apply; **PR 3** (independent) guards
+  `catalog/managed-skills-v1.json`, which is fetched live from `main` by every install
+  and is currently validated by nothing, and carries the Browser Pilot recommendation
+  entry (data, gated on its maintainer, not a blocker). See
+  `docs/plans/agent-skill-library-settings.md`.
 - **agent-reasoning-replay-fidelity** (P2, `draft` — codex-4 authored, plan merged #457
   2026-07-31 with five gate rulings; **implementation unclaimed and claimable now**, no
   dependency on anything in flight) — Tenon authors `` `[Reasoning]\n…` `` assistant text
