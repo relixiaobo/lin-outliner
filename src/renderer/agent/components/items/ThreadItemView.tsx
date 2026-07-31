@@ -48,6 +48,7 @@ import {
   NodeSearchToolIcon,
   OutlineUndoStackToolIcon,
   PencilIcon,
+  PlanToolIcon,
   QuestionToolIcon,
   RestoreIcon,
   SkillIcon,
@@ -1199,10 +1200,11 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
                       : identity === 'node_search' ? NodeSearchToolIcon
                         : identity === 'web_search' ? WebSearchToolIcon
                           : identity === 'web_fetch' ? WebFetchToolIcon
-                            : identity === 'skill' ? SkillIcon
-                              : identity === 'request_user_input' ? QuestionToolIcon
-                                : identity === 'outline_undo_stack' ? OutlineUndoStackToolIcon
-                                  : GenericToolIcon;
+                            : identity === 'update_plan' ? PlanToolIcon
+                              : identity === 'skill' ? SkillIcon
+                                : identity === 'request_user_input' ? QuestionToolIcon
+                                  : identity === 'outline_undo_stack' ? OutlineUndoStackToolIcon
+                                    : GenericToolIcon;
   return <Icon size={ICON_SIZE.menu} />;
 }
 
@@ -1243,6 +1245,7 @@ type ToolActivityKind =
   | 'nodeRestore'
   | 'nodeRead'
   | 'nodeSearch'
+  | 'plan'
   | 'web'
   | 'webFetch'
   | 'collaboration'
@@ -1264,6 +1267,7 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'nodeRestore',
   'nodeRead',
   'nodeSearch',
+  'plan',
   'web',
   'webFetch',
   'collaboration',
@@ -1466,6 +1470,7 @@ function toolActivityPhrase(
     case 'nodeRestore': return running ? labels.restoringNodes({ count }) : labels.restoredNodes({ count });
     case 'nodeRead': return running ? labels.readingNodes({ count }) : labels.readNodes({ count });
     case 'nodeSearch': return running ? labels.searchingNodes : labels.searchedNodes;
+    case 'plan': return running ? labels.updatingPlan : labels.updatedPlan({ count });
     case 'web': return running ? labels.searchingWebActivity : labels.searchedWebActivity;
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'collaboration': return running ? labels.collaborating({ count }) : labels.collaborated({ count });
@@ -1528,6 +1533,7 @@ function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicT
     case 'node_search': return 'nodeSearch';
     case 'web_fetch': return 'webFetch';
     case 'web_search': return 'web';
+    case 'update_plan': return 'plan';
     case 'skill': return 'skill';
     case 'request_user_input': return 'question';
     case 'outline_undo_stack': return 'history';

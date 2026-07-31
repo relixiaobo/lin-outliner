@@ -1262,6 +1262,9 @@ commandPalette: {
         listedAgents: 'Listed agents',
         interruptingAgent: 'Interrupting an agent',
         interruptedAgent: 'Interrupted an agent',
+        updatingPlan: 'Updating the plan',
+        updatedPlan: ({ count }: { count: number }) =>
+          count === 1 ? 'Updated the plan' : `Updated the plan ${count} times`,
         searchingWebActivity: 'Searching the web',
         searchedWebActivity: 'Searched the web',
         collaborating: ({ count }: { count: number }) => `Working with ${count === 1 ? 'an agent' : `${count} agents`}`,

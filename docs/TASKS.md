@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/plan-progress-pill` | plan-progress pill — Draft PR #467 (shipped tool-row-status-visuals #461, process-state-truthfulness #463) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463, plan-progress-pill #467, plan-visibility #468 — `agent-run-presentation-consistency` complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,14 +31,29 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: **#467** (cc-2, plan-progress pill) is a
-Draft claim — the plan-track review queue is empty, so there is room for two.
-PM staffing next: `agent-subagent-interaction` PR 2 (navigation +
-Thread-list hygiene) and PR 3 (delegation card + interrupt) are both unblocked now
-that PR 1 has landed; `agent-run-presentation-consistency` PR C is that plan's only
-unclaimed unit; `agent-browser-control` implementation is **shelved** pending upstream
+**In flight (2026-07-31).** Open PR queue: **#469** (codex,
+`agent-transcript-disclosure-anchor`) is a Draft claim carrying its plan commit only.
+**One claim is missing:** `cc/agent-skill-library-settings` is 8 commits ahead of
+`main` with no PR open, so the widest unmerged change in the repo is invisible on the
+collision radar — cc opens the Draft PR, then the review queue is at two and full.
+PM staffing after that: `agent-subagent-interaction` PR 2 (navigation + Thread-list
+hygiene) and PR 3 (delegation card + interrupt) are both unblocked now that PR 1 has
+landed, and PR 3's standing collision with #467 is released now that the pill has
+merged — but the two attach to the same divider region, where the plan warns that
+extraction refactors merge silently wrong, so **stagger them rather than running both
+at once**. `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
-Recently merged: #465 (`codex-4/agent-reasoning-replay-fidelity`) after a low review
+Recently merged: #467 + #468 (both `cc-2`) as a pair, closing
+`agent-run-presentation-consistency` — see *Recently completed* for both. The pair is
+worth remembering for one reason: #467's L4 ("filter `update_plan` out of Turn
+Diagnostics") was built, reviewed, and then **reverted on its own branch** because the
+PM ruled the same day that a session must show the complete, actual process. #468 then
+took the opposite direction and made the call an ordinary recorded Item, which fixes
+L4's real complaint — the empty `update_plan · completed · call_…` row existed because
+the execution carried `itemId: null`, so giving it an Item fills the row instead of
+hiding it. Reverting on-branch rather than shipping something known to contradict a
+ruling is the behavior to keep.
+Also merged: #465 (`codex-4/agent-reasoning-replay-fidelity`) after a low review
 gate that took two rounds. Both gate findings were checked against the code before
 they were sent: the `ContextProjector` batching one did not survive (retention is
 keyed on the `agentMessage` Item, which `PiEventNormalizer` creates at
@@ -495,10 +510,12 @@ before any directional/security-sensitive build.
   (`subagentPresentation.ts` projection, the divider now co-owned with #463, the
   `latestTurnByThread` fallback, the settled protocol shapes) and the integration
   warning that extraction refactors in the divider region merge silently wrong.
-  Two standing constraints for those PRs: **#467 (plan-progress pill) is the live
-  collision for PR 3** — same parent process block, second claimant rebases; and the
-  codec clean cut means **every clone wipes `~/.lin-outliner-*` dev userData** before
-  running any branch off this point. The plan's stale
+  One standing constraint for those PRs: the codec clean cut means **every clone wipes
+  `~/.lin-outliner-*` dev userData** before running any branch off this point. (The
+  former collision for PR 3 — #467's plan-progress pill in the same parent process
+  block — is released; #467 and #468 both merged 2026-07-31, so PR 3 starts from
+  a pill that renders on composer-less child Threads and from `update_plan` being an
+  ordinary recorded Item.) The plan's stale
   `ThreadService.ts:NNNN` citations (they predated #451's decomposition and reached past
   EOF) were repaired on the #466 branch — each relocated to `thread/TurnLifecycle.ts`,
   `thread/SubagentCollaboration.ts`, or `thread/ThreadCatalogOps.ts` and revalidated
@@ -514,8 +531,10 @@ before any directional/security-sensitive build.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
-- **agent-skill-library-settings** (P2, `draft` — main-authored 2026-07-31 at the PM's
-  request, **unclaimed**; shape (b): three complete PRs) — Skill settings are split by
+- **agent-skill-library-settings** (P2, `in-progress` — main-authored 2026-07-31 at the
+  PM's request; **built on `cc/agent-skill-library-settings` (8 commits) but no PR is
+  open, so the claim is invisible to every sibling clone — cc should open it**;
+  shape (a): one complete PR in eight staged commits) — Skill settings are split by
   *provenance*, which is an implementation detail: `AgentSettingsView.tsx:980-1010`
   renders the managed panel and then a second list filtered
   `source !== 'managed'`, while `ManagedSkillsSettings.tsx` keeps catalog browse and a
@@ -797,18 +816,9 @@ archived `done` (see Recently completed). Remaining active work:
 
 ### UI quality (design-system consistency)
 
-- **agent-run-presentation-consistency** (P3, `in-progress` — cc-2, plan merged #454; shape (b):
-  three complete PRs, independently claimable) — **PR A tool-row status visuals shipped #461**
-  (failed rows keep the tool's own glyph, status by `--status-danger` tint incl. a dark-mode
-  token-layer fix per B1/B11); **PR B process-state truthfulness shipped #463** (no
-  lying "Working" labels/timers/flash states, blocked-on-user surfacing for the PARENT,
-  one always-present owner for a Turn's terminal status, latched reasoning disclosures);
-  PR C centered plan-progress pill + the `update_plan` Turn-diagnostics leak fix remains
-  unclaimed. **Evidence warning:** this plan's `ThreadService.ts:NNNN`
-  citations predate #451 — that file is now 875 lines and the cited concerns moved to
-  `thread/TurnLifecycle.ts` / `thread/SubagentCollaboration.ts` / `thread/ThreadCatalogOps.ts`.
-  Re-locate before trusting any of them; #463 did exactly that for PR B's scope.
-  See `docs/plans/agent-run-presentation-consistency.md`.
+`agent-run-presentation-consistency` is **complete** — all three PRs shipped (#461, #463,
+#467); see *Recently completed*.
+
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
@@ -909,6 +919,15 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
+- **flaky-model-menu-focus-restore-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
+  #467/#468 gate) — `agent-thread.spec.ts` *"changes the canonical Thread model and reasoning from
+  the composer"* fails on its final `await expect(control).toBeFocused()` — the focus returned to
+  the model/reasoning control after Escape closes the menu — under a full-file run, then passes
+  solo and on a full-file re-run (1 fail / 60 pass, then 61 pass, same tree). Neither #467 nor
+  #468 touches that control, so it is not attributable to them, but it is the same *class* of
+  defect #467 fixed for the Plan pill (close path → focus destination), which makes a real
+  timing bug at least as likely as a test-side race. Check whether the menu's focus restore runs
+  before the element it returns to is re-enabled.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
@@ -925,6 +944,72 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-plan-visibility** (`cc-2/plan-visibility`, PR #468, cc-2, merged 2026-07-31,
+  plan-track; plan archived at `docs/plans/archive/agent-plan-visibility.md`) — the model
+  was visibly deliberating about a tool that never appeared to run. A real run showed a
+  dozen `Thought` rows reasoning about calling `update_plan` — "Deciding to call
+  update_plan", "Preparing to call plan" — while nothing was ever recorded, because
+  `agent-execution-interaction-consistency` (#438) had deliberately excluded the
+  `update_plan` Item from the persisted Turn to avoid a second durable execution
+  projection. **PM ruling 2026-07-31: the session must show the complete, actual
+  process**, which outranks that preference. `PiEventNormalizer.startTool` /
+  `completeTool` drop the `update_plan` branch and the `transientToolCallIds` set, so the
+  call produces an ordinary `dynamicToolCall` Item and reaches the transcript, counted
+  groups, Turn Diagnostics, reload history, and Turn copy **through paths that already
+  exist** — a special case removed, not a mechanism added. Worded as the act ("Updated the
+  plan", collapsing to "Updated the plan 3 times" through the existing grouping, never
+  `Used update_plan`), with its own `ListTodo` glyph under the #461 icon-distinctness
+  guard. The pill is untouched: `turn/plan/updated` stays the ephemeral fast path for
+  *which step*, the recorded Item is the account that it updated the Plan *at all*. The
+  executor test that pinned the old behavior was **inverted rather than deleted**, so the
+  reversal is asserted rather than silently unwound. **Gate (main):** verified no double
+  recording (`ToolRuntime`'s `coreTool('update_plan', …)` only calls `updateTurnPlan`;
+  Item creation lives solely in `PiEventNormalizer`), that a rejected Plan input reads
+  "Updated the plan · Failed" rather than over-claiming, that the plan payload is
+  length-bounded by `boundedJsonValue` before persistence, and that a child Thread's
+  `update_plan` Item does not leak into the parent transcript (the parent projects
+  `subAgentActivity` from activities, not raw child Items). Merged with a spec-paragraph
+  conflict against #467 resolved by hand; main also boarded the plan (`docs:check` was
+  red on the branch by construction — dev agents do not edit this file) and straightened
+  an icon-ladder indentation rung.
+
+- **agent-run-presentation-consistency** (`cc-2/plan-progress-pill`, PR #467, cc-2,
+  merged 2026-07-31, plan-track — **plan complete**, all three PRs shipped: PR A #461,
+  PR B #463, PR C #467; plan archived at
+  `docs/plans/archive/agent-run-presentation-consistency.md`) — PR C made the Plan say
+  *which step the agent is on* instead of a bare counter: the pill is centered above the
+  composer carrying `2/5 · Draft the summary` ellipsized to one line at fixed height so it
+  never reflows the composer, an all-complete Plan reads as complete rather than as its
+  last step, the current step is marked by weight and colour (not by a spinner alone,
+  whose cue vanishes under reduced motion), step rows carry status as text for assistive
+  technology, and the pill now also renders on a **composer-less** child or automation
+  Thread, where closing returns focus to the pill rather than dropping it to `<body>`.
+  **The unit worth remembering is L4.** The plan called for filtering `update_plan` out of
+  Turn Diagnostics; it was built, reviewed, and then **reverted on the branch** when the
+  PM ruled the same day that a session must show the real process — shipping it would have
+  meant landing something known to contradict a ruling. #468 then took the opposite
+  direction and fixed L4's actual complaint: the empty `update_plan · completed · call_…`
+  row existed because the execution carried `itemId: null`, so giving it an Item fills the
+  row instead of hiding it. **Gate (main):** `/code-review medium` — 11 findings, all
+  applied in one commit. Three were blocking and all three were regressions the PR itself
+  introduced: Escape stranded focus on the composer-less mount (`close(true)` restored
+  focus only via an `onClosed` that path never passes, and the popover then went
+  `visibility: hidden`), `:focus-visible` still carried the pre-PR `--radius-xs` and a
+  bare focus ring so tabbing morphed the pill into a rounded square and erased its
+  hairline (B6/B9), and the read-only wrapper's `display: flex` shrank the pill's
+  container so the absolutely-positioned checklist inherited the pill's width — a tall
+  narrow column on a child Thread. Four more were the same panel reporting two different
+  numbers for the same executions (moot once L4 was reverted). The rest: a `title`
+  tooltip firing on the same hover that opens the checklist, an `is-read-only` class that
+  styled nothing while an e2e test asserted it, a `24px` fallback on a token that is
+  `22px`, a spec sentence overstating that *every* close path restores focus (blur
+  deliberately does not), and a new e2e test misindented outside its block with duplicated
+  assertions and a thread id containing non-hex `ch`. The e2e now drives Escape on the
+  composer-less path and asserts the checklist gets the Thread's width, so both blocking
+  regressions are pinned rather than only fixed. The UI gate's light+dark visual pass was
+  run by the PM directly (2026-07-31), covering both #467 and #468 — the pill and the new
+  `ListTodo` tool row.
 
 - **agent-reasoning-replay-fidelity** (`codex-4/agent-reasoning-replay-fidelity`,
   PR #465, codex-4, merged 2026-07-31, plan-track; plan archived at

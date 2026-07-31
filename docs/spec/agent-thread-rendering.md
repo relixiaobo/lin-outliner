@@ -622,8 +622,18 @@ Provider request and stream retries are transient execution state, not Items.
 The selected Thread shows the established live reconnecting row while retrying
 and removes it when the provider recovers or the Turn becomes terminal.
 
-`turn/plan/updated` is also transient execution state, not an Item. The selected
-Thread keeps only the latest snapshot for its active Turn and shows it as a
+`update_plan` is an ordinary tool call and is recorded like any other: the
+session shows the complete, actual process, so a Plan update the agent
+performed appears in the transcript, in counted activity groups, in Turn
+Diagnostics, and in history after a reload. It is worded as the act — "Updated
+the plan", collapsing to "Updated the plan 3 times" in a group — never as
+`Used update_plan`, and carries its own glyph. This deliberately reverses the
+transient exclusion from `agent-execution-interaction-consistency` (#438),
+which left the model visibly deliberating about a tool that never appeared to
+run; see `docs/plans/archive/agent-plan-visibility.md`.
+
+`turn/plan/updated` remains the pill's ephemeral fast path, not an Item. The
+selected Thread keeps only the latest snapshot for its active Turn and shows it as a
 compact pill, horizontally centered above the composer. The pill's persistent
 affordance is **the current step's text**, not a bare counter: `2/5 · Draft the
 summary`, ellipsized to one line, on a fixed single-line height so it never

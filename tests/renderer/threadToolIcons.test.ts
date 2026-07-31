@@ -25,6 +25,7 @@ const TOOL_GLYPHS = {
   nodeSearch: icons.NodeSearchToolIcon,
   webSearch: icons.WebSearchToolIcon,
   webFetch: icons.WebFetchToolIcon,
+  plan: icons.PlanToolIcon,
   skill: icons.SkillIcon,
   question: icons.QuestionToolIcon,
   history: icons.OutlineUndoStackToolIcon,

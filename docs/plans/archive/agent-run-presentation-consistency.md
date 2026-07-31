@@ -167,7 +167,7 @@ mechanisms.
   Implemented and then reverted: the PM ruled on 2026-07-31 that the session
   must show the complete, actual process, which is the opposite of hiding a
   real execution. Making the Plan visible in the transcript is its own unit
-  (`docs/plans/agent-plan-visibility.md`); Turn Diagnostics keeps its rows in
+  (`docs/plans/archive/agent-plan-visibility.md`); Turn Diagnostics keeps its rows in
   the meantime.
 - **L5 — Focus is stolen and the popover cannot pin.** Activating the summary
   focuses the popover region and only Escape/blur exits

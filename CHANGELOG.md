@@ -12,6 +12,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **The Plan says which step the agent is on (PR #467, cc-2)** — the progress
+  pill above the composer showed a bare `Step 3 / 5`, so following along meant
+  opening the checklist to find out what step 3 was. It now carries the current
+  step's text — `2/5 · Draft the summary` — ellipsized to one line at a fixed
+  height so it never reflows the composer, and a Plan whose every step is
+  complete reads as complete rather than as its last step. The current step is
+  marked by weight and colour rather than by a spinner alone, whose cue
+  disappears entirely under reduced motion; step rows carry their status as
+  text for assistive technology, and the live announcement includes the step's
+  text rather than only a counter. The pill also appears on a Thread with **no
+  composer** — a watched child or automation Thread — where closing the
+  checklist returns focus to the pill instead of dropping it to the document
+  body.
+- **A Plan update is recorded like any other tool call (PR #468, cc-2)** — the
+  model would emit a dozen visible `Thought` rows deliberating about calling
+  `update_plan` and nothing would ever appear, because the Plan's tool-call Item
+  was deliberately excluded from the persisted Turn (PR #438). The reasoning
+  leaked the action while the action stayed hidden, so the agent read as
+  thinking about a tool it never called. `update_plan` is now an ordinary
+  recorded call: it reaches the transcript, counted activity groups, Turn
+  Diagnostics, reload history, and Turn copy through the paths every other tool
+  already uses. It is worded as the act — "Updated the plan", collapsing to
+  "Updated the plan 3 times" when consecutive — never as `Used update_plan`, and
+  carries its own glyph. The pill is unchanged and complementary: it remains the
+  ephemeral fast path for *which step* the agent is on, while the recorded call
+  is the account that it updated the Plan at all.
 - **The agent stops imitating its own thinking, and starts thinking again (PR
   #465, codex-4)** — Tenon rebuilt canonical context before every provider call
   and wrote reasoning Items back into the provider's own assistant channel as
