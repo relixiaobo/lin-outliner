@@ -11,6 +11,73 @@ async function createNewThread(page: Page): Promise<void> {
     .click();
 }
 
+/**
+ * One settled Turn holding three consecutive command Items — completed, failed
+ * with no exit code, and interrupted — so the counted activity group and each
+ * member row can be inspected for their own status treatment.
+ */
+async function seedMixedStatusToolTurn(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000b001';
+    const commandItem = (suffix: string, command: string, status: string, exitCode: number | null) => {
+      const id = `01910000-0000-7000-8000-00000000b0${suffix}`;
+      return {
+        id,
+        type: 'commandExecution',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
+        command,
+        description: null,
+        cwd: '/mock/workspace',
+        processId: null,
+        status,
+        commandActions: [],
+        aggregatedOutput: null,
+        exitCode,
+        durationMs: 1,
+      };
+    };
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [
+          commandItem('02', 'ls', 'completed', 0),
+          commandItem('03', 'timeout 1 sleep 5', 'failed', null),
+          commandItem('04', 'sleep 30', 'interrupted', null),
+          {
+            id: '01910000-0000-7000-8000-00000000b005',
+            type: 'agentMessage',
+            provenance: {
+              originThreadId: threadId,
+              originTurnId: turnId,
+              originItemId: '01910000-0000-7000-8000-00000000b005',
+            },
+            text: 'One command failed and one was stopped.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 5,
+        durationMs: 4,
+      },
+    });
+  });
+}
+
 async function openSelectedThreadActions(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Show Threads' }).click();
   await page.getByRole('dialog', { name: 'Threads' })
@@ -311,7 +378,10 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turn.getByText('Used memory')).toHaveCount(0);
     const process = turn.locator('.thread-process-block');
     await process.getByRole('button', { name: 'Worked for 1s' }).click();
-    await expect(process.locator('.thread-tool').filter({ hasText: 'node_read' })).toBeVisible();
+    // The row stays in the process, but says what it did rather than which tool
+    // was called.
+    await expect(process.locator('.thread-tool').filter({ hasText: 'Read' })).toBeVisible();
+    await expect(process).not.toContainText('node_read');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.mouse.move(0, 0);
     await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
@@ -1821,7 +1891,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(thought.locator('.thread-reasoning-gist')).toHaveCSS('font-weight', '400');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
     await expect(thoughtChevron).toHaveCSS('opacity', '0');
-    const activity = page.getByRole('button', { name: 'Ran a command · read a node' });
+    const activity = page.getByRole('button', { name: /^Ran a command · read / });
     const [thoughtBox, activityBox] = await Promise.all([thought.boundingBox(), activity.boundingBox()]);
     expect(thoughtBox).toBeTruthy();
     expect(activityBox).toBeTruthy();
@@ -1882,7 +1952,7 @@ test.describe('canonical agent Thread surface', () => {
     const commandPaths = command.locator('xpath=..').locator('.thread-tool-path-reference');
     await expect(commandPaths).toHaveCount(1);
     await expect(commandPaths).toHaveAttribute('data-tool-path', '/mock/workspace');
-    const nodeTool = page.getByRole('button', { name: 'Used node.read' });
+    const nodeTool = page.getByRole('button', { name: /^Read / });
     await nodeTool.click();
     const relativePath = nodeTool.locator('xpath=..').locator('.thread-tool-path-reference');
     await expect(relativePath).toHaveAttribute('data-tool-path', '/mock/workspace/notes with spaces.md');
@@ -2017,6 +2087,240 @@ test.describe('canonical agent Thread surface', () => {
     await command.click();
     await expect(commandDetails).toContainText('Command failed with exit code 2');
     await expect(commandDetails).not.toContainText('exit 2');
+  });
+
+  test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
+    await createNewThread(page);
+    await seedMixedStatusToolTurn(page);
+
+    await page.getByRole('button', { name: 'Worked for <1s' }).click();
+    await page.locator('.thread-tool-activity-toggle').click();
+    const failed = page.locator('.thread-tool-failed.thread-tool');
+    await failed.locator('.thread-tool-toggle').click();
+    await expect(failed.locator('.thread-inline-error')).toHaveText('Command failed');
+    await expect(failed).not.toContainText('exit code');
+  });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`carries tool-row status by colour and label in ${colorScheme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await createNewThread(page);
+      await seedMixedStatusToolTurn(page);
+
+      await page.getByRole('button', { name: 'Worked for <1s' }).click();
+      const group = page.locator('.thread-tool-activity-group');
+      await expect(group).toHaveClass(/thread-tool-failed/);
+      await expect(group.locator('.thread-tool-activity-summary'))
+        .toHaveText('Ran 3 commands · 1 failed · 1 interrupted');
+      await group.locator('.thread-tool-activity-toggle').click();
+      await expect(page.locator('.thread-tool-activity-members .thread-tool')).toHaveCount(3);
+
+      const probe = await page.evaluate(() => {
+        const channels = (value: string): readonly number[] =>
+          (value.match(/[\d.]+/g) ?? []).map(Number);
+        const luminance = (rgb: readonly number[]): number => {
+          const linear = rgb.slice(0, 3).map((channel) => {
+            const ratio = channel / 255;
+            return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+        };
+        const contrast = (a: readonly number[], b: readonly number[]): number => {
+          const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+          return (high! + 0.05) / (low! + 0.05);
+        };
+        const paintedBackground = (element: Element): readonly number[] => {
+          let node: Element | null = element;
+          while (node) {
+            const background = channels(getComputedStyle(node).backgroundColor);
+            if ((background[3] ?? 1) > 0.99) return background;
+            node = node.parentElement;
+          }
+          return channels(getComputedStyle(document.body).backgroundColor);
+        };
+        const token = (name: string): readonly number[] => {
+          const probeElement = document.createElement('span');
+          probeElement.style.color = `var(${name})`;
+          document.body.append(probeElement);
+          const resolved = channels(getComputedStyle(probeElement).color);
+          probeElement.remove();
+          return resolved;
+        };
+        const leadingSpaceWidth = (element: Element | null): number => {
+          const node = element?.firstChild;
+          if (!node) return -1;
+          const range = document.createRange();
+          range.setStart(node, 0);
+          range.setEnd(node, 1);
+          return range.getBoundingClientRect().width;
+        };
+        const row = (status: string) => {
+          const element = document.querySelector(`.thread-tool-activity-members .thread-tool-${status}`);
+          if (!element) throw new Error(`Missing ${status} row`);
+          const slot = element.querySelector('.thread-disclosure-status')!;
+          const label = element.querySelector('.thread-tool-label')!;
+          const slotStyle = getComputedStyle(slot);
+          return {
+            glyph: slot.querySelector('svg')?.outerHTML ?? '',
+            labelColor: channels(getComputedStyle(label).color).slice(0, 3),
+            slotBackgroundAlpha: channels(slotStyle.backgroundColor)[3] ?? 1,
+            slotBorderWidth: slotStyle.borderTopWidth,
+            slotHeight: Math.round(slot.getBoundingClientRect().height),
+          };
+        };
+        const failedRow = row('failed');
+        const summary = document.querySelector('.thread-tool-activity-summary')!;
+        const tally = summary.querySelector('.thread-tool-activity-count-failed')!;
+        return {
+          completed: row('completed'),
+          failed: failedRow,
+          interrupted: row('interrupted'),
+          statusDanger: token('--status-danger'),
+          textFaint: token('--text-faint'),
+          textSoft: token('--text-soft'),
+          group: {
+            summaryColor: channels(
+              getComputedStyle(summary.querySelector('.thread-tool-summary-act')!).color,
+            ).slice(0, 3),
+            // The act shrinks and the tally is pinned, so a narrow pane can
+            // never ellipsize the only failure cue away.
+            actFlexShrink: getComputedStyle(summary.querySelector('.thread-tool-summary-act')!).flexShrink,
+            tallyFlexShrink: getComputedStyle(tally).flexShrink,
+            glyphColor: channels(
+              getComputedStyle(document.querySelector('.thread-tool-activity-toggle .thread-disclosure-status')!).color,
+            ).slice(0, 3),
+            tallyColor: channels(getComputedStyle(tally).color).slice(0, 3),
+            tallyText: tally.textContent,
+            // Measure the separator as rendered. Text-content assertions
+            // normalize whitespace, so they pass on markup that draws
+            // "Ran 3 commands· 1 failed".
+            tallyLeadingSpaceWidth: leadingSpaceWidth(tally),
+            rowLeadingSpaceWidth: leadingSpaceWidth(
+              document.querySelector('.thread-tool-activity-members .thread-tool-failed .thread-tool-activity-count-failed'),
+            ),
+          },
+          failedLabelContrast: contrast(
+            failedRow.labelColor,
+            paintedBackground(document.querySelector('.thread-tool-failed.thread-tool')!),
+          ),
+        };
+      });
+
+      // The tool keeps its own glyph, so a broken row still says which tool broke.
+      expect(probe.failed.glyph).toBe(probe.completed.glyph);
+      expect(probe.interrupted.glyph).toBe(probe.completed.glyph);
+      // Status is colour on the label, never a fill or a second slot geometry.
+      expect(probe.failed.labelColor).toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.interrupted.labelColor).toEqual(probe.textFaint.slice(0, 3));
+      expect(probe.failed.slotBackgroundAlpha).toBe(0);
+      expect(probe.failed.slotBorderWidth).toBe('0px');
+      expect(probe.failed.slotHeight).toBe(probe.completed.slotHeight);
+      // The whole --status-* family is calibrated as marks and fills, not as
+      // small text: measured on the content surface, danger is 3.91 (light) /
+      // 3.46 (dark) — better than success (3.33 light) and warning (2.44
+      // light). 3:1 is therefore the bar this system actually holds; raising
+      // the family to AA small-text is a design-system-wide recalibration
+      // owned by docs/plans/dark-mode-contrast-pass.md, not by this row.
+      expect(probe.failedLabelContrast).toBeGreaterThanOrEqual(3);
+
+      // A mixed-outcome group stays neutral apart from its tally: one failed
+      // call out of three must not paint the line, or the whole group reads as
+      // broken. The group glyph stays neutral for the same reason.
+      expect(probe.group.tallyText).toBe(' · 1 failed');
+      expect(probe.group.tallyColor).toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.summaryColor).not.toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.summaryColor).toEqual(probe.textSoft.slice(0, 3));
+      expect(probe.group.glyphColor).not.toEqual(probe.statusDanger.slice(0, 3));
+      expect(probe.group.glyphColor).toEqual(probe.textFaint.slice(0, 3));
+      expect(probe.group.tallyFlexShrink).toBe('0');
+      expect(probe.group.actFlexShrink).not.toBe('0');
+      // The " · " separator has to actually occupy width; a flex item
+      // blockifies and a block trims its leading whitespace.
+      expect(probe.group.tallyLeadingSpaceWidth).toBeGreaterThan(0);
+      expect(probe.group.rowLeadingSpaceWidth).toBeGreaterThan(0);
+
+      // The tint has to survive interaction — the chevron swap used to erase it.
+      await page.locator('.thread-tool-failed.thread-tool .thread-tool-toggle').hover();
+      const hoveredLabelColor = await page.evaluate(() => getComputedStyle(
+        document.querySelector('.thread-tool-activity-members .thread-tool-failed .thread-tool-label')!,
+      ).color);
+      expect((hoveredLabelColor.match(/[\d.]+/g) ?? []).map(Number).slice(0, 3))
+        .toEqual(probe.statusDanger.slice(0, 3));
+    });
+  }
+
+  test('keeps a running tool spinning on its own row through hover and expansion', async ({ page }) => {
+    await createNewThread(page);
+    const turnId = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const liveTurnId = '01910000-0000-7000-8000-00000000b101';
+      const doneId = '01910000-0000-7000-8000-00000000b102';
+      const runningId = '01910000-0000-7000-8000-00000000b103';
+      const commandItem = (id: string, command: string, status: string, exitCode: number | null) => ({
+        id,
+        type: 'commandExecution',
+        provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: id },
+        command,
+        cwd: '/mock/workspace',
+        processId: null,
+        status,
+        commandActions: [],
+        aggregatedOutput: null,
+        exitCode,
+        durationMs: null,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId: liveTurnId,
+        turn: {
+          id: liveTurnId,
+          items: [
+            commandItem(doneId, 'ls', 'completed', 0),
+            commandItem(runningId, 'sleep 30', 'inProgress', null),
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return liveTurnId;
+    });
+
+    const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
+    const group = turn.locator('.thread-tool-activity-group');
+    await expect(group).toHaveClass(/thread-tool-inProgress/);
+    await group.locator('.thread-tool-activity-toggle').click();
+    const running = turn.locator('.thread-tool-activity-members .thread-tool-inProgress');
+    const done = turn.locator('.thread-tool-activity-members .thread-tool-completed');
+    await expect(running).toHaveCount(1);
+
+    // A finished child inside a running group must not borrow the spinner.
+    await expect(done.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    await expect(running.locator('.thread-disclosure-status svg'))
+      .toHaveCSS('animation-name', 'thread-tool-spin');
+
+    // Opacity is transitioned, so these assertions have to settle rather than
+    // read the frame the hover landed on.
+    await running.locator('.thread-tool-toggle').hover();
+    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
+    await expect(running.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '0');
+    await running.locator('.thread-tool-toggle').click();
+    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
+    // A settled sibling still swaps to the chevron on hover.
+    await done.locator('.thread-tool-toggle').hover();
+    await expect(done.locator('.thread-disclosure-status')).toHaveCSS('opacity', '0');
+    await expect(done.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {

@@ -841,6 +841,13 @@ export interface CommandAction {
 export interface CommandExecutionThreadItem extends ThreadToolItemBase {
   readonly type: 'commandExecution';
   readonly command: string;
+  /**
+   * The model's own one-line account of what this command does, in active
+   * voice, as requested by the `bash` tool contract. This is the honest source
+   * for a readable row: the shell text alone cannot distinguish three
+   * `python3 - <<'PY'` heredocs. Null when the caller omitted it.
+   */
+  readonly description: string | null;
   readonly cwd: string;
   readonly processId: string | null;
   readonly commandActions: readonly CommandAction[];

@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type {
+  CollaborationToolName,
   DynamicToolOutputContent,
   ItemExecutionStatus,
   ThreadAttachmentContent,
@@ -39,6 +40,7 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
+  McpToolIcon,
   NodeCreateToolIcon,
   NodeDeleteToolIcon,
   NodeEditToolIcon,
@@ -49,9 +51,7 @@ import {
   QuestionToolIcon,
   RestoreIcon,
   SkillIcon,
-  StopIcon,
   TerminalIcon,
-  ToolErrorIcon,
   WebFetchToolIcon,
   WebSearchToolIcon,
 } from '../../../ui/icons';
@@ -66,6 +66,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
+import { basenameForPath } from '../../../../core/referenceMarkup';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
@@ -160,6 +161,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       return (
         <ToolItemDisclosure
           expandState={props.expandState}
+          index={props.index}
           item={props.item}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
@@ -222,6 +224,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
 
 export function ThreadToolActivityGroup({
   expandState,
+  index,
   items,
   onReadToolOutput,
   onOpenThread,
@@ -229,6 +232,7 @@ export function ThreadToolActivityGroup({
   threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
+  readonly index?: DocumentIndex;
   readonly items: readonly ThreadToolItem[];
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
@@ -239,7 +243,12 @@ export function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const label = summarizeThreadToolActivity(items, t.agent.thread.activity);
+  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index);
+  // The tooltip re-derives the summary with no elision, so the names the row
+  // could not fit are still reachable.
+  const title = summarizeThreadToolActivity(
+    items, t.agent.thread.activity, index, { subjectLimit: Number.POSITIVE_INFINITY },
+  );
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
       <ButtonControl
@@ -248,14 +257,15 @@ export function ThreadToolActivityGroup({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, <GenericToolIcon size={ICON_SIZE.tiny} />)} />
-        <span className="thread-tool-activity-summary">{label}</span>
+        <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, groupGlyph(items))} />
+        <ToolSummaryText className="thread-tool-activity-summary" segments={segments} title={title} />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-activity-members">
           {items.map((item) => (
             <ToolItemDisclosure
               expandState={expandState}
+              index={index}
               item={item}
               key={item.id}
               onReadOutput={onReadToolOutput}
@@ -578,6 +588,7 @@ function ReasoningDisclosure({
 
 function ToolItemDisclosure({
   expandState,
+  index,
   item,
   onReadOutput,
   onOpenThread,
@@ -585,6 +596,7 @@ function ToolItemDisclosure({
   threadCwd,
 }: {
   readonly expandState: ThreadDisclosureState;
+  readonly index?: DocumentIndex;
   readonly item: ThreadToolItem;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
@@ -630,6 +642,15 @@ function ToolItemDisclosure({
     };
   }, [expanded, holdAnchorUntilSettled, onReadOutput, outputLoaded, outputRefId]);
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
+  const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
+  // A caller-authored description replaces the shell text in the label, so the
+  // tooltip has to keep the command itself visible without expanding the row —
+  // the description is a claim, the command is the fact.
+  const title = item.type === 'commandExecution' && item.description
+    ? `${item.description}\n${item.command}`
+    : summarizeThreadToolItem(item, t.agent.thread.activity, index, {
+      subjectLimit: Number.POSITIVE_INFINITY,
+    });
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -644,7 +665,7 @@ function ToolItemDisclosure({
         }}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
-        <span className="thread-tool-label">{summarizeThreadToolItem(item, t.agent.thread.activity)}</span>
+        <ToolSummaryText className="thread-tool-label" segments={segments} title={title} />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-body">
@@ -671,7 +692,7 @@ function ToolItemDisclosure({
               />
             </ToolDetailSection>
           ) : null}
-          {detail.error ? <p className="thread-inline-error">{detail.error}</p> : null}
+          {detail.error ? <p className="thread-inline-error" role="status">{detail.error}</p> : null}
         </div>
       ) : null}
     </div>
@@ -693,9 +714,40 @@ function ToolDetailSection({
   );
 }
 
-function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean; readonly status: ReactNode }) {
+/**
+ * A tool summary as a flex row: the act ellipsizes, the status tally never
+ * does. A trailing "· failed" that could truncate away would leave the row
+ * asserting the act succeeded.
+ */
+function ToolSummaryText({
+  className,
+  segments,
+  title,
+}: {
+  readonly className: string;
+  readonly segments: readonly ToolActivitySegment[];
+  readonly title: string;
+}) {
+  const act = segments.filter((segment) => segment.tone === 'neutral').map((segment) => segment.text).join(' · ');
+  const tallies = segments.filter((segment) => segment.tone !== 'neutral');
   return (
-    <span className={`thread-disclosure-indicator${expanded ? ' is-expanded' : ''}`}>
+    <span className={className} title={title}>
+      <span className="thread-tool-summary-act">{act}</span>
+      {tallies.map((segment, index) => (
+        <span className={`thread-tool-activity-count-${segment.tone}`} key={`${segment.tone}-${index}`}>
+          {` · ${segment.text}`}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean; readonly status: ReactNode }) {
+  // Both layers are decorative: the row's label names the status in words and
+  // the toggle carries aria-expanded, so announcing the glyph would only
+  // duplicate them.
+  return (
+    <span aria-hidden className={`thread-disclosure-indicator${expanded ? ' is-expanded' : ''}`}>
       <span className="thread-disclosure-status">{status}</span>
       <span className="thread-disclosure-chevron"><ChevronRightIcon size={ICON_SIZE.tiny} /></span>
     </span>
@@ -765,13 +817,18 @@ function toolDetail(
         input: item.command,
         inputLanguage: 'bash',
         output: item.aggregatedOutput,
+        // A real non-zero code is the useful explanation; a failure that never
+        // produced one says so plainly instead of borrowing "exit code 1".
         error: item.exitCode !== null && item.exitCode !== 0
           ? t.agent.thread.item.commandFailedWithExitCode({ code: item.exitCode })
-          : null,
+          : item.status === 'failed'
+            ? t.agent.thread.item.commandFailed
+            : null,
       };
     case 'fileChange':
       return {
         ...empty,
+        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
           <ul className="thread-file-changes">
             {item.changes.map((change, index) => (
@@ -802,14 +859,17 @@ function toolDetail(
       const images = (item.contentItems ?? []).filter((content): content is Extract<DynamicToolOutputContent, { type: 'image' }> => (
         content.type === 'image'
       ));
+      const failed = item.success === false;
       return {
         ...empty,
         input: jsonText(item.arguments),
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
-        outputLabel: t.agent.thread.item.result,
-        error: item.success === false && !textOutput ? t.agent.thread.item.status.failed : null,
+        // Failure prose is an error, not a "Result" — and a failure that
+        // returned nothing at all still owes the user a sentence.
+        outputLabel: failed ? t.agent.thread.item.error : t.agent.thread.item.result,
+        error: failed && !textOutput ? t.agent.thread.item.failedWithoutDetail : null,
         body: images.length > 0 ? (
           <div className="thread-tool-images">
             {images.map((image) => (
@@ -822,6 +882,7 @@ function toolDetail(
     case 'collabAgentToolCall':
       return {
         ...empty,
+        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         input: jsonText({
           tool: item.tool,
           receiverThreadIds: item.receiverThreadIds,
@@ -879,46 +940,116 @@ function subagentActivityStatus(
   return kind === 'errored' ? 'errored' : kind;
 }
 
+/**
+ * One shape for every row: **what it did**, then — only when something went
+ * wrong — the outcome as an annotation. Six per-kind failure phrasings used to
+ * compete here ("Command failed · x", "Failed to change 2 files", "x failed"),
+ * which made a scanning user re-learn the pattern per tool.
+ */
 export function summarizeThreadToolItem(
   item: ThreadToolItem,
   labels: Messages['agent']['thread']['activity'],
+  index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
 ): string {
+  return joinSegmentText(threadToolItemSegments(item, labels, index, options));
+}
+
+/**
+ * The act and its outcome are separate segments so the outcome can be rendered
+ * unshrinkable: a trailing "· failed" that ellipsizes away would leave the row
+ * asserting the act succeeded.
+ */
+export function threadToolItemSegments(
+  item: ThreadToolItem,
+  labels: Messages['agent']['thread']['activity'],
+  index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
+): readonly ToolActivitySegment[] {
+  const act: ToolActivitySegment = {
+    text: toolItemAct(item, labels, index, options.subjectLimit ?? NAMED_SUBJECT_LIMIT),
+    tone: 'neutral',
+  };
+  if (item.status === 'failed') return [act, { text: labels.statusFailed, tone: 'failed' }];
+  if (item.status === 'interrupted') return [act, { text: labels.statusInterrupted, tone: 'interrupted' }];
+  return [act];
+}
+
+function toolItemAct(
+  item: ThreadToolItem,
+  labels: Messages['agent']['thread']['activity'],
+  index: DocumentIndex | undefined,
+  limit: number,
+): string {
+  const running = item.status === 'inProgress';
   switch (item.type) {
     case 'commandExecution': {
-      const command = quoteSubject(firstLine(item.command));
-      if (item.status === 'inProgress') return labels.runningCommand({ command });
-      if (item.status === 'failed') return labels.commandFailed({ command });
-      return labels.ranCommand({ command });
+      // The caller's own description is the only thing that can tell three
+      // `python3 - <<'PY'` heredocs apart; the shell text stays one expand away.
+      if (item.description) return item.description;
+      const command = quoteSubject(commandDisplayText(item.command, item.cwd));
+      return running ? labels.runningCommand({ command }) : labels.ranCommand({ command });
     }
-    case 'fileChange':
-      if (item.status === 'inProgress') return labels.changingFiles({ count: item.changes.length });
-      if (item.status === 'failed') return labels.fileChangeFailed({ count: item.changes.length });
-      return labels.changedFiles({ count: item.changes.length });
+    case 'fileChange': {
+      const count = item.changes.length;
+      // A change set spans add/update/delete, so the verb stays "changed"; the
+      // paths are what the user actually wants to see.
+      const names = item.changes.map((change) => basenameForPath(change.path) || change.path);
+      if (names.length > 0) {
+        const subjects = joinSubjects(names, labels, limit);
+        return running ? labels.changingNamed({ subjects }) : labels.changedNamed({ subjects });
+      }
+      return running ? labels.changingFiles({ count }) : labels.changedFiles({ count });
+    }
     case 'mcpToolCall':
-      return namedToolSummary(`${item.server}.${item.tool}`, item.status, labels);
-    case 'dynamicToolCall':
-      return namedToolSummary([item.namespace, item.tool].filter(Boolean).join('.'), item.status, labels);
+      // An MCP tool's own name really is the most informative thing known about
+      // it — there is no activity vocabulary to map an arbitrary server tool on.
+      return namedToolAct(`${item.server}.${item.tool}`, running, labels);
+    case 'dynamicToolCall': {
+      // Built-in tools say what they did, in the same words a group of them
+      // uses. The identifier survives only for a tool we cannot map, where it
+      // genuinely is the best available description.
+      const kind = dynamicToolActivityKind(item);
+      const name = [item.namespace, item.tool].filter(Boolean).join('.');
+      if (kind === 'tool') return namedToolAct(name, running, labels);
+      const subjects = dynamicToolSubjects(item, kind, index);
+      return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels, limit);
+    }
     case 'collabAgentToolCall':
-      return namedToolSummary(item.tool, item.status, labels);
+      return collaborationAct(item.tool, running, labels);
     case 'webSearch': {
       const query = quoteSubject(item.query);
-      if (item.status === 'inProgress') return labels.searchingWeb({ query });
-      if (item.status === 'failed') return labels.searchFailed({ query });
-      return labels.searchedWeb({ query });
+      return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
     }
     default:
       return assertNever(item);
   }
 }
 
-function namedToolSummary(
+function namedToolAct(
   name: string,
-  status: ItemExecutionStatus,
+  running: boolean,
   labels: Messages['agent']['thread']['activity'],
 ): string {
-  if (status === 'inProgress') return labels.usingTool({ name });
-  if (status === 'failed') return labels.toolFailed({ name });
-  return labels.usedTool({ name });
+  return running ? labels.usingTool({ name }) : labels.usedTool({ name });
+}
+
+/** The collaboration tools are a closed set, so each one gets real copy rather
+ *  than leaking `spawn_agent` / `wait_agent` into the transcript. */
+function collaborationAct(
+  tool: CollaborationToolName,
+  running: boolean,
+  labels: Messages['agent']['thread']['activity'],
+): string {
+  switch (tool) {
+    case 'spawn_agent': return running ? labels.startingAgent : labels.startedAgent;
+    case 'send_message': return running ? labels.messagingAgent : labels.messagedAgent;
+    case 'followup_task': return running ? labels.sendingFollowup : labels.sentFollowup;
+    case 'wait_agent': return running ? labels.waitingForAgent : labels.waitedForAgent;
+    case 'list_agents': return running ? labels.listingAgents : labels.listedAgents;
+    case 'interrupt_agent': return running ? labels.interruptingAgent : labels.interruptedAgent;
+    default: return assertNever(tool);
+  }
 }
 
 function toolIcon(item: ThreadToolItem): ReactNode {
@@ -932,7 +1063,7 @@ function toolIcon(item: ThreadToolItem): ReactNode {
     }
     case 'webSearch': return <WebSearchToolIcon size={ICON_SIZE.menu} />;
     case 'collabAgentToolCall': return <AgentIcon size={ICON_SIZE.menu} />;
-    case 'mcpToolCall': return <GenericToolIcon size={ICON_SIZE.menu} />;
+    case 'mcpToolCall': return <McpToolIcon size={ICON_SIZE.menu} />;
     case 'dynamicToolCall': return dynamicToolIcon(item);
     default: return assertNever(item);
   }
@@ -961,6 +1092,23 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
   return <Icon size={ICON_SIZE.menu} />;
 }
 
+/**
+ * A group of six file reads showed a generic wrench while every row inside it
+ * showed the file-read glyph. When the members agree on one tool, the group
+ * wears that tool's icon; the wrench is for genuinely mixed groups.
+ */
+function groupGlyph(items: readonly ThreadToolItem[]): ReactNode {
+  const first = items[0];
+  // Same slot, same size: the shared-tool path renders at ICON_SIZE.menu, so
+  // the mixed fallback must too or the group glyph visibly changes size.
+  if (first === undefined) return <GenericToolIcon size={ICON_SIZE.menu} />;
+  const shared = items.every((item) => item.type === first.type
+    && (item.type !== 'dynamicToolCall' || dynamicToolActivityKind(item) === dynamicToolActivityKind(
+      first as Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
+    )));
+  return shared ? toolIcon(first) : <GenericToolIcon size={ICON_SIZE.menu} />;
+}
+
 function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
   if (items.some((item) => item.status === 'inProgress')) return 'inProgress';
   if (items.some((item) => item.status === 'failed')) return 'failed';
@@ -982,6 +1130,7 @@ type ToolActivityKind =
   | 'nodeRead'
   | 'nodeSearch'
   | 'web'
+  | 'webFetch'
   | 'collaboration'
   | 'skill'
   | 'question'
@@ -1002,6 +1151,7 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'nodeRead',
   'nodeSearch',
   'web',
+  'webFetch',
   'collaboration',
   'skill',
   'question',
@@ -1011,16 +1161,44 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
 
 interface ToolActivityBucket {
   readonly subjects: Set<string>;
+  readonly names: string[];
   running: boolean;
+}
+
+export interface ToolActivitySegment {
+  readonly text: string;
+  readonly tone: 'neutral' | 'failed' | 'interrupted';
 }
 
 export function summarizeThreadToolActivity(
   items: readonly ThreadToolItem[],
   labels: Messages['agent']['thread']['activity'],
+  index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
 ): string {
+  return joinSegmentText(threadToolActivitySegments(items, labels, index, options));
+}
+
+function joinSegmentText(segments: readonly ToolActivitySegment[]): string {
+  return segments.map((segment) => segment.text).join(' · ');
+}
+
+/**
+ * The group summary is split so only the tally of what went wrong carries the
+ * status colour. Tinting the whole line red would say "all of this failed" when
+ * one call out of six did.
+ */
+export function threadToolActivitySegments(
+  items: readonly ThreadToolItem[],
+  labels: Messages['agent']['thread']['activity'],
+  index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
+): readonly ToolActivitySegment[] {
+  const limit = options.subjectLimit ?? NAMED_SUBJECT_LIMIT;
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
-  const add = (kind: ToolActivityKind, subject: string, running: boolean) => {
-    const bucket = buckets.get(kind) ?? { subjects: new Set<string>(), running: false };
+  const add = (kind: ToolActivityKind, subject: string, running: boolean, name?: string) => {
+    const bucket = buckets.get(kind) ?? { subjects: new Set<string>(), names: [], running: false };
+    if (!bucket.subjects.has(subject) && name !== undefined) bucket.names.push(name);
     bucket.subjects.add(subject);
     bucket.running ||= running;
     buckets.set(kind, bucket);
@@ -1039,11 +1217,11 @@ export function summarizeThreadToolActivity(
             : change.kind === 'delete'
               ? 'fileDelete'
               : 'fileEdit';
-          add(kind, change.path, running);
+          add(kind, change.path, running, basenameForPath(change.path) || change.path);
         }
         break;
       case 'webSearch':
-        add('web', item.query || item.id, running);
+        add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
         break;
       case 'collabAgentToolCall':
         for (const threadId of item.receiverThreadIds.length > 0 ? item.receiverThreadIds : [item.id]) {
@@ -1055,7 +1233,8 @@ export function summarizeThreadToolActivity(
         break;
       case 'dynamicToolCall': {
         const kind = dynamicToolActivityKind(item);
-        for (const subject of dynamicToolSubjects(item, kind)) add(kind, subject, running);
+        const subjects = dynamicToolSubjects(item, kind, index);
+        subjects.keys.forEach((key, position) => add(kind, key, running, subjects.names[position]));
         break;
       }
       default:
@@ -1063,21 +1242,85 @@ export function summarizeThreadToolActivity(
     }
   }
 
-  const fragments = TOOL_ACTIVITY_ORDER.flatMap((kind) => {
+  const segments: ToolActivitySegment[] = TOOL_ACTIVITY_ORDER.flatMap((kind) => {
     const bucket = buckets.get(kind);
     if (!bucket || bucket.subjects.size === 0) return [];
-    return [toolActivityPhrase(kind, bucket.subjects.size, bucket.running, labels)];
+    return [{
+      text: toolActivityPhrase(kind, bucket.subjects.size, bucket.names, bucket.running, labels, limit),
+      tone: 'neutral' as const,
+    }];
   });
-  if (fragments.length === 0) return labels.ranTools({ count: items.length });
-  return fragments.map((fragment, index) => index === 0 ? fragment : sentenceFragment(fragment)).join(' · ');
+  if (segments.length === 0) {
+    segments.push({ text: labels.ranTools({ count: items.length }), tone: 'neutral' });
+  }
+  // What went wrong is stated in words as well as colour — colour alone is not
+  // a state (design-system patterns.md).
+  const failed = items.filter((item) => item.status === 'failed').length;
+  const interrupted = items.filter((item) => item.status === 'interrupted').length;
+  if (failed > 0) segments.push({ text: labels.failedCount({ count: failed }), tone: 'failed' });
+  if (interrupted > 0) {
+    segments.push({ text: labels.interruptedCount({ count: interrupted }), tone: 'interrupted' });
+  }
+  return segments.map((segment, index) => index === 0
+    ? segment
+    : { ...segment, text: sentenceFragment(segment.text) });
+}
+
+type ActivityLabels = Messages['agent']['thread']['activity'];
+
+/** The activity keys that take a rendered subject list, derived from the message
+ *  tree so a mistyped key cannot reach `namedSubjectPhrase`. */
+type SubjectPhraseKey = {
+  [K in keyof ActivityLabels]: ActivityLabels[K] extends (values: { subjects: string }) => string ? K : never
+}[keyof ActivityLabels];
+
+/** Verbs shared by the file and node families: with a subject named, the phrase
+ *  does not need to repeat the noun — "Read intro.xhtml" already says it is a
+ *  file. Kinds absent here have no subject a person would recognise. One map
+ *  holds both tenses so the pair cannot drift apart. */
+const SUBJECT_VERBS: Partial<Record<
+  ToolActivityKind,
+  { readonly past: SubjectPhraseKey; readonly present: SubjectPhraseKey }
+>> = {
+  fileCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  fileEdit: { past: 'editedNamed', present: 'editingNamed' },
+  fileDelete: { past: 'deletedNamed', present: 'deletingNamed' },
+  fileRead: { past: 'readNamed', present: 'readingNamed' },
+  fileSearch: { past: 'searchedNamed', present: 'searchingNamed' },
+  nodeCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  nodeEdit: { past: 'editedNamed', present: 'editingNamed' },
+  nodeDelete: { past: 'deletedNamed', present: 'deletingNamed' },
+  nodeRestore: { past: 'restoredNamed', present: 'restoringNamed' },
+  nodeRead: { past: 'readNamed', present: 'readingNamed' },
+  nodeSearch: { past: 'searchedNamed', present: 'searchingNamed' },
+  webFetch: { past: 'fetchedNamed', present: 'fetchingNamed' },
+  skill: { past: 'usedSkillNamed', present: 'usingSkillNamed' },
+};
+
+/** How many subjects a summary names before eliding (PM-ratified 2026-07-30).
+ *  The row's `title` re-derives the same summary with no limit, so the full
+ *  list is one hover away. */
+const NAMED_SUBJECT_LIMIT = 2;
+
+/** Display uses the elided form; `title` passes Infinity for the full list. */
+export interface ToolSummaryOptions {
+  readonly subjectLimit?: number;
 }
 
 function toolActivityPhrase(
   kind: ToolActivityKind,
   count: number,
+  names: readonly string[],
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
+  limit: number = NAMED_SUBJECT_LIMIT,
 ): string {
+  // Only name subjects when every one of them is nameable; a partly-named bucket
+  // would silently drop the work it could not name.
+  if (names.length === count && names.length > 0) {
+    const named = namedSubjectPhrase(kind, names, running, labels, limit);
+    if (named !== null) return named;
+  }
   switch (kind) {
     case 'command': return running ? labels.runningCommands({ count }) : labels.ranCommands({ count });
     case 'fileCreate': return running ? labels.creatingFiles({ count }) : labels.createdFiles({ count });
@@ -1092,6 +1335,7 @@ function toolActivityPhrase(
     case 'nodeRead': return running ? labels.readingNodes({ count }) : labels.readNodes({ count });
     case 'nodeSearch': return running ? labels.searchingNodes : labels.searchedNodes;
     case 'web': return running ? labels.searchingWebActivity : labels.searchedWebActivity;
+    case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'collaboration': return running ? labels.collaborating({ count }) : labels.collaborated({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
     case 'question': return running ? labels.askingQuestions({ count }) : labels.askedQuestions({ count });
@@ -1099,6 +1343,36 @@ function toolActivityPhrase(
     case 'tool': return running ? labels.usingTools({ count }) : labels.usedTools({ count });
     default: return assertNever(kind);
   }
+}
+
+function namedSubjectPhrase(
+  kind: ToolActivityKind,
+  names: readonly string[],
+  running: boolean,
+  labels: Messages['agent']['thread']['activity'],
+  limit: number,
+): string | null {
+  // The web-search family already ships subject-bearing phrasing of its own.
+  if (kind === 'web') {
+    const query = joinSubjects(names, labels, limit);
+    return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
+  }
+  // "Used the dataviz, run skill" is not a sentence; past one, count instead.
+  if (kind === 'skill' && names.length > 1) return null;
+  const verbs = SUBJECT_VERBS[kind];
+  if (verbs === undefined) return null;
+  const key = running ? verbs.present : verbs.past;
+  return labels[key]({ subjects: joinSubjects(names, labels, limit) });
+}
+
+function joinSubjects(
+  names: readonly string[],
+  labels: Messages['agent']['thread']['activity'],
+  limit: number,
+): string {
+  const shown = names.slice(0, limit).join(', ');
+  const remaining = names.length - limit;
+  return remaining > 0 ? labels.subjectsWithMore({ subjects: shown, more: remaining }) : shown;
 }
 
 function sentenceFragment(value: string): string {
@@ -1120,7 +1394,7 @@ function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicT
     case 'node_delete': return dynamicToolArgument(item, 'restore') === true ? 'nodeRestore' : 'nodeDelete';
     case 'node_read': return 'nodeRead';
     case 'node_search': return 'nodeSearch';
-    case 'web_fetch':
+    case 'web_fetch': return 'webFetch';
     case 'web_search': return 'web';
     case 'skill': return 'skill';
     case 'request_user_input': return 'question';
@@ -1129,22 +1403,68 @@ function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicT
   }
 }
 
+/**
+ * A tool call's subjects: `keys` dedupe and count the work, `names` are what the
+ * user is shown. `names` is empty when the arguments carry nothing a person
+ * would recognise, and the caller then falls back to counting — a half-named
+ * bucket would read as if the unnamed work did not happen.
+ */
+interface ToolActivitySubjects {
+  readonly keys: readonly string[];
+  readonly names: readonly string[];
+}
+
+const SUBJECT_ARGUMENT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>> = {
+  fileCreate: ['file_path', 'path'],
+  fileEdit: ['file_path', 'path'],
+  fileDelete: ['file_path', 'path'],
+  fileRead: ['file_path', 'path'],
+  fileSearch: ['pattern'],
+  nodeCreate: ['node_id', 'node_ids'],
+  nodeEdit: ['node_id', 'node_ids'],
+  nodeDelete: ['node_id', 'node_ids'],
+  nodeRestore: ['node_id', 'node_ids'],
+  nodeRead: ['node_id', 'node_ids'],
+  nodeSearch: ['query'],
+  web: ['query'],
+  webFetch: ['url'],
+  skill: ['skill', 'name'],
+};
+
 function dynamicToolSubjects(
   item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
   kind: ToolActivityKind,
-): string[] {
-  const keys = kind === 'fileRead' || kind === 'fileEdit' || kind === 'fileDelete'
-    ? ['file_path', 'path']
-    : kind === 'nodeRead' || kind === 'nodeEdit' || kind === 'nodeDelete' || kind === 'nodeRestore'
-      ? ['node_id', 'node_ids']
-      : [];
-  const subjects = keys.flatMap((key) => {
+  index: DocumentIndex | undefined,
+): ToolActivitySubjects {
+  const values = (SUBJECT_ARGUMENT_KEYS[kind] ?? []).flatMap((key) => {
     const value = dynamicToolArgument(item, key);
     if (typeof value === 'string' && value.trim()) return [value.trim()];
     if (!Array.isArray(value)) return [];
     return value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()));
   });
-  return subjects.length > 0 ? subjects : [item.id];
+  // `SUBJECT_ARGUMENT_KEYS` reads both singular and plural argument spellings,
+  // so the same subject can arrive twice; the grouped path dedupes through its
+  // bucket Set and the single-row path has to match it.
+  const keys = [...new Set(values)];
+  if (keys.length === 0) return { keys: [item.id], names: [] };
+  return { keys, names: keys.map((value) => subjectDisplayName(kind, value, index)) };
+}
+
+function subjectDisplayName(
+  kind: ToolActivityKind,
+  value: string,
+  index: DocumentIndex | undefined,
+): string {
+  // Search kinds first: `nodeSearch` starts with "node" but its subject is a
+  // query string, not an id — resolving it as a Node would rename the query.
+  if (kind === 'fileSearch' || kind === 'nodeSearch' || kind === 'web') return quoteSubject(value);
+  if (kind === 'webFetch') return quoteSubject(value);
+  if (kind.startsWith('node')) {
+    // The same title resolution user-message Node references use, so the
+    // transcript never shows a raw id where it can show a title.
+    return quoteSubject(threadNodeReferenceDisplayLabel('', value, index, value));
+  }
+  return basenameForPath(value) || value;
 }
 
 function normalizedToolIdentity(namespace: string | null, tool: string): string {
@@ -1164,11 +1484,14 @@ function dynamicToolArgument(
   return (item.arguments as { readonly [argument: string]: unknown })[key];
 }
 
-function executionStatusNode(status: ItemExecutionStatus, completed: ReactNode): ReactNode {
-  if (status === 'inProgress') return <LoaderIcon size={ICON_SIZE.tiny} />;
-  if (status === 'failed') return <ToolErrorIcon size={ICON_SIZE.tiny} />;
-  if (status === 'interrupted') return <StopIcon size={ICON_SIZE.tiny} />;
-  return completed;
+/**
+ * A row's status is carried by colour and by its label wording, never by
+ * swapping the tool's own glyph: a failed row has to keep saying WHICH tool
+ * broke. Only `inProgress` substitutes, because there the spinner *is* the
+ * state and nothing else animates.
+ */
+function executionStatusNode(status: ItemExecutionStatus, toolGlyph: ReactNode): ReactNode {
+  return status === 'inProgress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : toolGlyph;
 }
 
 function ToolOutputImage({
@@ -1383,6 +1706,37 @@ function reasoningGist(text: string): string {
 
 function firstLine(text: string): string {
   return text.split('\n').map((line) => line.trim()).find(Boolean) ?? text;
+}
+
+/**
+ * Fallback for a command whose caller gave no description. It does not try to
+ * understand the command — it only removes the parts that are provably not the
+ * point, so the 72-character budget is spent on the operative text:
+ *
+ *   `cd /long/path && swift build`     → `swift build`
+ *   `python3 - <<'PY' … PY`            → `python3 -`
+ *   `<threadCwd>/scripts/build.sh`     → `scripts/build.sh`
+ */
+function commandDisplayText(command: string, cwd: string): string {
+  let text = firstLine(command);
+  // Only a real heredoc opener: `<<WORD` / `<<-'WORD'`. Not `<<<` (here-string)
+  // and not `1<<20` (bit shift), both of which would truncate mid-command.
+  const heredoc = /<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/.exec(text);
+  // In `cat <<< hello` the delimiter match starts on the SECOND `<`, so looking
+  // forward for `<<<` is not enough — the character before it has to be checked
+  // too, or a bare-word here-string truncates to `cat <`.
+  const hereString = heredoc !== null
+    && (text.startsWith('<<<', heredoc.index) || text[heredoc.index - 1] === '<');
+  if (heredoc && heredoc.index > 0 && !hereString) {
+    text = text.slice(0, heredoc.index).trim();
+  }
+  // A leading `cd X &&` is scaffolding for the command that follows it.
+  const chained = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*(.+)$/.exec(text);
+  if (chained?.[1]) text = chained[1].trim();
+  // Shorten paths inside the Thread's own working directory. A root cwd has no
+  // prefix worth stripping — doing it anyway would delete every slash.
+  const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`;
+  return prefix.length > 1 ? text.split(prefix).join('') : text;
 }
 
 function quoteSubject(value: string): string {
