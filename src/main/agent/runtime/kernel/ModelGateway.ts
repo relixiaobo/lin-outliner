@@ -65,7 +65,9 @@ export class PiModelGateway implements ModelGateway {
         );
         await forwardProviderStream(fallback, output, () => false);
       } catch (error) {
-        output.push(providerPreparationFailure(request.model, error));
+        const failure = providerPreparationFailure(request.model, error);
+        output.push(failure);
+        output.end(failure.error);
       }
     })();
     return output;
