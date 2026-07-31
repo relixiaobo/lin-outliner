@@ -1291,7 +1291,12 @@
 .thread-tool-activity-count-failed,
 .thread-tool-activity-count-interrupted {
   flex: 0 0 auto;
-  white-space: nowrap;
+  /* `pre`, not `nowrap`: a flex item blockifies, and a block trims its own
+     leading whitespace — the " · " separator would collapse to zero width and
+     render as "Ran 3 commands· 1 failed". The separator stays in the text
+     rather than becoming a flex `gap` so the accessible name, clipboard text,
+     and rendered text remain the same string. */
+  white-space: pre;
 }
 
 .thread-disclosure-indicator {

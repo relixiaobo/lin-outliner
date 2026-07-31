@@ -33,6 +33,10 @@ describe('thread tool row status CSS guards', () => {
     expect(threadCss).toMatch(
       /\.thread-tool-activity-count-failed,\s*\.thread-tool-activity-count-interrupted \{\s*flex:\s*0 0 auto;/,
     );
+    // `nowrap` would let the flex item trim the " · " separator to zero width.
+    expect(threadCss).toMatch(
+      /\.thread-tool-activity-count-failed,[\s\S]*?white-space:\s*pre;/,
+    );
     // The containers must be flex for the pin to hold.
     expect(threadCss).toMatch(
       /\.thread-tool-label,\s*\.thread-tool-activity-summary \{\s*display:\s*flex;/,

@@ -2146,6 +2146,14 @@ test.describe('canonical agent Thread surface', () => {
           probeElement.remove();
           return resolved;
         };
+        const leadingSpaceWidth = (element: Element | null): number => {
+          const node = element?.firstChild;
+          if (!node) return -1;
+          const range = document.createRange();
+          range.setStart(node, 0);
+          range.setEnd(node, 1);
+          return range.getBoundingClientRect().width;
+        };
         const row = (status: string) => {
           const element = document.querySelector(`.thread-tool-activity-members .thread-tool-${status}`);
           if (!element) throw new Error(`Missing ${status} row`);
@@ -2183,6 +2191,13 @@ test.describe('canonical agent Thread surface', () => {
             ).slice(0, 3),
             tallyColor: channels(getComputedStyle(tally).color).slice(0, 3),
             tallyText: tally.textContent,
+            // Measure the separator as rendered. Text-content assertions
+            // normalize whitespace, so they pass on markup that draws
+            // "Ran 3 commands· 1 failed".
+            tallyLeadingSpaceWidth: leadingSpaceWidth(tally),
+            rowLeadingSpaceWidth: leadingSpaceWidth(
+              document.querySelector('.thread-tool-activity-members .thread-tool-failed .thread-tool-activity-count-failed'),
+            ),
           },
           failedLabelContrast: contrast(
             failedRow.labelColor,
@@ -2219,6 +2234,10 @@ test.describe('canonical agent Thread surface', () => {
       expect(probe.group.glyphColor).toEqual(probe.textFaint.slice(0, 3));
       expect(probe.group.tallyFlexShrink).toBe('0');
       expect(probe.group.actFlexShrink).not.toBe('0');
+      // The " · " separator has to actually occupy width; a flex item
+      // blockifies and a block trims its leading whitespace.
+      expect(probe.group.tallyLeadingSpaceWidth).toBeGreaterThan(0);
+      expect(probe.group.rowLeadingSpaceWidth).toBeGreaterThan(0);
 
       // The tint has to survive interaction — the chevron swap used to erase it.
       await page.locator('.thread-tool-failed.thread-tool .thread-tool-toggle').hover();
