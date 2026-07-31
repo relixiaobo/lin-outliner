@@ -1497,6 +1497,35 @@
   text-align: left;
 }
 
+.thread-agent-states code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-agent-state.thread-subagent-errored > button,
+.thread-agent-state.thread-subagent-errored > button > span {
+  color: var(--status-danger);
+}
+
+.thread-agent-state.thread-subagent-errored > button {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.thread-agent-state.thread-subagent-errored > button > span {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+
+.thread-agent-state.thread-subagent-interrupted > button,
+.thread-agent-state.thread-subagent-notFound > button,
+.thread-agent-state.thread-subagent-interrupted > button > span,
+.thread-agent-state.thread-subagent-notFound > button > span {
+  color: var(--text-faint);
+}
+
 .thread-file-changes li > span,
 .thread-agent-states li > span,
 .thread-agent-states li > button > span {
@@ -1664,6 +1693,15 @@ button.thread-inline-activity:hover,
   color: var(--text-strong);
 }
 
+.thread-agent-states .thread-agent-state.thread-subagent-errored > button:hover {
+  color: var(--status-danger);
+}
+
+.thread-agent-states .thread-agent-state.thread-subagent-interrupted > button:hover,
+.thread-agent-states .thread-agent-state.thread-subagent-notFound > button:hover {
+  color: var(--text-faint);
+}
+
 button.thread-inline-activity:focus-visible,
 .thread-agent-states li > button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
@@ -1675,6 +1713,51 @@ button.thread-inline-activity:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.thread-subagent-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-inline-activity.thread-subagent-errored {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  row-gap: var(--space-1);
+}
+
+.thread-inline-activity.thread-subagent-errored > svg,
+.thread-inline-activity.thread-subagent-errored > .thread-subagent-label,
+.thread-subagent-error {
+  color: var(--status-danger);
+}
+
+.thread-inline-activity.thread-subagent-errored > .thread-subagent-label {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.thread-inline-activity.thread-subagent-interrupted > svg,
+.thread-inline-activity.thread-subagent-interrupted > .thread-subagent-label,
+.thread-inline-activity.thread-subagent-notFound > svg,
+.thread-inline-activity.thread-subagent-notFound > .thread-subagent-label {
+  color: var(--text-faint);
+}
+
+.thread-subagent-error {
+  grid-column: 2;
+  min-width: 0;
+  max-width: none;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.thread-inline-activity .thread-subagent-error {
+  margin-left: 0;
 }
 
 .thread-inline-activity small {

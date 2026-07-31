@@ -112,6 +112,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('uses the provider call id for collaboration control-plane identity', async () => {
     const fixture = createContext();
+    const childThreadId = uuidV7(1_720_000_001_000);
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle({
       type: 'tool_execution_start',
@@ -125,7 +126,7 @@ describe('PiTurnExecutor event normalization', () => {
       toolName: 'collaboration__spawn_agent',
       result: {
         content: [{ type: 'text', text: 'spawned' }],
-        details: { task_name: '/root/worker', thread_id: uuidV7(1_720_000_001_000), nickname: null },
+        details: { task_name: '/root/worker', thread_id: childThreadId, nickname: null },
       },
       isError: false,
     });
@@ -136,6 +137,14 @@ describe('PiTurnExecutor event normalization', () => {
       tool: 'spawn_agent',
       status: 'completed',
       prompt: 'Inspect it',
+      agentsStates: {
+        [childThreadId]: {
+          status: 'running',
+          taskPath: '/root/worker',
+          nickname: null,
+          role: null,
+        },
+      },
     });
   });
 
@@ -184,7 +193,55 @@ describe('PiTurnExecutor event normalization', () => {
       tool: 'wait_agent',
       status: 'completed',
       receiverThreadIds: [childThreadId],
-      agentsStates: { [childThreadId]: 'completed' },
+      agentsStates: {
+        [childThreadId]: {
+          status: 'completed',
+          taskPath: '/root/worker',
+          nickname: null,
+          role: 'worker',
+        },
+      },
+    });
+  });
+
+  test('does not turn a collaboration tool failure into a child failure', async () => {
+    const fixture = createContext();
+    const childThreadId = uuidV7(1_720_000_001_200);
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-collab-send',
+      toolName: 'collaboration__send_message',
+      args: { target: '/root/worker', message: 'Continue' },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-collab-send',
+      toolName: 'collaboration__send_message',
+      result: {
+        content: [{ type: 'text', text: 'message delivery failed' }],
+        details: {
+          taskPath: '/root/worker',
+          threadId: childThreadId,
+          nickname: null,
+          role: 'worker',
+          status: 'running',
+        },
+      },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'collabAgentToolCall',
+      status: 'failed',
+      agentsStates: {
+        [childThreadId]: {
+          status: 'running',
+          taskPath: '/root/worker',
+          role: 'worker',
+        },
+      },
     });
   });
 

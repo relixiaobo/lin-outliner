@@ -360,9 +360,20 @@ describe('group summaries name up to two subjects, then elide', () => {
     // Two calls aimed at the same agent are one agent worked with, not two.
     ['same agent twice', [collab('spawn_agent', 'completed', 'r1'), collab('wait_agent', 'completed', 'r1')],
       'Worked with an agent'],
+    ['receiverless wait is not another agent', [
+      collab('spawn_agent', 'completed', 'r1'),
+      { ...collab('wait_agent', 'completed', 'unused'), receiverThreadIds: [] },
+    ], 'Worked with an agent'],
   ];
 
   for (const [name, items, expected] of cases) {
     test(name, () => expect(summarizeThreadToolActivity(items, labels)).toBe(expected));
   }
+
+  test('a live projection can supply the distinct children behind a receiverless wait', () => {
+    const wait = { ...collab('wait_agent', 'inProgress', 'unused'), receiverThreadIds: [] };
+    expect(summarizeThreadToolActivity([wait], labels, undefined, {
+      collaborationThreadIds: ['r1', 'r2'],
+    })).toBe('Working with 2 agents');
+  });
 });

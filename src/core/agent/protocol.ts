@@ -941,6 +941,13 @@ export type SubagentExecutionStatus =
   | 'errored'
   | 'notFound';
 
+export interface SubagentExecutionState {
+  readonly status: SubagentExecutionStatus;
+  readonly taskPath: string | null;
+  readonly nickname: string | null;
+  readonly role: string | null;
+}
+
 export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'collabAgentToolCall';
   readonly tool: CollaborationToolName;
@@ -949,7 +956,7 @@ export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly prompt: string | null;
   readonly model: string | null;
   readonly reasoningEffort: string | null;
-  readonly agentsStates: Readonly<Record<ThreadId, SubagentExecutionStatus>>;
+  readonly agentsStates: Readonly<Record<ThreadId, SubagentExecutionState>>;
 }
 
 export interface SubAgentActivityThreadItem extends ThreadItemBase {
@@ -957,6 +964,7 @@ export interface SubAgentActivityThreadItem extends ThreadItemBase {
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
   readonly agentThreadId: ThreadId;
   readonly agentPath: string;
+  readonly error: TurnError | null;
 }
 
 export interface WebSearchResult {

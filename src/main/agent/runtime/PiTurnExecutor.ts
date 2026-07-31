@@ -26,6 +26,7 @@ import type {
   JsonValue,
   MessagePhase,
   SkillInvocationContextPayload,
+  SubagentExecutionState,
   ThreadItem,
   ThreadItemOutputReference,
   Turn,
@@ -1008,16 +1009,22 @@ async function completedToolItem(
       };
     case 'collabAgentToolCall': {
       const views = collaborationViews(result);
-      const receiverThreadIds = views.flatMap((view) => typeof view.threadId === 'string' ? [view.threadId] : []);
-      const agentsStates = Object.fromEntries(views.flatMap((view) => {
-        if (typeof view.threadId !== 'string') return [];
-        return [[view.threadId, collaborationStatus(view.status, isError)]];
-      }));
+      const agentsStates: Record<string, SubagentExecutionState> = {};
+      for (const view of views) {
+        const threadId = collaborationThreadId(view);
+        if (threadId === null) continue;
+        agentsStates[threadId] = {
+          status: collaborationStatus(view.status, isError),
+          taskPath: collaborationText(view.taskPath ?? view.task_name),
+          nickname: collaborationText(view.nickname),
+          role: collaborationText(view.role),
+        };
+      }
       return {
         ...item,
         status,
         outputRef,
-        receiverThreadIds,
+        receiverThreadIds: Object.keys(agentsStates),
         agentsStates,
       };
     }
@@ -1246,13 +1253,23 @@ function collaborationViews(result: unknown): Array<Record<string, unknown>> {
   if (!isRecord(details)) return [];
   if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
   if (typeof details.thread_id === 'string') {
-    return [{ threadId: details.thread_id, status: 'running' }];
+    return [{ ...details, status: 'running' }];
   }
   return [details];
 }
 
+function collaborationThreadId(view: Record<string, unknown>): string | null {
+  const value = view.threadId ?? view.thread_id;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function collaborationText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim()
+    ? boundedText(value.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
+    : null;
+}
+
 function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'notFound' {
-  if (isError) return 'errored';
   if (
     value === 'pendingInit'
     || value === 'running'
@@ -1261,7 +1278,7 @@ function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 
     || value === 'errored'
     || value === 'notFound'
   ) return value;
-  return 'completed';
+  return isError ? 'notFound' : 'completed';
 }
 
 function messagePhase(message: AssistantMessage): MessagePhase {

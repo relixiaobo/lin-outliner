@@ -45,6 +45,7 @@ import {
   type ThreadUserContent,
   type ThreadResourceReference,
   type Turn,
+  type SubagentExecutionState,
   type TurnDiagnosticsPayload,
   type TurnDiagnosticsMessagePartProvenance,
   type TurnDiagnosticsPayloadReference,
@@ -301,13 +302,21 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         'model', 'reasoningEffort', 'agentsStates', 'outputRef',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
-      const decodedStates: Record<string, 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'notFound'> = {};
+      const decodedStates: Record<string, SubagentExecutionState> = {};
       for (const [threadId, state] of Object.entries(states)) {
-        decodedStates[uuidV7(threadId, 'item.agentsStates key')] = enumValue(
-          state,
-          ['pendingInit', 'running', 'interrupted', 'completed', 'errored', 'notFound'],
-          `item.agentsStates.${threadId}`,
-        );
+        const statePath = `item.agentsStates.${threadId}`;
+        const stateRecord = recordValue(state, statePath);
+        exactKeys(stateRecord, ['status', 'taskPath', 'nickname', 'role'], statePath);
+        decodedStates[uuidV7(threadId, 'item.agentsStates key')] = {
+          status: enumValue(
+            stateRecord.status,
+            ['pendingInit', 'running', 'interrupted', 'completed', 'errored', 'notFound'],
+            `${statePath}.status`,
+          ),
+          taskPath: nullableString(stateRecord.taskPath, `${statePath}.taskPath`, true),
+          nickname: nullableString(stateRecord.nickname, `${statePath}.nickname`, true),
+          role: nullableString(stateRecord.role, `${statePath}.role`, true),
+        };
       }
       result = {
         ...base,
@@ -330,13 +339,14 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       break;
     }
     case 'subAgentActivity':
-      exactKeys(record, ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath', 'error'], 'item');
       result = {
         ...base,
         type,
         kind: enumValue(record.kind, ['started', 'completed', 'interrupted', 'errored'], 'item.kind'),
         agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
         agentPath: stringValue(record.agentPath, 'item.agentPath'),
+        error: decodeTurnError(record.error, 'item.error'),
       };
       break;
     case 'webSearch':
@@ -2393,16 +2403,16 @@ function decodeMemoryCitation(value: unknown): MemoryCitation | null {
   });
 }
 
-function decodeTurnError(value: unknown): Turn['error'] {
+function decodeTurnError(value: unknown, path = 'turn.error'): Turn['error'] {
   if (value === null) return null;
-  const record = recordValue(value, 'turn.error');
-  exactKeys(record, ['message', 'code', 'detail'], 'turn.error');
+  const record = recordValue(value, path);
+  exactKeys(record, ['message', 'code', 'detail'], path);
   return deepFreeze({
-    message: stringValue(record.message, 'turn.error.message'),
+    message: stringValue(record.message, `${path}.message`),
     ...(record.code === undefined
       ? {}
-      : { code: normalizeTurnErrorCode(stringValue(record.code, 'turn.error.code')) }),
-    ...(record.detail === undefined ? {} : { detail: stringValue(record.detail, 'turn.error.detail', true) }),
+      : { code: normalizeTurnErrorCode(stringValue(record.code, `${path}.code`)) }),
+    ...(record.detail === undefined ? {} : { detail: stringValue(record.detail, `${path}.detail`, true) }),
   });
 }
 

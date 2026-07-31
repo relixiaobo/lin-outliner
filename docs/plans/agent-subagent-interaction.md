@@ -12,7 +12,7 @@ live delegation surface plus user control — the human-facing half of the
 Delegation Contract's "Account" product
 (`docs/spec/agent-subagent-threads.md`, Delegation Contract §2).
 
-All `file:line` references are against `main` at `7bd60a04`.
+All `file:line` references are against `main` at `8c40d637`.
 
 ## Non-goals
 
@@ -23,7 +23,7 @@ All `file:line` references are against `main` at `7bd60a04`.
   cannot ask the user" deferral (`docs/plans/agent-program.md:90-91`) stands;
   this plan only makes the blocked state visible.
 - No child composer. Child Threads stay read-only per
-  `docs/spec/agent-thread-rendering.md:360-363`; user control is limited to
+  `docs/spec/agent-thread-rendering.md:442-445`; user control is limited to
   interrupt.
 - No token numbers on user surfaces (Delegation Contract §3: receipts are
   internal; user surfaces speak time/status).
@@ -44,30 +44,28 @@ but replaces its row presentation; it must land after PR 1.
 
 ## Collision Result
 
-Refreshed 2026-07-30 after the gate review (R2); #450 and #451 have merged.
+Refreshed 2026-07-31 before the PR 1 claim. #451, #455, #456, and the
+Subagent transcript artifact (#460) have merged; all pre-decomposition backend
+evidence below is relocated to its current owner.
 
-- **#451 (`threadservice-decomposition`) is merged:** this plan's backend
-  work is written directly against the decomposed services —
-  `src/main/agent/thread/SubagentCollaboration.ts` (activity flush,
-  `agentsStates` payload, wait/interrupt seams) and
-  `src/main/agent/thread/TurnLifecycle.ts` (Turn admission/finalization).
-  The defect inventory's `ThreadService.ts:NNN` citations stay pinned at
-  `7bd60a04` as evidence; implementation targets the current module layout.
-- **`subagent-transcript-artifact` (queued board item):** touches
-  `CollaborationTerminalOutcomeSchema` — PR 1's S5 fix consumes
-  `outcome.error`; the artifact work adds `transcriptPath`. Adjacent and
-  compatible; coordinate the schema edits with whoever lands second.
-- **#455 (`subagent-budget-propagation-pr-c`, draft):** its renderer
-  translation of budget-typed failure copy shares the failure-presentation
-  region with PR 1's S5 vocabulary; its user-irrelevance clause governs any
-  budget-shaped error these rows surface — time/status wording, never token
-  numbers (consistent with this plan's Non-goals).
-- **#456 (`toolruntime-handler-contribution`, draft):** relocates the
-  collaboration handlers this plan's backend touches ride on; land ordering
-  is flexible, whoever lands second rebases.
-- **#453 (`tool-path-modifier-click`):** overlaps `ThreadItemView.tsx` —
-  mechanical rebase only.
-- Renderer-only parts of PR 1/PR 2 can proceed regardless.
+- **#463 (`process-state-truthfulness`, draft):** real adjacency in
+  `ThreadView.tsx`, i18n, renderer tests, and E2E. #463 owns the generic process
+  divider states, duration/boundary rules, and `TurnLifecycle` finalization.
+  PR 1 owns only the `wait_agent`-exclusive bottleneck derivation and copy in
+  that region. It does not change `waitingOnUserInput` presentation.
+- **#464 (`red-e2e-on-main`, draft):** currently claims attachment-preview and
+  material-surface CSS. No confirmed overlap. If its bisect reaches
+  `thread.css`, the selectors are separate and the second branch rebases.
+- **#455 (`subagent-budget-propagation-pr-c`) is merged:** its user-irrelevance
+  boundary governs S5. A terminal Subagent activity carries the canonical
+  `TurnError`; renderer classification uses the closed `Turn.error.code` set
+  (`runtime_failure`, `host_restart`, `subagent_budget_exhausted`,
+  `subagent_structural_limit`). Budget-shaped failure copy is localized
+  resource-limit language saying completed results were preserved; no user
+  surface renders token quantities or classifies errors by message text.
+- **#460 (`subagent-transcript-artifact`) is merged:**
+  `CollaborationTerminalOutcome` now also carries `transcriptPath`; PR 1 keeps
+  that account-layer field unchanged.
 - No infrastructure-ownership files. `src/core/agent/protocol.ts` changes
   (PR 1) are a coordinated protocol-adjacent change: flagged here for the
   gate, and pre-release policy applies — no migration, no legacy readers;
@@ -79,39 +77,46 @@ Refreshed 2026-07-30 after the gate review (R2); #450 and #451 have merged.
 
 - **S1 — A permanently lying "Running" row.** `subAgentActivity` Items are
   append-only; the `started` row maps to "Running" forever
-  (`ThreadItemView.tsx:843-848`), never rewritten when the child ends — the
+  (`ThreadItemView.tsx:172-185`), never rewritten when the child ends — the
   terminal state arrives as a *second* row.
 - **S2 — A permanently lying spawn row.** The spawn tool row's `agentsStates`
   is synthesized as a hard-coded `'running'` from the tool result
-  (`PiTurnExecutor.ts:1229-1231`) and has no later writer.
+  (`PiTurnExecutor.ts:1243-1251`) and has no later writer
+  (`PiTurnExecutor.ts:1009-1022`).
 - **S3 — Completion can be invisible for a long time.** Terminal child
   activity is flushed into the parent only at `wait_agent` return, next-Turn
-  admission, or parent-Turn end (`ThreadService.ts:2437`, `2474`,
-  `2691-2728`, `2849`); fire-and-forget children finish silently until the
-  user's next message.
+  admission, or parent-Turn end (`SubagentCollaboration.ts:509-512`, `545`;
+  `TurnLifecycle.ts:810-848`, `979-980`); fire-and-forget children finish
+  silently until the user's next message. The renderer receives the canonical
+  child `turn/completed` notification but currently discards it when that
+  child's history is not loaded (`threadStore.ts:387-450`).
 - **S4 — No live signal at all from a running child.** No elapsed time, no
-  current activity, no turn count in the parent row (`ThreadItemView.tsx:
-  168-183`); the Turn divider says only "Working for …"
-  (`ThreadView.tsx:1541-1552`).
+  current activity, no turn count in the parent row
+  (`ThreadItemView.tsx:172-185`); the Turn divider says only "Working for …"
+  (`ThreadView.tsx:1921-1924`).
 - **S5 — Failure looks like success.** Terminal `errored`/`interrupted` rows
-  are styled identically to `completed` (`ThreadItemView.tsx:168-183`,
-  `thread.css:1460-1500`); the failure reason is not in the Item, only inside
-  the child Thread or the raw `wait_agent` output JSON
-  (`ThreadItemView.tsx:789-822`, `606-618`).
+  are styled identically to `completed` (`ThreadItemView.tsx:172-185`,
+  `thread.css:1643-1683`); the failure reason is not in the Item, only inside
+  the child Thread or `CollaborationTerminalOutcome.error`
+  (`SubagentCollaboration.ts:638-662`). #461 already shipped the shared
+  tool-row failure vocabulary and tint (`thread.css:1391-1403`); the remaining
+  defect is Subagent-activity-specific.
 - **S6 — Children are truncated UUIDs.** Spawn/wait rows list
-  `shortThreadId` + status only (`ThreadItemView.tsx:806`, `838-840`) because
+  `shortThreadId` + status only (`ThreadItemView.tsx:894-910`) because
   the persisted Item shape drops `taskPath`/`nickname`/`role`
-  (`protocol.ts:917-927` vs the tool result at `ThreadService.ts:318-327`).
-- **S7 — Model jargon on a user surface.** "Using spawn_agent", "Using
-  wait_agent", "spawn_agent failed" (`ThreadItemView.tsx:869-870`, `881-887`;
-  `en.ts:1239-1241`).
+  (`protocol.ts:944-960` vs the live collaboration view at
+  `SubagentCollaboration.ts:591-615`).
+- **S7 — Resolved by #461.** Collaboration rows now use the closed product
+  vocabulary in `ThreadItemView.tsx:1037-1051`; model-facing names such as
+  `spawn_agent` and `wait_agent` no longer reach the row label. Readable child
+  identity remains S6 and is still in PR 1 scope.
 - **S8 — Misleading aggregate states.** An idle-but-alive child reports
-  "Completed" (`ThreadService.ts:3659-3667`); a failed collab *tool* marks
-  every receiver `errored` (`PiTurnExecutor.ts:1235-1246`); "Working with N
-  agents" counts a `wait_agent` row as an agent (`ThreadItemView.tsx:
-  1016-1019`, `1049`).
+  "Completed" (`SubagentCollaboration.ts:591-615`); a failed collab *tool*
+  marks every receiver `errored` (`PiTurnExecutor.ts:1010-1015`,
+  `1254-1264`); "Working with N agents" counts a `wait_agent` row as an agent
+  (`ThreadItemView.tsx:1226-1229`, `1339`).
 - **S9 — Blocked state is dead data.** `waitingOnUserInput`
-  (`protocol.ts:48`, set at `ThreadService.ts:2040`) is read by nothing in
+  (`protocol.ts:48`, set at `TurnLifecycle.ts:491`) is read by nothing in
   `src/renderer`. (Parent-side rendering is owned by
   `agent-run-presentation-consistency.md` PR B; a child can never carry the
   flag — see the PR 1 correction below.)
@@ -121,34 +126,39 @@ Refreshed 2026-07-30 after the gate review (R2); #450 and #451 have merged.
 - **S10 — No way back to the parent.** Opening a child replaces the dock view
   wholesale (`ThreadDock.tsx:293-325`); the header has no
   breadcrumb/back (`:229-255`); the child often sorts *above* its parent in
-  the flat recency list (`threadStore.ts:624-626`).
+  the flat recency list (`threadStore.ts:626-627`).
 - **S11 — Dead links fail silently.** Transcript rows call `selectThread`,
-  which throws for a Thread missing from the catalog (`threadStore.ts:115`)
-  behind a bare `void` (`ThreadItemView.tsx:174`, `810`); the recovering
-  `openThreadById` (`threadStore.ts:120-127`) is wired only into Automations.
+  which throws for a Thread missing from the catalog
+  (`threadStore.ts:114-126`) through the dock callback
+  (`ThreadDock.tsx:308`) behind bare `void` calls
+  (`ThreadItemView.tsx:178`, `903`); the recovering `openThreadById` is wired
+  only into Automations (`ThreadDock.tsx:330-332`).
 - **S12 — Thread-list pollution and spec violation.** Every child ever
-  spawned is a permanent flat row (`ThreadService.ts:1240-1263`); "nesting" is
+  spawned is a permanent flat row (`ThreadCatalogOps.ts:148-171`); "nesting" is
   a left margin only (`ThreadList.tsx:126`, `201-215`), while the spec
   promises "Child Threads are visibly nested under their parent"
   (`docs/spec/agent-thread-rendering.md:14-16`). No run-status indicator
   (`thread.status`/`activeFlags` unread in `ThreadList.tsx`), no filter, no
   bulk cleanup; isolated-Skill children (`skill_<slug>_<hex>`,
-  `ThreadService.ts:2264-2269`) are listed but unreachable from the transcript
+  `SubagentCollaboration.ts:325-341`) are listed but unreachable from the transcript
   (no `subAgentActivity` for `source !== 'collaboration'`,
-  `ThreadService.ts:2203-2211`).
+  `SubagentCollaboration.ts:274-282`).
 - **S13 — The child link is 3 clicks deep post-run.** The process block folds
-  under "Worked for …" (`ThreadView.tsx:1471-1478`), then the group, then the
-  spawn row (`ThreadItemView.tsx:238`, `594`).
+  under "Worked for …" (`ThreadView.tsx:1843-1866`), then the group
+  (`ThreadItemView.tsx:225-278`), then the spawn row
+  (`ThreadItemView.tsx:589-660`, `894-910`).
 
 ### Control (PR 3)
 
 - **S14 — The user cannot stop a running child.** Child views have no
-  composer and no Stop (`ThreadDock.tsx:294`, `ThreadView.tsx:883`,
-  `949-961`); parent Stop does not cascade (`interruptTurn` aborts only the
-  addressed Thread, `ThreadService.ts:1996-2002`);
-  `collaboration.interrupt_agent` is model-only (`ToolRuntime.ts:243-250`).
+  composer and no Stop (`ThreadDock.tsx:293-295`,
+  `ThreadView.tsx:1237-1324`); parent Stop does not cascade (`interruptTurn`
+  aborts only the
+  addressed Thread, `TurnLifecycle.ts:448-453`);
+  `collaboration.interrupt_agent` is model-only
+  (`SubagentCollaboration.ts:166-173`).
   The only user-reachable stop is deleting the Thread — which destroys the
-  subtree (`ThreadService.ts:1617-1647`).
+  subtree (`ThreadCatalogOps.ts:513-547`).
 - **S15 — No aggregate "what are my agents doing" surface.** The program docs
   describe a task panel as the intended background-visibility surface
   (`docs/plans/agent-program.md:75-76`,
@@ -161,7 +171,7 @@ Refreshed 2026-07-30 after the gate review (R2); #450 and #451 have merged.
 **One presentation row per child, driven by live state.** The canonical
 Items stay append-only; the renderer builds a per-Turn *presentation
 projection* over them (same pattern as the existing Turn process projection,
-`docs/spec/agent-thread-rendering.md:76-88`):
+`docs/spec/agent-thread-rendering.md:151-163`):
 
 - All `subAgentActivity` Items for the same `agentThreadId` within a Turn
   collapse into one row; the rendered status is the latest kind
@@ -169,12 +179,17 @@ projection* over them (same pattern as the existing Turn process projection,
   its position at the first activity's canonical slot. No duplicate
   Running-then-Completed pairs (S1).
 - While no terminal activity Item exists, the row's status is read from the
-  live Thread catalog in `threadStore` — child `thread/started` /
-  `turn/completed` notifications already reach the renderer and update catalog
-  metadata (`threadStore.ts:400-406`). This makes child completion visible the
-  moment it happens, independent of the parent-side flush timing (S3), and
-  adds a live elapsed time for running children (S4). Canonical history is
-  untouched; on reload the terminal Items are authoritative.
+  live canonical state in `threadStore`: the Thread catalog supplies
+  `active`/`idle`, while the latest canonical `turn/started` or
+  `turn/completed` notification supplies start time, terminal status, and
+  `TurnError`. The store currently consumes those notifications at
+  `threadStore.ts:387-450`; PR 1 retains one latest canonical Turn per Thread
+  even when that child's paged history is not loaded. This makes child
+  completion visible the moment it happens, independent of the parent-side
+  flush timing (S3), and adds a live elapsed time for running children (S4).
+  This is a cache of the canonical DTO, not a parallel execution model;
+  canonical parent history is untouched, and on reload terminal Items are
+  authoritative.
 - Spawn/wait tool rows stop rendering the stale `agentsStates` snapshot as if
   it were current: per-child lines derive from the same live projection, and
   the persisted snapshot remains visible only inside the expanded raw
@@ -184,24 +199,27 @@ projection* over them (same pattern as the existing Turn process projection,
 - **Protocol addition (coordinated, pre-release no-migration):**
   `collabAgentToolCall.agentsStates` values widen from bare status to
   `{ status, taskPath, nickname, role }` — data the service already has at
-  completion (`ThreadService.ts:318-327`) — so rows show `/root/research`
+  completion (`SubagentCollaboration.ts:591-615`) — so rows show `/root/research`
   instead of a truncated UUID after the child Thread is deleted (S6).
-  `subAgentActivity` already carries `agentPath` (`protocol.ts:929-934`).
+  `subAgentActivity` already carries `agentPath` (`protocol.ts:955-960`).
 - Failure presentation reuses the tool-row status vocabulary from
   `agent-run-presentation-consistency.md` PR A: `errored` tints the row's
   icon + label with `--status-danger`; `interrupted` uses the muted
-  treatment; the terminal row exposes the child's bounded error summary when
-  the outcome carries one (`CollaborationTerminalOutcome.error`,
-  `ThreadService.ts:329-335`) instead of leaving it inside raw JSON (S5).
-- Copy: collaboration rows read as product language — "Started subagent
-  research", "Waited for 3 subagents", "Subagent research failed" — via typed
-  i18n keys (en + zh-Hans), replacing "Using spawn_agent" (S7). An
+  treatment. `subAgentActivity` widens with `error: TurnError | null`, copied
+  from the exact child Turn when terminal activity is queued; the terminal row
+  exposes the bounded user-safe summary instead of leaving it inside raw JSON
+  (S5). Budget-shaped errors are selected only by the closed code and translated
+  to the existing localized resource-limit/result-preserved copy; token numbers
+  never reach the row, its accessible label, title, or copy text.
+- Copy: individual child rows read as product language — "Started subagent
+  research", "Subagent research failed" — via typed i18n keys (en + zh-Hans).
+  #461 already fixed the generic collaboration tool-row vocabulary (S7). An
   idle-but-alive child renders "Idle", distinct from "Completed" (S8; the
   model-facing `wait_agent` payload is unchanged).
 - **Correction (PM discussion, 2026-07-30):** a child Thread can never carry
   `waitingOnUserInput` — `request_user_input` is root-scoped and hard-rejected
-  for children (`src/core/agent/tools.ts:412-418`,
-  `ThreadService.ts:2013-2015`), so the earlier "blocked child" framing was
+  for children (`src/core/agent/tools.ts:414-418`,
+  `TurnLifecycle.ts:462-466`), so the earlier "blocked child" framing was
   wrong. Blocked-on-input surfacing applies to the parent only and is owned by
   `agent-run-presentation-consistency.md` PR B. What this PR adds instead
   (Q3, ratified): while the parent Turn's only in-progress work is
@@ -219,19 +237,19 @@ projection* over them (same pattern as the existing Turn process projection,
   `ThreadDock.tsx:245-255`); activating it selects the parent. Breadcrumb
   depth beyond one level collapses to the immediate parent (S10).
 - **Resilient links.** Transcript child links route through `openThreadById`
-  (catalog-recovering, `threadStore.ts:120-127`); a genuinely deleted Thread
+  (catalog-recovering, `threadStore.ts:120-126`); a genuinely deleted Thread
   produces the existing transient feedback affordance instead of a silent
   throw (S11).
 - **Children leave the Thread list (PM-ratified, 2026-07-30; S12, S13).**
   The history list is "conversations the user had"; a child Thread is an
   execution artifact of a Turn, not a conversation — and the current
   indentation-without-adjacency rendering (recency sort,
-  `threadStore.ts:624-626`, plus margin-only depth, `ThreadList.tsx:126`,
+  `threadStore.ts:626-627`, plus margin-only depth, `ThreadList.tsx:126`,
   `201-215`) is internally contradictory. Rather than building true nesting
   (tree rendering, expand state, sort ambiguity, a fight with the flat keyset
   pagination), child Threads stop being list rows entirely:
   - `thread/list` returns root Threads only (service-side filter,
-    `ThreadService.ts:1240-1263`), so children stop occupying keyset cursor
+    `ThreadCatalogOps.ts:148-171`), so children stop occupying keyset cursor
     slots and cannot displace roots between pages. The lineage-indent
     rendering is deleted.
   - A root Thread with any live descendant shows a neutral
@@ -243,12 +261,12 @@ projection* over them (same pattern as the existing Turn process projection,
     name, status, last activity; each row opens the child (via
     `openThreadById`) and offers Delete, plus a "Delete finished subagents"
     bulk action through the existing cascading delete path
-    (`ThreadService.ts:1617-1647`). This is the fallback browse surface now
+    (`ThreadCatalogOps.ts:513-547`). This is the fallback browse surface now
     that the list no longer carries children.
   - Isolated-Skill children (`skill_<slug>_<hex>`) equally leave the list and
     become reachable from their invoking `skill` tool row via the same
     supplemental child-Thread link affordance collaboration rows have
-    (`docs/spec/agent-thread-rendering.md:54-66`).
+    (`docs/spec/agent-thread-rendering.md:140-141`).
 - Spec: rewrite `docs/spec/agent-thread-rendering.md:14-16` and the Thread
   list section in the same change — child Threads are not Thread-list rows;
   they are reachable from the parent transcript and parent Thread Details.
@@ -276,7 +294,7 @@ Ratified shape (Q1/Q2, PM 2026-07-30):
   authorization: the target must be a descendant of a user-owned root. Per
   the user bright line, a human-triggered interrupt is never budget- or
   state-gated: it aborts the active child Turn and leaves the Thread for
-  follow-up (`ThreadService.ts:1996-2002` semantics unchanged).
+  follow-up (`TurnLifecycle.ts:448-453` semantics unchanged).
 - **Parent Stop cascades (Q2).** The composer Stop on a delegating Turn
   interrupts the parent Turn and every live descendant Turn (service-side
   walk of the descendant tree, same authorization). A user pressing Stop
@@ -311,7 +329,9 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   precedence, live catalog fallback, terminal-Item authority on reload);
   core tests for the widened `agentsStates` payload; E2E: spawn → row shows
   live Running with elapsed; child completes mid-parent-Turn → row flips
-  without waiting for flush; child failure shows tinted row + error summary.
+  without waiting for flush; child failure shows tinted row + error summary;
+  `wait_agent` as the only in-progress work produces the localized "Waiting
+  on N subagents · elapsed" divider.
 - PR 2: E2E for back-affordance round-trip (child → parent preserves parent
   scroll per the existing snapshot mechanism); the Thread list excludes
   children while the parent row shows the activity indicator during a live
@@ -319,9 +339,8 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   finished ones; skill-row child link; renderer test for `openThreadById`
   fallback feedback; core test for the root-only `thread/list` page shape.
 - PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
-  a running child, parent-Stop cascade interrupting live descendants, and the
-  "Waiting on N subagents" divider while `wait_agent` is the only in-progress
-  work; light + dark visual verification for card and indicators.
+  a running child, and parent-Stop cascade interrupting live descendants;
+  light + dark visual verification for card and indicators.
 - All PRs: `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   focused `bun run test:e2e` scope, `bun run docs:check`; spec updated in the
   same change (A6); dev userData wipe noted in the PR body for the PR 1

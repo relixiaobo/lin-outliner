@@ -266,6 +266,7 @@ describe('renderer Thread store', () => {
     notify({ type: 'turn/started', threadId: unloaded.id, turnId: started.id, turn: started });
 
     expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
+    expect(store.getSnapshot().latestTurnByThread.get(unloaded.id)).toEqual(started);
     expect(store.getSnapshot().threads[0]).toMatchObject({
       id: unloaded.id,
       preview: 'Background activity',
@@ -281,7 +282,70 @@ describe('renderer Thread store', () => {
     notify({ type: 'turn/completed', threadId: unloaded.id, turnId: completed.id, turn: completed });
 
     expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
+    expect(store.getSnapshot().latestTurnByThread.get(unloaded.id)).toEqual(completed);
     expect(store.getSnapshot().threads[0]).toMatchObject({ id: unloaded.id, updatedAt: 110 });
+  });
+
+  test('clears latest canonical Turn cache entries when reload drops a Thread', async () => {
+    const owner = thread('thread-1', 2);
+    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    let listCalls = 0;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') {
+          listCalls += 1;
+          return { data: listCalls === 1 ? [owner, child] : [owner], nextCursor: null };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const active = turn('turn-child', 'inProgress', '');
+    notify({ type: 'turn/started', threadId: child.id, turnId: active.id, turn: active });
+    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(true);
+
+    await store.reloadThreads();
+
+    expect(store.getSnapshot().threads.map((entry) => entry.id)).toEqual([owner.id]);
+    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(false);
+  });
+
+  test('clears latest canonical Turn cache entries for a deleted subtree', async () => {
+    const owner = thread('thread-1', 2);
+    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner, child], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/delete') return {};
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const completed = turn('turn-child', 'completed', 'done');
+    notify({ type: 'turn/completed', threadId: child.id, turnId: completed.id, turn: completed });
+
+    await store.deleteThread(owner.id);
+
+    expect(store.getSnapshot().threads).toEqual([]);
+    expect(store.getSnapshot().latestTurnByThread.size).toBe(0);
   });
 
   test('removes a transient fork notification when Continue in new chat fails', async () => {
@@ -624,6 +688,44 @@ describe('renderer Thread store', () => {
         outputId: 'a'.repeat(64),
       },
     }]);
+  });
+
+  test('never resolves raw collaboration output through the renderer store', async () => {
+    let reads = 0;
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async () => {
+        reads += 1;
+        return { output: null };
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    const item: Extract<ThreadItem, { type: 'collabAgentToolCall' }> = {
+      id: 'collaboration-item',
+      provenance: {
+        originThreadId: 'thread-1',
+        originTurnId: 'turn-1',
+        originItemId: 'collaboration-item',
+      },
+      type: 'collabAgentToolCall',
+      tool: 'wait_agent',
+      status: 'completed',
+      outputRef: {
+        id: 'c'.repeat(64),
+        mimeType: 'application/json',
+        byteLength: 40,
+        summary: 'tokensUsed: 1234',
+      },
+      senderThreadId: 'thread-1',
+      receiverThreadIds: [],
+      prompt: null,
+      model: null,
+      reasoningEffort: null,
+      agentsStates: {},
+    };
+
+    expect(await store.readItemOutput('thread-1', 'turn-1', item)).toBeNull();
+    expect(reads).toBe(0);
   });
 
   test('retries a full tool output read after a transient request failure', async () => {

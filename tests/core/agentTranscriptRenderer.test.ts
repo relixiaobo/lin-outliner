@@ -82,7 +82,7 @@ export const a = 1;
 ### Tool collaboration.spawn_agent — completed
 args: {"message":"Audit the parser."}
 output:
-{"status":"completed","receiverThreadIds":["thread-grandchild"],"agentsStates":{"thread-grandchild":"running"}}
+{"status":"completed","receiverThreadIds":["thread-grandchild"],"agentsStates":{"thread-grandchild":{"status":"running","taskPath":"/root/audit/parser","nickname":"Parser","role":"worker"}}}
 
 - [subagent:completed] /root/audit/parser (thread-grandchild)
 
@@ -301,7 +301,14 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       prompt: 'Audit the parser.',
       model: null,
       reasoningEffort: null,
-      agentsStates: { 'thread-grandchild': 'running' },
+      agentsStates: {
+        'thread-grandchild': {
+          status: 'running',
+          taskPath: '/root/audit/parser',
+          nickname: 'Parser',
+          role: 'worker',
+        },
+      },
     },
     {
       type: 'subAgentActivity',
@@ -310,6 +317,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       kind: 'completed',
       agentThreadId: 'thread-grandchild',
       agentPath: '/root/audit/parser',
+      error: null,
     },
     {
       type: 'contextCompaction',

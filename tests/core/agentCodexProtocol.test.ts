@@ -190,7 +190,14 @@ const allItems: readonly ThreadItem[] = [
     prompt: 'Inspect tests',
     model: null,
     reasoningEffort: null,
-    agentsStates: { [CHILD_THREAD_ID]: 'running' },
+    agentsStates: {
+      [CHILD_THREAD_ID]: {
+        status: 'running',
+        taskPath: '/root/inspect_tests',
+        nickname: null,
+        role: null,
+      },
+    },
     outputRef: null,
   },
   {
@@ -200,6 +207,7 @@ const allItems: readonly ThreadItem[] = [
     kind: 'started',
     agentThreadId: CHILD_THREAD_ID,
     agentPath: '/root/inspect_tests',
+    error: null,
   },
   {
     type: 'webSearch',
@@ -396,6 +404,18 @@ describe('Codex Agent Core protocol codec', () => {
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.provenance)).toBe(true);
     }
+  });
+
+  test('rejects pre-status-truth Subagent Item shapes without a legacy reader', () => {
+    const collaboration = allItems.find((item) => item.type === 'collabAgentToolCall')!;
+    expect(() => decodeThreadItem({
+      ...collaboration,
+      agentsStates: { [CHILD_THREAD_ID]: 'running' },
+    })).toThrow('expected an object');
+
+    const activity = { ...allItems.find((item) => item.type === 'subAgentActivity')! } as Record<string, unknown>;
+    delete activity.error;
+    expect(() => decodeThreadItem(activity)).toThrow('item.error');
   });
 
   test('reads a command Item persisted before it carried a description', () => {
