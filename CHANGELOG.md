@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **A subagent gets one row in the parent transcript, and that row tells the
+  truth (PR #466, codex-2)** — a delegated child used to append a fresh row for
+  every lifecycle event, so one subagent read as several and the parent's
+  transcript grew a row for work the reader had already seen finish. Each child
+  now occupies exactly one live presentation row: terminal parent Items are
+  authoritative, and the latest canonical child Turn is used only as the live
+  fallback, retained per Thread even when child history is unloaded — reload
+  omissions, rollback, and subtree deletion clear that cache rather than letting
+  it go stale. The row shows live elapsed time and distinct
+  idle/completed/interrupted/failed/unavailable states, and the process divider
+  says `Waiting on N subagents · elapsed` only when `wait_agent` is the sole
+  in-progress tool, so the parent never claims to be waiting on a child that
+  already finished. Collaboration identity (`status`, `taskPath`, `nickname`,
+  `role`) and the child's exact terminal `TurnError` are persisted as typed
+  records instead of a bare status string. Budget failures are classified only
+  by `Turn.error.code` and rendered as resource-limit copy with no token
+  quantities anywhere the reader can see, and raw collaboration output stays out
+  of user surfaces. Child Threads remain composer-less; navigation and
+  per-child interrupt are still to come. **This is a pre-release protocol clean
+  cut** — the codec rejects the old `subAgentActivity` and `agentsStates`
+  shapes, so wipe clone-local `~/.lin-outliner-*` dev userData before running.
 - **The run's status line stops claiming more than the run is doing (PR #463,
   cc-2)** — a settled Turn is now always described in the past instead of
   falling through to the live "Working" label, and exactly one element owns a

@@ -32,13 +32,27 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-31).** Open PR queue: **#465** (codex-4,
-`agent-reasoning-replay-fidelity`) and **#466** (codex-2, `agent-subagent-status-truth`)
-are ready for the gate — two plan-track changes awaiting review, i.e. the WIP cap is
-full; **#467** (cc-2, plan-progress pill) is a Draft claim. PM staffing next:
-`agent-run-presentation-consistency` PR C is the plan's only unclaimed unit;
-`agent-browser-control` implementation is **shelved** pending upstream Browser Pilot
-stabilization (PM ruling 2026-07-31).
-Recently merged: #464 (`codex/red-e2e-on-main`) — `test:e2e` is a clean gate signal
+`agent-reasoning-replay-fidelity`) is ready for the gate — one plan-track change
+awaiting review, so there is room for one more; **#467** (cc-2, plan-progress pill)
+is a Draft claim. PM staffing next: `agent-subagent-interaction` PR 2 (navigation +
+Thread-list hygiene) and PR 3 (delegation card + interrupt) are both unblocked now
+that PR 1 has landed; `agent-run-presentation-consistency` PR C is that plan's only
+unclaimed unit; `agent-browser-control` implementation is **shelved** pending upstream
+Browser Pilot stabilization (PM ruling 2026-07-31).
+Recently merged: #466 (`codex-2/agent-subagent-status-truth`,
+`agent-subagent-interaction` PR 1) after a low review gate. The gate's two findings
+were both re-checked and neither survived: the codec's rejection of pre-existing
+`subAgentActivity` Items is the PR's declared pre-release clean cut (wipe
+`~/.lin-outliner-*` dev userData; no legacy reader), and the "unreachable"
+`terminal.kind === 'started'` ternary is type narrowing a cast would only make worse.
+The real gate work was integration — the branch forked before #463 and main had moved
+16 commits, so three conflicts were resolved as unions, one of them a semantic conflict
+git merged silently: #463 extracted `threadProcessNeutralHeader` out of
+`threadProcessSummary`, and this branch's `collaborationThreadIds` edit landed inside
+the extracted body without the `subagents` parameter it needs. Post-integration
+typecheck, `test:core` (1592), `test:renderer` (907), `test:e2e agent-thread.spec.ts`
+(59), and `docs:check` are all green.
+#464 (`codex/red-e2e-on-main`) — `test:e2e` is a clean gate signal
 again; the two deterministic B5 guard failures bisected to one real omission (the
 jump-to-latest pill's material was never registered) and the third filed spec no longer
 reproduces at all.
@@ -452,7 +466,8 @@ before any directional/security-sensitive build.
   costs accuracy, never the delegator's result. Design folded into
   `docs/spec/agent-subagent-threads.md`; plan archived at
   `docs/plans/archive/subagent-transcript-artifact.md`.
-- **agent-subagent-interaction** (P2, `draft` — cc-2, plan merged #454 after gate review;
+- **agent-subagent-interaction** (P2, `in-progress` — cc-2, plan merged #454 after gate
+  review; **PR 1 `done` 2026-07-31 via #466** (codex-2), PR 2 / PR 3 unclaimed;
   shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
   presentation row per child over append-only Items, `agentsStates` widened to
   `{status, taskPath, nickname, role}`, product language, failure tinting), PR 2 navigation +
@@ -462,14 +477,14 @@ before any directional/security-sensitive build.
   dock-level agents panel (the #160 panel lived and was dissolved — reconsider only on
   demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
   the standing "task contract meta doc" idea is folded here rather than written separately.
-  PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 1/2
-  independent and claimable now; PR 3 after PR 1. **Evidence warning:** the plan's ~15
-  `ThreadService.ts:NNNN` citations predate #451's decomposition — that file is now 875
-  lines (citations reach 3659, i.e. past EOF) and the concerns moved to
-  `thread/TurnLifecycle.ts` (turn lifecycle, `activeFlags`, pending child activity),
-  `thread/SubagentCollaboration.ts` (spawn, rows, terminal outcome),
-  `thread/ThreadCatalogOps.ts` (thread list, subtree). The DEFECTS are still real; only
-  the pointers rotted — re-locate each before building.
+  PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 2 and
+  PR 3 are both claimable now that PR 1 has landed. The plan's stale
+  `ThreadService.ts:NNNN` citations (they predated #451's decomposition and reached past
+  EOF) were repaired on the #466 branch — each relocated to `thread/TurnLifecycle.ts`,
+  `thread/SubagentCollaboration.ts`, or `thread/ThreadCatalogOps.ts` and revalidated
+  against current code. PR 1's design is folded into
+  `docs/spec/agent-thread-rendering.md` + `docs/spec/agent-subagent-threads.md`; the plan
+  stays out of `archive/` until PR 2 and PR 3 ship.
   See `docs/plans/agent-subagent-interaction.md`.
 - **toolruntime-handler-contribution** (P2, `done` 2026-07-30; PR #456, codex-2) —
   collaboration handlers moved verbatim into `thread/SubagentCollaboration.ts` via the
