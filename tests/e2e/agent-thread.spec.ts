@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -9,6 +9,74 @@ async function createNewThread(page: Page): Promise<void> {
   await page.getByRole('dialog', { name: 'Threads' })
     .getByRole('button', { name: 'New Thread' })
     .click();
+}
+
+async function setTranscriptFollowingBottom(page: Page): Promise<void> {
+  const transcript = page.locator('.thread-transcript');
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event('scroll'));
+  });
+  await expect.poll(() => transcript.evaluate((element) => (
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ))).toBeLessThanOrEqual(1);
+}
+
+async function toggleDisclosureWithStableAnchor(toggle: Locator, anchor: Locator = toggle): Promise<void> {
+  await expect(toggle).toBeVisible();
+  await expect(anchor).toBeVisible();
+  const top = await anchor.evaluate((element) => element.getBoundingClientRect().top);
+  await toggle.click();
+  const frameDeltas = await anchor.evaluate(async (element, expectedTop) => {
+    const deltas: number[] = [];
+    for (let frame = 0; frame < 16; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      deltas.push(Math.abs(element.getBoundingClientRect().top - expectedTop));
+    }
+    return deltas;
+  }, top);
+  expect(Math.max(...frameDeltas)).toBeLessThan(1);
+}
+
+async function seedOverflowingTranscript(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000fa01';
+    const itemId = '01910000-0000-7000-8000-00000000fa02';
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [{
+          id: itemId,
+          type: 'agentMessage',
+          provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+          text: Array.from(
+            { length: 32 },
+            (_, index) => `Earlier transcript evidence ${index + 1}.`,
+          ).join('\n\n'),
+          phase: 'final_answer',
+          memoryCitation: null,
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    });
+  });
+  await expect(page.getByText('Earlier transcript evidence 32.')).toBeVisible();
 }
 
 /**
@@ -1151,13 +1219,14 @@ test.describe('canonical agent Thread surface', () => {
       'Beforeagenda.pdfmiddlereference-1.png reference-2.png reference-3.png reference-4.png reference-5.png reference-6.pngAfter',
     );
 
-    await showAll.click();
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(showAll, gallery);
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(6);
     await expect(gallery).toHaveAttribute('data-layout-count', 'many');
     await expect(showAll).toHaveCount(0);
     const showFewer = gallery.getByRole('button', { name: 'Show fewer images' });
     await expect(showFewer).toBeVisible();
-    await showFewer.click();
+    await toggleDisclosureWithStableAnchor(showFewer, gallery);
     await expect(gallery.locator('.thread-image-gallery-tile')).toHaveCount(4);
     await expect(gallery).toHaveAttribute('data-layout-count', '4');
     await expect(gallery.getByRole('button', { name: 'Show all 6 images' })).toBeVisible();
@@ -2008,6 +2077,7 @@ test.describe('canonical agent Thread surface', () => {
 
   test('renders reasoning and grouped tool Items with disclosure and copy interactions', async ({ page }) => {
     await createNewThread(page);
+    await seedOverflowingTranscript(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -2093,7 +2163,14 @@ test.describe('canonical agent Thread surface', () => {
 
     const process = page.getByRole('button', { name: 'Worked for <1s' });
     await expect(process).toHaveAttribute('aria-expanded', 'false');
-    await process.click();
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(process);
+    await expect(process).toHaveAttribute('aria-expanded', 'true');
+    await toggleDisclosureWithStableAnchor(process);
+    await expect(process).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(process);
+    await expect(process).toHaveAttribute('aria-expanded', 'true');
 
     const thought = page.locator('.thread-reasoning-toggle').first();
     await expect(thought).toBeVisible();
@@ -2109,7 +2186,8 @@ test.describe('canonical agent Thread surface', () => {
     expect(Math.abs(thoughtBox!.x - activityBox!.x)).toBeLessThan(1);
     await thought.hover();
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
-    await thought.click();
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(thought);
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
     const reasoningBody = page.locator('.thread-reasoning-body');
@@ -2123,6 +2201,11 @@ test.describe('canonical agent Thread surface', () => {
     expect(thoughtHeadlineBox).toBeTruthy();
     expect(reasoningBodyBox).toBeTruthy();
     expect(Math.abs(thoughtHeadlineBox!.x - reasoningBodyBox!.x)).toBeLessThan(1);
+    await toggleDisclosureWithStableAnchor(thought);
+    await expect(thought).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(thought);
+    await expect(thought).toHaveAttribute('aria-expanded', 'true');
     const singleLineThought = page.locator('.thread-reasoning-toggle').nth(1);
     await expect(singleLineThought).toHaveAccessibleName(/Thought.*Preparing the final response/);
     await expect(singleLineThought).toHaveAttribute('aria-expanded', 'false');
@@ -2138,7 +2221,13 @@ test.describe('canonical agent Thread surface', () => {
     await activity.hover();
     await expect(activityStatus).toHaveCSS('opacity', '0');
     await expect(activityChevron).toHaveCSS('opacity', '1');
-    await activity.click();
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(activity);
+    await expect(activity).toHaveAttribute('aria-expanded', 'true');
+    await toggleDisclosureWithStableAnchor(activity);
+    await expect(activity).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(activity);
     await expect(activity).toHaveAttribute('aria-expanded', 'true');
     const command = page.getByRole('button', { name: /Ran.*pwd/ });
     await expect(command).toBeVisible();
@@ -2153,9 +2242,15 @@ test.describe('canonical agent Thread surface', () => {
     });
     expect(commandAlignment).not.toBeNull();
     expect(commandAlignment!).toBeLessThan(1);
-    await command.click();
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(command);
     await expect(command.locator('xpath=..')).not.toContainText('exit 0');
     await expect(command.locator('xpath=..').getByRole('button', { name: 'Copy output' })).toHaveCount(1);
+    await toggleDisclosureWithStableAnchor(command);
+    await expect(command).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    await toggleDisclosureWithStableAnchor(command);
+    await expect(command).toHaveAttribute('aria-expanded', 'true');
     await command.locator('xpath=..').locator('.thread-tool-section').last().locator('.agent-code-block').hover();
     await page.getByRole('button', { name: 'Copy output' }).click();
     expect(await clipboardText(page)).toBe('/mock/workspace');
@@ -2204,7 +2299,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.outline-panel-surface.active-panel.is-file-preview'))
       .toContainText('Mock preview text.');
 
-    await page.getByRole('button', { name: 'Copy message' }).click();
+    await page.locator('[data-thread-turn-row="01910000-0000-7000-8000-00000000aa01"]')
+      .getByRole('button', { name: 'Copy message' })
+      .click();
     expect(await clipboardText(page)).toBe([
       '```tool bash',
       JSON.stringify({ command: 'pwd', cwd: '/mock/workspace' }, null, 2),
@@ -3565,7 +3662,7 @@ test.describe('canonical agent Thread surface', () => {
     ))).toBeLessThanOrEqual(1);
   });
 
-  test('keeps following when a long user message expands at the bottom', async ({ page }) => {
+  test('keeps a bottom-positioned long-message disclosure anchored', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill(Array.from(
@@ -3575,15 +3672,154 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('button', { name: 'Send' }).click();
 
     const transcript = page.locator('.thread-transcript');
-    await expect(page.getByRole('button', { name: 'Show more' })).toBeVisible();
+    const disclosure = page.locator('.thread-user-expand-button');
+    await expect(disclosure).toHaveAccessibleName('Show more');
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
     await expect.poll(() => transcript.evaluate((element) => (
       element.scrollHeight - element.scrollTop - element.clientHeight
     ))).toBeLessThanOrEqual(1);
 
-    await page.getByRole('button', { name: 'Show more' }).click();
-    await expect(page.getByRole('button', { name: 'Show less' })).toBeVisible();
+    await toggleDisclosureWithStableAnchor(disclosure);
+    await expect(disclosure).toHaveAccessibleName('Show less');
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+
+    await toggleDisclosureWithStableAnchor(disclosure);
+    await expect(disclosure).toHaveAccessibleName('Show more');
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+  });
+
+  test('lets a keyboard send supersede a pending disclosure anchor', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill(Array.from(
+      { length: 80 },
+      (_, index) => `Pending disclosure evidence ${index + 1}.`,
+    ).join(' '));
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const disclosure = page.locator('.thread-user-expand-button');
+    await expect(disclosure).toHaveAccessibleName('Show more');
+    await composer.fill('Send while the disclosure anchor is pending.');
+    await page.evaluate(() => {
+      const toggle = document.querySelector<HTMLButtonElement>('.thread-user-expand-button');
+      const editor = document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message this Thread"]');
+      if (!toggle || !editor) throw new Error('Missing disclosure or composer');
+      toggle.click();
+      editor.focus();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Enter',
+        key: 'Enter',
+      }));
+    });
+
+    const sentMessage = page.locator('.thread-user-message').filter({
+      hasText: 'Send while the disclosure anchor is pending.',
+    });
+    await expect(sentMessage).toBeVisible();
+    await expect.poll(() => sentMessage.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+    await expect.poll(() => page.locator('.thread-transcript-content').evaluate((element) => (
+      element.style.paddingBottom
+    ))).toBe('');
+  });
+
+  test('replays bottom follow after a streaming update waits on a disclosure anchor', async ({ page }) => {
+    await createNewThread(page);
+    await seedOverflowingTranscript(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000fb01';
+      const userItemId = '01910000-0000-7000-8000-00000000fb02';
+      const reasoningItemId = '01910000-0000-7000-8000-00000000fb03';
+      const responseItemId = '01910000-0000-7000-8000-00000000fb04';
+      const provenance = (originItemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userItemId,
+              type: 'userMessage',
+              provenance: provenance(userItemId),
+              content: [{ type: 'text', text: 'Keep following this short live response.' }],
+            },
+            {
+              id: reasoningItemId,
+              type: 'reasoning',
+              provenance: provenance(reasoningItemId),
+              summary: ['Inspect'],
+              content: [],
+            },
+            {
+              id: responseItemId,
+              type: 'agentMessage',
+              provenance: provenance(responseItemId),
+              text: 'Streaming follow checkpoint.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: 3,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { responseItemId, threadId, turnId };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const thought = page.locator('.thread-reasoning-toggle').last();
+    await expect(thought).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    const anchoredTop = await thought.evaluate((element) => element.getBoundingClientRect().top);
+    await page.evaluate(({ responseItemId, threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const toggle = document.querySelectorAll<HTMLButtonElement>('.thread-reasoning-toggle');
+      toggle[toggle.length - 1]?.click();
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/delta',
+        threadId,
+        turnId,
+        itemId: responseItemId,
+        delta: { type: 'agentMessageText', delta: ' continued' },
+      });
+    }, fixture);
+    await expect(thought).toHaveAttribute('aria-expanded', 'true');
+    await page.evaluate(async () => {
+      for (let frame = 0; frame < 4; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+    });
+    expect(Math.abs(await thought.evaluate((element) => (
+      element.getBoundingClientRect().top
+    )) - anchoredTop)).toBeLessThan(1);
     await expect.poll(() => transcript.evaluate((element) => (
       element.scrollHeight - element.scrollTop - element.clientHeight
     ))).toBeLessThanOrEqual(1);

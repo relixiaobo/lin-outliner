@@ -411,7 +411,13 @@ function base(id: string) {
 function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Document } {
   return renderTree(
     <ThreadToolActivityGroup
-      expandState={{ isExpanded: () => false, toggle: () => undefined }}
+      expandState={{
+        captureAnchor: () => undefined,
+        holdAnchorUntilSettled: () => null,
+        isExpanded: () => false,
+        restoreAnchor: () => undefined,
+        toggle: () => undefined,
+      }}
       items={items}
       onOpenThread={async () => undefined}
       onReadToolOutput={async () => null}
@@ -515,13 +521,14 @@ function ThreadItemProbe({
       canEditUserMessage={false}
       defaultReasoningExpanded={false}
       expandState={expandState ?? {
+        captureAnchor: () => undefined,
         holdAnchorUntilSettled,
         isExpanded: () => expanded,
+        restoreAnchor: () => undefined,
         toggle: (_id, currentlyExpanded) => setExpanded(!currentlyExpanded),
       }}
       index={buildIndex(emptyProjection())}
       item={item}
-      onDisclosureToggle={() => undefined}
       onEditUserMessage={async () => undefined}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}

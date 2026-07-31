@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 const DISCLOSURE_ANCHOR_RESTORE_FRAMES = 12;
+const DISCLOSURE_ANCHOR_HOLD_TIMEOUT_MS = 3_000;
 const SCROLL_INTENT_KEYS = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ']);
 
 export interface DisclosureScrollAnchorSnapshot {
@@ -12,6 +13,7 @@ export interface DisclosureScrollAnchorSnapshot {
 
 export interface DisclosureScrollAnchorRestoreResult {
   readonly moved: boolean;
+  readonly remainingDelta: number;
   readonly restored: boolean;
 }
 
@@ -51,15 +53,24 @@ export function captureDisclosureScrollAnchor(
 export function restoreDisclosureScrollAnchor(
   snapshot: DisclosureScrollAnchorSnapshot | null,
 ): DisclosureScrollAnchorRestoreResult {
-  if (!snapshot || !snapshot.scroller.isConnected) return { moved: false, restored: false };
+  if (!snapshot || !snapshot.scroller.isConnected) {
+    return { moved: false, remainingDelta: 0, restored: false };
+  }
   const element = snapshot.element.isConnected
     ? snapshot.element
     : snapshot.resolveElement?.() ?? null;
-  if (!element || !snapshot.scroller.contains(element)) return { moved: false, restored: false };
+  if (!element || !snapshot.scroller.contains(element)) {
+    return { moved: false, remainingDelta: 0, restored: false };
+  }
   const delta = element.getBoundingClientRect().top - snapshot.top;
-  if (Math.abs(delta) < 1) return { moved: false, restored: true };
+  if (Math.abs(delta) < 1) return { moved: false, remainingDelta: 0, restored: true };
+  const previousScrollTop = snapshot.scroller.scrollTop;
   snapshot.scroller.scrollTop += delta;
-  return { moved: true, restored: true };
+  return {
+    moved: Math.abs(snapshot.scroller.scrollTop - previousScrollTop) >= 1,
+    remainingDelta: element.getBoundingClientRect().top - snapshot.top,
+    restored: true,
+  };
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -73,15 +84,23 @@ function isScrollIntentKey(event: KeyboardEvent) {
   return SCROLL_INTENT_KEYS.has(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey && !isEditableTarget(event.target);
 }
 
-export function usePendingDisclosureAnchor(onRestore?: () => void) {
+export function usePendingDisclosureAnchor(
+  onRestore?: (result: DisclosureScrollAnchorRestoreResult) => void,
+  onRelease?: () => void,
+) {
   const activeAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
   const expectedScrollTopRef = useRef<number | null>(null);
   const interactionCleanupRef = useRef<(() => void) | null>(null);
   const holdCountRef = useRef(0);
+  const holdTimeoutsRef = useRef(new Set<number>());
   const anchorGenerationRef = useRef(0);
+  const onReleaseRef = useRef(onRelease);
+  const onRestoreRef = useRef(onRestore);
   const restoringRef = useRef(false);
   const restoreFramesRemainingRef = useRef(0);
   const restoreFrameRef = useRef<number | null>(null);
+  onReleaseRef.current = onRelease;
+  onRestoreRef.current = onRestore;
 
   const cancelRestoreFrame = useCallback(() => {
     if (restoreFrameRef.current === null) return;
@@ -94,15 +113,23 @@ export function usePendingDisclosureAnchor(onRestore?: () => void) {
     interactionCleanupRef.current = null;
   }, []);
 
+  const clearHoldTimeouts = useCallback(() => {
+    for (const timeout of holdTimeoutsRef.current) window.clearTimeout(timeout);
+    holdTimeoutsRef.current.clear();
+  }, []);
+
   const clearActiveAnchor = useCallback(() => {
+    const hadActiveAnchor = activeAnchorRef.current !== null;
     anchorGenerationRef.current += 1;
     activeAnchorRef.current = null;
     expectedScrollTopRef.current = null;
     holdCountRef.current = 0;
     restoreFramesRemainingRef.current = 0;
     cancelRestoreFrame();
+    clearHoldTimeouts();
     clearInteractionListeners();
-  }, [cancelRestoreFrame, clearInteractionListeners]);
+    if (hadActiveAnchor) onReleaseRef.current?.();
+  }, [cancelRestoreFrame, clearHoldTimeouts, clearInteractionListeners]);
 
   const installInteractionListeners = useCallback((snapshot: DisclosureScrollAnchorSnapshot) => {
     clearInteractionListeners();
@@ -146,11 +173,11 @@ export function usePendingDisclosureAnchor(onRestore?: () => void) {
       return result;
     }
     if (anchor) {
+      onRestoreRef.current?.(result);
       expectedScrollTopRef.current = anchor.scroller.scrollTop;
-      onRestore?.();
     }
     return result;
-  }, [clearActiveAnchor, onRestore]);
+  }, [clearActiveAnchor]);
 
   const scheduleRestoreFrame = useCallback(() => {
     if (!activeAnchorRef.current || restoreFrameRef.current !== null) return;
@@ -168,32 +195,51 @@ export function usePendingDisclosureAnchor(onRestore?: () => void) {
   }, [clearActiveAnchor, restoreActiveAnchor]);
 
   const capturePendingAnchor = useCallback((snapshot: DisclosureScrollAnchorSnapshot | null) => {
+    if (!snapshot) {
+      clearActiveAnchor();
+      return;
+    }
     cancelRestoreFrame();
+    clearHoldTimeouts();
     anchorGenerationRef.current += 1;
     activeAnchorRef.current = snapshot;
-    expectedScrollTopRef.current = snapshot?.scroller.scrollTop ?? null;
+    expectedScrollTopRef.current = snapshot.scroller.scrollTop;
     holdCountRef.current = 0;
-    restoreFramesRemainingRef.current = snapshot ? DISCLOSURE_ANCHOR_RESTORE_FRAMES : 0;
-    if (snapshot) installInteractionListeners(snapshot);
-    else clearInteractionListeners();
-  }, [cancelRestoreFrame, clearInteractionListeners, installInteractionListeners]);
+    restoreFramesRemainingRef.current = DISCLOSURE_ANCHOR_RESTORE_FRAMES;
+    installInteractionListeners(snapshot);
+    scheduleRestoreFrame();
+  }, [
+    cancelRestoreFrame,
+    clearActiveAnchor,
+    clearHoldTimeouts,
+    installInteractionListeners,
+    scheduleRestoreFrame,
+  ]);
 
   const holdUntilSettled = useCallback((): DisclosureScrollAnchorHold | null => {
-    if (!activeAnchorRef.current) return null;
+    const anchor = activeAnchorRef.current;
+    if (!anchor) return null;
     const generation = anchorGenerationRef.current;
+    const win = anchor.scroller.ownerDocument.defaultView ?? window;
     let settled = false;
+    let timeout: number | null = null;
     holdCountRef.current += 1;
-    return {
-      settle: () => {
-        if (settled) return;
-        settled = true;
-        if (generation !== anchorGenerationRef.current || !activeAnchorRef.current) return;
-        holdCountRef.current = Math.max(0, holdCountRef.current - 1);
-        if (holdCountRef.current > 0) return;
-        restoreFramesRemainingRef.current = DISCLOSURE_ANCHOR_RESTORE_FRAMES;
-        scheduleRestoreFrame();
-      },
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== null) {
+        win.clearTimeout(timeout);
+        holdTimeoutsRef.current.delete(timeout);
+      }
+      if (generation !== anchorGenerationRef.current || !activeAnchorRef.current) return;
+      holdCountRef.current = Math.max(0, holdCountRef.current - 1);
+      if (holdCountRef.current > 0) return;
+      restoreFramesRemainingRef.current = DISCLOSURE_ANCHOR_RESTORE_FRAMES;
+      scheduleRestoreFrame();
     };
+    timeout = win.setTimeout(settle, DISCLOSURE_ANCHOR_HOLD_TIMEOUT_MS);
+    holdTimeoutsRef.current.add(timeout);
+    return { settle };
   }, [scheduleRestoreFrame]);
 
   const restorePendingAnchor = useCallback(() => {
@@ -203,7 +249,18 @@ export function usePendingDisclosureAnchor(onRestore?: () => void) {
     return cancelRestoreFrame;
   }, [cancelRestoreFrame, restoreActiveAnchor, scheduleRestoreFrame]);
 
-  useEffect(() => clearActiveAnchor, [clearActiveAnchor]);
+  const hasPendingAnchor = useCallback(() => activeAnchorRef.current !== null, []);
 
-  return { capturePendingAnchor, holdUntilSettled, restorePendingAnchor };
+  useEffect(() => () => {
+    onReleaseRef.current = undefined;
+    clearActiveAnchor();
+  }, [clearActiveAnchor]);
+
+  return {
+    cancelPendingAnchor: clearActiveAnchor,
+    capturePendingAnchor,
+    hasPendingAnchor,
+    holdUntilSettled,
+    restorePendingAnchor,
+  };
 }
