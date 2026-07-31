@@ -283,6 +283,8 @@ export interface SkillIsolatedExecutionResult {
   agentRole: string;
   status: Exclude<TurnStatus, 'inProgress'>;
   result?: string;
+  /** Account layer: the child transcript artifact, absent when the write failed (A12). */
+  transcriptPath?: string;
   error?: string;
 }
 
@@ -316,6 +318,7 @@ export interface SkillToolData {
   threadId?: string;
   agentRole?: string;
   result?: string;
+  transcriptPath?: string;
   error?: string;
 }
 
@@ -681,6 +684,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         threadId: invocation.isolated?.threadId,
         agentRole: invocation.isolated?.agentRole,
         result: invocation.isolated?.result,
+        transcriptPath: invocation.isolated?.transcriptPath,
         error: invocation.isolated?.error,
       };
       if (invocation.execution === 'isolated') {
@@ -1655,11 +1659,15 @@ function formatIsolatedSkillToolResult(
     `outcome: ${result.status}`,
     `threadId: ${result.threadId}`,
     `agentRole: ${result.agentRole}`,
+    result.transcriptPath ? `transcriptPath: ${result.transcriptPath}` : '',
     result.error ? `error: ${result.error}` : '',
     '',
     completed
       ? 'The child already executed this Skill. Synthesize the completed result below; do not repeat covered work unless it reports a gap or independent verification is explicitly required.'
       : 'Treat the text below as partial evidence only; the isolated Skill did not complete successfully.',
+    result.transcriptPath
+      ? 'To verify or debug it, read or grep the child transcript at transcriptPath with the file tools.'
+      : '',
     '',
     '<skill-result>',
     result.result || 'Skill execution produced no text result.',

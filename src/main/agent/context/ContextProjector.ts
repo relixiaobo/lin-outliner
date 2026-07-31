@@ -969,7 +969,7 @@ async function historyTool(
   };
 }
 
-function historyToolIdentity(item: HistoryToolItem): { namespace: string | null; name: string } {
+export function historyToolIdentity(item: HistoryToolItem): { namespace: string | null; name: string } {
   switch (item.type) {
     case 'commandExecution': return { namespace: null, name: 'bash' };
     case 'fileChange': {
@@ -985,7 +985,7 @@ function historyToolIdentity(item: HistoryToolItem): { namespace: string | null;
   }
 }
 
-function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
+export function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
   switch (item.type) {
     case 'commandExecution': return { command: item.command, cwd: item.cwd };
     case 'fileChange': return { changes: item.changes };
@@ -1038,7 +1038,7 @@ async function projectedToolOutputText(
   return text;
 }
 
-function dynamicToolImageIdentity(
+export function dynamicToolImageIdentity(
   part: Extract<NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number], { type: 'image' }>,
   ref: ThreadResourceReference,
 ): string {

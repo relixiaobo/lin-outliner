@@ -99,6 +99,7 @@ TurnExecutor
 } from './runtime/types';
 import type { AgentTool } from './runtime/kernel/types';
 import { SubagentCollaboration } from './thread/SubagentCollaboration';
+import { subagentTranscriptRoot } from './thread/SubagentTranscriptArtifact';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
@@ -111,6 +112,8 @@ export interface AgentCorePaths {
   readonly history: string;
   readonly goals: string;
   readonly payloads: string;
+  /** Subagent transcript artifacts. A sibling of `agent/`, directly under userData. */
+  readonly transcripts: string;
 }
 
 export interface ThreadServiceStores {
@@ -126,6 +129,8 @@ export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
+  /** App-owned root for Subagent transcript artifacts. Never a workspace path. */
+  readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
   readonly extensions?: ExtensionRegistry;
   readonly resolveConfiguration?: (
@@ -261,6 +266,8 @@ export interface CollaborationTerminalOutcome {
   readonly threadId: ThreadId;
   readonly status: 'interrupted' | 'completed' | 'errored';
   readonly result: string | null;
+  /** Account layer: the materialized transcript, or null when the write failed (A12). */
+  readonly transcriptPath: string | null;
   readonly error: string | null;
 }
 
@@ -368,6 +375,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       applyToolCeiling,
       (message) => new ThreadBusyError(message),
+      options.transcriptRoot,
     );
     this.catalogOps = new ThreadCatalogOps(
       this.core,
@@ -395,7 +403,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   static open(
     userDataPath: string,
     executor: TurnExecutor,
-    options: Omit<ThreadServiceOptions, 'stores' | 'executor'>,
+    options: Omit<ThreadServiceOptions, 'stores' | 'executor' | 'transcriptRoot'>,
   ): ThreadService {
     const paths = agentCorePaths(userDataPath);
     const metadata = new ThreadMetadataStore(paths.state);
@@ -403,6 +411,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return new ThreadService({
       executor,
       ...options,
+      transcriptRoot: paths.transcripts,
       stores: {
         metadata,
         history: new ThreadHistoryProjectionStore(paths.history),
@@ -430,12 +439,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
         cursor = page.nextCursor;
       } while (cursor);
     }
-    await Promise.all(knownThreadIds.flatMap((threadId) => [
-      this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
-      this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
-      this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
-      this.core.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
-    ]));
+    const knownThreads = new Set(knownThreadIds);
+    await Promise.all([
+      // Transcript reclamation is the same kind of work as payload pruning, so it
+      // joins the same startup batch rather than adding a serial step.
+      this.collaboration.sweepOrphanTranscripts((threadId) => knownThreads.has(threadId)),
+      ...knownThreadIds.flatMap((threadId) => [
+        this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
+        this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
+        this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
+        this.core.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
+      ]),
+    ]);
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
       const { thread } = await this.resumeThread(threadId);
@@ -752,6 +767,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
+  /** Test seam: settle a child's pending transcript appends. */
+  async flushSubagentTranscript(threadId: ThreadId): Promise<void> { return this.collaboration.flushTranscriptWrites(threadId); }
+  /** Account layer for a delegated child: the artifact path, or null when it is not on disk (A12). */
+  async subagentTranscriptPath(threadId: ThreadId): Promise<string | null> { return this.collaboration.transcriptPathForReader(threadId); }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
@@ -821,6 +840,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     history: join(root, 'thread_history.sqlite'),
     goals: join(root, 'goals.sqlite'),
     payloads: join(root, 'payloads'),
+    transcripts: subagentTranscriptRoot(userDataPath),
   };
 }
 

@@ -51,6 +51,11 @@ import {
   createSkillTool,
   resolveUserSkillInvocation,
 } from '../../src/main/agent/capabilities/agentSkills';
+import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import {
+  subagentTranscriptPath,
+  subagentTranscriptRoot,
+} from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -2566,6 +2571,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: clock,
     });
     await service.initialize();
@@ -2901,6 +2907,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: () => 1_720_000_000_000,
     });
     await service.initialize();
@@ -3138,6 +3145,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       extensions,
       resolveUserContent: async (_content, context) => {
         const written = await stores.payloads.writeResourceWithStatus(
@@ -6571,6 +6579,7 @@ async function openFixture(
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       now: clock,
       extensions,
       ...options,
@@ -6675,4 +6684,461 @@ async function recordCollaborationSpawnBoundary(
     agentsStates: {},
     outputRef: null,
   });
+}
+
+
+describe('subagent transcript artifact', () => {
+  test('appends the child account under userData and reports its path in the outcome', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'transcript_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    const outcome = terminal.updates[0]!;
+    expect(outcome).toMatchObject({ taskPath: '/root/transcript_child', status: 'completed', result: 'Done' });
+    expect(outcome.transcriptPath).toBe(subagentTranscriptPath(
+      transcriptRootFor(fixture),
+      spawned.child.thread.id,
+    ));
+    // The account is app-owned: nothing lands in the workspace the child shares
+    // with its parent, so git and workspace search never see a transcript.
+    expect(await readdir(fixture.root)).not.toContain('subagent-transcripts');
+
+    const transcript = await readFile(outcome.transcriptPath!, 'utf8');
+    expect(transcript).toContain(`threadId: ${spawned.child.thread.id}`);
+    expect(transcript).toContain('taskPath: /root/transcript_child');
+    expect(transcript).toContain(`parentThreadId: ${spawned.root.id}`);
+    expect(transcript).toContain('## Turn 1 — completed');
+    expect(transcript).toContain('Complete the delegated task');
+    expect(transcript).toContain('### Assistant (final_answer)');
+    expect(transcript).toContain('Done');
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('appends a followup Turn without rewriting the bytes already on disk', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'growing_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const afterFirstTurn = await readFile(path, 'utf8');
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'growing_child-followup');
+    await fixture.service.followupCollaborationTask(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+      'growing_child-followup',
+      'growing_child',
+      'Also check the second case',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+
+    const afterSecondTurn = await readFile(path, 'utf8');
+    expect(afterSecondTurn.startsWith(afterFirstTurn)).toBe(true);
+    expect(afterSecondTurn).toContain('## Turn 1 — completed');
+    expect(afterSecondTurn).toContain('## Turn 2 — completed');
+    expect(afterSecondTurn).toContain('Also check the second case');
+    // Exactly one header, so the append never re-emitted the preamble.
+    expect(afterSecondTurn.match(/# Agent Thread transcript/g)).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('rebuilds the whole artifact when the file disagrees with the cursor', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'rebuilt_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const expected = await readFile(path, 'utf8');
+
+    // Truncate behind the cursor's back — the shape a crash mid-append leaves.
+    await writeFile(path, 'clobbered', 'utf8');
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'rebuilt_child-followup');
+    await fixture.service.followupCollaborationTask(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+      'rebuilt_child-followup',
+      'rebuilt_child',
+      'Second pass',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+
+    const rebuilt = await readFile(path, 'utf8');
+    expect(rebuilt).not.toContain('clobbered');
+    expect(rebuilt.startsWith(expected.slice(0, expected.indexOf('## Turn 1')))).toBe(true);
+    expect(rebuilt).toContain('## Turn 1 — completed');
+    expect(rebuilt).toContain('## Turn 2 — completed');
+    expect(rebuilt.match(/# Agent Thread transcript/g)).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('delivers the outcome with a null path when the artifact cannot be written (A12)', async () => {
+    const fixture = await createFixture();
+    // Occupy the artifact directory name with a file so every write must fail.
+    mkdirSync(join(fixture.root, 'app-data'), { recursive: true });
+    await writeFile(transcriptRootFor(fixture), 'not a directory', 'utf8');
+    const spawned = await spawnTranscriptChild(fixture, 'unwritable_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    expect(terminal.updates[0]).toMatchObject({
+      taskPath: '/root/unwritable_child',
+      status: 'completed',
+      result: 'Done',
+      transcriptPath: null,
+    });
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('keeps delivering the result when a payload read throws under the account (A12)', async () => {
+    const fixture = await createFixture();
+    fixture.stores.payloads.readTextReference = async () => { throw new Error('payload store is unavailable'); };
+    const spawned = await spawnTranscriptChild(fixture, 'throwing_reader_child');
+
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+
+    expect(terminal.updates[0]).toMatchObject({ status: 'completed', result: 'Done' });
+    expect(terminal.updates[0]!.transcriptPath).not.toBeNull();
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('does not resurrect the artifact when deletion races the parked parent wait', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'deleted_child');
+    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    expect(await readFile(path, 'utf8')).toContain('taskPath: /root/deleted_child');
+
+    // Deletion's stop cascade wakes this parked wait; nothing it does may write.
+    const parked = fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await fixture.service.deleteThread(spawned.root.id);
+    await parked.catch(() => undefined);
+
+    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    await fixture.service.close();
+  });
+
+  test('drains an append already in flight before removing the artifact', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'draining_child');
+
+    // The append is now past its guards and parked inside rendering — exactly the
+    // window where a drain that awaits `undefined` lets the write outlive the rm.
+    await blocked.reached;
+    const deletion = fixture.service.deleteThread(spawned.root.id);
+    // Let the cascade run all the way to its removal step while the append is
+    // still parked. A real drain cannot get past it; a no-op drain removes the
+    // file here and the released append recreates it.
+    for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+    blocked.release();
+    await deletion;
+
+    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    await fixture.service.close();
+  });
+
+  // Pins the observable invariant: a rebuild plus the appends queued behind it
+  // leave exactly one block per Turn. It does NOT reproduce the narrow
+  // stat-boundary interleaving that motivated membership-based dedup — see the
+  // PR body; `allTurns` is read synchronously at rebuild start, so forcing a
+  // rebuild to fold in a non-last queued Turn needs two Turn completions inside
+  // one `stat` await, which no public seam can schedule deterministically.
+  test('leaves one block per Turn when appends queue behind a rebuild', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'deduped_child');
+    await blocked.reached;
+
+    // Turn 2 completes while Turn 1's cold-cursor rebuild is still parked, so the
+    // rebuild will fold in both and Turn 2's queued append must recognise that.
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'deduped_child-followup');
+    await fixture.service.followupCollaborationTask(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+      'deduped_child-followup',
+      'deduped_child',
+      'Second pass',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(spawned.child.thread.id);
+    blocked.release();
+    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+
+    const transcript = await readFile(
+      subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
+      'utf8',
+    );
+    expect(transcript.match(/^## Turn 1 —/gm)).toHaveLength(1);
+    expect(transcript.match(/^## Turn 2 —/gm)).toHaveLength(1);
+    expect(transcript).not.toContain('## Turn 3');
+    expect(transcript.match(/# Agent Thread transcript/g)).toHaveLength(1);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('records the interrupted Turn when the tree is archived rather than deleted', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate, then archive mid-flight' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'archived_child-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'archived_child-spawn',
+      taskName: 'archived_child',
+      message: 'Work that gets cut short',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    // Archive keeps the artifact, so the Turn it interrupts is the child's last
+    // word: dropping it would leave a retained transcript ending mid-task.
+    await fixture.service.setThreadArchived(root.id, true);
+    await fixture.service.flushSubagentTranscript(child.thread.id);
+
+    const transcript = await readFile(
+      subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id),
+      'utf8',
+    );
+    expect(transcript).toContain('## Turn 1 — interrupted');
+    await fixture.service.close();
+  });
+
+  test('sweeps transcripts whose Thread no longer exists at startup', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'swept_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await finishTranscriptRoot(fixture, spawned);
+    await fixture.service.close();
+
+    const root = transcriptRootFor(fixture);
+    const orphan = subagentTranscriptPath(root, '019fb2da-0000-7000-8000-00000000dead');
+    await writeFile(orphan, '# orphaned transcript\n', 'utf8');
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+
+    const remaining = await readdir(root);
+    expect(remaining).not.toContain('019fb2da-0000-7000-8000-00000000dead.md');
+    expect(remaining).toContain(`${spawned.child.thread.id}.md`);
+    await reopened.service.close();
+  });
+
+  test('lets the parent verify a reported claim by grepping the transcript with the existing file tools', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'verified_child');
+    const terminal = await fixture.service.waitForCollaborationActivity(
+      spawned.root.id,
+      spawned.rootTurn.turn.id,
+    );
+    const outcome = terminal.updates[0]!;
+
+    // The parent's own capability set, unchanged: no account-layer tool, and an
+    // absolute path outside the workspace needs no permission widening.
+    const tools = createLocalTools({ localRoot: fixture.root, scratchRoot: join(fixture.root, 'agent-scratch') });
+    const grep = await executeTool(tools, 'file_grep', 'verify-claim', {
+      pattern: outcome.result!,
+      path: outcome.transcriptPath!,
+      output_mode: 'content',
+    });
+
+    expect(grep.details).toMatchObject({ ok: true, data: { mode: 'content', numLines: 1 } });
+    expect(JSON.stringify(grep.details)).toContain(outcome.result!);
+
+    await finishTranscriptRoot(fixture, spawned);
+  });
+
+  test('gives an isolated-Skill child the same artifact as a collaboration Subagent', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Run an isolated Skill' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'isolated-skill-spawn');
+    const child = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'isolated-skill-spawn',
+      skillName: 'Review PR',
+      prompt: 'Review the pending change',
+      allowedTools: ['file_read'],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    const path = await fixture.service.subagentTranscriptPath(child.thread.id);
+
+    expect(path).toBe(subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id));
+    const transcript = await readFile(path!, 'utf8');
+    expect(transcript).toContain(`taskPath: ${child.taskPath}`);
+    expect(transcript).toContain('Review the pending change');
+    expect(transcript).toContain('### Assistant (final_answer)');
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+});
+
+/**
+ * Park every transcript payload read until released, so a test can hold an append
+ * inside rendering — past its guards, before its write.
+ */
+function blockPayloadReads(fixture: Fixture): { reached: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let markReached!: () => void;
+  const reached = new Promise<void>((resolve) => { markReached = resolve; });
+  fixture.stores.payloads.readTextReference = async () => {
+    markReached();
+    await gate;
+    return 'parked tool output';
+  };
+  return { reached, release };
+}
+
+/**
+ * A child whose completed Turn carries a tool Item with an output reference, so
+ * rendering it must go through the payload store (and can therefore be parked).
+ * Deliberately does NOT flush: these tests need the append still in flight.
+ */
+async function spawnTranscriptChildWithToolOutput(fixture: Fixture, taskName: string): Promise<{
+  root: Awaited<ReturnType<ThreadService['startThread']>>['thread'];
+  rootTurn: Awaited<ReturnType<ThreadService['startRendererTurn']>>;
+  child: Awaited<ReturnType<ThreadService['spawnCollaborationAgent']>>;
+}> {
+  const root = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  const rootTurn = await fixture.service.startRendererTurn({
+    threadId: root.id,
+    input: [{ type: 'text', text: 'Delegate work that reads a payload' }],
+  });
+  await fixture.executor.waitUntilWaiting(0);
+  await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, `${taskName}-spawn`);
+  const child = await fixture.service.spawnCollaborationAgent({
+    senderThreadId: root.id,
+    senderTurnId: rootTurn.turn.id,
+    parentItemId: `${taskName}-spawn`,
+    taskName,
+    message: 'Complete the delegated task',
+  });
+  await fixture.executor.waitUntilWaiting(1);
+  await recordChildToolOutput(fixture.executor.contexts[1]!, `${taskName}-tool`);
+  fixture.executor.finish(1);
+  await fixture.service.waitForIdle(child.thread.id);
+  return { root, rootTurn, child };
+}
+
+async function recordChildToolOutput(context: TurnExecutionContext, itemId: string): Promise<void> {
+  const item = {
+    type: 'dynamicToolCall' as const,
+    id: itemId,
+    provenance: context.recorder.localProvenance(itemId),
+    namespace: null,
+    tool: 'file_read',
+    arguments: { file_path: '/w/a.ts' },
+    contentItems: null,
+    success: null,
+    durationMs: null,
+    status: 'inProgress' as const,
+    outputRef: null,
+  };
+  await context.recorder.started(item);
+  await context.recorder.completed({
+    ...item,
+    status: 'completed',
+    success: true,
+    durationMs: 1,
+    outputRef: {
+      id: createHash('sha256').update(itemId).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: 18,
+      summary: 'file_read output',
+    },
+  });
+}
+
+/** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
+function transcriptRootFor(fixture: Fixture): string {
+  return subagentTranscriptRoot(join(fixture.root, 'app-data'));
+}
+
+async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{
+  root: Awaited<ReturnType<ThreadService['startThread']>>['thread'];
+  rootTurn: Awaited<ReturnType<ThreadService['startRendererTurn']>>;
+  child: Awaited<ReturnType<ThreadService['spawnCollaborationAgent']>>;
+}> {
+  const root = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  const rootTurn = await fixture.service.startRendererTurn({
+    threadId: root.id,
+    input: [{ type: 'text', text: 'Delegate and then verify the account' }],
+  });
+  await fixture.executor.waitUntilWaiting(0);
+  await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, `${taskName}-spawn`);
+  const child = await fixture.service.spawnCollaborationAgent({
+    senderThreadId: root.id,
+    senderTurnId: rootTurn.turn.id,
+    parentItemId: `${taskName}-spawn`,
+    taskName,
+    message: 'Complete the delegated task',
+  });
+  await fixture.executor.waitUntilWaiting(1);
+  fixture.executor.finish(1);
+  await fixture.service.waitForIdle(child.thread.id);
+  await fixture.service.flushSubagentTranscript(child.thread.id);
+  return { root, rootTurn, child };
+}
+
+async function finishTranscriptRoot(
+  fixture: Fixture,
+  spawned: { root: { id: string } },
+): Promise<void> {
+  fixture.executor.finish(0);
+  await fixture.service.waitForIdle(spawned.root.id);
+  await fixture.service.close();
 }

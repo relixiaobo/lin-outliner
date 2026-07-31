@@ -31,6 +31,7 @@ export interface ThreadCatalogCollaboration {
   deleteEphemeralSpawnEdge(threadId: ThreadId): void;
   ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
+  deleteTranscriptArtifact(threadId: ThreadId): Promise<void>;
 }
 
 export class ThreadCatalogOps {
@@ -536,6 +537,11 @@ export class ThreadCatalogOps {
           }
           this.clearThreadCoordinationState(subtree.threadIds);
         });
+        // After coordination-state teardown, so no append the cascade raced can
+        // land behind the removal and resurrect a transcript the user deleted.
+        for (const descendantId of [...subtree.threadIds].reverse()) {
+          await this.collaboration.deleteTranscriptArtifact(descendantId);
+        }
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }

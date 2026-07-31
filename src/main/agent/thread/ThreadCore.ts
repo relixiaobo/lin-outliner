@@ -230,14 +230,7 @@ export class ThreadCore {
   allTurns(threadId: ThreadId): Turn[] {
       const ephemeral = this.ephemeral.get(threadId);
       if (ephemeral) return [...ephemeral.turns];
-      const turns: Turn[] = [];
-      let cursor: string | null = null;
-      do {
-        const page = this.history.listTurns({ threadId, cursor, limit: 100, itemsView: 'full' });
-        turns.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
-      return turns;
+      return this.history.allTurns(threadId);
     }
   readTurn(threadId: ThreadId, turnId: string): Turn | null {
       return this.ephemeral.get(threadId)?.turns.find((turn) => turn.id === turnId)

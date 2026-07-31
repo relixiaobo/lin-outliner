@@ -16,6 +16,7 @@
     "dev:codex-4": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex-4\" electron-vite dev",
     "dev:anti": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-anti\" electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
+    "agent:dump": "bun scripts/agent-dump.ts",
     "skills:sync": "bun scripts/sync-built-in-skills.ts",
     "import-cli:build": "bun build src/main/builtInSkills/data-cleanup/scripts/tenon-import.ts --outfile build/generated/tenon-import/tenon-import.mjs --target node --format esm",
     "preview": "vite preview",
