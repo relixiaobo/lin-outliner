@@ -122,6 +122,17 @@ export function SettingsSkillLibrarySection({
     }
   }
 
+  /** Reveals a bound directory, and reports it when the directory is gone. */
+  async function revealDirectory(directory: string) {
+    onError(null);
+    try {
+      const { revealed } = await api.agentRevealSkillDirectory(directory);
+      if (!revealed) onError(t.settings.skills.localRevealFailed({ directory }));
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   /**
    * Unbinds a directory. This removes Tenon's pointer to it and NOTHING else —
    * the directory and every file in it are the user's and are left untouched.
@@ -193,7 +204,15 @@ export function SettingsSkillLibrarySection({
       .finally(() => setSkillTrustBusy(false));
   };
 
-  const sourceChipLabel = (source: SkillSourceKind): string => source;
+  // Every chip in this column is localized. Returning the raw enum for
+  // built-in/user/project while managed and local were translated produced
+  // mixed-language chips in one column.
+  const sourceChipLabel = (source: SkillSourceKind): string => {
+    if (source === 'built-in') return t.settings.skills.sourceBuiltIn;
+    if (source === 'project') return t.settings.skills.sourceProject;
+    if (source === 'managed') return t.settings.skills.sourceManaged;
+    return t.settings.skills.sourceUser;
+  };
 
   /**
    * Managed rows come from the managed index rather than the loaded catalog,
@@ -283,7 +302,7 @@ export function SettingsSkillLibrarySection({
       if (localDirectory) {
         actions.push({
           label: t.settings.skills.localReveal,
-          onSelect: () => void api.agentRevealSkillDirectory(localDirectory),
+          onSelect: () => void revealDirectory(localDirectory),
         });
         actions.push({
           // "Unbind", never "remove" or "delete": the handler drops Tenon's
@@ -460,7 +479,7 @@ export function SettingsSkillLibrarySection({
                   actions={[
                     {
                       label: t.settings.skills.localReveal,
-                      onSelect: () => void api.agentRevealSkillDirectory(directory),
+                      onSelect: () => void revealDirectory(directory),
                     },
                     {
                       label: t.settings.skills.localUnbind,

@@ -281,7 +281,19 @@ row label, the notice, and the handler all say *unbind* for that reason. A bound
 directory that currently yields no Skills is still listed, so pointing at the
 wrong folder stays reversible. Local Skills are ordinary `user`/`project` Skills
 to the runtime; a row is identified as local by whether its `rootDir` sits under
-a bound directory.
+a bound directory, and the picked path is resolved in main so that comparison is
+against a canonical path.
+
+A bound directory may either **contain** Skills or **be** one — picking
+`my-pdf-skill/` is as natural as picking its parent, so both load. Canonical
+identity remains the directory name, as it is for every other source. This
+applies only to bound directories; the convention directories
+(`~/.agents/skills`, `.agents/skills`) are containers by definition.
+
+Revealing a bound directory checks that it still exists before reporting
+success, because the case a user clicks Reveal to investigate — a directory that
+was renamed, deleted, or unmounted — is exactly the one that would otherwise
+report success and open nothing.
 
 ### Update visibility
 

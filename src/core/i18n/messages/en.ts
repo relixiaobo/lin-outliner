@@ -75,7 +75,7 @@ export const en = {
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
     insertAttachmentTitle: 'Insert attachment',
-    chooseSkillDirectoryTitle: 'Choose a Skill directory',
+    chooseSkillDirectoryTitle: 'Choose a Skill, or a folder of Skills',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -210,6 +210,11 @@ export const en = {
       acquireClose: 'Done',
       addLocalDirectory: 'Add Local Directory…',
       sourceLocal: 'local',
+      sourceBuiltIn: 'built-in',
+      sourceUser: 'user',
+      sourceProject: 'project',
+      localRevealFailed: ({ directory }: { directory: string }) =>
+        `Could not open ${directory}. It may have been moved, renamed, or unmounted.`,
       localReveal: 'Reveal in Finder',
       // "Unbind", never "remove"/"delete": Tenon points at the directory, so
       // this drops the pointer and leaves the user's files untouched.

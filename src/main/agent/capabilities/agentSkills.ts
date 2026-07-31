@@ -1166,10 +1166,21 @@ class SkillRegistry {
         await this.addLoadedSkill(skill);
       }
       const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
+      const boundByUser = new Set(this.additionalSkillDirectories);
       for (const { dir, source } of roots) {
         const loaded = await loadSkillsFromDir(dir, source);
         for (const skill of loaded) {
           await this.addLoadedSkill(skill);
+        }
+        // A directory the user bound by hand may BE a Skill rather than contain
+        // Skills: picking `my-pdf-skill/` is at least as natural as picking its
+        // parent, and loadSkillsFromDir only ever looks one level down. Without
+        // this the pick silently yields nothing, with no hint that the picker
+        // wanted the parent. The convention directories are containers by
+        // definition, so this applies only to bound ones.
+        if (boundByUser.has(dir)) {
+          const self = await loadSkillFromRoot(dir, source);
+          if (self) await this.addLoadedSkill(self);
         }
       }
       for (const dir of this.dynamicSkillDirectories) {

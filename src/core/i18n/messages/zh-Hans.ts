@@ -62,7 +62,7 @@ export const zhHans: PartialMessages = {
     providerConfigTitle: '配置服务商',
     insertImageTitle: '插入图片',
     insertAttachmentTitle: '插入附件',
-    chooseSkillDirectoryTitle: '选择 Skill 目录',
+    chooseSkillDirectoryTitle: '选择一个 Skill，或包含多个 Skill 的文件夹',
     imageFilesFilter: '图片',
   },
   launcher: {
@@ -178,6 +178,11 @@ export const zhHans: PartialMessages = {
       acquireClose: '完成',
       addLocalDirectory: '添加本地目录…',
       sourceLocal: '本地',
+      sourceBuiltIn: '内置',
+      sourceUser: '用户',
+      sourceProject: '项目',
+      localRevealFailed: ({ directory }: { directory: string }) =>
+        `无法打开 ${directory}，它可能已被移动、重命名或卸载。`,
       localReveal: '在访达中显示',
       // 「解绑」而非「移除/删除」：Tenon 只是指向该目录，解绑仅去掉指针，不动用户的文件。
       localUnbind: '解绑目录',

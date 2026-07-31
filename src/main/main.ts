@@ -3421,11 +3421,26 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         ? await dialog.showOpenDialog(window, options)
         : await dialog.showOpenDialog(options);
       const picked = result.canceled ? undefined : result.filePaths[0];
-      return { path: picked ?? null };
+      // Resolved here so the stored path is canonical. The renderer decides
+      // which rows belong to a bound directory by comparing it against each
+      // Skill's rootDir, and a trailing separator or a `.`/`..` segment would
+      // match nothing — the directory's Skills would lose their local chip and
+      // their actions, and the directory would list as if it were empty.
+      return { path: picked ? resolve(picked) : null };
     }
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');
       if (!target) return { revealed: false };
+      // showItemInFolder returns void and reports nothing, so check first. The
+      // common case is the failing one: a bound directory that was renamed,
+      // deleted, or unmounted is exactly what the user clicks Reveal to
+      // investigate, and reporting success there is indistinguishable from a
+      // genuinely empty folder.
+      try {
+        await stat(target);
+      } catch {
+        return { revealed: false };
+      }
       shell.showItemInFolder(target);
       return { revealed: true };
     }
