@@ -1194,9 +1194,9 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
                           : identity === 'web_fetch' ? WebFetchToolIcon
                             : identity === 'update_plan' ? PlanToolIcon
                               : identity === 'skill' ? SkillIcon
-                              : identity === 'request_user_input' ? QuestionToolIcon
-                                : identity === 'outline_undo_stack' ? OutlineUndoStackToolIcon
-                                  : GenericToolIcon;
+                                : identity === 'request_user_input' ? QuestionToolIcon
+                                  : identity === 'outline_undo_stack' ? OutlineUndoStackToolIcon
+                                    : GenericToolIcon;
   return <Icon size={ICON_SIZE.menu} />;
 }
 

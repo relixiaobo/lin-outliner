@@ -630,7 +630,7 @@ the plan", collapsing to "Updated the plan 3 times" in a group — never as
 `Used update_plan`, and carries its own glyph. This deliberately reverses the
 transient exclusion from `agent-execution-interaction-consistency` (#438),
 which left the model visibly deliberating about a tool that never appeared to
-run; see `docs/plans/agent-plan-visibility.md`.
+run; see `docs/plans/archive/agent-plan-visibility.md`.
 
 `turn/plan/updated` remains the pill's ephemeral fast path, not an Item. The
 selected Thread keeps only the latest snapshot for its active Turn and shows it as a
