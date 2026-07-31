@@ -574,13 +574,27 @@ before any directional/security-sensitive build.
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
 - **agent-browser-control** (P1 design, **implementation `shelved` by PM ruling
-  2026-07-31**; design updated #443, revised #459) — the in-repo blockers cleared
-  (#455/#460 landed, #456's catalog byte-stability judge guards the landing zone), but
-  **Browser Pilot's own integration surface and feature set are still iterating
-  upstream**, and A7 forbids building against a mechanism we are about to replace —
-  that is the same discipline that killed the first UI-refactor round, applied at the
-  dependency boundary. Revisit when upstream stabilizes; the design below stays valid
-  and needs only an evidence re-validation pass at claim time. Do not claim without a
+  2026-07-31, and its distribution half `superseded`**; design updated #443, revised
+  #459) — the in-repo blockers cleared (#455/#460 landed, #456's catalog judge guards
+  the landing zone), but the review of *how* Browser Pilot should arrive concluded the
+  plan was solving a problem we had already solved. Its distribution design (checked-in
+  release manifest, build-time `extraResources` staging, `resourcesPath`-only executable
+  resolution, bundled upstream skill directory, and the non-goal at `:38` forbidding
+  PATH discovery / `npx` / install-during-a-task) **couples Tenon's release cadence to
+  Browser Pilot's for no security gain** — Full Access already permits arbitrary
+  commands through `bash`, so refusing to discover one binary buys reproducibility, not
+  safety. #406's managed-Skill channel already ships catalog recommendation, install
+  from any public repository, pinned-commit updates with preview and rollback; a tool's
+  own Skill owns its preflight and version pairing (see *Third-Party Tool Integration*
+  in `docs/spec/agent-skills.md`). Browser Pilot integrates through that path with **no
+  Tenon code and no release**. What survives as genuinely Tenon-side value is narrower:
+  **turning browser artifacts (screenshots, PDFs, downloads) into durable Thread
+  resources** readable by `file_read` and pruned by the resource system, plus the
+  per-Turn output root and browser-shaped capability effects. The output-flag
+  vocabulary at `:362-371` should go with the rest — parsing another project's flags to
+  guess where it writes is the same category of mistake, and it means adding a flag to
+  Browser Pilot can break Tenon admission; push containment into the tool via
+  `BROWSER_PILOT_OUTPUT_DIR` instead. Re-scope before any claim; do not claim without a
   fresh PM go-ahead.
 
   The shelved design: Tenon consumes pinned Browser Pilot 0.5 and its matching skill through

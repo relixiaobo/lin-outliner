@@ -167,6 +167,38 @@ resource roots cannot be authoring targets.
 contract from an explicit request, writes the mutable bundle, and relies on the
 same provenance and capability checks as any file edit.
 
+## Third-Party Tool Integration
+
+Tenon does not distribute executables, and a Skill install runs nothing: the
+managed installer fetches, validates, and writes bytes, then re-checks that no
+installed file carries an executable bit. That inertness is what makes
+installing from an arbitrary public repository defensible, so it is a boundary,
+not an omission.
+
+A third-party command-line tool therefore integrates entirely through a Skill
+published in **the tool's own repository**, carrying three things: the
+prerequisite it declares, a preflight that verifies the installed version and
+states how to obtain or upgrade it, and the command surface the model needs.
+Provisioning happens at first use — the Agent runs the stated command through
+`bash`, classified and decided by the ordinary capability path, with the user
+present and in context — never at install time, where the user has no reason to
+understand what is being installed. Version pairing between Skill and executable
+belongs to the tool, which is the only party that knows its own requirements;
+`metadata.tenon` constrains the Tenon version only.
+
+The Skill catalog entry is a pointer (`repository` + `subdirectory` +
+`trackingRef`), never a copy, so Skill content stays versioned alongside the
+code it describes and updates follow that repository. Catalog presence is
+recommendation only; any compatible public repository or tree URL installs
+without it.
+
+Two consequences follow. Tenon needs no per-tool knowledge, no bundled binary,
+and no release to adopt or update a tool — a first-party tool is only a Skill
+whose repository we happen to own. And `AgentCoreExtension` stays a permanently
+internal seam: third-party capability arrives across the process boundary,
+where the existing classification and capability model already governs it,
+never as code loaded into the host.
+
 ## Built-In Floor
 
 The packaged platform floor contains `data-cleanup`. Development registration
