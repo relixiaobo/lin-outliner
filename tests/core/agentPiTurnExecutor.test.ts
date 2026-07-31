@@ -2345,9 +2345,15 @@ describe('PiTurnExecutor provider payload', () => {
 
   test('maps kernel budget exhaustion to an interrupted Turn with recorded usage', async () => {
     const fixture = createContext();
+    let observedTokens = 0;
     const context: TurnExecutionContext = {
       ...fixture.context,
-      remainingTokenBudget: () => ({ budget: 10, used: 6 }),
+      remainingTokenBudget: () => ({
+        remaining: 4 - observedTokens,
+        total: 10,
+        used: 6 + observedTokens,
+      }),
+      onModelCallUsage: (tokens) => { observedTokens += tokens; },
     };
     let providerCalls = 0;
     const executor = new PiTurnExecutor({
@@ -2381,10 +2387,45 @@ describe('PiTurnExecutor provider payload', () => {
 
     await expect(executor.execute(context)).resolves.toMatchObject({
       status: 'interrupted',
-      error: { message: 'Token budget exhausted mid-Turn (13 of 10 tokens)' },
+      error: {
+        code: 'subagent_budget_exhausted',
+        message: 'Token budget exhausted mid-Turn (13 of 10 tokens)',
+      },
       execution: { usage: { totalTokens: 7 } },
     });
     expect(providerCalls).toBe(1);
+  });
+
+  test('keeps runtime usage tally when diagnostics cannot match a provider response', async () => {
+    const fixture = createContext();
+    const observedTokens: number[] = [];
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      onModelCallUsage: (tokens) => observedTokens.push(tokens),
+    };
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: () => {
+          const stream = createAssistantMessageEventStream();
+          const message = assistantMessage([{ type: 'text', text: 'No captured request payload' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: 'stop', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({
+      status: 'completed',
+      execution: { usage: { totalTokens: 7 } },
+    });
+    expect(observedTokens).toEqual([7]);
+    expect(fixture.diagnosticsPayloads[0]?.providerCalls).toEqual([]);
   });
 
   test('keeps an exhausted child user Turn unlimited across provider calls', async () => {

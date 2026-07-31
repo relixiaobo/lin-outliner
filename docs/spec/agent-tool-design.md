@@ -180,24 +180,29 @@ snapshot before awaiting admission, preserves concurrently queued messages, and 
 the snapshot again if admission is refused. Goal continuation records the complete typed
 refusal as a deferral; automation dispatch records it as a failed run. Completion and
 failure finalization debit member and pool before exposing an idle admission window.
+Budget rows are created only after earlier fallible spawn work under the Thread-tree
+mutex; rollback deletes only rows created by that spawn before the mutex releases.
 
-Covered non-user Turns re-read shared persisted usage and the complete active-sibling
-in-flight tally through the unchanged native-kernel budget port before every model call;
-a tighter child cap is returned through the same port. Explicit user Turns remain
-unlimited in flight while their descendant usage remains visible to sibling ports and
-still accrues. The first model call is unconditional.
-Before later calls, and before steering drain or a new kernel Turn boundary, accumulated
-Turn usage at 80% of the starting remainder admits one canonical steering notice with
-actual figures. Reaching the remainder interrupts only outstanding model work; a terminal
-answer remains completed and racing steering remains undelivered. Warning delivery
-failures log and degrade without changing Turn status.
+Pool-covered Turns feed the complete active-tree in-flight tally from the runtime
+normalizer's own usage accumulation; diagnostics are inspection-only. Covered non-user
+Turns re-read shared persisted usage through a native-kernel port carrying authoritative
+`remaining` and the binding constraint's `used`/`total`; a tighter child cap uses the same
+port. The kernel never computes snapshot differentials, so pool/cap denomination changes
+are harmless. Explicit user Turns have no gate port or warning but still contribute usage
+and accrue. The first model call is unconditional. Before later calls, and before steering
+drain or a new kernel Turn boundary, 80% consumption admits one canonical steering notice
+with actual figures. Reaching zero remaining interrupts only outstanding model work; a
+terminal answer remains completed and racing steering remains undelivered. Warning
+delivery failures log and degrade without changing Turn status. Completion and failure
+accrual clear the corresponding live tally without an intervening await.
 
 Collaboration spawn rejects a child deeper than `/root/a/b` and rejects a seventeenth
 direct collaboration child from one Thread. Isolated Skill children are exempt from both
 gates and the lifetime count. Both are fixed host constants with distinct typed errors.
 Model-facing budget text remains token-denominated. Renderer transcript, Details, copy,
 and Automation error surfaces classify stable error codes and translate budget failures
-into localized resource-limit copy without token counts.
+into localized resource-limit copy without token counts. The shared `Turn.error.code` set
+is closed; unknown strings normalize to `runtime_failure`.
 
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,

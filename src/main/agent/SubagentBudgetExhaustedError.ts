@@ -1,5 +1,6 @@
+import { SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE } from '../../core/agent/protocol';
+
 export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_NAME = 'SubagentBudgetExhaustedError';
-export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
 
 export class SubagentBudgetExhaustedError extends Error {
   readonly code = SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE;

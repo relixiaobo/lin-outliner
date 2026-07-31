@@ -75,6 +75,7 @@ export interface TurnExecutionContext {
   ): Promise<StagedContextCompaction | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
+  readonly onModelCallUsage?: (tokens: number) => void;
   readonly remainingTokenBudget?: () => TokenBudgetUsage | null;
   readonly onBudgetWarning?: (actuals: TokenBudgetUsage) => Promise<void>;
 }

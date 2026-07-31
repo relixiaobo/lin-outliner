@@ -46,7 +46,6 @@ import type {
 import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
-import { recordModelCallUsage } from '../../src/main/agent/context/ModelCallUsageScope';
 import { Core } from '../../src/core/core';
 import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import {
@@ -151,7 +150,7 @@ class ControlledExecutor implements TurnExecutor {
     while (true) {
       const report = await this.nextModelCallUsage(index);
       if (!report) return;
-      recordModelCallUsage(report.tokens);
+      this.contexts[index]?.onModelCallUsage?.(report.tokens);
       report.acknowledged();
     }
   }
@@ -2456,7 +2455,7 @@ describe('ThreadService', () => {
     expect(recovered).toMatchObject({
       id: turnId,
       status: 'interrupted',
-      error: { code: 'host_restart' },
+      error: { code: 'runtime_failure' },
     });
     expect(recovered?.items.at(-1)).toMatchObject({ type: 'agentMessage', text: 'Partial output' });
     expect(reopened.stores.history.unfinishedItems(thread.id, turnId)).toEqual([]);
@@ -3729,6 +3728,160 @@ describe('ThreadService', () => {
     await expect(readdir(join(fixture.root, 'agent', 'payloads', stagedChild.threadId))).rejects.toThrow();
 
     fixture.executor.finish();
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('preserves existing sibling budget rows when a later spawn admission fails', async () => {
+    for (const ephemeral of [false, true]) {
+      const fixture = await createFixture(undefined, {
+        resolveSubagentTokenBudget: () => 100,
+        resolveUserContent: (content) => {
+          const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+          if (text === 'Fail after staging budget rows') {
+            throw new Error('simulated child admission failure');
+          }
+          return content;
+        },
+      });
+      const root = (await fixture.service.startThread({
+        ephemeral,
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+      })).thread;
+      const active = await fixture.service.startRendererTurn({
+        threadId: root.id,
+        input: [{ type: 'text', text: 'Preserve a sibling across failed spawn rollback' }],
+      });
+      await fixture.executor.waitUntilWaiting(0);
+      await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'rollback-sibling-spawn');
+      const sibling = await fixture.service.spawnCollaborationAgent({
+        senderThreadId: root.id,
+        senderTurnId: active.turn.id,
+        parentItemId: 'rollback-sibling-spawn',
+        taskName: 'rollback_sibling',
+        message: 'Remain budgeted after the next spawn fails',
+      });
+      await fixture.executor.waitUntilWaiting(1);
+
+      let failedThreadId: string | null = null;
+      const unsubscribe = fixture.service.subscribe((notification) => {
+        if (
+          notification.type === 'thread/started'
+          && notification.threadId !== root.id
+          && notification.threadId !== sibling.thread.id
+        ) {
+          failedThreadId = notification.threadId;
+        }
+      });
+      await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'rollback-failure-spawn');
+      await expect(fixture.service.spawnCollaborationAgent({
+        senderThreadId: root.id,
+        senderTurnId: active.turn.id,
+        parentItemId: 'rollback-failure-spawn',
+        taskName: 'rollback_failure',
+        message: 'Fail after staging budget rows',
+      })).rejects.toThrow('simulated child admission failure');
+
+      expect(failedThreadId).not.toBeNull();
+      expect(fixture.stores.subagentBudgets.readPool(root.id)).toMatchObject({
+        tokenBudget: 100,
+        tokensUsed: 0,
+      });
+      expect(fixture.stores.subagentBudgets.readMember(sibling.thread.id)).toMatchObject({
+        poolThreadId: root.id,
+        tokensUsed: 0,
+      });
+      expect(fixture.stores.subagentBudgets.readMember(failedThreadId!)).toBeNull();
+      unsubscribe();
+
+      fixture.executor.finish(1, completedExecutionResult(0));
+      await fixture.service.waitForIdle(sibling.thread.id);
+      fixture.executor.finish(0, completedExecutionResult(0));
+      await fixture.service.waitForIdle(root.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('keeps a concurrent spawn budgeted while a failed first spawn rolls back', async () => {
+    let enterFailedAdmission!: () => void;
+    let releaseFailedAdmission!: () => void;
+    const failedAdmissionEntered = new Promise<void>((resolve) => { enterFailedAdmission = resolve; });
+    const failedAdmissionRelease = new Promise<void>((resolve) => { releaseFailedAdmission = resolve; });
+    const fixture = await createFixture(undefined, {
+      resolveSubagentTokenBudget: () => 100,
+      resolveUserContent: async (content) => {
+        const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+        if (text === 'Hold the tree transaction before failing') {
+          enterFailedAdmission();
+          await failedAdmissionRelease;
+          throw new Error('simulated blocked child admission failure');
+        }
+        return content;
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Serialize rollback against a concurrent spawn' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'concurrent-rollback-failure');
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'concurrent-rollback-success');
+
+    let failedThreadId: string | null = null;
+    const unsubscribe = fixture.service.subscribe((notification) => {
+      if (notification.type === 'thread/started' && notification.threadId !== root.id) {
+        failedThreadId ??= notification.threadId;
+      }
+    });
+
+    const failedSpawn = fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'concurrent-rollback-failure',
+      taskName: 'concurrent_rollback_failure',
+      message: 'Hold the tree transaction before failing',
+    });
+    await failedAdmissionEntered;
+    expect(fixture.stores.subagentBudgets.readPool(root.id)).toMatchObject({ tokenBudget: 100 });
+    expect(fixture.stores.subagentBudgets.readMember(failedThreadId!)).toMatchObject({
+      poolThreadId: root.id,
+    });
+
+    const successfulSpawn = fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'concurrent-rollback-success',
+      taskName: 'concurrent_rollback_success',
+      message: 'Wait for rollback, then create the replacement pool',
+    });
+    releaseFailedAdmission();
+    await expect(failedSpawn).rejects.toThrow('simulated blocked child admission failure');
+    const sibling = await successfulSpawn;
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(fixture.stores.subagentBudgets.readMember(failedThreadId!)).toBeNull();
+    expect(fixture.stores.subagentBudgets.readPool(root.id)).toMatchObject({
+      tokenBudget: 100,
+      tokensUsed: 0,
+    });
+    expect(fixture.stores.subagentBudgets.readMember(sibling.thread.id)).toMatchObject({
+      poolThreadId: root.id,
+      tokensUsed: 0,
+    });
+    unsubscribe();
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(sibling.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
@@ -5119,7 +5272,7 @@ describe('ThreadService', () => {
       tokensUsed: 0,
     });
     expect((await fixture.service.request('goal/get', { threadId: isolated.thread.id })).goal).toBeNull();
-    expect(defaultReads).toBe(1);
+    expect(defaultReads).toBe(2);
 
     fixture.executor.finish(1, completedExecutionResult(3));
     fixture.executor.finish(2, completedExecutionResult(3));
@@ -5177,7 +5330,7 @@ describe('ThreadService', () => {
       { threadId: child.thread.id, tokensUsed: 0, tokenBudget: null },
     ]);
     expect(fixture.executor.contexts[0]?.remainingTokenBudget).toBeUndefined();
-    expect(fixture.executor.contexts[1]?.remainingTokenBudget?.()).toBeNull();
+    expect(fixture.executor.contexts[1]?.remainingTokenBudget).toBeUndefined();
 
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
@@ -5211,9 +5364,9 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(1);
 
     const context = fixture.executor.contexts[1]!;
-    expect(context.remainingTokenBudget?.()).toEqual({ budget: 10, used: 0 });
+    expect(context.remainingTokenBudget?.()).toEqual({ remaining: 10, total: 10, used: 0 });
     expect(context.onBudgetWarning).toBeDefined();
-    await context.onBudgetWarning?.({ budget: 10, used: 9 });
+    await context.onBudgetWarning?.({ remaining: 1, total: 10, used: 9 });
     const notice = '[Budget notice] ~80% of the token budget is consumed (9 of 10). '
       + 'Synthesize your findings and conclude now.';
     expect(fixture.executor.steered).toContain(notice);
@@ -5226,7 +5379,7 @@ describe('ThreadService', () => {
     fixture.executor.finish(1, {
       ...completedExecutionResult(10),
       status: 'interrupted',
-      error: { message: interruptionError },
+      error: { message: interruptionError, code: 'subagent_budget_exhausted' },
     });
     await fixture.service.waitForIdle(child.thread.id);
 
@@ -5281,7 +5434,7 @@ describe('ThreadService', () => {
 
     const context = fixture.executor.contexts[1]!;
     fixture.executor.steeringFailure = new Error('budget notice projection failed');
-    await expect(context.onBudgetWarning?.({ budget: 10, used: 9 }))
+    await expect(context.onBudgetWarning?.({ remaining: 1, total: 10, used: 9 }))
       .rejects.toThrow('budget notice projection failed');
     expect(context.signal.aborted).toBe(false);
 
@@ -5327,7 +5480,11 @@ describe('ThreadService', () => {
       message: 'Spawn one nested worker',
     });
     await fixture.executor.waitUntilWaiting(1);
-    expect(fixture.executor.contexts[1]?.remainingTokenBudget?.()).toEqual({ budget: 12, used: 0 });
+    expect(fixture.executor.contexts[1]?.remainingTokenBudget?.()).toEqual({
+      remaining: 12,
+      total: 12,
+      used: 0,
+    });
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'pool-grandchild-spawn');
     const grandchild = await fixture.service.spawnCollaborationAgent({
       senderThreadId: parent.thread.id,
@@ -5425,7 +5582,11 @@ describe('ThreadService', () => {
 
     await Promise.all([1, 2, 3, 4].map((index) => fixture.executor.reportModelCallUsage(index, 30)));
     for (let index = 1; index <= 4; index += 1) {
-      expect(fixture.executor.contexts[index]?.remainingTokenBudget?.()).toEqual({ budget: 100, used: 90 });
+      expect(fixture.executor.contexts[index]?.remainingTokenBudget?.()).toEqual({
+        remaining: -20,
+        total: 100,
+        used: 120,
+      });
     }
     expect(fixture.service.listCollaborationAgents(root.id)).toEqual(
       expect.arrayContaining(children.map((child) => expect.objectContaining({
@@ -5496,7 +5657,12 @@ describe('ThreadService', () => {
       message: 'Create the newly enabled pool',
     });
     await fixture.executor.waitUntilWaiting(2);
-    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toEqual({ budget: 20, used: 10 });
+    expect(fixture.executor.contexts[1]?.onModelCallUsage).toBeUndefined();
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toEqual({
+      remaining: 20,
+      total: 20,
+      used: 0,
+    });
     fixture.executor.finish(1, completedExecutionResult(10));
     fixture.executor.finish(2, completedExecutionResult(5));
     await Promise.all([
@@ -5513,7 +5679,11 @@ describe('ThreadService', () => {
       'This older child is now pool-covered',
     );
     await fixture.executor.waitUntilWaiting(3);
-    expect(fixture.executor.contexts[3]?.remainingTokenBudget?.()).toEqual({ budget: 20, used: 15 });
+    expect(fixture.executor.contexts[3]?.remainingTokenBudget?.()).toEqual({
+      remaining: 5,
+      total: 20,
+      used: 15,
+    });
     fixture.executor.finish(3, completedExecutionResult(5));
     await fixture.service.waitForIdle(older.thread.id);
     expect(fixture.stores.subagentBudgets.readMember(older.thread.id)).toBeNull();
@@ -5575,7 +5745,7 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting(2);
     expect(fixture.stores.subagentBudgets.readMember(descendant.thread.id)?.poolThreadId).toBe(parent.thread.id);
-    expect(settingReads).toBe(0);
+    expect(settingReads).toBe(1);
 
     fixture.executor.finish(2, completedExecutionResult(20));
     await fixture.service.waitForIdle(descendant.thread.id);
@@ -5651,7 +5821,11 @@ describe('ThreadService', () => {
       'Use the last three tokens',
     );
     await fixture.executor.waitUntilWaiting(3);
-    expect(fixture.executor.contexts[3]?.remainingTokenBudget?.()).toEqual({ budget: 10, used: 7 });
+    expect(fixture.executor.contexts[3]?.remainingTokenBudget?.()).toEqual({
+      remaining: 3,
+      total: 10,
+      used: 7,
+    });
     fixture.executor.finish(3, completedExecutionResult(3));
     await fixture.service.waitForIdle(child.thread.id);
     expect(fixture.stores.subagentBudgets.readPool(root.id)).toMatchObject({ tokenBudget: 100, tokensUsed: 10 });
@@ -6080,8 +6254,8 @@ describe('ThreadService', () => {
     });
     expect(userTurn.turn.provenance.trigger).toEqual({ kind: 'user' });
     await fixture.executor.waitUntilWaiting(2);
-    expect(fixture.executor.contexts[2]?.remainingTokenBudget).toBeDefined();
-    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toBeNull();
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget).toBeUndefined();
+    expect(fixture.executor.contexts[2]?.onModelCallUsage).toBeDefined();
     expect(fixture.executor.contexts[2]?.onBudgetWarning).toBeUndefined();
     fixture.executor.finish(2, completedExecutionResult(3));
     await fixture.service.waitForIdle(child.thread.id);
@@ -6313,6 +6487,89 @@ describe('ThreadService', () => {
       });
 
     fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('clears failure-path in-flight usage before finalization I/O admits a sibling', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 8 });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Test failure finalization budget visibility' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'failure-window-child');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'failure-window-child',
+      taskName: 'failure_window_child',
+      message: 'Fail after reporting one model call',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await fixture.executor.reportModelCallUsage(1, 5);
+
+    const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+    let blockFailurePrune = false;
+    let rejectCompletion = true;
+    fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+      if (rejectCompletion && threadId === child.thread.id && notification.type === 'turn/completed') {
+        rejectCompletion = false;
+        blockFailurePrune = true;
+        throw new Error('simulated completion write failure');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let enterFailurePrune!: () => void;
+    let releaseFailurePrune!: () => void;
+    const failurePruneEntered = new Promise<void>((resolve) => { enterFailurePrune = resolve; });
+    const failurePruneRelease = new Promise<void>((resolve) => { releaseFailurePrune = resolve; });
+    fixture.stores.payloads.pruneUnreferencedContexts = async (threadId, refs) => {
+      if (blockFailurePrune && threadId === child.thread.id) {
+        blockFailurePrune = false;
+        enterFailurePrune();
+        await failurePruneRelease;
+      }
+      return prune(threadId, refs);
+    };
+
+    fixture.executor.finish(1, completedExecutionResult(5));
+    await failurePruneEntered;
+    expect(fixture.stores.subagentBudgets.readPool(root.id)).toMatchObject({
+      tokenBudget: 8,
+      tokensUsed: 5,
+    });
+    expect(fixture.service.listCollaborationAgents(root.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: child.thread.id, tokenBudget: 8, tokensUsed: 5 }),
+    ]));
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'failure-window-sibling');
+    const sibling = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'failure-window-sibling',
+      taskName: 'failure_window_sibling',
+      message: 'Use the real remaining pool after failure accrual',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toEqual({
+      remaining: 3,
+      total: 8,
+      used: 5,
+    });
+
+    releaseFailurePrune();
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(sibling.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });

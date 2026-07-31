@@ -1,7 +1,10 @@
-import type { TurnError } from '../../core/agent/protocol';
+import {
+  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  normalizeTurnErrorCode,
+  type TurnError,
+} from '../../core/agent/protocol';
 
 const ERROR_PREVIEW_MAX = 280;
-const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
@@ -25,7 +28,7 @@ function parsedPayloadError(text: string): TurnError | null {
       : parsed.code;
     return {
       message: message.trim(),
-      ...(typeof code === 'string' && code ? { code } : {}),
+      ...(typeof code === 'string' && code ? { code: normalizeTurnErrorCode(code) } : {}),
     };
   } catch {
     return null;

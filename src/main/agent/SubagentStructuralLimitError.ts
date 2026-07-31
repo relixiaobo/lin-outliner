@@ -1,6 +1,7 @@
+import { SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE } from '../../core/agent/protocol';
+
 export const SUBAGENT_DEPTH_LIMIT_ERROR_NAME = 'SubagentDepthLimitError';
 export const SUBAGENT_SPAWN_LIMIT_ERROR_NAME = 'SubagentSpawnLimitError';
-export const SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE = 'subagent_structural_limit';
 
 export class SubagentDepthLimitError extends Error {
   readonly code = SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE;

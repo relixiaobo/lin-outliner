@@ -128,20 +128,20 @@ export class SubagentBudgetLedger {
     return { ...member, poolThreadId };
   }
 
-  deletePool(poolThreadId: ThreadId): boolean {
+  deleteMember(threadId: ThreadId): boolean {
+    const ephemeralMember = this.ephemeralMembers.delete(threadId);
+    const persistedChanges = this.db.prepare(
+      'DELETE FROM subagent_budget_members WHERE thread_id = ?',
+    ).run(threadId).changes;
+    return ephemeralMember || Number(persistedChanges) > 0;
+  }
+
+  deletePoolRecord(poolThreadId: ThreadId): boolean {
     const ephemeralPool = this.ephemeralPools.delete(poolThreadId);
-    if (ephemeralPool) {
-      for (const [memberThreadId, member] of this.ephemeralMembers) {
-        if (member.poolThreadId === poolThreadId) this.ephemeralMembers.delete(memberThreadId);
-      }
-    }
-    const memberChanges = this.db.prepare(
-      'DELETE FROM subagent_budget_members WHERE pool_thread_id = ?',
-    ).run(poolThreadId).changes;
-    const poolChanges = this.db.prepare(
+    const persistedChanges = this.db.prepare(
       'DELETE FROM subagent_budget_pools WHERE pool_thread_id = ?',
     ).run(poolThreadId).changes;
-    return ephemeralPool || Number(memberChanges) > 0 || Number(poolChanges) > 0;
+    return ephemeralPool || Number(persistedChanges) > 0;
   }
 
   recordSpawnCount(spawnerThreadId: ThreadId, spawnCount: number, ephemeral: boolean): number {

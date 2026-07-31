@@ -179,88 +179,96 @@ export class SubagentCollaboration {
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
       this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const tokenCap = this.childTokenCap(input.maxTotalTokens);
+      const configuredPoolBudget = tokenCap === null ? await this.configuredPoolBudget() : null;
       let stagedThreadId: ThreadId | null = null;
-      let createdPoolThreadId: ThreadId | null = null;
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
-        if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
-        const parent = this.core.requireThread(input.parentThreadId);
-        const collaborationChild = input.childKind !== 'isolatedSkill';
-        const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
-        const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
-        const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
-        const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
-          role,
-          ...(input.model === undefined ? {} : { model: input.model }),
-          ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
-        });
-        const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
-        const configuration = this.applyToolCeiling(resolvedConfiguration, toolCeiling);
-        const thread = await this.catalog.createThread({
-          name: input.taskPath.split('/').at(-1) ?? 'Subagent',
-          ephemeral: parent.thread.ephemeral,
-          source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
-          threadSource: 'subagent',
-          modelProvider: parent.thread.modelProvider,
-          cwd: parent.thread.cwd,
-        }, {
-          sessionId: parent.thread.sessionId,
-          parentThreadId: parent.thread.id,
-          forkedFromId: null,
-          agentRole: role.name,
-          agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
-          configuration,
-          toolCeiling,
-          modelOverride: input.model ?? null,
-          reasoningEffortOverride: input.reasoningEffort ?? null,
-          taskPath: input.taskPath,
-        });
-        stagedThreadId = thread.id;
-        let pool = inheritedBudget?.pool ?? null;
-        if (!pool && !inheritedBudget?.resolutionFailed) {
-          const poolBudget = tokenCap ?? await this.configuredPoolBudget();
-          if (poolBudget !== null) {
-            const poolThreadId = tokenCap === null ? parent.thread.id : thread.id;
-            pool = this.subagentBudgets.createPool(poolThreadId, poolBudget, parent.thread.ephemeral);
-            createdPoolThreadId = poolThreadId;
-            this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+          let createdPoolThreadId: ThreadId | null = null;
+          let createdMemberThreadId: ThreadId | null = null;
+          try {
+            if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
+            const parent = this.core.requireThread(input.parentThreadId);
+            const collaborationChild = input.childKind !== 'isolatedSkill';
+            const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
+            const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
+            const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
+            const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
+              role,
+              ...(input.model === undefined ? {} : { model: input.model }),
+              ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+            });
+            const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
+            const configuration = this.applyToolCeiling(resolvedConfiguration, toolCeiling);
+            const thread = await this.catalog.createThread({
+              name: input.taskPath.split('/').at(-1) ?? 'Subagent',
+              ephemeral: parent.thread.ephemeral,
+              source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
+              threadSource: 'subagent',
+              modelProvider: parent.thread.modelProvider,
+              cwd: parent.thread.cwd,
+            }, {
+              sessionId: parent.thread.sessionId,
+              parentThreadId: parent.thread.id,
+              forkedFromId: null,
+              agentRole: role.name,
+              agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
+              configuration,
+              toolCeiling,
+              modelOverride: input.model ?? null,
+              reasoningEffortOverride: input.reasoningEffort ?? null,
+              taskPath: input.taskPath,
+            });
+            stagedThreadId = thread.id;
+            const stagedContextEvidence = input.inheritedContext
+              ? [await this.copyInheritedContextToChild(input.parentThreadId, thread.id, input.inheritedContext)]
+              : [];
+            let pool = inheritedBudget?.pool ?? null;
+            if (!pool && !inheritedBudget?.resolutionFailed) {
+              const poolBudget = tokenCap ?? configuredPoolBudget;
+              if (poolBudget !== null) {
+                const poolThreadId = tokenCap === null ? parent.thread.id : thread.id;
+                pool = this.subagentBudgets.createPool(poolThreadId, poolBudget, parent.thread.ephemeral);
+                createdPoolThreadId = poolThreadId;
+                this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+              }
+            }
+            if (pool || tokenCap !== null) {
+              this.subagentBudgets.createMember(thread.id, pool?.poolThreadId ?? null, tokenCap, thread.ephemeral);
+              createdMemberThreadId = thread.id;
+            }
+            const accepted = await this.turnLifecycle.acceptAndLaunch({
+              threadId: thread.id,
+              input: [{ type: 'text', text: input.prompt }],
+              trigger: {
+                kind: 'subagent',
+                parentThreadId: parent.thread.id,
+                parentItemId: input.parentItemId,
+              },
+              ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+              ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
+            });
+            if (nextSpawnCount !== null) {
+              this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
+            }
+            return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
+          } catch (error) {
+            try {
+              if (createdMemberThreadId) this.subagentBudgets.deleteMember(createdMemberThreadId);
+              if (createdPoolThreadId) this.subagentBudgets.deletePoolRecord(createdPoolThreadId);
+              if (createdPoolThreadId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+            } catch (rollbackError) {
+              console.warn('[agent][subagent-budget-audit] failed to roll back staged budget rows', {
+                memberThreadId: createdMemberThreadId,
+                poolThreadId: createdPoolThreadId,
+                error: rollbackError,
+              });
+            }
+            throw error;
           }
-        }
-        if (pool || tokenCap !== null) {
-          this.subagentBudgets.createMember(thread.id, pool?.poolThreadId ?? null, tokenCap, thread.ephemeral);
-        }
-        const stagedContextEvidence = input.inheritedContext
-          ? [await this.copyInheritedContextToChild(input.parentThreadId, thread.id, input.inheritedContext)]
-          : [];
-        const accepted = await this.turnLifecycle.acceptAndLaunch({
-          threadId: thread.id,
-          input: [{ type: 'text', text: input.prompt }],
-          trigger: {
-            kind: 'subagent',
-            parentThreadId: parent.thread.id,
-            parentItemId: input.parentItemId,
-          },
-          ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
-          ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
-        });
-        if (nextSpawnCount !== null) {
-          this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
-        }
-        return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
         });
       } catch (error) {
         if (stagedThreadId) await this.catalog.deleteThread(stagedThreadId).catch(() => undefined);
-        if (createdPoolThreadId) {
-          try {
-            this.subagentBudgets.deletePool(createdPoolThreadId);
-          } catch (rollbackError) {
-            console.warn('[agent][subagent-budget-audit] failed to roll back a staged pool', {
-              poolThreadId: createdPoolThreadId,
-              error: rollbackError,
-            });
-          }
-        }
         throw error;
       }
       if (result.thread.source === 'collaboration') {

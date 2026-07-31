@@ -9,7 +9,6 @@ import {
   encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
 import { TurnDiagnosticsCollector } from '../../src/main/agent/context/TurnDiagnostics';
-import { withModelCallUsageObserver } from '../../src/main/agent/context/ModelCallUsageScope';
 
 const model = {
   id: 'test-model',
@@ -130,16 +129,10 @@ describe('Turn diagnostics', () => {
         'set-cookie': 'private-cookie',
       },
     });
-    let observedModelCallTokens = 0;
-    await withModelCallUsageObserver((tokens) => {
-      observedModelCallTokens += tokens;
-    }, async () => {
-      collector.captureEvent({
-        type: 'message_end',
-        message: assistantMessage('First response'),
-      } as AgentEvent);
-    });
-    expect(observedModelCallTokens).toBe(15);
+    collector.captureEvent({
+      type: 'message_end',
+      message: assistantMessage('First response'),
+    } as AgentEvent);
     collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
     collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 
