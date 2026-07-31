@@ -659,11 +659,21 @@ switching Threads, streaming-to-terminal remounts, and application reloads do no
 discard an explicit user choice. A live reasoning Item is open while streaming.
 A terminal reasoning Item rests folded unless it is the only process Item in a
 Turn without a final agent response, in which case it opens by default. Expanding
-or collapsing a disclosure preserves the clicked row's scroll position; follow is
-then derived from the resulting geometry rather than released by the toggle. An
-asynchronous tool-output read holds that anchor until the expanded content lands,
-while wheel, pointer, touch, keyboard, or independent scroll intent still cancels
-the pending correction immediately.
+or collapsing any explicit transcript disclosure preserves its activated surface's
+viewport position. This includes the persisted process, reasoning, tool-group, and
+tool-detail disclosures as well as measured long-user-message and image-gallery
+controls. The activated anchor owns that layout transaction while delayed
+measurements settle, so frame-level bottom follow yields instead of moving the
+surface the user just activated. The image gallery anchors its persistent container
+because the `+N` control unmounts when the full grid replaces it. Follow is derived
+from the resulting geometry after the anchor settles rather than released by the
+toggle. If growth above the activated control needs more scroll range than the
+transcript naturally has, a transient renderer-only tail runway supplies exactly
+the missing range. It is excluded from real-content metrics and is consumed by a
+collapse, later content, or independent scrolling. An asynchronous tool-output read
+holds that anchor until the expanded content lands, while wheel, pointer, touch,
+keyboard, or independent scroll intent still cancels the pending correction
+immediately.
 
 ## Pagination And Notifications
 

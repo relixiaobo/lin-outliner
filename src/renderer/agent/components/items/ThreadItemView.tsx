@@ -102,7 +102,7 @@ interface ThreadItemViewProps {
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
-  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void;
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
@@ -401,7 +401,7 @@ function renderUserContent(
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
   threadId: string,
   itemId: string,
-  onDisclosureToggle: (anchorElement: HTMLElement | null) => void,
+  onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void,
 ): ReactNode[] {
   const images: ThreadAttachmentContent[] = [];
   const narrative: ReactNode[] = [];
@@ -449,7 +449,14 @@ function renderUserContent(
   });
   const rendered: ReactNode[] = [];
   if (images.length > 0) {
-    rendered.push(<ThreadImageGallery contents={images} key="images" threadId={threadId} />);
+    rendered.push(
+      <ThreadImageGallery
+        contents={images}
+        key="images"
+        onDisclosureToggle={onDisclosureToggle}
+        threadId={threadId}
+      />,
+    );
   }
   if (narrative.length > 0) {
     rendered.push(
@@ -475,12 +482,13 @@ function UserMessageCollapsibleContent({
 }: {
   readonly children: ReactNode;
   readonly measureKey: string;
-  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void;
 }) {
   const t = useT();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [canCollapse, setCanCollapse] = useState(false);
+  const captureDisclosureAnchor = useLocalDisclosureAnchor(expanded, onDisclosureToggle);
 
   useLayoutEffect(() => {
     setExpanded(false);
@@ -519,7 +527,7 @@ function UserMessageCollapsibleContent({
           aria-expanded={expanded}
           className="thread-user-expand-button"
           onClick={(event) => {
-            onDisclosureToggle(event.currentTarget);
+            captureDisclosureAnchor(event.currentTarget);
             setExpanded((current) => !current);
           }}
         >
@@ -1699,15 +1707,34 @@ function ThreadInlineAttachment({
 
 const MAX_COLLAPSED_GALLERY_IMAGES = 4;
 
+function useLocalDisclosureAnchor(
+  expanded: boolean,
+  onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void,
+) {
+  const pendingRestoreRef = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    const restore = pendingRestoreRef.current;
+    pendingRestoreRef.current = null;
+    restore?.();
+  }, [expanded]);
+  return useCallback((anchorElement: HTMLElement | null) => {
+    pendingRestoreRef.current = onDisclosureToggle(anchorElement);
+  }, [onDisclosureToggle]);
+}
+
 function ThreadImageGallery({
   contents,
+  onDisclosureToggle,
   threadId,
 }: {
   readonly contents: readonly ThreadAttachmentContent[];
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void;
   readonly threadId: string;
 }) {
   const t = useT();
+  const galleryRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const captureDisclosureAnchor = useLocalDisclosureAnchor(expanded, onDisclosureToggle);
   const collapsed = !expanded && contents.length > MAX_COLLAPSED_GALLERY_IMAGES;
   const visible = collapsed ? contents.slice(0, MAX_COLLAPSED_GALLERY_IMAGES) : contents;
   const hiddenCount = contents.length - visible.length;
@@ -1717,6 +1744,7 @@ function ThreadImageGallery({
       aria-label={t.agent.message.imageGallery({ count: contents.length })}
       className="thread-image-gallery"
       data-layout-count={layout}
+      ref={galleryRef}
       role="group"
     >
       <div className="thread-image-gallery-grid">
@@ -1730,7 +1758,10 @@ function ThreadImageGallery({
                   aria-expanded="false"
                   aria-label={t.agent.message.showAllImages({ count: contents.length })}
                   className="thread-image-gallery-more"
-                  onClick={() => setExpanded(true)}
+                  onClick={() => {
+                    captureDisclosureAnchor(galleryRef.current);
+                    setExpanded(true);
+                  }}
                 >
                   +{hiddenCount}
                 </ButtonControl>
@@ -1746,7 +1777,10 @@ function ThreadImageGallery({
           icon={ChevronDownIcon}
           iconSize={ICON_SIZE.tiny}
           label={t.agent.message.showFewerImages}
-          onClick={() => setExpanded(false)}
+          onClick={() => {
+            captureDisclosureAnchor(galleryRef.current);
+            setExpanded(false);
+          }}
           variant="message"
         />
       ) : null}

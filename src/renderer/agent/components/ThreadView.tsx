@@ -92,6 +92,7 @@ import {
   captureDisclosureScrollAnchor,
   nearestScrollContainer,
   usePendingDisclosureAnchor,
+  type DisclosureScrollAnchorRestoreResult,
 } from '../../ui/interactions/disclosureScrollAnchor';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { formatDateTime } from '../../ui/formatting';
@@ -354,6 +355,7 @@ export function ThreadView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const composerRegionRef = useRef<HTMLDivElement>(null);
+  const disclosureAnchorRunwayRef = useRef(0);
   const composerRef = useRef<ThreadComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
@@ -458,7 +460,9 @@ export function ThreadView({
     const spacer = element.querySelector<HTMLElement>('.thread-send-anchor-spacer');
     const transcriptScrollHeight = Math.max(
       0,
-      element.scrollHeight - (spacer?.getBoundingClientRect().height ?? 0),
+      element.scrollHeight
+        - (spacer?.getBoundingClientRect().height ?? 0)
+        - disclosureAnchorRunwayRef.current,
     );
     const next = {
       hasContentBelow: hasTranscriptContentBelow({
@@ -499,18 +503,53 @@ export function ThreadView({
     });
   }, [synchronizeScrollPosition]);
 
-  const handleDisclosureAnchorRestore = useCallback(() => {
+  // Supply only the tail space needed when the natural scroll range cannot preserve the activated control.
+  const setDisclosureAnchorRunway = useCallback((height: number) => {
+    const nextHeight = Math.max(0, height);
+    if (Math.abs(disclosureAnchorRunwayRef.current - nextHeight) < 0.01) return;
+    disclosureAnchorRunwayRef.current = nextHeight;
+    const content = transcriptContentRef.current;
+    if (!content) return;
+    if (nextHeight > 0) content.style.paddingBottom = `${nextHeight}px`;
+    else content.style.removeProperty('padding-bottom');
+  }, []);
+
+  const handleDisclosureAnchorRestore = useCallback((result: DisclosureScrollAnchorRestoreResult) => {
     const scroll = scrollRef.current;
     if (!scroll) return;
+    if (result.remainingDelta > 0) {
+      setDisclosureAnchorRunway(disclosureAnchorRunwayRef.current + result.remainingDelta);
+      scroll.scrollTop += result.remainingDelta;
+    }
+    const naturalMaximumTop = Math.max(
+      0,
+      scroll.scrollHeight - disclosureAnchorRunwayRef.current - scroll.clientHeight,
+    );
+    const requiredRunway = Math.max(0, scroll.scrollTop - naturalMaximumTop);
+    if (requiredRunway < disclosureAnchorRunwayRef.current) {
+      setDisclosureAnchorRunway(requiredRunway);
+    }
     expectedProgrammaticScrollTopRef.current = scroll.scrollTop;
     synchronizeScrollPosition(scroll);
-  }, [synchronizeScrollPosition]);
+  }, [setDisclosureAnchorRunway, synchronizeScrollPosition]);
 
   const {
     capturePendingAnchor,
+    hasPendingAnchor,
     holdUntilSettled,
     restorePendingAnchor,
   } = usePendingDisclosureAnchor(handleDisclosureAnchorRestore);
+
+  const reconcileDisclosureAnchorRunway = useCallback((scroll: HTMLDivElement) => {
+    const currentRunway = disclosureAnchorRunwayRef.current;
+    if (currentRunway <= 0 || hasPendingAnchor()) return;
+    const naturalMaximumTop = Math.max(
+      0,
+      scroll.scrollHeight - currentRunway - scroll.clientHeight,
+    );
+    const requiredRunway = Math.max(0, scroll.scrollTop - naturalMaximumTop);
+    if (requiredRunway < currentRunway) setDisclosureAnchorRunway(requiredRunway);
+  }, [hasPendingAnchor, setDisclosureAnchorRunway]);
 
   const expandState = useMemo<ThreadDisclosureState>(() => ({
     holdAnchorUntilSettled: holdUntilSettled,
@@ -534,7 +573,9 @@ export function ThreadView({
   const handleUserDisclosureToggle = useCallback((anchorElement: HTMLElement | null) => {
     const scroller = nearestScrollContainer(anchorElement, scrollRef.current);
     capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement, scroller));
-    restorePendingAnchor();
+    return () => {
+      restorePendingAnchor();
+    };
   }, [capturePendingAnchor, restorePendingAnchor]);
 
   const attemptScrollRestore = useCallback(() => {
@@ -547,19 +588,20 @@ export function ThreadView({
   }, [setProgrammaticScrollTop]);
 
   const scheduleBottomPin = useCallback(() => {
-    if (!followRef.current || bottomScrollFrameRef.current !== null) return;
+    if (hasPendingAnchor() || !followRef.current || bottomScrollFrameRef.current !== null) return;
     bottomScrollFrameRef.current = window.requestAnimationFrame(() => {
       bottomScrollFrameRef.current = null;
       const scroll = scrollRef.current;
-      if (!scroll || !followRef.current) return;
+      if (!scroll || hasPendingAnchor() || !followRef.current) return;
       setProgrammaticScrollTop(scroll, scroll.scrollHeight);
     });
-  }, [setProgrammaticScrollTop]);
+  }, [hasPendingAnchor, setProgrammaticScrollTop]);
 
   const scheduleSendAnchorLayout = useCallback(() => {
-    if (pendingSendAnchorFrameRef.current !== null) return;
+    if (hasPendingAnchor() || pendingSendAnchorFrameRef.current !== null) return;
     pendingSendAnchorFrameRef.current = window.requestAnimationFrame(() => {
       pendingSendAnchorFrameRef.current = null;
+      if (hasPendingAnchor()) return;
       const pending = pendingSendScrollRef.current;
       const currentSpacer = sendAnchorSpacerRef.current;
       const scroll = scrollRef.current;
@@ -593,7 +635,9 @@ export function ThreadView({
       const renderedSpacer = scroll.querySelector<HTMLElement>('.thread-send-anchor-spacer');
       const contentScrollHeight = Math.max(
         0,
-        scroll.scrollHeight - (renderedSpacer?.getBoundingClientRect().height ?? 0),
+        scroll.scrollHeight
+          - (renderedSpacer?.getBoundingClientRect().height ?? 0)
+          - disclosureAnchorRunwayRef.current,
       );
       const requiredScrollHeight = naturalTargetTop
         + scroll.clientHeight
@@ -633,7 +677,7 @@ export function ThreadView({
       pendingSendScrollRef.current = null;
       setProgrammaticScrollTop(scroll, targetTop);
     });
-  }, [measuredTurnHeights, setProgrammaticScrollTop, updateSendAnchorSpacer]);
+  }, [hasPendingAnchor, measuredTurnHeights, setProgrammaticScrollTop, updateSendAnchorSpacer]);
 
   const measureTurn = useCallback((turnId: string, height: number, element: HTMLDivElement) => {
     const current = measuredTurnHeights.get(turnId);
@@ -687,6 +731,7 @@ export function ThreadView({
     const scroll = scrollRef.current;
     if (!scroll) return undefined;
     const synchronizeLayout = () => {
+      reconcileDisclosureAnchorRunway(scroll);
       updateScrollMetrics(scroll);
       attemptScrollRestore();
       scheduleSendAnchorLayout();
@@ -703,6 +748,7 @@ export function ThreadView({
     return () => observer.disconnect();
   }, [
     attemptScrollRestore,
+    reconcileDisclosureAnchorRunway,
     scheduleBottomPin,
     scheduleSendAnchorLayout,
     updateScrollMetrics,
@@ -741,6 +787,7 @@ export function ThreadView({
       scrollMetricsFrameRef.current = null;
     }
     cancelPendingVirtualScrollAdjustment();
+    setDisclosureAnchorRunway(0);
     const scroll = scrollRef.current;
     if (scroll && !scrollRestoreRef.current) {
       cacheThreadScrollSnapshot(threadId, {
@@ -748,7 +795,7 @@ export function ThreadView({
         top: scroll.scrollTop,
       });
     }
-  }, [cancelPendingVirtualScrollAdjustment, threadId]);
+  }, [cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway, threadId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -819,6 +866,7 @@ export function ThreadView({
     const editorSnapshot = composerRef.current?.snapshot() ?? null;
     const scroll = scrollRef.current;
     const previousViewport = scroll ? {
+      disclosureRunway: disclosureAnchorRunwayRef.current,
       follow: followRef.current,
       spacer: sendAnchorSpacerRef.current,
       top: scroll.scrollTop,
@@ -832,6 +880,7 @@ export function ThreadView({
       targetTurnId: null,
     };
     clearSendAnchorSpacer();
+    setDisclosureAnchorRunway(0);
     pendingSendScrollRef.current = pendingSend;
     setFollowValue(true);
     if (scroll) setProgrammaticScrollTop(scroll, scroll.scrollHeight);
@@ -860,6 +909,7 @@ export function ThreadView({
       const currentScroll = scrollRef.current;
       if (currentScroll && currentScroll === scroll && previousViewport) {
         updateSendAnchorSpacer(previousViewport.spacer);
+        setDisclosureAnchorRunway(previousViewport.disclosureRunway);
         setFollowValue(previousViewport.follow);
         cacheThreadScrollSnapshot(threadId, {
           follow: previousViewport.follow,
@@ -1178,6 +1228,7 @@ export function ThreadView({
             if (!programmatic) {
               scrollRestoreRef.current = null;
             }
+            reconcileDisclosureAnchorRunway(scroll);
             const nextFollow = isTranscriptFollowing(scroll);
             setFollowValue(nextFollow);
             cacheThreadScrollSnapshot(threadId, { follow: nextFollow, top: scroll.scrollTop });
@@ -1246,6 +1297,7 @@ export function ThreadView({
             onClick={() => {
               scrollRestoreRef.current = null;
               clearSendAnchorSpacer();
+              setDisclosureAnchorRunway(0);
               setFollowValue(true);
               const scroll = scrollRef.current;
               if (scroll) setProgrammaticScrollTop(scroll, scroll.scrollHeight);
@@ -1434,7 +1486,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly index: DocumentIndex;
   /** Reasoning Item ids that have been open by default this session. */
   readonly latchedReasoning: Set<string>;
-  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
+  readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => () => void;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;

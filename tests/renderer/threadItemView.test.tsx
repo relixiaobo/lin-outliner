@@ -521,7 +521,7 @@ function ThreadItemProbe({
       }}
       index={buildIndex(emptyProjection())}
       item={item}
-      onDisclosureToggle={() => undefined}
+      onDisclosureToggle={() => () => undefined}
       onEditUserMessage={async () => undefined}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}

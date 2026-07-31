@@ -34,6 +34,12 @@ Later streaming content may therefore continue following when the resulting
 geometry remains near the bottom. Wheel, pointer, touch, keyboard, or independent
 scroll input continues to cancel the temporary anchor immediately.
 
+When a disclosure grows content above its control and the transcript has less
+natural scroll range than the required correction, add only the missing amount as
+a transient renderer runway on the transcript content. Keep it outside React state
+and exclude it from real-content metrics; collapse, later content, or independent
+scroll consumes the runway without moving the activated surface.
+
 Reuse the existing `usePendingDisclosureAnchor` mechanism and transient refs;
 do not add React state that rerenders the transcript merely to track a
 frame-level interaction.

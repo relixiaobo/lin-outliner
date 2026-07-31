@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import {
   captureDisclosureScrollAnchor,
+  restoreDisclosureScrollAnchor,
   usePendingDisclosureAnchor,
   type DisclosureScrollAnchorHold,
   type DisclosureScrollAnchorSnapshot,
@@ -14,6 +15,7 @@ interface Rendered {
   cleanup: () => void;
   dispatchScroll: () => void;
   flushFrame: () => void;
+  hasPendingAnchor: () => boolean;
   holdAnchor: () => DisclosureScrollAnchorHold | null;
   pendingFrameCount: () => number;
 }
@@ -65,6 +67,7 @@ describe('usePendingDisclosureAnchor', () => {
     );
 
     expect(rendered.scroller.scrollTop).toBe(100);
+    expect(rendered.hasPendingAnchor()).toBe(true);
 
     layoutTop = 570;
     rendered.flushFrame();
@@ -75,6 +78,9 @@ describe('usePendingDisclosureAnchor', () => {
     rendered.flushFrame();
     expect(rendered.scroller.scrollTop).toBe(50);
     expect(rendered.anchor.getBoundingClientRect().top).toBe(500);
+
+    for (let frame = 0; frame < 10; frame += 1) rendered.flushFrame();
+    expect(rendered.hasPendingAnchor()).toBe(false);
   });
 
   test('releases the disclosure anchor when the user scrolls before delayed corrections', () => {
@@ -123,6 +129,7 @@ describe('usePendingDisclosureAnchor', () => {
     rendered.scroller.scrollTop = 160;
     rendered.dispatchScroll();
     expect(rendered.pendingFrameCount()).toBe(0);
+    expect(rendered.hasPendingAnchor()).toBe(false);
 
     layoutTop = 570;
     rendered.flushFrame();
@@ -173,12 +180,51 @@ describe('usePendingDisclosureAnchor', () => {
     expect(hold).not.toBeNull();
     for (let frame = 0; frame < 12; frame += 1) rendered.flushFrame();
     expect(rendered.pendingFrameCount()).toBe(0);
+    expect(rendered.hasPendingAnchor()).toBe(true);
 
     layoutTop = 540;
     hold?.settle();
     expect(rendered.pendingFrameCount()).toBe(1);
     rendered.flushFrame();
     expect(rendered.scroller.scrollTop).toBe(40);
+    for (let frame = 0; frame < 11; frame += 1) rendered.flushFrame();
+    expect(rendered.hasPendingAnchor()).toBe(false);
+  });
+});
+
+test('reports anchor movement that remains after the scroller reaches its limit', () => {
+  const { document } = parseHTML('<!doctype html><html><body></body></html>');
+  const scroller = document.createElement('div');
+  const anchor = document.createElement('button');
+  let scrollTop = 100;
+  let layoutTop = 600;
+  Object.defineProperty(scroller, 'scrollTop', {
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = Math.min(130, value);
+    },
+  });
+  anchor.getBoundingClientRect = () => ({
+    bottom: layoutTop - scrollTop + 12,
+    height: 12,
+    left: 0,
+    right: 12,
+    top: layoutTop - scrollTop,
+    width: 12,
+    x: 0,
+    y: layoutTop - scrollTop,
+    toJSON: () => ({}),
+  });
+  scroller.append(anchor);
+  document.body.append(scroller);
+  const snapshot = captureDisclosureScrollAnchor(anchor, scroller);
+  if (!snapshot) throw new Error('Missing disclosure anchor snapshot');
+
+  layoutTop = 650;
+  expect(restoreDisclosureScrollAnchor(snapshot)).toEqual({
+    moved: true,
+    remainingDelta: 20,
+    restored: true,
   });
 });
 
@@ -186,15 +232,26 @@ function Probe({
   onReady,
   snapshot,
 }: {
-  readonly onReady: (holdAnchor: () => DisclosureScrollAnchorHold | null) => void;
+  readonly onReady: (controls: {
+    hasPendingAnchor: () => boolean;
+    holdAnchor: () => DisclosureScrollAnchorHold | null;
+  }) => void;
   readonly snapshot: DisclosureScrollAnchorSnapshot;
 }) {
-  const { capturePendingAnchor, holdUntilSettled, restorePendingAnchor } = usePendingDisclosureAnchor();
+  const {
+    capturePendingAnchor,
+    hasPendingAnchor,
+    holdUntilSettled,
+    restorePendingAnchor,
+  } = usePendingDisclosureAnchor();
   useLayoutEffect(() => {
     capturePendingAnchor(snapshot);
   }, [capturePendingAnchor, snapshot]);
   useLayoutEffect(() => restorePendingAnchor(), [restorePendingAnchor, snapshot]);
-  useLayoutEffect(() => onReady(holdUntilSettled), [holdUntilSettled, onReady]);
+  useLayoutEffect(() => onReady({
+    hasPendingAnchor,
+    holdAnchor: holdUntilSettled,
+  }), [hasPendingAnchor, holdUntilSettled, onReady]);
   return null;
 }
 
@@ -218,10 +275,17 @@ function render(
   });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const { anchor, scroller, snapshot } = createAnchor(document);
+  let hasPendingAnchor = () => false;
   let holdAnchor = (): DisclosureScrollAnchorHold | null => null;
   const root = createRoot(document.getElementById('root')!);
   act(() => {
-    root.render(<Probe onReady={(hold) => { holdAnchor = hold; }} snapshot={snapshot} />);
+    root.render(<Probe
+      onReady={(controls) => {
+        hasPendingAnchor = controls.hasPendingAnchor;
+        holdAnchor = controls.holdAnchor;
+      }}
+      snapshot={snapshot}
+    />);
   });
   const rendered = {
     anchor,
@@ -241,6 +305,7 @@ function render(
       frameCallbacks.delete(first[0]);
       first[1](performance.now());
     },
+    hasPendingAnchor: () => hasPendingAnchor(),
     holdAnchor: () => holdAnchor(),
     pendingFrameCount: () => (
       (window as unknown as { __frames?: Map<number, FrameRequestCallback> }).__frames?.size ?? 0
