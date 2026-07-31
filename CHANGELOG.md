@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **The run's status line stops claiming more than the run is doing (PR #463,
+  cc-2)** — a settled Turn is now always described in the past instead of
+  falling through to the live "Working" label, and exactly one element owns a
+  Turn's terminal status — with something always owning it, including the case
+  where a Turn was interrupted before it produced anything at all and no
+  process divider exists to state it. A Turn blocked on the user says so and
+  stops its spinner, because a spinner claims work is happening; the elapsed
+  time is deliberately left as wall-clock since the Turn started — the same
+  span the server records — so the live label and the settled one cannot
+  contradict each other, and the wait is named rather than subtracted. Counted
+  activity reports finished and in-flight work separately ("Read 5 files ·
+  reading 1") instead of one present-tense count covering work already done. A
+  reasoning disclosure that opened by default now latches open for the rest of
+  the Thread session, so an arriving Item can no longer snap it shut and shift
+  the layout under the reader — an explicit collapse still wins, and a reloaded
+  transcript rests at the settled default rather than permanently expanding
+  every reasoning Item a reader once watched live. The reconnect banner honors
+  `prefers-reduced-motion` and can no longer outlive the attempt it describes.
 - **Tool rows say what the agent did, and show status without a mystery glyph
   (PR #461, cc-2)** — a tool row in the transcript now keeps its own icon and
   reads as a sentence about the work: "Read \"Chapter Three\"" rather than

@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/process-state-truthfulness` | `agent-run-presentation-consistency` PR B (#463, draft claim) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,11 +31,29 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: #463 (cc-2, `agent-run-presentation-consistency`
-PR B claim). PM staffing next: `red-e2e-on-main` and `agent-subagent-interaction` PR 1/2;
-`agent-browser-control` implementation is **shelved** pending upstream Browser Pilot
-stabilization (PM ruling 2026-07-31), and `agent-reasoning-replay-fidelity` is claimable.
-Recently merged: #457 (plan-only, five gate rulings folded in);
+**In flight (2026-07-31).** Open PR queue: empty. PM staffing next: `red-e2e-on-main`
+and `agent-subagent-interaction` PR 1/2; `agent-run-presentation-consistency` PR C is
+now the plan's only unclaimed unit; `agent-browser-control` implementation is
+**shelved** pending upstream Browser Pilot stabilization (PM ruling 2026-07-31), and
+`agent-reasoning-replay-fidelity` is claimable.
+Recently merged: #463 (`cc-2/process-state-truthfulness`,
+`agent-run-presentation-consistency` PR B) after a medium review gate that took three
+rounds — the first pass found the status-owner guard erasing the status entirely from a
+Turn interrupted before it produced any process Item, and a `reasoningDefaultExpanded`
+helper that was character-for-character the `streaming` prop it sat beside, so the
+disclosure-collapse bug it claimed to fix (and which the code comment and spec both
+asserted was fixed) was untouched. Two lower findings — a "frozen" elapsed clock that
+still re-attributed the whole wait as work on resume, and an unscoped
+`providerRetryByThread` clear racing an in-flight retry — were answered in a third
+round by deleting the freeze rather than repairing it (it bought nothing: the waiting
+label outranks the elapsed value before it is ever read, and subtracting the wait would
+contradict the server's wall-clock `durationMs`) and by a scoped clear. The reasoning
+latch moved from the disclosure component up to `ThreadView` after the gate found the
+ref died with the row on virtualization; deliberately not persisted, both halves now
+stated in the spec. Gate verified the latch e2e fails without the latch. The one e2e
+failure at the gate reproduces identically on `main` and is already filed as
+`flaky-thread-model-menu-focus-e2e`.
+#457 (plan-only, five gate rulings folded in);
 #455 (`subagent-budget-propagation` PR C) after three gate rounds — the budget
 line is now closed end-to-end (per-child breaker + tree-pool conservation +
 depth/count legibility gates); and
@@ -721,13 +739,14 @@ archived `done` (see Recently completed). Remaining active work:
 - **agent-run-presentation-consistency** (P3, `in-progress` — cc-2, plan merged #454; shape (b):
   three complete PRs, independently claimable) — **PR A tool-row status visuals shipped #461**
   (failed rows keep the tool's own glyph, status by `--status-danger` tint incl. a dark-mode
-  token-layer fix per B1/B11); PR B process-state truthfulness (no lying "Working"
-  labels/timers/flash states, blocked-on-user surfacing for the PARENT), PR C centered
-  plan-progress pill + the `update_plan` Turn-diagnostics leak fix remain unclaimed
-  (PR B claimed by #463). **Evidence warning:** this plan's `ThreadService.ts:NNNN`
+  token-layer fix per B1/B11); **PR B process-state truthfulness shipped #463** (no
+  lying "Working" labels/timers/flash states, blocked-on-user surfacing for the PARENT,
+  one always-present owner for a Turn's terminal status, latched reasoning disclosures);
+  PR C centered plan-progress pill + the `update_plan` Turn-diagnostics leak fix remains
+  unclaimed. **Evidence warning:** this plan's `ThreadService.ts:NNNN`
   citations predate #451 — that file is now 875 lines and the cited concerns moved to
   `thread/TurnLifecycle.ts` / `thread/SubagentCollaboration.ts` / `thread/ThreadCatalogOps.ts`.
-  Re-locate before trusting any of them; #463 is doing exactly that for PR B's scope.
+  Re-locate before trusting any of them; #463 did exactly that for PR B's scope.
   See `docs/plans/agent-run-presentation-consistency.md`.
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +
