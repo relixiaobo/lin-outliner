@@ -47,6 +47,7 @@ describe('ThreadTurnDetailsPanel', () => {
         error: {
           message: 'Token budget exhausted mid-Turn (1234 of 1000 tokens)',
           code: 'subagent_budget_exhausted',
+          detail: 'Internal budget receipt: 1234 tokens used',
         },
       },
     };
@@ -62,6 +63,95 @@ describe('ThreadTurnDetailsPanel', () => {
     );
     expect(rendered.document.body.textContent).not.toContain('1234');
     expect(rendered.document.body.textContent).not.toContain('1000 tokens');
+    expect(rendered.document.body.textContent).not.toContain('Internal budget receipt');
+  });
+
+  test('sanitizes Subagent canonical Items and never reads collaboration raw output', async () => {
+    const base = detailsResponse('thread-subagent', 'turn-subagent', 'subagent-marker');
+    const collaborationOutput = {
+      id: 'b'.repeat(64),
+      mimeType: 'application/json' as const,
+      byteLength: 80,
+      summary: 'tokensUsed: 9876, tokenBudget: 9000',
+    };
+    const detail: ThreadTurnDetailsReadResponse = {
+      ...base,
+      turn: {
+        ...base.turn,
+        items: [
+          ...base.turn.items,
+          {
+            type: 'collabAgentToolCall',
+            id: 'collaboration-item',
+            provenance: {
+              originThreadId: base.thread.id,
+              originTurnId: base.turn.id,
+              originItemId: 'collaboration-item',
+            },
+            status: 'completed',
+            outputRef: collaborationOutput,
+            tool: 'spawn_agent',
+            senderThreadId: base.thread.id,
+            receiverThreadIds: ['thread-child'],
+            prompt: 'Research the issue',
+            model: null,
+            reasoningEffort: null,
+            agentsStates: {
+              'thread-child': {
+                status: 'errored',
+                taskPath: '/root/research',
+                nickname: 'Researcher',
+                role: 'worker',
+              },
+            },
+          },
+          {
+            type: 'subAgentActivity',
+            id: 'subagent-item',
+            provenance: {
+              originThreadId: base.thread.id,
+              originTurnId: base.turn.id,
+              originItemId: 'subagent-item',
+            },
+            kind: 'errored',
+            agentThreadId: 'thread-child',
+            agentPath: '/root/research',
+            error: {
+              message: 'Token budget exhausted (9876 of 9000 tokens)',
+              code: 'subagent_budget_exhausted',
+              detail: 'Internal receipt: 9876 tokens used',
+            },
+          },
+        ],
+      },
+    };
+    const requests: string[] = [];
+    const rendered = renderPanel(async (method) => {
+      requests.push(method);
+      if (method === 'thread/turn/details/read') return detail;
+      if (method === 'thread/item/output/read') {
+        return { output: { ref: collaborationOutput, text: '{"tokensUsed":9876,"tokenBudget":9000}' } };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render('thread-subagent', 'turn-subagent');
+    await flush();
+    await openDetailsContaining(rendered.document, 'Internal diagnostics');
+    await openDetailsContaining(rendered.document, 'Canonical Items');
+    await openExecutionItem(rendered.document, 'collabAgentToolCall');
+    await openExecutionItem(rendered.document, 'subAgentActivity');
+    await flush();
+
+    const text = rendered.document.body.textContent ?? '';
+    expect(requests).toEqual(['thread/turn/details/read']);
+    expect(text).toContain('Task reached the system resource limit. Results have been preserved.');
+    expect(text).toContain('/root/research');
+    expect(text).not.toContain('tokensUsed');
+    expect(text).not.toContain('tokenBudget');
+    expect(text).not.toContain('9876');
+    expect(text).not.toContain('9000');
+    expect(text).not.toContain('Internal receipt');
   });
 
   test('renders the typed activity timeline and copies the complete model interaction', async () => {

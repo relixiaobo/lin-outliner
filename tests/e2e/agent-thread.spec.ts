@@ -1772,6 +1772,7 @@ test.describe('canonical agent Thread surface', () => {
             kind: 'completed',
             agentThreadId: child.id,
             agentPath: '/root/research',
+            error: null,
           }],
           itemsView: 'full',
           provenance: { originThreadId: root.id, originTurnId: turnId, trigger: { kind: 'user' } },
@@ -1794,6 +1795,216 @@ test.describe('canonical agent Thread surface', () => {
     await expect(childRow).toHaveCSS('--thread-depth', '1');
     await expect(childRow.locator('small')).toContainText('Subagent · research [explorer]');
   });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await createNewThread(page);
+      const fixture = await page.evaluate(async () => {
+        const target = window as Window & {
+          lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+          __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+        };
+        const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+        const root = response?.data[0];
+        if (!root) throw new Error('Mock root Thread not found');
+        const parentThreadId = String(root.id);
+        const parentTurnId = '01910000-0000-7000-8000-00000000de01';
+        const waitItemId = '01910000-0000-7000-8000-00000000de02';
+        const startedAt = Date.now() - 6_000;
+        const children = [
+          {
+            id: '01910000-0000-7000-8000-00000000de10',
+            turnId: '01910000-0000-7000-8000-00000000de11',
+            activityId: '01910000-0000-7000-8000-00000000de12',
+            taskPath: '/root/research',
+            nickname: 'Researcher',
+          },
+          {
+            id: '01910000-0000-7000-8000-00000000de20',
+            turnId: '01910000-0000-7000-8000-00000000de21',
+            activityId: '01910000-0000-7000-8000-00000000de22',
+            taskPath: '/root/audit',
+            nickname: 'Auditor',
+          },
+        ];
+        for (const child of children) {
+          const thread = {
+            ...root,
+            id: child.id,
+            parentThreadId,
+            agentNickname: child.nickname,
+            agentRole: 'worker',
+            name: null,
+            source: 'collaboration',
+            threadSource: 'subagent',
+            status: { type: 'active', activeFlags: [] },
+            updatedAt: startedAt,
+          };
+          target.__LIN_E2E__?.emitAgentCoreNotification({
+            type: 'thread/started',
+            threadId: child.id,
+            thread,
+          });
+          target.__LIN_E2E__?.emitAgentCoreNotification({
+            type: 'turn/started',
+            threadId: child.id,
+            turnId: child.turnId,
+            turn: {
+              id: child.turnId,
+              items: [],
+              itemsView: 'full',
+              provenance: {
+                originThreadId: child.id,
+                originTurnId: child.turnId,
+                trigger: {
+                  kind: 'subagent',
+                  parentThreadId,
+                  parentItemId: waitItemId,
+                },
+              },
+              status: 'inProgress',
+              error: null,
+              startedAt,
+              completedAt: null,
+              durationMs: null,
+            },
+          });
+        }
+        const provenance = (itemId: string) => ({
+          originThreadId: parentThreadId,
+          originTurnId: parentTurnId,
+          originItemId: itemId,
+        });
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/started',
+          threadId: parentThreadId,
+          turnId: parentTurnId,
+          turn: {
+            id: parentTurnId,
+            items: [
+              ...children.map((child) => ({
+                id: child.activityId,
+                type: 'subAgentActivity',
+                provenance: provenance(child.activityId),
+                kind: 'started',
+                agentThreadId: child.id,
+                agentPath: child.taskPath,
+                error: null,
+              })),
+              {
+                id: waitItemId,
+                type: 'collabAgentToolCall',
+                provenance: provenance(waitItemId),
+                tool: 'wait_agent',
+                status: 'inProgress',
+                outputRef: null,
+                senderThreadId: parentThreadId,
+                receiverThreadIds: [],
+                prompt: null,
+                model: null,
+                reasoningEffort: null,
+                agentsStates: {},
+              },
+            ],
+            itemsView: 'full',
+            provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+            status: 'inProgress',
+            error: null,
+            startedAt,
+            completedAt: null,
+            durationMs: null,
+          },
+        });
+        return { children, parentThreadId, parentTurnId, startedAt };
+      });
+
+      const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
+      await expect(parentTurn.locator('.thread-process-title'))
+        .toContainText(/Waiting on 2 subagents · \d+[smhd]/u);
+      const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/research/u });
+      const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/audit/u });
+      await expect(researchRow).toContainText(/Started subagent research · \d+[smhd]/u);
+      await expect(auditRow).toContainText(/Started subagent audit · \d+[smhd]/u);
+
+      await page.evaluate(({ child, parentThreadId, startedAt }) => {
+        const target = window as Window & {
+          __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+        };
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId: child.id,
+          turnId: child.turnId,
+          turn: {
+            id: child.turnId,
+            items: [],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: child.id,
+              originTurnId: child.turnId,
+              trigger: { kind: 'subagent', parentThreadId, parentItemId: '01910000-0000-7000-8000-00000000de02' },
+            },
+            status: 'completed',
+            error: null,
+            startedAt,
+            completedAt: Date.now(),
+            durationMs: Date.now() - startedAt,
+          },
+        });
+      }, { child: fixture.children[0]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
+
+      await expect(researchRow).toContainText('Subagent research completed');
+      await expect(parentTurn.locator('.thread-process-title'))
+        .toContainText(/Waiting on 1 subagent ·/u);
+
+      await page.evaluate(({ child, parentThreadId, startedAt }) => {
+        const target = window as Window & {
+          __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+        };
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId: child.id,
+          turnId: child.turnId,
+          turn: {
+            id: child.turnId,
+            items: [],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: child.id,
+              originTurnId: child.turnId,
+              trigger: { kind: 'subagent', parentThreadId, parentItemId: '01910000-0000-7000-8000-00000000de02' },
+            },
+            status: 'failed',
+            error: {
+              message: 'Token budget exhausted (9876 of 9000 tokens)',
+              code: 'subagent_budget_exhausted',
+            },
+            startedAt,
+            completedAt: Date.now(),
+            durationMs: Date.now() - startedAt,
+          },
+        });
+      }, { child: fixture.children[1]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
+
+      await expect(auditRow).toContainText('Subagent audit failed');
+      await expect(auditRow).toContainText('Task reached the system resource limit. Results have been preserved.');
+      await expect(auditRow).not.toContainText('9876');
+      await expect(auditRow).not.toContainText('9000');
+      await expect(auditRow.locator('.thread-subagent-error')).toHaveCSS('white-space', 'normal');
+      expect(await auditRow.locator('.thread-subagent-error').evaluate((element) => (
+        element.scrollWidth <= element.clientWidth
+      ))).toBe(true);
+      await auditRow.hover();
+      expect(await auditRow.locator('.thread-subagent-label').evaluate((element) => {
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--status-danger)';
+        document.body.append(probe);
+        const matches = getComputedStyle(element).color === getComputedStyle(probe).color;
+        probe.remove();
+        return matches;
+      })).toBe(true);
+    });
+  }
 
   test('renders reasoning and grouped tool Items with disclosure and copy interactions', async ({ page }) => {
     await createNewThread(page);

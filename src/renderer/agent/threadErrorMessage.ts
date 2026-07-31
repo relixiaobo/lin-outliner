@@ -72,7 +72,22 @@ export function userFacingAgentError(raw: TurnError | string, resourceLimitMessa
   const error = typeof raw === 'string'
     ? parsedPayloadError(raw) ?? { message: raw }
     : raw;
-  return error.code === SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE
+  return isSubagentBudgetError(error)
     ? resourceLimitMessage
     : threadErrorMessage(error.message);
+}
+
+export function isSubagentBudgetError(error: TurnError): boolean {
+  return error.code === SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE;
+}
+
+export function userFacingAgentErrorRecord(
+  error: TurnError,
+  resourceLimitMessage: string,
+): TurnError {
+  return {
+    message: userFacingAgentError(error, resourceLimitMessage),
+    ...(error.code ? { code: error.code } : {}),
+    ...(!isSubagentBudgetError(error) && error.detail ? { detail: error.detail } : {}),
+  };
 }

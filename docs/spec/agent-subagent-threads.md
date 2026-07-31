@@ -227,11 +227,24 @@ preserved; they never render token counts. `Turn.error.code` accepts only
 Spawning records a `collabAgentToolCall` in the sender and a
 `subAgentActivity` `started` Item in the sender's active Turn. Child terminal
 status queues a parent-scoped `completed`, `interrupted`, or `errored` activity
-Item. The queue is flushed into the active parent Turn while it waits, before a
+Item bound to the exact child Turn; the Item copies that Turn's complete typed
+`TurnError`, while a started or successful activity carries `error: null`.
+`collabAgentToolCall.agentsStates` persists each reported child's status together
+with nullable task path, nickname, and Role so its identity survives catalog
+deletion. This is a historical result snapshot, not a second source of live
+execution truth. The queue is flushed into the active parent Turn while it waits, before a
 new parent Turn reaches the provider, or before an active parent Turn becomes
 terminal. If no parent Turn is active, the activity remains pending for the next
 one. Child output remains in the child rollout. Parent-visible summaries are
 Items, not copied child history.
+
+The renderer also consumes the canonical child `turn/started` and
+`turn/completed` notifications it already receives. It retains only the latest
+Turn DTO per Thread when child history is unloaded, allowing the parent row to
+reflect a terminal child before the parent-side activity queue is admitted.
+Persisted terminal parent activity remains authoritative after reload; the
+renderer cache is cleared with catalog reload omissions, rollback, and subtree
+deletion and is never persisted as another execution record.
 
 Waiting is interruptible and uses a pending latch scoped to the sender Thread. It
 has no model-controlled polling timeout: while a child is active, it returns only

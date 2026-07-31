@@ -72,6 +72,13 @@ import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
 import { ToolCodeBlock } from '../ToolCodeBlock';
 import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
+import { userFacingAgentError } from '../../threadErrorMessage';
+import {
+  collaborationResultSnapshot,
+  presentationFromActivity,
+  presentationFromSnapshot,
+  type SubagentPresentation,
+} from '../../subagentPresentation';
 
 export type ThreadToolItem = Extract<ThreadItem, {
   type:
@@ -92,6 +99,7 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
@@ -165,25 +173,13 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           item={props.item}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
+          subagents={props.subagents}
           threadId={props.threadId}
           threadCwd={props.threadCwd}
         />
       );
     case 'subAgentActivity': {
-      const item = props.item;
-      return (
-        <button
-          aria-label={t.agent.thread.openSubagentThread({ id: item.agentPath })}
-          className="thread-item thread-inline-activity"
-          onClick={() => void props.onOpenThread(item.agentThreadId)}
-          type="button"
-        >
-          <AgentIcon size={ICON_SIZE.menu} />
-          <span>{t.agent.thread.item.subagent}</span>
-          <code>{item.agentPath}</code>
-          <small>{t.agent.thread.subagentStatuses[subagentActivityStatus(item.kind)]}</small>
-        </button>
-      );
+      return <SubagentActivityItem {...props} item={props.item} />;
     }
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
@@ -228,6 +224,7 @@ export function ThreadToolActivityGroup({
   items,
   onReadToolOutput,
   onOpenThread,
+  subagents,
   threadId,
   threadCwd,
 }: {
@@ -236,6 +233,7 @@ export function ThreadToolActivityGroup({
   readonly items: readonly ThreadToolItem[];
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
 }) {
@@ -243,11 +241,15 @@ export function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index);
+  const collaborationThreadIds = subagents ? [...subagents.keys()] : undefined;
+  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index, { collaborationThreadIds });
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.
   const title = summarizeThreadToolActivity(
-    items, t.agent.thread.activity, index, { subjectLimit: Number.POSITIVE_INFINITY },
+    items, t.agent.thread.activity, index, {
+      collaborationThreadIds,
+      subjectLimit: Number.POSITIVE_INFINITY,
+    },
   );
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
@@ -270,6 +272,7 @@ export function ThreadToolActivityGroup({
               key={item.id}
               onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
+              subagents={subagents}
               threadId={threadId}
               threadCwd={threadCwd}
             />
@@ -592,6 +595,7 @@ function ToolItemDisclosure({
   item,
   onReadOutput,
   onOpenThread,
+  subagents,
   threadId,
   threadCwd,
 }: {
@@ -600,14 +604,15 @@ function ToolItemDisclosure({
   readonly item: ThreadToolItem;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
 }) {
   const t = useT();
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
-  const detail = toolDetail(item, t, onOpenThread, threadId);
-  const outputRefId = item.outputRef?.id ?? null;
+  const detail = toolDetail(item, t, onOpenThread, threadId, subagents);
+  const outputRefId = item.type === 'collabAgentToolCall' ? null : item.outputRef?.id ?? null;
   const itemRef = useRef(item);
   itemRef.current = item;
   const [loadedOutput, setLoadedOutput] = useState<{
@@ -800,6 +805,7 @@ function toolDetail(
   t: Messages,
   onOpenThread: (threadId: string) => Promise<void>,
   threadId: string,
+  subagents?: ReadonlyMap<string, SubagentPresentation>,
 ): ToolDetail {
   const empty = {
     input: null,
@@ -891,26 +897,19 @@ function toolDetail(
           reasoningEffort: item.reasoningEffort,
         }),
         inputLanguage: 'json',
+        output: jsonText(collaborationResultSnapshot(item)),
+        outputLanguage: 'json',
+        outputLabel: t.agent.thread.item.result,
         body: item.receiverThreadIds.length > 0 ? (
           <ul className="thread-agent-states">
-            {item.receiverThreadIds.map((threadId) => {
-              const shortId = shortThreadId(threadId);
-              const status = item.agentsStates[threadId] ?? 'notFound';
-              return (
-                <li key={threadId}>
-                  <button
-                    aria-label={t.agent.thread.openSubagentThread({ id: shortId })}
-                    onClick={() => void onOpenThread(threadId)}
-                    title={threadId}
-                    type="button"
-                  >
-                    <AgentIcon size={ICON_SIZE.menu} />
-                    <code>{shortId}</code>
-                    <span>{t.agent.thread.subagentStatuses[status]}</span>
-                  </button>
-                </li>
-              );
-            })}
+            {item.receiverThreadIds.map((receiverThreadId) => (
+              <SubagentStateItem
+                key={receiverThreadId}
+                onOpenThread={onOpenThread}
+                presentation={subagents?.get(receiverThreadId)
+                  ?? presentationFromSnapshot(receiverThreadId, item.agentsStates[receiverThreadId])}
+              />
+            ))}
           </ul>
         ) : null,
       };
@@ -929,15 +928,116 @@ function toolDetail(
   }
 }
 
-function shortThreadId(threadId: string): string {
-  return threadId.length > 12 ? `${threadId.slice(0, 8)}...${threadId.slice(-4)}` : threadId;
+function SubagentActivityItem({
+  item,
+  onOpenThread,
+  subagents,
+}: {
+  readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
+  readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+}) {
+  const t = useT();
+  const presentation = subagents?.get(item.agentThreadId) ?? presentationFromActivity(item);
+  const elapsedMs = useSubagentElapsedMs(presentation);
+  const label = subagentActivityLabel(presentation, elapsedMs, t);
+  const error = presentation.status === 'errored' && presentation.error
+    ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
+    : null;
+  const openLabel = t.agent.thread.openSubagentThread({
+    id: presentation.taskPath ?? presentation.displayName,
+  });
+  return (
+    <button
+      aria-label={`${openLabel}. ${label}${error ? `. ${error}` : ''}`}
+      className={`thread-item thread-inline-activity thread-subagent-${presentation.status}`}
+      onClick={() => void onOpenThread(item.agentThreadId)}
+      title={error ?? presentation.taskPath ?? label}
+      type="button"
+    >
+      <AgentIcon size={ICON_SIZE.menu} />
+      <span className="thread-subagent-label">{label}</span>
+      {error ? <small className="thread-subagent-error">{error}</small> : null}
+    </button>
+  );
 }
 
-function subagentActivityStatus(
-  kind: Extract<ThreadItem, { type: 'subAgentActivity' }>['kind'],
-): keyof Messages['agent']['thread']['subagentStatuses'] {
-  if (kind === 'started') return 'running';
-  return kind === 'errored' ? 'errored' : kind;
+function SubagentStateItem({
+  onOpenThread,
+  presentation,
+}: {
+  readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly presentation: SubagentPresentation;
+}) {
+  const t = useT();
+  const elapsedMs = useSubagentElapsedMs(presentation);
+  const status = t.agent.thread.subagentStatuses[presentation.status];
+  const statusWithDuration = elapsedMs !== null && elapsedMs >= 1_000
+    ? `${status} · ${formatSubagentDuration(elapsedMs)}`
+    : status;
+  const error = presentation.status === 'errored' && presentation.error
+    ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
+    : null;
+  const identity = presentation.taskPath ?? presentation.displayName;
+  return (
+    <li className={`thread-agent-state thread-subagent-${presentation.status}`}>
+      <button
+        aria-label={`${t.agent.thread.openSubagentThread({ id: identity })}. ${statusWithDuration}${error ? `. ${error}` : ''}`}
+        onClick={() => void onOpenThread(presentation.agentThreadId)}
+        title={error ?? identity}
+        type="button"
+      >
+        <AgentIcon size={ICON_SIZE.menu} />
+        <code>{identity}</code>
+        <span>{error ?? statusWithDuration}</span>
+      </button>
+    </li>
+  );
+}
+
+function useSubagentElapsedMs(presentation: SubagentPresentation): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  const knownStart = presentation.status === 'running'
+    && presentation.startedAt !== null
+    && presentation.startedAt > 1_000_000_000_000
+    ? presentation.startedAt
+    : null;
+  useEffect(() => {
+    if (knownStart === null) return undefined;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [knownStart]);
+  return knownStart === null ? null : Math.max(0, now - knownStart);
+}
+
+function subagentActivityLabel(
+  presentation: SubagentPresentation,
+  elapsedMs: number | null,
+  t: Messages,
+): string {
+  const name = presentation.displayName;
+  if (presentation.status === 'running' && elapsedMs !== null && elapsedMs >= 1_000) {
+    return t.agent.thread.subagentActivity.runningFor({
+      name,
+      duration: formatSubagentDuration(elapsedMs),
+    });
+  }
+  return t.agent.thread.subagentActivity[presentation.status]({ name });
+}
+
+function formatSubagentDuration(durationMs: number): string {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [
+    days > 0 ? `${days}d` : '',
+    hours > 0 ? `${hours}h` : '',
+    minutes > 0 ? `${minutes}m` : '',
+    seconds > 0 ? `${seconds}s` : '',
+  ].filter(Boolean).join(' ');
 }
 
 /**
@@ -1224,7 +1324,7 @@ export function threadToolActivitySegments(
         add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
         break;
       case 'collabAgentToolCall':
-        for (const threadId of item.receiverThreadIds.length > 0 ? item.receiverThreadIds : [item.id]) {
+        for (const threadId of options.collaborationThreadIds ?? item.receiverThreadIds) {
           add('collaboration', threadId, running);
         }
         break;
@@ -1305,6 +1405,7 @@ const NAMED_SUBJECT_LIMIT = 2;
 /** Display uses the elided form; `title` passes Infinity for the full list. */
 export interface ToolSummaryOptions {
   readonly subjectLimit?: number;
+  readonly collaborationThreadIds?: readonly string[];
 }
 
 function toolActivityPhrase(

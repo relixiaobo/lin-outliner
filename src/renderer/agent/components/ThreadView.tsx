@@ -28,6 +28,8 @@ import type {
   ProviderRetryStatus,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
+  Thread,
+  ThreadId,
   ThreadItem,
   ThreadResourceReference,
   ThreadUserContent,
@@ -99,6 +101,11 @@ import {
   isTranscriptFollowing,
   TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
 } from '../threadScrollFollow';
+import {
+  collaborationResultSnapshot,
+  projectSubagentsForTurn,
+  type SubagentTurnProjection,
+} from '../subagentPresentation';
 
 interface ThreadViewProps {
   readonly composerEnabled: boolean;
@@ -112,6 +119,8 @@ interface ThreadViewProps {
   readonly threadModelProvider: string;
   readonly threadCwd: string;
   readonly threadId: string;
+  readonly threadsById: ReadonlyMap<ThreadId, Thread>;
+  readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turns: readonly Turn[];
   readonly inputRequest: RequestUserInputRequest | null;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
@@ -311,6 +320,8 @@ export function ThreadView({
   threadCwd,
   threadModelProvider,
   threadId,
+  threadsById,
+  latestTurnByThread,
   turns,
   inputRequest,
   providerRetry,
@@ -1200,6 +1211,8 @@ export function ThreadView({
                         onReadToolOutput={onReadToolOutput}
                         threadId={threadId}
                         threadCwd={threadCwd}
+                        threadsById={threadsById}
+                        latestTurnByThread={latestTurnByThread}
                         turn={turn}
                       />
                     </ThreadTranscriptTurnShell>
@@ -1390,6 +1403,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onReadToolOutput,
   threadId,
   threadCwd,
+  threadsById,
+  latestTurnByThread,
   turn,
 }: {
   readonly canEditUserMessage: boolean;
@@ -1404,13 +1419,19 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
   readonly threadCwd: string;
+  readonly threadsById: ReadonlyMap<ThreadId, Thread>;
+  readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turn: Turn;
 }) {
   const t = useT();
   const responseItem = lastAgentResponse(turn);
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
-  const contentBlocks = groupTurnContent(turn);
+  const subagents = useMemo(
+    () => projectSubagentsForTurn(turn, threadsById, latestTurnByThread),
+    [latestTurnByThread, threadsById, turn],
+  );
+  const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
   const editUserMessage = useCallback(
     (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
     [onEditUserMessage, turn],
@@ -1464,6 +1485,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
+      subagents={subagents.byThreadId}
       threadId={threadId}
       threadCwd={threadCwd}
     />
@@ -1479,6 +1501,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
               index={index}
               items={block.items}
               key={`process:${block.items[0]?.id ?? turn.id}`}
+              subagents={subagents}
               turn={turn}
             >
               {groupTurnItems(block.items).map((group) => group.kind === 'tools' ? (
@@ -1489,6 +1512,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
                   onReadToolOutput={readToolOutput}
+                  subagents={subagents.byThreadId}
                   threadId={threadId}
                   threadCwd={threadCwd}
                 />
@@ -1737,7 +1761,9 @@ async function buildTurnCopyText(
     }
     if (!isThreadToolItem(item)) continue;
     parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item)}\n\`\`\``);
-    const output = await readToolOutput(item) ?? projectedToolOutput(item);
+    const output = item.type === 'collabAgentToolCall'
+      ? projectedToolOutput(item)
+      : await readToolOutput(item) ?? projectedToolOutput(item);
     if (output.trim()) {
       const tag = item.status === 'failed' ? 'tool-error' : 'tool-result';
       parts.push(`\`\`\`${tag}\n${output.trim()}\n\`\`\``);
@@ -1787,7 +1813,7 @@ function projectedToolOutput(item: ThreadToolItem): string {
     case 'dynamicToolCall': return (item.contentItems ?? []).flatMap((content) => (
       content.type === 'text' ? [content.text] : content.type === 'json' ? [jsonText(content.value)] : []
     )).join('\n');
-    case 'collabAgentToolCall': return jsonText(item.agentsStates);
+    case 'collabAgentToolCall': return jsonText(collaborationResultSnapshot(item));
     case 'webSearch': return item.error ?? jsonText(item.results);
     default: return assertNever(item);
   }
@@ -1827,6 +1853,7 @@ function ThreadProcessBlock({
   hasFinalResponse,
   index,
   items,
+  subagents,
   turn,
 }: {
   readonly children: ReactNode;
@@ -1834,6 +1861,7 @@ function ThreadProcessBlock({
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
+  readonly subagents: SubagentTurnProjection;
   readonly turn: Turn;
 }) {
   const t = useT();
@@ -1846,7 +1874,7 @@ function ThreadProcessBlock({
     && items.length > 0;
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
-  const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t, index);
+  const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t, index, subagents);
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
   return (
     <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
@@ -1910,15 +1938,25 @@ function useTurnElapsedMs(turn: Turn): number | null {
   return knownStart === null ? null : Math.max(0, now - knownStart);
 }
 
-function threadProcessSummary(
+export function threadProcessSummary(
   turn: Turn,
   items: readonly ThreadItem[],
   hasFinalResponse: boolean,
   liveElapsedMs: number | null,
   t: Messages,
   index: DocumentIndex,
+  subagents: SubagentTurnProjection,
 ): string {
   if (turn.status === 'inProgress') {
+    const waitingCount = waitingSubagentCount(items, subagents);
+    if (waitingCount > 0) {
+      return liveElapsedMs !== null && liveElapsedMs >= 1_000
+        ? t.agent.thread.waitingOnSubagentsFor({
+            count: waitingCount,
+            duration: formatProcessDuration(liveElapsedMs),
+          })
+        : t.agent.thread.waitingOnSubagents({ count: waitingCount });
+    }
     return liveElapsedMs !== null && liveElapsedMs >= 1_000
       ? t.agent.thread.workingFor({ duration: formatProcessDuration(liveElapsedMs) })
       : t.agent.thread.working;
@@ -1934,7 +1972,9 @@ function threadProcessSummary(
   const activity = tools.length === 1
     ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
-      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index)
+      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index, {
+          collaborationThreadIds: [...subagents.byThreadId.keys()],
+        })
       : '';
   if (reasoning) {
     if (activity) return `${t.agent.thinking.thought} · ${sentenceFragment(activity)}`;
@@ -1942,6 +1982,19 @@ function threadProcessSummary(
     return gist ? `${t.agent.thinking.thought} · ${gist}` : t.agent.thinking.thought;
   }
   return activity || t.agent.thread.working;
+}
+
+function waitingSubagentCount(
+  items: readonly ThreadItem[],
+  subagents: SubagentTurnProjection,
+): number {
+  const inProgressTools = items.filter((item): item is ThreadToolItem => (
+    isThreadToolItem(item) && item.status === 'inProgress'
+  ));
+  if (inProgressTools.length === 0 || inProgressTools.some((item) => (
+    item.type !== 'collabAgentToolCall' || item.tool !== 'wait_agent'
+  ))) return 0;
+  return subagents.activeThreadIds.length;
 }
 
 function firstProcessLine(value: string): string {

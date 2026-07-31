@@ -30,6 +30,7 @@ export interface ThreadStoreSnapshot {
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
   readonly turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>;
+  readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly configurationsByThread: ReadonlyMap<ThreadId, ThreadConfigurationSummary>;
   readonly goalsByThread: ReadonlyMap<ThreadId, ThreadGoal>;
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
@@ -43,6 +44,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   threads: [],
   selectedThreadId: null,
   turnsByThread: new Map(),
+  latestTurnByThread: new Map(),
   configurationsByThread: new Map(),
   goalsByThread: new Map(),
   userInputByThread: new Map(),
@@ -104,6 +106,7 @@ export class ThreadStore {
     this.patch({
       threads: sortThreads(threads),
       selectedThreadId: selected,
+      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(threads.map((thread) => thread.id))),
       planByThread: new Map(),
       loading: false,
       error: null,
@@ -146,6 +149,7 @@ export class ThreadStore {
     const deletedIds = descendantThreadIds(this.snapshot.threads, threadId);
     const threads = this.snapshot.threads.filter((thread) => !deletedIds.has(thread.id));
     const turnsByThread = new Map(this.snapshot.turnsByThread);
+    const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
     const configurationsByThread = new Map(this.snapshot.configurationsByThread);
     const goalsByThread = new Map(this.snapshot.goalsByThread);
     const userInputByThread = new Map(this.snapshot.userInputByThread);
@@ -154,6 +158,7 @@ export class ThreadStore {
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
+      latestTurnByThread.delete(deletedId);
       configurationsByThread.delete(deletedId);
       goalsByThread.delete(deletedId);
       userInputByThread.delete(deletedId);
@@ -169,6 +174,7 @@ export class ThreadStore {
     this.patch({
       threads,
       turnsByThread,
+      latestTurnByThread,
       configurationsByThread,
       goalsByThread,
       userInputByThread,
@@ -265,9 +271,14 @@ export class ThreadStore {
     this.historyRevisions.set(threadId, (this.historyRevisions.get(threadId) ?? 0) + 1);
     const turnsByThread = new Map(this.snapshot.turnsByThread);
     turnsByThread.set(threadId, (turnsByThread.get(threadId) ?? []).slice(0, -1));
+    const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+    const latestRemaining = turnsByThread.get(threadId)?.at(-1);
+    if (latestRemaining) latestTurnByThread.set(threadId, latestRemaining);
+    else latestTurnByThread.delete(threadId);
     this.patch({
       threads: sortThreads(upsertById(this.snapshot.threads, response.thread)),
       turnsByThread,
+      latestTurnByThread,
     });
     await this.client.agentCoreRequest('turn/start', {
       threadId,
@@ -291,6 +302,7 @@ export class ThreadStore {
   }
 
   readItemOutput(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<string | null> {
+    if (item.type === 'collabAgentToolCall') return Promise.resolve(null);
     if (!('outputRef' in item) || !item.outputRef) return Promise.resolve(null);
     const key = `${item.provenance.originThreadId}:${item.outputRef.id}`;
     let pending = this.outputTextCache.get(key);
@@ -355,6 +367,14 @@ export class ThreadStore {
       configurationsByThread.set(threadId, configuration.configuration);
     }
     const currentThread = this.snapshot.threads.find((thread) => thread.id === threadId);
+    const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+    const loadedLatest = turns.at(-1);
+    if (loadedLatest) {
+      latestTurnByThread.set(
+        threadId,
+        newerTurn(latestTurnByThread.get(threadId), loadedLatest),
+      );
+    }
     this.patch({
       configurationsByThread,
       goalsByThread,
@@ -365,6 +385,7 @@ export class ThreadStore {
         ))
         : this.snapshot.threads,
       turnsByThread,
+      latestTurnByThread,
     });
   }
 
@@ -419,6 +440,8 @@ export class ThreadStore {
         return;
       case 'turn/started': {
         const planByThread = new Map(this.snapshot.planByThread);
+        const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+        latestTurnByThread.set(notification.threadId, notification.turn);
         planByThread.delete(notification.threadId);
         const preview = threadPreviewFromTurn(notification.turn);
         this.updateThread(notification.threadId, (thread) => ({
@@ -426,13 +449,15 @@ export class ThreadStore {
           preview: thread.preview.trim() ? thread.preview : preview,
           updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
         }));
-        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { planByThread });
-        else this.patch({ planByThread });
+        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { latestTurnByThread, planByThread });
+        else this.patch({ latestTurnByThread, planByThread });
         return;
       }
       case 'turn/completed': {
         const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
         const planByThread = new Map(this.snapshot.planByThread);
+        const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+        latestTurnByThread.set(notification.threadId, notification.turn);
         if (providerRetryByThread.get(notification.threadId)?.turnId === notification.turnId) {
           providerRetryByThread.delete(notification.threadId);
         }
@@ -446,8 +471,9 @@ export class ThreadStore {
         if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, {
           planByThread,
           providerRetryByThread,
+          latestTurnByThread,
         });
-        else this.patch({ planByThread, providerRetryByThread });
+        else this.patch({ latestTurnByThread, planByThread, providerRetryByThread });
         return;
       }
       case 'turn/providerRetry/changed': {
@@ -608,6 +634,13 @@ function upsertById<T extends { readonly id: string }>(values: readonly T[], val
   return next;
 }
 
+function filterMapKeys<Key, Value>(
+  values: ReadonlyMap<Key, Value>,
+  keys: ReadonlySet<Key>,
+): Map<Key, Value> {
+  return new Map([...values].filter(([key]) => keys.has(key)));
+}
+
 function descendantThreadIds(threads: readonly Thread[], rootThreadId: ThreadId): Set<ThreadId> {
   const deletedIds = new Set<ThreadId>([rootThreadId]);
   let changed = true;
@@ -661,6 +694,15 @@ function mergeLoadedTurn(loaded: Turn, current: Turn | undefined): Turn {
   const loadedItemIds = new Set(loaded.items.map((item) => item.id));
   items.push(...current.items.filter((item) => !loadedItemIds.has(item.id)));
   return { ...loaded, ...current, items };
+}
+
+function newerTurn(current: Turn | undefined, candidate: Turn): Turn {
+  if (!current) return candidate;
+  if (current.id === candidate.id) return mergeLoadedTurn(candidate, current);
+  return candidate.startedAt > current.startedAt
+    || (candidate.startedAt === current.startedAt && candidate.id > current.id)
+    ? candidate
+    : current;
 }
 
 type ExecutableThreadItem = Extract<ThreadItem, {

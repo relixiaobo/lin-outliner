@@ -1,7 +1,9 @@
 # Agent Thread Rendering
 
 The Agent dock renders canonical Thread DTOs directly. There is no second event
-projection or UI-only execution model.
+projection or UI-only execution model. Presentation-only reductions may collapse
+append-only Items or select the latest canonical DTO, but never invent execution
+state or write it back as history.
 
 ## Surface Structure
 
@@ -138,7 +140,29 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   expressions and URL text are not treated as concrete local paths, and
   main-process preview checks remain authoritative
 - collaboration Items and Subagent activity link directly to their canonical
-  child Thread
+  child Thread. Within one parent Turn, all `subAgentActivity` Items for the same
+  child collapse into one presentation row at the first Item's position. A
+  terminal activity Item is authoritative; otherwise the row combines the
+  Thread catalog with the latest canonical child `turn/started` or
+  `turn/completed` DTO retained by `threadStore`, even when that child's paged
+  history is not loaded. This lets a running row show elapsed time and flip to
+  completed, interrupted, or failed as soon as the child Turn notification
+  arrives, without waiting for the parent activity queue to flush. Catalog
+  reload and subtree deletion remove the corresponding latest-Turn cache entries
+- Subagent rows use task-path identity first, then nickname, Role, and finally a
+  shortened Thread id. Running copy is `Started subagent <name>` plus elapsed
+  time when known; idle remains distinct from completed. A failed row exposes a
+  bounded user-facing error and tints its glyph and label with
+  `--status-danger`; interrupted and unavailable rows stay muted. These colours
+  survive hover and focus, and every status is also named in text and accessible
+  labels
+- persisted collaboration result snapshots contain, per child, `status`,
+  `taskPath`, `nickname`, and `role`. Spawn and wait rows render those identities
+  through the same live projection instead of treating the persisted status as
+  current truth. The snapshot remains available in expanded result JSON and in
+  Turn copy after a child is deleted. Renderer user surfaces never resolve a
+  collaboration Item's raw `outputRef`, because the model-facing result also
+  contains internal budget receipts; they expose only the typed snapshot
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Turn Diagnostics, with no separate Memory Item or disclosure
@@ -152,8 +176,12 @@ A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
 outside the fold. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
-before its first process Item arrives. Rendering builds one Turn-level process
-projection from every reasoning, commentary, image-view, Subagent, and
+before its first process Item arrives. When `collaboration.wait_agent` is the
+only in-progress tool and at least one projected child remains active, that row
+instead reads `Waiting on N subagents` plus the same live elapsed time. A
+receiverless wait does not count as an additional agent; the count is the
+distinct active child Thread identities in the projection. Rendering builds one
+Turn-level process projection from every reasoning, commentary, image-view, Subagent, and
 tool Item. That block is placed before the first final response regardless of
 the Items' persisted arrival order, so a late reasoning Item cannot appear
 below the answer. The process disclosure contains the independent reasoning,
@@ -244,7 +272,10 @@ errors carry `subagent_budget_exhausted`; renderer surfaces classify that code r
 than model-facing copy. They translate it before transcript display or copy into
 localized resource-limit copy that says produced results were preserved. The same
 translation applies in Turn Details and structured Automation run errors. Token counts
-never render on these user surfaces.
+never render on these user surfaces. For a budget error, Turn Details omits the
+canonical error `detail`, replaces a Subagent activity's raw error record with
+the localized record, and does not resolve collaboration raw output; this holds
+inside the lazy Canonical Items disclosure as well as the default Summary.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and

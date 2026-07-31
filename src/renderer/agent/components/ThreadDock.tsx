@@ -80,6 +80,10 @@ export function ThreadDock({
   const open = railState === 'open';
   const openRef = useRef(open);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.selectedThreadId) ?? null;
+  const threadsById = useMemo(
+    () => new Map(snapshot.threads.map((candidate) => [candidate.id, candidate])),
+    [snapshot.threads],
+  );
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
@@ -320,6 +324,8 @@ export function ThreadDock({
               threadCwd={thread.cwd}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}
+              threadsById={threadsById}
+              latestTurnByThread={snapshot.latestTurnByThread}
               turns={turns}
             />
           </>

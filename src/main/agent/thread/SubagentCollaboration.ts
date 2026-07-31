@@ -34,6 +34,7 @@ export interface PendingSubagentActivity {
   readonly agentTurnId: TurnId;
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
+  readonly error: Turn['error'];
 }
 /**
  * Ceiling on any filesystem wait the account layer puts in front of a delegator.
@@ -278,6 +279,7 @@ export class SubagentCollaboration {
           result.thread.id,
           result.taskPath,
           'started',
+          null,
         );
       }
       return result;
@@ -829,6 +831,7 @@ export class SubagentCollaboration {
       agentThreadId: ThreadId,
       agentPath: string,
       kind: PendingSubagentActivity['kind'],
+      error: Turn['error'],
     ): Promise<void> {
       await this.turnLifecycle.recordSubagentActivity(
         ownerThreadId,
@@ -836,6 +839,7 @@ export class SubagentCollaboration {
         agentThreadId,
         agentPath,
         kind,
+        error,
         this.now(),
       );
     }
@@ -853,7 +857,7 @@ export class SubagentCollaboration {
           ? 'interrupted'
           : 'errored';
       const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
-      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind });
+      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error });
       this.pendingSubagentActivities.set(thread.parentThreadId, queued);
       this.signalCollaborationActivity(thread.parentThreadId);
     }
@@ -874,6 +878,7 @@ export class SubagentCollaboration {
             activity.agentThreadId,
             activity.agentPath,
             activity.kind,
+            activity.error,
           );
         }
       } catch (error) {
@@ -1203,5 +1208,6 @@ function subagentActivityItem(
     kind: activity.kind,
     agentThreadId: activity.agentThreadId,
     agentPath: activity.agentPath,
+    error: activity.error,
   };
 }

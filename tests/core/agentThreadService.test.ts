@@ -4744,9 +4744,56 @@ describe('ThreadService', () => {
     expect((await fixture.stores.rollout.read(root.id)).map((entry) => entry.event.type))
       .not.toContain('turn/plan/updated');
     expect(stored.turns?.[0]?.items.filter((item) => item.type === 'subAgentActivity')).toMatchObject([
-      { kind: 'started', agentThreadId: childId, agentPath: '/root/helper' },
-      { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper' },
+      { kind: 'started', agentThreadId: childId, agentPath: '/root/helper', error: null },
+      { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper', error: null },
     ]);
+    await fixture.service.close();
+  });
+
+  test('copies the exact child Turn error into terminal parent activity', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate failure handling' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'spawn-failure');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'spawn-failure',
+      taskName: 'failure',
+      message: 'Reach the resource limit',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const childError = {
+      message: 'Token budget exhausted (1234 of 1000 tokens)',
+      code: 'subagent_budget_exhausted' as const,
+      detail: 'Internal receipt',
+    };
+    fixture.executor.finish(1, {
+      ...completedExecutionResult(),
+      status: 'failed',
+      error: childError,
+    });
+    await fixture.service.waitForIdle(child.thread.id);
+
+    await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id);
+
+    expect(fixture.executor.contexts[0]!.recorder.orderedItems().filter((item) => (
+      item.type === 'subAgentActivity' && item.agentThreadId === child.thread.id
+    ))).toMatchObject([
+      { kind: 'started', error: null },
+      { kind: 'errored', error: childError },
+    ]);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 

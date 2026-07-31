@@ -16,6 +16,7 @@ import {
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
+import type { SubagentPresentation } from '../../src/renderer/agent/subagentPresentation';
 import { buildIndex } from '../../src/renderer/state/document';
 
 const mounted: Array<() => void> = [];
@@ -240,6 +241,102 @@ describe('ThreadItemView tool row status presentation', () => {
   });
 });
 
+describe('ThreadItemView Subagent status presentation', () => {
+  test('uses the ratified running copy and appends live elapsed time', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-running'),
+      type: 'subAgentActivity',
+      kind: 'started',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: null,
+    };
+    const rendered = renderItem(item, {
+      subagents: new Map([['thread-child', {
+        agentThreadId: 'thread-child',
+        displayName: 'research',
+        error: null,
+        nickname: null,
+        role: null,
+        startedAt: Date.now() - 5_000,
+        status: 'running',
+        taskPath: '/root/research',
+      }]]),
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-inline-activity')?.textContent)
+      .toMatch(/^Started subagent research · [4-6]s$/u);
+  });
+
+  test('renders a budget failure with product copy and no token quantities in visible or accessible text', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-failed'),
+      type: 'subAgentActivity',
+      kind: 'errored',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: {
+        message: 'Token budget exhausted (1234 of 1000 tokens)',
+        code: 'subagent_budget_exhausted',
+      },
+    };
+    const rendered = renderItem(item);
+    await flush();
+
+    const row = rendered.document.querySelector<HTMLButtonElement>('.thread-inline-activity');
+    expect(row?.className).toContain('thread-subagent-errored');
+    expect(row?.textContent).toContain('Subagent research failed');
+    expect(row?.textContent).toContain('Task reached the system resource limit. Results have been preserved.');
+    expect(`${row?.textContent} ${row?.ariaLabel} ${row?.title}`).not.toMatch(/token|\d/u);
+  });
+
+  test('keeps collaboration snapshots in sanitized result JSON without loading raw model output', async () => {
+    let reads = 0;
+    const item: ThreadItem = {
+      ...base('collaboration-state'),
+      type: 'collabAgentToolCall',
+      tool: 'spawn_agent',
+      status: 'completed',
+      outputRef: {
+        id: 'c'.repeat(64),
+        mimeType: 'text/plain',
+        byteLength: 40,
+        summary: 'Raw collaboration result',
+      },
+      senderThreadId: 'thread-1',
+      receiverThreadIds: ['thread-child'],
+      prompt: 'Research the issue',
+      model: null,
+      reasoningEffort: null,
+      agentsStates: {
+        'thread-child': {
+          status: 'running',
+          taskPath: '/root/research',
+          nickname: 'Researcher',
+          role: 'worker',
+        },
+      },
+    };
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolOutput: async () => {
+        reads += 1;
+        return 'tokensUsed: 1234';
+      },
+    });
+    await flush();
+
+    expect(reads).toBe(0);
+    expect(rendered.document.querySelector('.thread-agent-states')?.textContent)
+      .toContain('/root/researchRunning');
+    expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
+      .not.toContain('tokensUsed');
+    expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
+      .toContain('taskPath');
+  });
+});
+
 describe('ThreadToolActivityGroup glyph', () => {
   test('wears the shared tool glyph when every member agrees, the wrench when mixed', async () => {
     const reads = renderGroup([
@@ -328,6 +425,7 @@ interface RenderItemOptions {
   readonly expanded?: boolean;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
 
 function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
@@ -344,6 +442,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         initiallyExpanded={options.expanded === true}
         item={nextItem}
         onReadToolOutput={onReadToolOutput}
+        subagents={options.subagents}
       />
     </I18nProvider>,
   ));
@@ -389,11 +488,13 @@ function ThreadItemProbe({
   initiallyExpanded,
   item,
   onReadToolOutput,
+  subagents,
 }: {
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
@@ -415,6 +516,7 @@ function ThreadItemProbe({
       onReadToolOutput={onReadToolOutput}
       showMessageActions={false}
       streaming={false}
+      subagents={subagents}
       threadCwd="/workspace"
       threadId="thread-1"
     />

@@ -39,7 +39,8 @@ import { Button } from '../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
-import { userFacingAgentError } from '../threadErrorMessage';
+import { userFacingAgentErrorRecord } from '../threadErrorMessage';
+import { threadItemForUserSurface } from '../subagentPresentation';
 import {
   ThreadUsageBreakdown,
   formatCachedShare,
@@ -208,6 +209,9 @@ function TurnOverview({
   const timeRange = turn.completedAt
     ? `${formatTimestamp(turn.startedAt, locale)} - ${formatTimestamp(turn.completedAt, locale)}`
     : formatTimestamp(turn.startedAt, locale);
+  const turnError = turn.error
+    ? userFacingAgentErrorRecord(turn.error, t.agent.thread.resourceLimitReached)
+    : null;
   return (
     <div className="thread-turn-details-overview">
       <dl className="thread-turn-details-fact-grid">
@@ -250,14 +254,14 @@ function TurnOverview({
           </small>
         </div>
       </dl>
-      {turn.error ? (
+      {turnError ? (
         <dl aria-label={t.agent.turnDetails.turnError} className="thread-turn-details-identity-list">
           <Fact
             label={t.agent.turnDetails.turnError}
-            value={userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)}
+            value={turnError.message}
           />
-          {turn.error.code ? <Identity label={t.agent.turnDetails.errorCode} value={turn.error.code} /> : null}
-          {turn.error.detail ? <Fact label={t.agent.turnDetails.errorDetail} value={turn.error.detail} /> : null}
+          {turnError.code ? <Identity label={t.agent.turnDetails.errorCode} value={turnError.code} /> : null}
+          {turnError.detail ? <Fact label={t.agent.turnDetails.errorDetail} value={turnError.detail} /> : null}
         </dl>
       ) : null}
       <UsagePopover usage={usage} />
@@ -1136,7 +1140,8 @@ function CanonicalItemRow({
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const requestRef = useRef(0);
-  const outputRef = itemOutputReference(item);
+  const displayItem = threadItemForUserSurface(item, t.agent.thread.resourceLimitReached);
+  const outputRef = itemOutputReference(displayItem);
 
   useEffect(() => {
     requestRef.current += 1;
@@ -1203,7 +1208,7 @@ function CanonicalItemRow({
       </summary>
       {open ? (
         <div className="thread-turn-details-row-body">
-          <JsonCode value={item} />
+          <JsonCode value={displayItem} />
           {loading ? <span className="is-muted">{t.agent.turnDetails.loadingPayload}</span> : null}
           {loadError ? (
             <div className="thread-turn-details-context-error">
