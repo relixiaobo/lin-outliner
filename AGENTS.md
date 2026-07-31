@@ -215,7 +215,9 @@ requirement, so the PM can drive several at once:
    branch.
 3. **Build — dev agent.** Implement the approved plan; run `bun run typecheck` +
    relevant tests; commit, push, mark the PR ready. The PR body is the contract.
-   Escalate per the rule below.
+   Escalate per the rule below. Evidence images in a PR body go in as **comment
+   uploads** (GitHub's own CDN), never as `raw.githubusercontent` links to a
+   side branch — the branch is deleted on merge and the evidence 404s with it.
 4. **Gate — main agent.** Run the review gate, integration-check against the real
    system, merge to `main`, update `docs/TASKS.md`, add a `CHANGELOG.md` entry
    under `[Unreleased]`, and own merge ordering.
