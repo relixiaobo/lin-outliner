@@ -288,7 +288,9 @@ function renderComponent(
   act(() => root.render(
     <I18nProvider>
       <SettingsSkillLibrarySection
+        additionalSkillDirectories={[]}
         disabledSkills={[]}
+        onDirectoriesChange={async () => undefined}
         onApplied={async () => undefined}
         onError={() => undefined}
         onNotice={() => undefined}

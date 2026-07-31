@@ -3386,6 +3386,27 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       return getProviderSettings();
     case 'agent_refresh_provider_models':
       return refreshProviderModels(String(args.providerId));
+    case 'agent_pick_skill_directory': {
+      // Tenon points at the directory; it never copies it in. The picker returns
+      // a path the caller stores in additionalSkillDirectories, so the user's
+      // files stay where they are and stay live.
+      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const options = {
+        title: getMessages(effectiveLocale()).window.chooseSkillDirectoryTitle,
+        properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+      };
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options);
+      const picked = result.canceled ? undefined : result.filePaths[0];
+      return { path: picked ?? null };
+    }
+    case 'agent_reveal_skill_directory': {
+      const target = String(args.path ?? '');
+      if (!target) return { revealed: false };
+      shell.showItemInFolder(target);
+      return { revealed: true };
+    }
     case 'agent_update_runtime_settings': {
       const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
       for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {

@@ -62,6 +62,7 @@ export const zhHans: PartialMessages = {
     providerConfigTitle: '配置服务商',
     insertImageTitle: '插入图片',
     insertAttachmentTitle: '插入附件',
+    chooseSkillDirectoryTitle: '选择 Skill 目录',
     imageFilesFilter: '图片',
   },
   launcher: {
@@ -174,6 +175,15 @@ export const zhHans: PartialMessages = {
       addSkill: '添加 Skill…',
       acquireTitle: '添加 Skill',
       acquireClose: '完成',
+      addLocalDirectory: '添加本地目录…',
+      sourceLocal: '本地',
+      localReveal: '在访达中显示',
+      // 「解绑」而非「移除/删除」：Tenon 只是指向该目录，解绑仅去掉指针，不动用户的文件。
+      localUnbind: '解绑目录',
+      localUnboundNotice: ({ directory }: { directory: string }) =>
+        `已解绑 ${directory}，其中的文件未作改动。`,
+      localDirectoryEmpty: '该目录中未找到技能。',
+      localDirectoryActions: ({ directory }: { directory: string }) => `${directory} 操作`,
       toggleSkill: ({ name }: { name: string }) => `切换 ${name}`,
       pendingChip: '待接受',
       pendingWorkspaceChip: '工作区 · 未接受',

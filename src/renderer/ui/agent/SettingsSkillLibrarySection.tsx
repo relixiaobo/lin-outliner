@@ -21,10 +21,26 @@ import { useManagedSkills } from './useManagedSkills';
 
 interface SettingsSkillLibrarySectionProps {
   disabledSkills: readonly string[];
+  /** Directories Tenon reads Skills from. Pointed at, never copied in. */
+  additionalSkillDirectories: readonly string[];
+  onDirectoriesChange: (next: string[]) => Promise<void>;
   onToggleSkill: (skillName: string) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   onApplied: () => Promise<void>;
+}
+
+/**
+ * True when a Skill was loaded out of one of the user's own directories. Local
+ * Skills are ordinary user/project Skills to the runtime; the only thing that
+ * marks them is the directory they came from, so the row is identified by path
+ * rather than by source.
+ */
+function directoryContaining(
+  rootDir: string,
+  directories: readonly string[],
+): string | undefined {
+  return directories.find((dir) => rootDir === dir || rootDir.startsWith(`${dir}/`));
 }
 
 /**
@@ -55,6 +71,8 @@ interface LibraryRow {
 
 export function SettingsSkillLibrarySection({
   disabledSkills,
+  additionalSkillDirectories,
+  onDirectoriesChange,
   onToggleSkill,
   onError,
   onNotice,
@@ -75,11 +93,44 @@ export function SettingsSkillLibrarySection({
   const sectionRequestRef = useRef(0);
   const managed = useManagedSkills(onApplied);
 
+  // A local directory is POINTED AT, never copied in: Tenon stores the path, so
+  // the user's edits are live and there is no snapshot to drift.
+  async function addLocalDirectory() {
+    onError(null);
+    onNotice(null);
+    try {
+      const { path } = await api.agentPickSkillDirectory();
+      if (!path) return;
+      if (additionalSkillDirectories.includes(path)) return;
+      await onDirectoriesChange([...additionalSkillDirectories, path]);
+      await reloadSkills();
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /**
+   * Unbinds a directory. This removes Tenon's pointer to it and NOTHING else —
+   * the directory and every file in it are the user's and are left untouched.
+   */
+  async function unbindDirectory(directory: string) {
+    onError(null);
+    onNotice(null);
+    try {
+      await onDirectoriesChange(additionalSkillDirectories.filter((dir) => dir !== directory));
+      await reloadSkills();
+      onNotice(t.settings.skills.localUnboundNotice({ directory }));
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   // Acquisition lives behind `+` instead of occupying the page. The menu is the
   // level-1 chrome surface here and reuses the registered popover glass, which
   // carries the prefers-reduced-transparency opaque fallback with it.
   const addActions: AnchoredMenuAction[] = [
     { label: t.settings.skills.addSkill, onSelect: () => setAcquireOpen(true) },
+    { label: t.settings.skills.addLocalDirectory, onSelect: () => void addLocalDirectory() },
   ];
 
   useEffect(() => {
@@ -90,23 +141,25 @@ export function SettingsSkillLibrarySection({
     };
   }, []);
 
-  useEffect(() => {
+  async function reloadSkills(): Promise<void> {
     sectionRequestRef.current += 1;
     const id = sectionRequestRef.current;
     const isCurrent = () => mountedRef.current && id === sectionRequestRef.current;
     setLoadingSkills(true);
+    try {
+      const skills = await api.agentListAllSkills();
+      if (isCurrent()) setAllSkills(skills);
+    } catch (caught) {
+      if (isCurrent()) onError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (isCurrent()) setLoadingSkills(false);
+    }
+  }
+
+  useEffect(() => {
     onError(null);
     onNotice(null);
-    api.agentListAllSkills()
-      .then((skills) => {
-        if (isCurrent()) setAllSkills(skills);
-      })
-      .catch((caught) => {
-        if (isCurrent()) onError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => {
-        if (isCurrent()) setLoadingSkills(false);
-      });
+    void reloadSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,12 +246,26 @@ export function SettingsSkillLibrarySection({
       } else if (skill.accepted) {
         chips.push(t.settings.skills.acceptedChip);
       }
+      const localDirectory = directoryContaining(skill.rootDir, additionalSkillDirectories);
+      if (localDirectory) {
+        actions.push({
+          label: t.settings.skills.localReveal,
+          onSelect: () => void api.agentRevealSkillDirectory(localDirectory),
+        });
+        actions.push({
+          // "Unbind", never "remove" or "delete": the handler drops Tenon's
+          // pointer and leaves every file where it is. The label has to say the
+          // same thing the handler does.
+          label: t.settings.skills.localUnbind,
+          onSelect: () => void unbindDirectory(localDirectory),
+        });
+      }
       return {
         key: `skill:${skill.name}`,
         name: skill.name,
         displayName: skill.displayName || skill.name,
         description: skill.description,
-        sourceChip: sourceChipLabel(skill.source),
+        sourceChip: localDirectory ? t.settings.skills.sourceLocal : sourceChipLabel(skill.source),
         chips,
         enabled: !disabled,
         busy: skillTrustBusy,
@@ -222,6 +289,16 @@ export function SettingsSkillLibrarySection({
   const rows = useMemo(
     () => [...managedRows, ...localRows].sort((left, right) => left.name.localeCompare(right.name)),
     [localRows, managedRows],
+  );
+
+  // A bound directory that currently yields no Skills would otherwise be
+  // invisible — and so impossible to unbind. Showing it keeps pointing at the
+  // wrong folder a reversible mistake.
+  const emptyDirectories = useMemo(
+    () => additionalSkillDirectories.filter((dir) => !allSkills.some(
+      (skill) => directoryContaining(skill.rootDir, [dir]),
+    )),
+    [additionalSkillDirectories, allSkills],
   );
 
   const loading = loadingSkills || managed.loading;
@@ -263,22 +340,17 @@ export function SettingsSkillLibrarySection({
         open={acquireOpen}
       />
 
-      {loading && rows.length === 0 ? (
+      {loading && rows.length === 0 && emptyDirectories.length === 0 ? (
         <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.skills.loadingInstalled} />
-      ) : rows.length === 0 ? (
-        <InsetGroup
-          ariaLabel={t.settings.skills.installedAriaLabel}
-          headerAction={addControl}
-          label={t.settings.skills.installedGroup}
-        >
-          <InsetRow disabled label={t.settings.skills.noneInstalled} />
-        </InsetGroup>
       ) : (
         <InsetGroup
           ariaLabel={t.settings.skills.installedAriaLabel}
           headerAction={addControl}
           label={t.settings.skills.installedGroup}
         >
+          {rows.length === 0 && emptyDirectories.length === 0 ? (
+            <InsetRow disabled label={t.settings.skills.noneInstalled} />
+          ) : null}
           {rows.map((row) => (
             <InsetRow
               dimmed={row.dimmed}
@@ -324,6 +396,36 @@ export function SettingsSkillLibrarySection({
                     <SwitchMark checked={row.enabled} />
                   </SwitchControl>
                 </>
+              )}
+              wrap
+            />
+          ))}
+          {emptyDirectories.map((directory) => (
+            <InsetRow
+              key={`dir:${directory}`}
+              label={(
+                <>
+                  {directory}
+                  <span className="settings-chip">{t.settings.skills.sourceLocal}</span>
+                </>
+              )}
+              sublabel={t.settings.skills.localDirectoryEmpty}
+              trailing={(
+                <SettingsRowMenu
+                  actions={[
+                    {
+                      label: t.settings.skills.localReveal,
+                      onSelect: () => void api.agentRevealSkillDirectory(directory),
+                    },
+                    {
+                      label: t.settings.skills.localUnbind,
+                      onSelect: () => void unbindDirectory(directory),
+                    },
+                  ]}
+                  ariaLabel={t.settings.skills.localDirectoryActions({ directory })}
+                  onOpenChange={(open) => setOpenRowMenu(open ? `dir:${directory}` : null)}
+                  open={openRowMenu === `dir:${directory}`}
+                />
               )}
               wrap
             />

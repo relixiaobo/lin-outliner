@@ -249,6 +249,24 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     });
   }
 
+  /**
+   * Binding or unbinding a Skill directory is a structural action like
+   * installing, not a preference — it applies immediately rather than waiting
+   * for the footer Save. It deliberately does NOT reset the drafts: a directory
+   * change is orthogonal to the toggles the user may have pending.
+   */
+  async function changeSkillDirectories(next: string[]) {
+    const requestId = beginRequest('mutation');
+    setSaving(true);
+    try {
+      const updated = await api.agentUpdateRuntimeSettings({ additionalSkillDirectories: next });
+      if (isCurrentRequest('mutation', requestId)) setSettings(updated);
+      await onApplied();
+    } finally {
+      if (isCurrentRequest('mutation', requestId)) setSaving(false);
+    }
+  }
+
   function toggleSkill(skillName: string) {
     setSkillDraft((current) => {
       const disabled = current.disabledSkills.includes(skillName)
@@ -411,8 +429,10 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               <SettingsSecuritySection blocks={capabilityBlocks} onRemoveBlock={removeCapabilityBlock} />
             ) : (
               <SettingsSkillLibrarySection
+                additionalSkillDirectories={settings?.agent.additionalSkillDirectories ?? []}
                 disabledSkills={skillDraft.disabledSkills}
                 onApplied={onApplied}
+                onDirectoriesChange={changeSkillDirectories}
                 onError={setError}
                 onNotice={setNotice}
                 onToggleSkill={toggleSkill}

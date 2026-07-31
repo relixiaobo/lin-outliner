@@ -403,6 +403,11 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills'),
+  /** Opens the native directory picker. Returns null when the user cancels. */
+  agentPickSkillDirectory: () =>
+    command<{ path: string | null }>('agent_pick_skill_directory'),
+  agentRevealSkillDirectory: (path: string) =>
+    command<{ revealed: boolean }>('agent_reveal_skill_directory', { path }),
   agentListUserInvocableSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentAcceptSkill: (skillName: string, expectedHash: string) =>

@@ -148,6 +148,58 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.inset-group-header-action button')).not.toBeNull();
   });
 
+  test('a skill from a bound directory carries the local chip', async () => {
+    const rendered = await render({
+      skills: [{ ...localSkill('notes', 'user'), rootDir: '/work/skills/notes' }],
+      managed: [],
+      directories: ['/work/skills'],
+    });
+
+    const label = [...rendered.document.querySelectorAll('.inset-row-label')]
+      .map((node) => node.textContent ?? '')
+      .find((text) => text.startsWith('/notes'));
+    // The source chip reports where it actually came from, not the user/project
+    // bucket the runtime happens to file it under.
+    expect(label).toContain('local');
+    expect(label).not.toContain('user');
+  });
+
+  test('a bound directory with no skills is still listed, so it can be unbound', async () => {
+    const rendered = await render({ skills: [], managed: [], directories: ['/work/empty'] });
+
+    expect(rendered.document.body.textContent).toContain('/work/empty');
+    expect(rendered.document.body.textContent).toContain('No skills found in this directory.');
+  });
+
+  test('unbinding a directory only drops the pointer', async () => {
+    const changes: string[][] = [];
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      directories: ['/work/a', '/work/b'],
+      onDirectoriesChange: async (next) => { changes.push(next); },
+    });
+
+    const menu = rendered.document.querySelector<HTMLButtonElement>('[aria-label="/work/a actions"]');
+    if (!menu) throw new Error('Missing directory row menu');
+    await act(async () => {
+      menu.click();
+      await Promise.resolve();
+    });
+    const unbind = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Unbind directory');
+    if (!unbind) throw new Error('Missing unbind action');
+    // The label says unbind, and this asserts the handler agrees: the only
+    // effect is that the path leaves the list. Nothing deletes anything.
+    expect(unbind.textContent).not.toContain('Delete');
+    await act(async () => {
+      unbind.click();
+      await Promise.resolve();
+    });
+
+    expect(changes).toEqual([['/work/b']]);
+  });
+
   test('acquisition is behind the + control, not on the page', async () => {
     const rendered = await render({ skills: [], managed: [] });
 
@@ -179,6 +231,8 @@ async function render(input: {
   skills: SkillDefinition[];
   managed: ManagedSkillView[];
   disabledSkills?: string[];
+  directories?: string[];
+  onDirectoriesChange?: (next: string[]) => Promise<void>;
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -204,7 +258,9 @@ async function render(input: {
     root.render(
       <I18nProvider>
         <SettingsSkillLibrarySection
+          additionalSkillDirectories={input.directories ?? []}
           disabledSkills={input.disabledSkills ?? []}
+          onDirectoriesChange={input.onDirectoriesChange ?? (async () => undefined)}
           onApplied={async () => undefined}
           onError={() => undefined}
           onNotice={() => undefined}

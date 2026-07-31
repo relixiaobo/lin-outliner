@@ -75,6 +75,7 @@ export const en = {
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
     insertAttachmentTitle: 'Insert attachment',
+    chooseSkillDirectoryTitle: 'Choose a Skill directory',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -205,6 +206,16 @@ export const en = {
       addSkill: 'Add Skill…',
       acquireTitle: 'Add Skill',
       acquireClose: 'Done',
+      addLocalDirectory: 'Add Local Directory…',
+      sourceLocal: 'local',
+      localReveal: 'Reveal in Finder',
+      // "Unbind", never "remove"/"delete": Tenon points at the directory, so
+      // this drops the pointer and leaves the user's files untouched.
+      localUnbind: 'Unbind directory',
+      localUnboundNotice: ({ directory }: { directory: string }) =>
+        `Unbound ${directory}. Its files were not changed.`,
+      localDirectoryEmpty: 'No skills found in this directory.',
+      localDirectoryActions: ({ directory }: { directory: string }) => `${directory} actions`,
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
       pendingChip: 'Pending acceptance',
       pendingWorkspaceChip: 'Workspace · not accepted',
