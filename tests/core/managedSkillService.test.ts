@@ -662,12 +662,12 @@ describe('managed skill service', () => {
       'spreadsheet',
     ]);
     // browser-pilot is the one entry that is not a Linlab skill: it tracks a
-    // separate project on its own branch, which is exactly the shape a
-    // third-party recommendation takes.
+    // subdirectory of a separate project, which is the shape a third-party
+    // recommendation takes.
     expect(catalog.entries.find((entry) => entry.name === 'browser-pilot')).toMatchObject({
       repository: 'https://github.com/relixiaobo/browser-pilot',
       subdirectory: 'plugin/skills/browser-pilot',
-      trackingRef: 'skill-stable',
+      trackingRef: 'main',
     });
   });
 

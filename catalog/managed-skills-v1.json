@@ -7,7 +7,7 @@
       "description": "Drive the user's real Chrome tabs from the command line: browse signed-in sites, read pages, fill forms, and operate web apps.",
       "repository": "https://github.com/relixiaobo/browser-pilot",
       "subdirectory": "plugin/skills/browser-pilot",
-      "trackingRef": "skill-stable",
+      "trackingRef": "main",
       "compatibilityRange": ">=0.1.0 <1.0.0"
     },
     {
