@@ -74,6 +74,9 @@ export {
   ListFilter as FilterIcon,
   List as ListIcon,
   ListChecks as OptionsIcon,
+  // Distinct from OptionsIcon's ListChecks: a plan is a task list, and the two
+  // co-occur in the agent panel.
+  ListTodo as PlanToolIcon,
   ListPlus as AddChildIcon,
   ListPlus as NodeCreateToolIcon,
   ListTree as NodeReadToolIcon,
