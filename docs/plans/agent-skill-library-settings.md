@@ -15,7 +15,7 @@ update visible without going looking for it.
   acquiring and applying stay explicit user actions.
 - No non-GitHub managed sources.
 - No copying a local Skill directory into Tenon storage. Local directories are
-  **pointed at**, never imported (see Design → PR 1).
+  **pointed at**, never imported (see Design → PR 2).
 - No migration. Installed Skills are already indexed; only presentation and the
   enable predicate change.
 - Not a Skill authoring surface. `skillify` and the file tools remain the way
@@ -23,24 +23,35 @@ update visible without going looking for it.
 
 ## Shape
 
-Shape **(b): a set of independent complete features**, three PRs.
+Shape **(b): two independent complete features**, two PRs.
 
-- **PR 1 — the Skill library.** One complete feature: the unified list, the `+`
-  acquisition panel, local directories, the single enable predicate, **and**
-  update visibility. Its internal order is build order inside one PR (cf. A7
-  foundation-before-consumers), not shippable slices:
-  predicate → one list → `+` panel → local directories → update surfacing.
-  Update surfacing was briefly planned as its own PR and folded back in: its
-  badge attaches to the very surface this PR rebuilds, so splitting it invented
-  an ordering dependency instead of removing one. Two things that must land in
-  a fixed order against the same surface are one thing.
-- **PR 2 — the catalog guard** (validator + test, plus the Browser Pilot
-  recommendation entry). Genuinely independent: a CI guard over a data file,
-  touching no UI. **Do this one first.** Not for shape purity — because
-  `catalog/managed-skills-v1.json` reaches every installed Tenon from `main`
-  today with nothing validating it, and parking that behind a settings redesign
-  leaves a live artifact unguarded for no reason. It is small enough to
-  fast-track.
+- **PR 1 — the catalog guard** (validator + test, plus the Browser Pilot
+  recommendation entry). A CI guard over a data file, touching no UI. **Do this
+  first.** Not for shape purity — because `catalog/managed-skills-v1.json`
+  reaches every installed Tenon from `main` today with nothing validating it,
+  and parking that behind a settings redesign leaves a live artifact unguarded
+  for no reason. Small enough to fast-track.
+- **PR 2 — the settings decomposition and the Skill library, together.** One PR,
+  **six staged commits**, in this order:
+
+  1. decompose the settings page into one component per category (**pure move**)
+  2. the single enable predicate
+  3. one list, every source
+  4. the `+` acquisition panel
+  5. local directories
+  6. update visibility
+
+  Commits 2-6 are build order inside one feature (cf. A7), not shippable
+  slices. Commit 1 is a complete refactor that would stand alone; it is carried
+  here at the PM's direction because both pieces are small.
+
+  **The staging is what makes that safe, so it is not optional.** A pure move
+  and a behaviour change in one undifferentiated diff cost the reviewer the
+  ability to tell which lines changed behaviour. Commit 1 must therefore be
+  provably behaviour-free — snapshot judge first (see Design), no test edits in
+  that commit — so it can be reviewed as a move and commits 2-6 read as the only
+  behaviour in the PR. This is the #451 pattern: one PR, four staged
+  extractions, a frozen-surface proof, zero review findings.
 
 ## Current state (verified against `main`, 2026-07-31)
 
@@ -78,7 +89,35 @@ Shape **(b): a set of independent complete features**, three PRs.
 
 ## Design
 
-### PR 1 — One library, acquisition behind `+`
+### PR 2, commit 1 — Decompose the settings page (pure move)
+
+`AgentSettingsView.tsx` is 1,281 lines holding **seventeen** `useState` across
+four unrelated domains — providers (`settings`, `creatingCustom`, four derived
+`useMemo`s), security (`capabilitySettings`, `capabilityDraft`), Skills
+(`allSkills`, `loadingSkills`, `skillTrustBusy`), general (`themeMode`,
+`osNotificationsEnabled`, `diagnosticsBusy`) — plus shared nav, save, error, and
+notice. `DraftConfig` (`:70-75`) has four fields and already spans two domains:
+`providerId`/`baseUrl`/`enabled` belong to providers, `disabledSkills` to Skills,
+under one save.
+
+The reason this is worth doing rather than tolerating is not size. **The one
+extraction that has already happened — `ManagedSkillsSettings` at 893 lines — was
+cut along *provenance*, and that wrong seam is what produced the split page this
+plan exists to fix.** A wrong file boundary has already cost one user-visible
+defect here; leaving three more categories in the same component invites the next
+person to cut along the next convenient-but-wrong seam.
+
+Extract one component per category — general, providers, security, Skill library
+— each receiving what it needs and owning its own local state. Shared navigation,
+the save action, and the error/notice surface stay in the parent. `DraftConfig`
+splits along the same lines; the parent composes what save sends.
+
+**Mechanical proof, judge before change** (the #456 pattern): capture a rendered
+DOM snapshot per settings category on `main` **first**, commit that judge, then
+perform the move and show the snapshots byte-unchanged. **No test file may be
+edited in this commit.** If a snapshot moves, the move was not a move.
+
+### PR 2, commits 2-6 — One library, acquisition behind `+`
 
 **One list, one row shape, every source.** Sources rendered together:
 `built-in`, `user`, `project`, local directory, `managed`. Each row carries the
@@ -147,7 +186,7 @@ i18n `en.ts` + `zh-Hans.ts`, and a new settings IPC pair for adding/removing an
 predicate is placed there rather than in the renderer's view model — prefer main,
 so the model-facing catalog and the UI cannot disagree about what is enabled.
 
-#### PR 1, final step — an update you do not have to go looking for
+#### PR 2, commit 6 — an update you do not have to go looking for
 
 - **Throttle on the existing record field.** Check at most once per record per
   window using `lastCheckedAt`; recommend **6 hours**. Trigger at app start once
@@ -162,7 +201,7 @@ so the model-facing catalog and the UI cannot disagree about what is enabled.
   any Skill's enabled state — it degrades and records (A12).
 - Explicitly not in scope: auto-update, background download, update-on-schedule.
 
-### PR 2 — The catalog is a production artifact; guard it
+### PR 1 — The catalog is a production artifact; guard it
 
 `catalog/managed-skills-v1.json` is fetched live from `main` by every installed
 Tenon. It is the only file in this repository whose contents reach users without

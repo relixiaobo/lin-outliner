@@ -512,14 +512,18 @@ before any directional/security-sensitive build.
   (`agentSkills.ts:588` excludes managed from `disabledSkills`), and
   `additionalSkillDirectories` (`core/types.ts:718`, honored at `main.ts:483/567/667`)
   has **no renderer surface at all**, so adding a local Skill directory is unreachable
-  from the app. **PR 1 (the library, one PR)** one list + `+` acquisition panel +
-  local-directory pointing (never copying) + one enable predicate over two writers +
-  update visibility via a throttled `lastCheckedAt` check and a nav badge (no
-  auto-apply); its internal order is build order, not slices. **PR 2 (do first,
-  fast-track-sized)** guards `catalog/managed-skills-v1.json` — the only file here that
-  reaches every installed Tenon from `main` without a release, currently validated by
-  nothing — and carries the Browser Pilot recommendation entry (data, gated on its
-  maintainer, not a blocker). See
+  from the app. **PR 1 (do first, fast-track-sized)** guards
+  `catalog/managed-skills-v1.json` — the only file here that reaches every installed
+  Tenon from `main` without a release, currently validated by nothing — and carries the
+  Browser Pilot recommendation entry (data, gated on its maintainer, not a blocker).
+  **PR 2 (one PR, six staged commits)** decomposes the 1,281-line settings god
+  component (17 `useState` across four domains; `DraftConfig` already spans two) into
+  one component per category as a **pure move proven by a DOM-snapshot judge captured
+  on `main` first**, then builds the library on top: enable predicate → one list → `+`
+  acquisition panel → local directories → update visibility. The decomposition earns
+  its place from evidence, not tidiness — the one extraction already made
+  (`ManagedSkillsSettings`) was cut along *provenance*, and that wrong seam is what
+  produced the split page this plan fixes. See
   `docs/plans/agent-skill-library-settings.md`.
 - **agent-reasoning-replay-fidelity** (P2, `draft` — codex-4 authored, plan merged #457
   2026-07-31 with five gate rulings; **implementation unclaimed and claimable now**, no
