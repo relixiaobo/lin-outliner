@@ -504,13 +504,14 @@ before any directional/security-sensitive build.
   (`agentSkills.ts:588` excludes managed from `disabledSkills`), and
   `additionalSkillDirectories` (`core/types.ts:718`, honored at `main.ts:483/567/667`)
   has **no renderer surface at all**, so adding a local Skill directory is unreachable
-  from the app. **PR 1** one library + `+` acquisition panel + local-directory pointing
-  (never copying) + one enable predicate over two writers; **PR 2** (after PR 1)
-  surfaces available updates outside the Skills page via a throttled `lastCheckedAt`
-  check and a nav badge — no auto-apply; **PR 3** (independent) guards
-  `catalog/managed-skills-v1.json`, which is fetched live from `main` by every install
-  and is currently validated by nothing, and carries the Browser Pilot recommendation
-  entry (data, gated on its maintainer, not a blocker). See
+  from the app. **PR 1 (the library, one PR)** one list + `+` acquisition panel +
+  local-directory pointing (never copying) + one enable predicate over two writers +
+  update visibility via a throttled `lastCheckedAt` check and a nav badge (no
+  auto-apply); its internal order is build order, not slices. **PR 2 (do first,
+  fast-track-sized)** guards `catalog/managed-skills-v1.json` — the only file here that
+  reaches every installed Tenon from `main` without a release, currently validated by
+  nothing — and carries the Browser Pilot recommendation entry (data, gated on its
+  maintainer, not a blocker). See
   `docs/plans/agent-skill-library-settings.md`.
 - **agent-reasoning-replay-fidelity** (P2, `draft` — codex-4 authored, plan merged #457
   2026-07-31 with five gate rulings; **implementation unclaimed and claimable now**, no

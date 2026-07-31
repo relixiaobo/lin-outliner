@@ -25,13 +25,22 @@ update visible without going looking for it.
 
 Shape **(b): a set of independent complete features**, three PRs.
 
-- **PR 1** — the unified library and `+`. Complete alone.
-- **PR 2** — update visibility outside the Skills page. Complete alone, but
-  **ordered after PR 1**: its badge attaches to a settings surface PR 1
-  rebuilds, and building against a surface about to be replaced is exactly what
-  A7 forbids.
-- **PR 3** — the catalog becomes a guarded production artifact, plus the Browser
-  Pilot recommendation entry. Fully independent of PR 1/2; may land first.
+- **PR 1 — the Skill library.** One complete feature: the unified list, the `+`
+  acquisition panel, local directories, the single enable predicate, **and**
+  update visibility. Its internal order is build order inside one PR (cf. A7
+  foundation-before-consumers), not shippable slices:
+  predicate → one list → `+` panel → local directories → update surfacing.
+  Update surfacing was briefly planned as its own PR and folded back in: its
+  badge attaches to the very surface this PR rebuilds, so splitting it invented
+  an ordering dependency instead of removing one. Two things that must land in
+  a fixed order against the same surface are one thing.
+- **PR 2 — the catalog guard** (validator + test, plus the Browser Pilot
+  recommendation entry). Genuinely independent: a CI guard over a data file,
+  touching no UI. **Do this one first.** Not for shape purity — because
+  `catalog/managed-skills-v1.json` reaches every installed Tenon from `main`
+  today with nothing validating it, and parking that behind a settings redesign
+  leaves a live artifact unguarded for no reason. It is small enough to
+  fast-track.
 
 ## Current state (verified against `main`, 2026-07-31)
 
@@ -138,7 +147,7 @@ i18n `en.ts` + `zh-Hans.ts`, and a new settings IPC pair for adding/removing an
 predicate is placed there rather than in the renderer's view model — prefer main,
 so the model-facing catalog and the UI cannot disagree about what is enabled.
 
-### PR 2 — An update you do not have to go looking for
+#### PR 1, final step — an update you do not have to go looking for
 
 - **Throttle on the existing record field.** Check at most once per record per
   window using `lastCheckedAt`; recommend **6 hours**. Trigger at app start once
@@ -153,7 +162,7 @@ so the model-facing catalog and the UI cannot disagree about what is enabled.
   any Skill's enabled state — it degrades and records (A12).
 - Explicitly not in scope: auto-update, background download, update-on-schedule.
 
-### PR 3 — The catalog is a production artifact; guard it
+### PR 2 — The catalog is a production artifact; guard it
 
 `catalog/managed-skills-v1.json` is fetched live from `main` by every installed
 Tenon. It is the only file in this repository whose contents reach users without
@@ -184,8 +193,8 @@ a release, and nothing validates it.
   }
   ```
 
-  This is a data change gated on an external party and is **not a blocker for PR
-  3** — ship the guard, add the entry when the values arrive. Tenon ships no
+  This is a data change gated on an external party and is **not a blocker for
+  this PR** — ship the guard, add the entry when the values arrive. Tenon ships no
   Browser Pilot binary and requires no code for this: the Skill it installs owns
   its own preflight and version pairing (`docs/spec/agent-skills.md` →
   *Third-Party Tool Integration*).
