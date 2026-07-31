@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463, plan-progress-pill #467, plan-visibility #468 — `agent-run-presentation-consistency` complete) |
-| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
@@ -31,11 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: **#469** (codex,
-`agent-transcript-disclosure-anchor`) is a Draft claim carrying its plan commit only.
+**In flight (2026-07-31).** Open PR queue: **empty** — #469 merged, so the review
+queue is at zero and the front is wide open.
 **One claim is missing:** `cc/agent-skill-library-settings` is 8 commits ahead of
 `main` with no PR open, so the widest unmerged change in the repo is invisible on the
-collision radar — cc opens the Draft PR, then the review queue is at two and full.
+collision radar — cc opens the Draft PR, then the review queue is at one.
 PM staffing after that: `agent-subagent-interaction` PR 2 (navigation + Thread-list
 hygiene) and PR 3 (delegation card + interrupt) are both unblocked now that PR 1 has
 landed, and PR 3's standing collision with #467 is released now that the pill has
@@ -43,6 +43,9 @@ merged — but the two attach to the same divider region, where the plan warns t
 extraction refactors merge silently wrong, so **stagger them rather than running both
 at once**. `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
+Recently merged: #469 (`codex/agent-transcript-disclosure-anchor`) after a **high**
+review gate whose ten findings the author answered in one hardening commit — see
+*Recently completed*.
 Recently merged: #467 + #468 (both `cc-2`) as a pair, closing
 `agent-run-presentation-consistency` — see *Recently completed* for both. The pair is
 worth remembering for one reason: #467's L4 ("filter `update_plan` out of Turn
@@ -953,6 +956,39 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-transcript-disclosure-anchor** (`codex/agent-transcript-disclosure-anchor`,
+  PR #469, codex, merged 2026-07-31, plan-track; plan archived at
+  `docs/plans/archive/agent-transcript-disclosure-anchor.md`) — expanding or collapsing
+  a transcript disclosure moved the row the user had just clicked, because frame-level
+  bottom follow and virtualized measurement compensation both re-scrolled inside the
+  same layout transaction. An explicit toggle now captures its control's viewport top
+  and stays authoritative for that transaction: bottom pin, send-anchor layout, and
+  virtual row compensation all yield to the pending anchor, and when growth above the
+  control needs more scroll range than the transcript has, a transient renderer-only
+  tail runway supplies exactly the missing range (excluded from real-content metrics,
+  reclaimed by later content or independent scrolling). **The unit worth remembering is
+  the gate.** A `high` review returned ten verified findings, and every one of them was
+  the same shape: `hasPendingAnchor()` had been made a hard gate on the programmatic
+  scroll paths without being self-limiting or re-armed, so a latched anchor (a
+  never-settling tool-output hold, or a restore thunk whose owner unmounted first)
+  silently killed bottom-follow and send-to-top for the rest of the session, and the
+  gated schedulers *dropped* their work rather than deferring it. The author's single
+  hardening commit answered nine: capture starts its own restore loop so an anchor
+  cannot latch, holds carry a 3s safety bound, `scheduleBottomPin` /
+  `scheduleSendAnchorLayout` defer and replay on release, send and Jump-to-latest
+  explicitly cancel the anchor, virtual compensation is gated, the sub-pixel early
+  return stops reporting a delta for a scroll it declined, and the thunk-returning
+  `onDisclosureToggle` prop was replaced by `captureAnchor` / `restoreAnchor` on
+  `ThreadDisclosureState`. The tenth — a bottom-clamped collapse keeping runway as a
+  blank tail band — was **kept deliberately**: holding the control fixed and letting the
+  content sit flush are in genuine conflict there, so the choice was made in favour of
+  the control and *the spec was amended to say so* rather than left contradicting the
+  code. **Gate (main):** typecheck, `test:core`, `test:renderer`, `docs:check`, the full
+  `agent-thread` e2e (63) including the two new anchor tests, and the outliner
+  expand/collapse specs (66) — the anchor hook is shared with `OutlinerFlatView`, and
+  capture now starts a restore frame there too. No CSS or token changes, so no separate
+  light/dark pass.
 
 - **agent-plan-visibility** (`cc-2/plan-visibility`, PR #468, cc-2, merged 2026-07-31,
   plan-track; plan archived at `docs/plans/archive/agent-plan-visibility.md`) — the model

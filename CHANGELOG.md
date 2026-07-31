@@ -169,6 +169,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   swallow it. Sizes, per-pane history, and the active pane are untouched; the
   agent-visible pane `order` renumbers to match.
 
+### Fixed
+
+- **Expanding a transcript disclosure no longer moves the row you clicked (PR
+  #469, codex)** — opening a Thought, a tool output, or a long user message in
+  the agent transcript could shove that row up or down the screen, because
+  bottom-follow and the virtualized-row measurement compensation both
+  re-scrolled inside the same layout transaction as the toggle. An explicit
+  toggle now owns its transaction: the control's viewport position is captured
+  before the update and held while delayed measurements settle, and every
+  programmatic scroll — bottom pin, send anchoring, virtual compensation —
+  yields to it instead of competing with it. Work that arrives while the anchor
+  holds is replayed after it releases rather than dropped, so a streaming
+  response keeps following the bottom and a message sent mid-expansion still
+  lands at the top of the viewport. When the expansion needs more scroll range
+  than the transcript has, a transient renderer-only tail runway supplies
+  exactly the missing amount and is reclaimed by later content or by scrolling.
+  Sending or choosing Jump to latest supersedes a pending anchor outright, an
+  asynchronous tool-output read holds it only until the read lands (bounded at
+  three seconds, so a lost reply cannot latch scrolling), and wheel, pointer,
+  touch, or keyboard input still cancels it immediately.
+
 ### Internal
 
 - **The e2e suite is a clean gate signal again (PR #464, codex)** — the two
