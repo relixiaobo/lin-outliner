@@ -12,7 +12,7 @@ import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdm
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
-import type { SubagentBudgetLedger,SubagentBudgetMember,SubagentBudgetPool } from '../persistence/SubagentBudgetLedger';
+import { childBudgetPoolId,turnBudgetPoolId,type SubagentBudgetLedger,type SubagentBudgetMember,type SubagentBudgetPool,type SubagentBudgetPoolId } from '../persistence/SubagentBudgetLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
 import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
@@ -31,7 +31,7 @@ interface ActiveTurn {
   readonly queuedSteering: SteeredTurnInput[]; steeringDelivery: Promise<void>;
   readonly completion: Promise<void>; readonly resolveCompletion: () => void;
   recordedExecution: Turn['execution'] | null; budgetUsageAccrued: boolean;
-  modelCallTokens: number; inFlightPoolThreadId: ThreadId | null;
+  modelCallTokens: number; inFlightPoolId: SubagentBudgetPoolId | null;
 }
 interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
   readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
@@ -55,7 +55,7 @@ export interface ResolvedSubagentBudget {
 }
 export class TurnLifecycle {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>(); private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
-  private readonly inFlightPoolUsage = new Map<ThreadId, Map<ThreadId, number>>();
+  private readonly inFlightPoolUsage = new Map<SubagentBudgetPoolId, Map<ThreadId, number>>();
   constructor(
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: TurnLifecycleCatalog, private readonly collaboration: TurnLifecycleCollaboration,
@@ -523,18 +523,28 @@ export class TurnLifecycle {
       await this.resolveUserInput(response);
     }
   resolveSubagentBudget(threadId: ThreadId): ResolvedSubagentBudget | null {
-      return this.resolveSubagentBudgetFrom(threadId, false, false);
+      return this.resolveSubagentBudgetFrom(threadId, false);
     }
-  resolveSubagentSpawnBudget(parentThreadId: ThreadId): ResolvedSubagentBudget | null {
-      return this.resolveSubagentBudgetFrom(parentThreadId, true, true);
+  /**
+   * The pool a child spawned by `parentThreadId` inside `parentTurnId` joins:
+   * the parent's own coverage first, then this delegating Turn's pool. A Turn
+   * with neither resolves to nothing, and the spawn creates the Turn's pool —
+   * which is why a new user Turn can always delegate again.
+   */
+  resolveSubagentSpawnBudget(parentThreadId: ThreadId, parentTurnId: TurnId): ResolvedSubagentBudget | null {
+      const inherited = this.resolveSubagentBudgetFrom(parentThreadId, true);
+      if (inherited?.pool || inherited?.resolutionFailed) return inherited;
+      const turnPool = this.subagentBudgets.readPool(turnBudgetPoolId(parentTurnId));
+      if (!turnPool) return inherited;
+      return { member: inherited?.member ?? null, pool: turnPool };
     }
   assertSubagentBudgetAvailable(threadId: ThreadId): ResolvedSubagentBudget | null {
       const budget = this.resolveSubagentBudget(threadId);
       this.assertResolvedSubagentBudgetAvailable(threadId, budget);
       return budget;
     }
-  assertSubagentSpawnBudgetAvailable(threadId: ThreadId): ResolvedSubagentBudget | null {
-      const budget = this.resolveSubagentSpawnBudget(threadId);
+  assertSubagentSpawnBudgetAvailable(threadId: ThreadId, turnId: TurnId): ResolvedSubagentBudget | null {
+      const budget = this.resolveSubagentSpawnBudget(threadId, turnId);
       this.assertResolvedSubagentBudgetAvailable(threadId, budget);
       return budget;
     }
@@ -544,34 +554,24 @@ export class TurnLifecycle {
     }
   refreshActiveSubagentBudgetCoverage(): void {
       for (const active of this.activeTurns.values()) {
-        const poolThreadId = this.resolveSubagentBudget(active.threadId)?.pool?.poolThreadId ?? null;
-        this.bindSubagentInFlightPool(active, poolThreadId);
+        const poolId = this.resolveSubagentBudget(active.threadId)?.pool?.poolId ?? null;
+        this.bindSubagentInFlightPool(active, poolId);
       }
     }
   private resolveSubagentBudgetFrom(
       threadId: ThreadId,
-      includeSelfPool: boolean,
       markFailure: boolean,
     ): ResolvedSubagentBudget | null {
       try {
         let member = this.subagentBudgets.readMember(threadId);
-        const thread = this.core.requireThread(threadId).thread;
-        let currentThreadId = includeSelfPool || member ? threadId : thread.parentThreadId;
-        const visited = new Set<ThreadId>();
-        let pool: SubagentBudgetPool | null = null;
-        while (currentThreadId !== null && !visited.has(currentThreadId)) {
-          visited.add(currentThreadId);
-          pool = this.subagentBudgets.readPool(currentThreadId);
-          if (pool) break;
-          currentThreadId = this.core.requireThread(currentThreadId).thread.parentThreadId;
-        }
-        const resolvedPoolThreadId = pool?.poolThreadId ?? null;
-        if (member && member.poolThreadId !== resolvedPoolThreadId) {
-          const recordedPoolThreadId = member.poolThreadId;
-          member = this.subagentBudgets.rebindMemberPool(threadId, resolvedPoolThreadId);
+        const pool = this.authoritativeSubagentPool(threadId, member);
+        const resolvedPoolId = pool?.poolId ?? null;
+        if (member && member.poolId !== resolvedPoolId) {
+          const recordedPoolId = member.poolId;
+          member = this.subagentBudgets.rebindMemberPool(threadId, resolvedPoolId);
           console.warn(
             '[agent][subagent-budget-audit] corrected member pool binding',
-            { threadId, recordedPoolThreadId, resolvedPoolThreadId },
+            { threadId, recordedPoolId, resolvedPoolId },
           );
           if (!member) throw new Error(`Subagent budget member disappeared during re-bind: ${threadId}`);
         }
@@ -580,6 +580,38 @@ export class TurnLifecycle {
         this.auditSubagentBudgetFailure('ancestor pool resolution', threadId, error);
         return markFailure ? { member: null, pool: null, resolutionFailed: true } : null;
       }
+    }
+  /**
+   * The pool a Thread's own Turns debit. The spawn binding is authoritative;
+   * a member recorded before its request had a pool heals to that request's
+   * pool, never to a later one — healing forward would migrate a fire-and-forget
+   * child onto a budget the user never spent on it. The ancestor walk stays as
+   * the guarded fallback for a Thread whose own member row is missing.
+   */
+  private authoritativeSubagentPool(
+      threadId: ThreadId,
+      member: SubagentBudgetMember | null,
+    ): SubagentBudgetPool | null {
+      if (member) {
+        const bound = member.poolId === null ? null : this.subagentBudgets.readPool(member.poolId);
+        if (bound) return bound;
+        const originPool = this.subagentBudgets.readPool(turnBudgetPoolId(member.originTurnId));
+        if (originPool) return originPool;
+      }
+      const visited = new Set<ThreadId>();
+      let currentThreadId = this.core.requireThread(threadId).thread.parentThreadId;
+      while (currentThreadId !== null && !visited.has(currentThreadId)) {
+        visited.add(currentThreadId);
+        const ancestor = this.subagentBudgets.readMember(currentThreadId);
+        const ancestorPool = ancestor?.poolId === undefined || ancestor.poolId === null
+          ? null
+          : this.subagentBudgets.readPool(ancestor.poolId);
+        if (ancestorPool) return ancestorPool;
+        const anchored = this.subagentBudgets.readPool(childBudgetPoolId(currentThreadId));
+        if (anchored) return anchored;
+        currentThreadId = this.core.requireThread(currentThreadId).thread.parentThreadId;
+      }
+      return null;
     }
   private assertResolvedSubagentBudgetAvailable(
       threadId: ThreadId,
@@ -597,7 +629,7 @@ export class TurnLifecycle {
       const active = this.activeTurns.get(threadId);
       const currentInFlight = active?.modelCallTokens ?? 0;
       const poolInFlight = budget?.pool
-        ? this.inFlightTokensForPool(budget.pool.poolThreadId)
+        ? this.inFlightTokensForPool(budget.pool.poolId)
         : 0;
       const poolUsed = budget?.pool ? budget.pool.tokensUsed + poolInFlight : Number.POSITIVE_INFINITY;
       const poolRemaining = budget?.pool ? budget.pool.tokenBudget - poolUsed : Number.POSITIVE_INFINITY;
@@ -844,7 +876,7 @@ export class TurnLifecycle {
         recordedExecution: null,
         budgetUsageAccrued: false,
         modelCallTokens: 0,
-        inFlightPoolThreadId: null,
+        inFlightPoolId: null,
       };
       await this.core.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
       this.collaboration.consumePendingSubagentActivities(request.threadId, pendingSubagentActivities);
@@ -1036,6 +1068,7 @@ export class TurnLifecycle {
         this.accrueSubagentBudgetUsage(active, thread, turn.execution);
         this.settleSubagentInFlightUsage(active);
         this.activeTurns.delete(active.threadId);
+        this.reapSettledSubagentPools(active.threadId, active.turnId);
         await this.setStatus(active.threadId, { type: 'idle' });
       });
       this.catalog.scheduleAutomaticThreadName(
@@ -1068,7 +1101,7 @@ export class TurnLifecycle {
         if (!budget?.member && !budget?.pool) return;
         this.subagentBudgets.addUsage(
           active.threadId,
-          budget.pool?.poolThreadId ?? null,
+          budget.pool?.poolId ?? null,
           execution.usage.totalTokens,
         );
       } catch (error) {
@@ -1076,6 +1109,34 @@ export class TurnLifecycle {
       } finally {
         active.budgetUsageAccrued = true;
       }
+    }
+  /**
+   * Reclaim the delegating Turn's pool once the request it belongs to is
+   * genuinely over: its originating Turn has ended and no member Thread is still
+   * running. The pool deliberately outlives its Turn until then — a
+   * fire-and-forget child keeps charging the request that asked for it.
+   *
+   * Bookkeeping, not enforcement (A12): a reap that throws must never take the
+   * settling Turn down with it.
+   */
+  private reapSettledSubagentPools(threadId: ThreadId, settledTurnId: TurnId): void {
+      try {
+        // Either end of the request can be the last to settle: a member Thread,
+        // or the delegating Turn itself when its children finished first.
+        this.reapSubagentPoolIfSettled(this.subagentBudgets.readMember(threadId)?.poolId ?? null);
+        this.reapSubagentPoolIfSettled(turnBudgetPoolId(settledTurnId));
+      } catch (error) {
+        this.auditSubagentBudgetFailure('settled pool reclamation', threadId, error);
+      }
+    }
+  private reapSubagentPoolIfSettled(poolId: SubagentBudgetPoolId | null): void {
+      if (poolId === null) return;
+      const pool = this.subagentBudgets.readPool(poolId);
+      if (!pool || pool.scope !== 'turn') return;
+      if (this.activeTurns.get(pool.originThreadId)?.turnId === pool.originTurnId) return;
+      const members = this.subagentBudgets.membersForPool(poolId);
+      if (members.some((member) => this.activeTurns.has(member.threadId))) return;
+      this.subagentBudgets.reapPool(poolId);
     }
   private recordSubagentInFlightUsage(active: ActiveTurn, tokens: number): void {
       if (!Number.isSafeInteger(tokens) || tokens < 0) {
@@ -1097,31 +1158,31 @@ export class TurnLifecycle {
       }
       this.bindSubagentInFlightPool(
         active,
-        this.resolveSubagentBudget(active.threadId)?.pool?.poolThreadId ?? null,
+        this.resolveSubagentBudget(active.threadId)?.pool?.poolId ?? null,
       );
     }
-  private bindSubagentInFlightPool(active: ActiveTurn, poolThreadId: ThreadId | null): void {
-      if (active.inFlightPoolThreadId !== poolThreadId) this.clearSubagentInFlightUsage(active);
-      active.inFlightPoolThreadId = poolThreadId;
-      if (poolThreadId === null || active.modelCallTokens === 0) return;
-      const poolUsage = this.inFlightPoolUsage.get(poolThreadId) ?? new Map<ThreadId, number>();
+  private bindSubagentInFlightPool(active: ActiveTurn, poolId: SubagentBudgetPoolId | null): void {
+      if (active.inFlightPoolId !== poolId) this.clearSubagentInFlightUsage(active);
+      active.inFlightPoolId = poolId;
+      if (poolId === null || active.modelCallTokens === 0) return;
+      const poolUsage = this.inFlightPoolUsage.get(poolId) ?? new Map<ThreadId, number>();
       poolUsage.set(active.threadId, active.modelCallTokens);
-      this.inFlightPoolUsage.set(poolThreadId, poolUsage);
+      this.inFlightPoolUsage.set(poolId, poolUsage);
     }
   private clearSubagentInFlightUsage(active: ActiveTurn): void {
-      if (active.inFlightPoolThreadId === null) return;
-      const poolUsage = this.inFlightPoolUsage.get(active.inFlightPoolThreadId);
+      if (active.inFlightPoolId === null) return;
+      const poolUsage = this.inFlightPoolUsage.get(active.inFlightPoolId);
       poolUsage?.delete(active.threadId);
-      if (poolUsage?.size === 0) this.inFlightPoolUsage.delete(active.inFlightPoolThreadId);
-      active.inFlightPoolThreadId = null;
+      if (poolUsage?.size === 0) this.inFlightPoolUsage.delete(active.inFlightPoolId);
+      active.inFlightPoolId = null;
     }
   private settleSubagentInFlightUsage(active: ActiveTurn): void {
       this.clearSubagentInFlightUsage(active);
       active.modelCallTokens = 0;
     }
-  private inFlightTokensForPool(poolThreadId: ThreadId): number {
+  private inFlightTokensForPool(poolId: SubagentBudgetPoolId): number {
       let total = 0;
-      for (const tokens of this.inFlightPoolUsage.get(poolThreadId)?.values() ?? []) total += tokens;
+      for (const tokens of this.inFlightPoolUsage.get(poolId)?.values() ?? []) total += tokens;
       return total;
     }
   private auditSubagentBudgetFailure(operation: string, threadId: ThreadId, error: unknown): void {
@@ -1326,6 +1387,7 @@ export class TurnLifecycle {
           ),
         ]).catch(() => undefined);
         if (this.activeTurns.get(active.threadId) === active) this.activeTurns.delete(active.threadId);
+        this.reapSettledSubagentPools(active.threadId, active.turnId);
         await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
       }).catch(() => undefined);
       if (thread && failedTurn) this.catalog.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);

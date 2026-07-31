@@ -7,9 +7,12 @@ import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
 import {
+  childBudgetPoolId,
   MAX_SUBAGENT_DEPTH,
   MAX_SUBAGENT_SPAWNS_PER_THREAD,
+  turnBudgetPoolId,
   type SubagentBudgetLedger,
+  type SubagentBudgetPoolId,
 } from '../persistence/SubagentBudgetLedger';
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import { SubagentDepthLimitError,SubagentSpawnLimitError } from '../SubagentStructuralLimitError';
@@ -185,14 +188,17 @@ export class SubagentCollaboration {
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
-          let createdPoolThreadId: ThreadId | null = null;
+          let createdPoolId: SubagentBudgetPoolId | null = null;
           let createdMemberThreadId: ThreadId | null = null;
           try {
             if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
             const parent = this.core.requireThread(input.parentThreadId);
             const collaborationChild = input.childKind !== 'isolatedSkill';
             const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
-            const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
+            const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(
+              input.parentThreadId,
+              input.parentTurnId,
+            );
             const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
             const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
               role,
@@ -228,16 +234,40 @@ export class SubagentCollaboration {
             if (!pool && !inheritedBudget?.resolutionFailed) {
               const poolBudget = tokenCap ?? configuredPoolBudget;
               if (poolBudget !== null) {
-                const poolThreadId = tokenCap === null ? parent.thread.id : thread.id;
-                pool = this.subagentBudgets.createPool(poolThreadId, poolBudget, parent.thread.ephemeral);
-                createdPoolThreadId = poolThreadId;
+                // Spend is request-scoped: with no inherited pool, this
+                // delegating Turn opens one, and the next user Turn opens its
+                // own. An explicit cap still anchors at the child it caps —
+                // that pool is request-scoped already, because the spawn
+                // created the Thread it is named for.
+                pool = this.subagentBudgets.createPool(tokenCap === null
+                  ? {
+                      poolId: turnBudgetPoolId(input.parentTurnId),
+                      scope: 'turn',
+                      originThreadId: parent.thread.id,
+                      originTurnId: input.parentTurnId,
+                      tokenBudget: poolBudget,
+                    }
+                  : {
+                      poolId: childBudgetPoolId(thread.id),
+                      scope: 'thread',
+                      originThreadId: thread.id,
+                      originTurnId: input.parentTurnId,
+                      tokenBudget: poolBudget,
+                    }, parent.thread.ephemeral);
+                createdPoolId = pool.poolId;
                 this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
               }
             }
-            if (pool || tokenCap !== null) {
-              this.subagentBudgets.createMember(thread.id, pool?.poolThreadId ?? null, tokenCap, thread.ephemeral);
-              createdMemberThreadId = thread.id;
-            }
+            // Recorded even with no pool and no cap: the member carries the
+            // delegating Turn, so a child spawned before its request had a pool
+            // can still join THAT request's pool later, and never a later one's.
+            this.subagentBudgets.createMember({
+              threadId: thread.id,
+              poolId: pool?.poolId ?? null,
+              originTurnId: input.parentTurnId,
+              tokenCap,
+            }, thread.ephemeral);
+            createdMemberThreadId = thread.id;
             const accepted = await this.turnLifecycle.acceptAndLaunch({
               threadId: thread.id,
               input: [{ type: 'text', text: input.prompt }],
@@ -256,12 +286,12 @@ export class SubagentCollaboration {
           } catch (error) {
             try {
               if (createdMemberThreadId) this.subagentBudgets.deleteMember(createdMemberThreadId);
-              if (createdPoolThreadId) this.subagentBudgets.deletePoolRecord(createdPoolThreadId);
-              if (createdPoolThreadId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+              if (createdPoolId) this.subagentBudgets.deletePoolRecord(createdPoolId);
+              if (createdPoolId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
             } catch (rollbackError) {
               console.warn('[agent][subagent-budget-audit] failed to roll back staged budget rows', {
                 memberThreadId: createdMemberThreadId,
-                poolThreadId: createdPoolThreadId,
+                poolId: createdPoolId,
                 error: rollbackError,
               });
             }
@@ -433,6 +463,7 @@ export class SubagentCollaboration {
       if (activeTurnId) {
         await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
       } else {
+        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
         this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
         const queued = this.mailbox.get(targetThread.id) ?? [];
         queued.push({ content });
@@ -454,6 +485,7 @@ export class SubagentCollaboration {
       if (activeTurnId) {
         await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
       } else {
+        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
         this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
         const queued = this.mailbox.get(targetThread.id) ?? [];
         this.mailbox.delete(targetThread.id);
@@ -550,6 +582,51 @@ export class SubagentCollaboration {
         activities.length > 0 ? 'terminal' : 'steering',
         activities,
       );
+    }
+  /**
+   * Re-delegating to an idle child is a NEW request, so it joins the pool of the
+   * Turn delegating now — the same rule that binds a fresh spawn. This is not
+   * orphan migration: a live member is never moved, and this path is reached
+   * only once every member of the old pool settled and the pool was reclaimed.
+   * Without it a re-driven child would run uncovered, which is the one hole the
+   * request-scoped pool could otherwise open.
+   */
+  private async adoptIdleChildIntoDelegatingPool(
+      childThreadId: ThreadId,
+      senderThreadId: ThreadId,
+      senderTurnId: TurnId,
+    ): Promise<void> {
+      if (this.turnLifecycle.resolveSubagentBudget(childThreadId)?.pool) return;
+      const configuredPoolBudget = await this.configuredPoolBudget();
+      await this.core.threadTreeMutex.run(async () => {
+        if (this.turnLifecycle.resolveSubagentBudget(childThreadId)?.pool) return;
+        const sender = this.core.requireThread(senderThreadId).thread;
+        const inherited = this.turnLifecycle.resolveSubagentSpawnBudget(senderThreadId, senderTurnId);
+        if (inherited?.resolutionFailed) return;
+        let pool = inherited?.pool ?? null;
+        if (!pool) {
+          if (configuredPoolBudget === null) return;
+          pool = this.subagentBudgets.createPool({
+            poolId: turnBudgetPoolId(senderTurnId),
+            scope: 'turn',
+            originThreadId: senderThreadId,
+            originTurnId: senderTurnId,
+            tokenBudget: configuredPoolBudget,
+          }, sender.ephemeral);
+          this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+        }
+        const child = this.core.requireThread(childThreadId).thread;
+        if (this.subagentBudgets.readMember(childThreadId)) {
+          this.subagentBudgets.rebindMemberPool(childThreadId, pool.poolId, senderTurnId);
+        } else {
+          this.subagentBudgets.createMember({
+            threadId: childThreadId,
+            poolId: pool.poolId,
+            originTurnId: senderTurnId,
+            tokenCap: null,
+          }, child.ephemeral);
+        }
+      });
     }
   private taskPathForThread(threadId: ThreadId): string | null { return this.ephemeralSpawnEdges.get(threadId)?.taskPath
         ?? this.core.metadata.spawnEdgeForChild(threadId)?.taskPath

@@ -65,13 +65,39 @@ ancestor blocked on an event routed to a different parent.
 ## Budgets
 
 The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000`; `null` disables
-the shared default. When a Thread with no ancestor pool first spawns, that Thread becomes
-the pool holder. Every descendant resolves the nearest holder by following
-`parentThreadId`, and every descendant Turn contributes `totalTokens` to that one pool.
-The grant is fixed from the setting value at pool creation; later setting changes affect
-only new delegated trees, while interrupt remains the control for a live tree. The
-holder's own Turns never debit or gate against the pool when the holder is the
-top-level spawner rather than a capped child member. The user-triggered Turn
+the shared default.
+
+**Spend is request-scoped.** A pool belongs to the delegating Turn that opened it, not to
+a Thread. When a spawn finds no inherited pool, the delegating Turn becomes the pool
+holder, and every descendant spawned inside that Turn's subtree shares it; a later Turn
+that delegates again opens its own pool. What the breaker defends against is runaway
+recursion inside one request, so "how much this conversation has spent over two weeks" is
+not an anomaly signal and is never accumulated as one. Restating a need is therefore a
+real recovery path: a new user Turn always delegates against a fresh grant. Structural
+limits do not follow spend into request scope — depth and the direct-child count below
+stay Thread-lifetime, because they defend against topology and topology is a property of
+the conversation.
+
+Each spawn records a membership row naming its pool, if any, and the delegating Turn that
+owns its spend. A child spawned before its request had a pool joins that request's pool
+when one is created, and never a later request's — migrating a live child onto a budget
+the user never spent on it is exactly what request scope exists to prevent. Resolution is
+the membership binding first, then a guarded ancestor walk for a Thread whose own row is
+missing. The grant is fixed from the setting value at pool creation; later setting changes
+affect only new delegated trees, while interrupt remains the control for a live tree. The
+top-level spawner's own Turns never debit or gate against the pool it opened; a capped
+child member is covered by its own membership.
+
+**Pool lifetime.** The pool outlives the Turn that opened it: a fire-and-forget child
+keeps charging the request that asked for it after that Turn has already returned. It is
+reclaimed once its originating Turn has ended and no member Thread is still running,
+whichever settles last. Reclamation deletes the pool and its uncapped member rows; a
+member carrying a local cap keeps its row, because the cap is a per-Thread lifetime
+constraint. Re-delegating to an idle child whose pool was reclaimed — a `followup_task` or
+message that starts new work — binds it to the pool of the Turn delegating now, by the
+same rule that binds a fresh spawn, so no descendant Turn runs uncovered.
+
+The user-triggered Turn
 bright line is an admission-level defense-in-depth invariant, not a product journey:
 children have no composer, so recovery from exhaustion is parent respawn or synthesis
 plus the preserved transcript artifact.
@@ -96,24 +122,26 @@ global pool default. The explicit value and global value are different constrain
 than overrides: admission and in-flight enforcement obey whichever has less remaining.
 Role and Skill caps remain deferred.
 
-`SubagentBudgetLedger` stores one pool row per holder and an internal contribution row
-for each child spawned while that pool exists. Persistent rows live in
-`subagent_budget_pools` and `subagent_budget_members` beside Goals in `goals.sqlite`;
-ephemeral rows mirror them in memory. The old per-child `thread_budgets` format is deleted,
-not migrated or read. Deleting a descendant removes only its member row and never refunds
-usage. Deleting the holder Thread deletes the complete Thread subtree and its pool plus
+`SubagentBudgetLedger` stores one pool row per holder — keyed by the delegating Turn, or
+by the capped child for an explicit cap — and one membership row per spawned child.
+Persistent rows live in `subagent_turn_budget_pools` and `subagent_turn_budget_members`
+beside Goals in `goals.sqlite`; ephemeral rows mirror them in memory. The per-child
+`thread_budgets` and Thread-keyed `subagent_budget_*` formats are deleted, not migrated or
+read. Deleting a descendant removes only its member row and never refunds usage. Deleting
+the Thread that originated a pool deletes the complete Thread subtree and that pool plus
 all remaining member rows. A separate lifetime spawn counter survives child deletion and
 is removed only with its spawner. The ledger has no model-tool surface; child Goals remain
 independent and cannot replace, remove, or raise these host-owned limits. Coverage does
-not depend on a member row: a child that predates pool creation still gates and debits the
-pool resolved by its ancestry.
+not depend on a pool binding: a child spawned before its request had a pool still gates and
+debits the pool its own delegating Turn later creates.
 
-One guarded ancestor walk is authoritative for spawn binding, admission, in-flight
-enforcement, accrual, and views. Member rows record contribution and optional cap state,
-not an independent pool assignment. If a stored member binding disagrees with the walk,
-the host re-binds it and writes a budget audit entry. Read, re-bind, and accrual failures
-also audit and degrade without changing Turn status; only pool/member creation remains a
-fail-closed write boundary.
+One guarded resolution is authoritative for spawn binding, admission, in-flight
+enforcement, accrual, and views: the membership binding, healed to the member's own
+delegating Turn, then an ancestor walk. Member rows record contribution, the owning Turn,
+and optional cap state, not an independent pool assignment. If a stored member binding
+disagrees with that resolution, the host re-binds it and writes a budget audit entry.
+Read, re-bind, accrual, and pool-reclamation failures audit and degrade without changing
+Turn status; only pool/member creation remains a fail-closed write boundary.
 
 Spawn reads the default setting before entering the Thread-tree mutex. Inside that mutex,
 role/configuration resolution, child creation, and inherited-context copying precede
@@ -125,7 +153,8 @@ has restored a coherent ledger.
 
 When either the shared pool or the target child's local cap is exhausted, the single
 Turn-admission boundary rejects every new non-user trigger with
-`SubagentBudgetExhaustedError`. An exhausted pool holder also cannot spawn another child.
+`SubagentBudgetExhaustedError`. A delegator whose request pool is exhausted also cannot
+spawn another child into that request; its next Turn delegates against a new pool.
 Collaboration follow-up and message tools surface the complete typed error to the parent.
 Steering an already-active Turn remains unconditional; the gate protects new-work
 admission only, so a parent can still steer an overshooting child to conclude.

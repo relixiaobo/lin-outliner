@@ -1,18 +1,32 @@
-import type { ThreadId } from '../../../core/agent/protocol';
+import type { ThreadId, TurnId } from '../../../core/agent/protocol';
 import type { SqliteDatabase } from './sqlite';
 
 export const MAX_SUBAGENT_DEPTH = 2;
 export const MAX_SUBAGENT_SPAWNS_PER_THREAD = 16;
 
+/**
+ * A pool key. Spend is request-scoped, so the ordinary pool is named by the Turn
+ * that initiated the delegation; an explicit `max_total_tokens` with no ancestor
+ * pool still anchors its own pool at the capped child Thread, which is already
+ * request-scoped because that Thread is created by the spawn itself.
+ */
+export type SubagentBudgetPoolId = string;
+
+export type SubagentBudgetPoolScope = 'turn' | 'thread';
+
 interface SubagentBudgetPoolRow {
-  pool_thread_id: string;
+  pool_id: string;
+  scope: string;
+  origin_thread_id: string;
+  origin_turn_id: string;
   token_budget: number;
   tokens_used: number;
 }
 
 interface SubagentBudgetMemberRow {
   thread_id: string;
-  pool_thread_id: string | null;
+  pool_id: string | null;
+  origin_turn_id: string;
   token_cap: number | null;
   tokens_used: number;
 }
@@ -22,39 +36,82 @@ interface SubagentSpawnCountRow {
 }
 
 export interface SubagentBudgetPool {
-  readonly poolThreadId: ThreadId;
+  readonly poolId: SubagentBudgetPoolId;
+  readonly scope: SubagentBudgetPoolScope;
+  /** The Thread that ran the originating Turn, or the capped child it anchors. */
+  readonly originThreadId: ThreadId;
+  readonly originTurnId: TurnId;
   readonly tokenBudget: number;
   readonly tokensUsed: number;
 }
 
 export interface SubagentBudgetMember {
   readonly threadId: ThreadId;
-  readonly poolThreadId: ThreadId | null;
+  readonly poolId: SubagentBudgetPoolId | null;
+  /** The delegating Turn that owns this Thread's spend. */
+  readonly originTurnId: TurnId;
   readonly tokenCap: number | null;
   readonly tokensUsed: number;
 }
 
+export interface CreateSubagentBudgetPoolInput {
+  readonly poolId: SubagentBudgetPoolId;
+  readonly scope: SubagentBudgetPoolScope;
+  readonly originThreadId: ThreadId;
+  readonly originTurnId: TurnId;
+  readonly tokenBudget: number;
+}
+
+export interface CreateSubagentBudgetMemberInput {
+  readonly threadId: ThreadId;
+  readonly poolId: SubagentBudgetPoolId | null;
+  readonly originTurnId: TurnId;
+  readonly tokenCap: number | null;
+}
+
+/** The shared pool of one delegating Turn. */
+export function turnBudgetPoolId(turnId: TurnId): SubagentBudgetPoolId {
+  return `turn:${turnId}`;
+}
+
+/** The pool an explicit `max_total_tokens` anchors at the child it caps. */
+export function childBudgetPoolId(threadId: ThreadId): SubagentBudgetPoolId {
+  return `thread:${threadId}`;
+}
+
 export class SubagentBudgetLedger {
-  private readonly ephemeralPools = new Map<ThreadId, SubagentBudgetPool>();
+  private readonly ephemeralPools = new Map<SubagentBudgetPoolId, SubagentBudgetPool>();
   private readonly ephemeralMembers = new Map<ThreadId, SubagentBudgetMember>();
   private readonly ephemeralSpawnCounts = new Map<ThreadId, number>();
 
   constructor(private readonly db: SqliteDatabase) {
+    // Pre-release clean cut, the same way the per-child `thread_budgets` format
+    // was retired: the Thread-keyed pool tables are dropped by name and the new
+    // scope gets new names, so there is no legacy reader and no shape sniffing.
+    // The spawn counter is structural rather than spend, and survives untouched.
     this.db.exec(`
       DROP TABLE IF EXISTS thread_budgets;
-      CREATE TABLE IF NOT EXISTS subagent_budget_pools (
-        pool_thread_id TEXT PRIMARY KEY,
+      DROP TABLE IF EXISTS subagent_budget_pools;
+      DROP TABLE IF EXISTS subagent_budget_members;
+      CREATE TABLE IF NOT EXISTS subagent_turn_budget_pools (
+        pool_id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('turn', 'thread')),
+        origin_thread_id TEXT NOT NULL,
+        origin_turn_id TEXT NOT NULL,
         token_budget INTEGER NOT NULL CHECK (token_budget > 0),
         tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0)
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS subagent_budget_members (
+      CREATE INDEX IF NOT EXISTS subagent_turn_budget_pools_origin_idx
+        ON subagent_turn_budget_pools(origin_thread_id);
+      CREATE TABLE IF NOT EXISTS subagent_turn_budget_members (
         thread_id TEXT PRIMARY KEY,
-        pool_thread_id TEXT,
+        pool_id TEXT,
+        origin_turn_id TEXT NOT NULL,
         token_cap INTEGER CHECK (token_cap IS NULL OR token_cap > 0),
         tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0)
       ) STRICT;
-      CREATE INDEX IF NOT EXISTS subagent_budget_members_pool_idx
-        ON subagent_budget_members(pool_thread_id);
+      CREATE INDEX IF NOT EXISTS subagent_turn_budget_members_pool_idx
+        ON subagent_turn_budget_members(pool_id);
       CREATE TABLE IF NOT EXISTS subagent_spawn_counts (
         spawner_thread_id TEXT PRIMARY KEY,
         spawn_count INTEGER NOT NULL CHECK (spawn_count >= 0)
@@ -62,8 +119,8 @@ export class SubagentBudgetLedger {
     `);
   }
 
-  readPool(poolThreadId: ThreadId): SubagentBudgetPool | null {
-    return this.ephemeralPools.get(poolThreadId) ?? this.readPersistedPool(poolThreadId);
+  readPool(poolId: SubagentBudgetPoolId): SubagentBudgetPool | null {
+    return this.ephemeralPools.get(poolId) ?? this.readPersistedPool(poolId);
   }
 
   readMember(threadId: ThreadId): SubagentBudgetMember | null {
@@ -74,74 +131,105 @@ export class SubagentBudgetLedger {
     return this.ephemeralSpawnCounts.get(spawnerThreadId) ?? this.readPersistedSpawnCount(spawnerThreadId);
   }
 
-  createPool(poolThreadId: ThreadId, tokenBudget: number, ephemeral: boolean): SubagentBudgetPool {
-    positiveSafeInteger(tokenBudget, 'Subagent token pool');
-    const record = { poolThreadId, tokenBudget, tokensUsed: 0 } satisfies SubagentBudgetPool;
+  membersForPool(poolId: SubagentBudgetPoolId): readonly SubagentBudgetMember[] {
+    const ephemeral = [...this.ephemeralMembers.values()].filter((member) => member.poolId === poolId);
+    const rows = this.db.prepare(`
+      SELECT thread_id, pool_id, origin_turn_id, token_cap, tokens_used
+      FROM subagent_turn_budget_members WHERE pool_id = ?
+    `).all(poolId) as unknown as SubagentBudgetMemberRow[];
+    return [...ephemeral, ...rows.map(memberFromRow)];
+  }
+
+  createPool(input: CreateSubagentBudgetPoolInput, ephemeral: boolean): SubagentBudgetPool {
+    positiveSafeInteger(input.tokenBudget, 'Subagent token pool');
+    const record = { ...input, tokensUsed: 0 } satisfies SubagentBudgetPool;
     if (ephemeral) {
-      if (this.ephemeralPools.has(poolThreadId)) throw new Error(`Subagent token pool already exists: ${poolThreadId}`);
-      this.ephemeralPools.set(poolThreadId, record);
+      if (this.ephemeralPools.has(input.poolId)) throw new Error(`Subagent token pool already exists: ${input.poolId}`);
+      this.ephemeralPools.set(input.poolId, record);
       return record;
     }
     this.db.prepare(`
-      INSERT INTO subagent_budget_pools(pool_thread_id, token_budget, tokens_used)
-      VALUES (?, ?, 0)
-    `).run(poolThreadId, tokenBudget);
+      INSERT INTO subagent_turn_budget_pools(pool_id, scope, origin_thread_id, origin_turn_id, token_budget, tokens_used)
+      VALUES (?, ?, ?, ?, ?, 0)
+    `).run(input.poolId, input.scope, input.originThreadId, input.originTurnId, input.tokenBudget);
     return record;
   }
 
-  createMember(
+  createMember(input: CreateSubagentBudgetMemberInput, ephemeral: boolean): SubagentBudgetMember {
+    if (input.tokenCap !== null) positiveSafeInteger(input.tokenCap, 'Subagent token cap');
+    if (input.poolId !== null && !this.readPool(input.poolId)) {
+      throw new Error(`Subagent token pool not found: ${input.poolId}`);
+    }
+    const record = { ...input, tokensUsed: 0 } satisfies SubagentBudgetMember;
+    if (ephemeral) {
+      if (this.ephemeralMembers.has(input.threadId)) throw new Error(`Subagent budget member already exists: ${input.threadId}`);
+      this.ephemeralMembers.set(input.threadId, record);
+      return record;
+    }
+    this.db.prepare(`
+      INSERT INTO subagent_turn_budget_members(thread_id, pool_id, origin_turn_id, token_cap, tokens_used)
+      VALUES (?, ?, ?, ?, 0)
+    `).run(input.threadId, input.poolId, input.originTurnId, input.tokenCap);
+    return record;
+  }
+
+  /**
+   * Correct a member's pool binding. `originTurnId` moves with it: a Thread
+   * re-driven by a later delegation belongs to that request, and a stale
+   * originating Turn would otherwise keep healing the binding backwards.
+   */
+  rebindMemberPool(
     threadId: ThreadId,
-    poolThreadId: ThreadId | null,
-    tokenCap: number | null,
-    ephemeral: boolean,
-  ): SubagentBudgetMember {
-    if (tokenCap !== null) positiveSafeInteger(tokenCap, 'Subagent token cap');
-    if (poolThreadId !== null && !this.readPool(poolThreadId)) {
-      throw new Error(`Subagent token pool not found: ${poolThreadId}`);
-    }
-    const record = { threadId, poolThreadId, tokenCap, tokensUsed: 0 } satisfies SubagentBudgetMember;
-    if (ephemeral) {
-      if (this.ephemeralMembers.has(threadId)) throw new Error(`Subagent budget member already exists: ${threadId}`);
-      this.ephemeralMembers.set(threadId, record);
-      return record;
-    }
-    this.db.prepare(`
-      INSERT INTO subagent_budget_members(thread_id, pool_thread_id, token_cap, tokens_used)
-      VALUES (?, ?, ?, 0)
-    `).run(threadId, poolThreadId, tokenCap);
-    return record;
-  }
-
-  rebindMemberPool(threadId: ThreadId, poolThreadId: ThreadId | null): SubagentBudgetMember | null {
+    poolId: SubagentBudgetPoolId | null,
+    originTurnId?: TurnId,
+  ): SubagentBudgetMember | null {
     const ephemeral = this.ephemeralMembers.get(threadId);
     if (ephemeral) {
-      const rebound = { ...ephemeral, poolThreadId };
+      const rebound = {
+        ...ephemeral,
+        poolId,
+        ...(originTurnId === undefined ? {} : { originTurnId }),
+      };
       this.ephemeralMembers.set(threadId, rebound);
       return rebound;
     }
     const member = this.readPersistedMember(threadId);
     if (!member) return null;
+    const nextOriginTurnId = originTurnId ?? member.originTurnId;
     const result = this.db.prepare(`
-      UPDATE subagent_budget_members SET pool_thread_id = ? WHERE thread_id = ?
-    `).run(poolThreadId, threadId);
+      UPDATE subagent_turn_budget_members SET pool_id = ?, origin_turn_id = ? WHERE thread_id = ?
+    `).run(poolId, nextOriginTurnId, threadId);
     if (result.changes !== 1) return null;
-    return { ...member, poolThreadId };
+    return { ...member, poolId, originTurnId: nextOriginTurnId };
   }
 
   deleteMember(threadId: ThreadId): boolean {
     const ephemeralMember = this.ephemeralMembers.delete(threadId);
     const persistedChanges = this.db.prepare(
-      'DELETE FROM subagent_budget_members WHERE thread_id = ?',
+      'DELETE FROM subagent_turn_budget_members WHERE thread_id = ?',
     ).run(threadId).changes;
     return ephemeralMember || Number(persistedChanges) > 0;
   }
 
-  deletePoolRecord(poolThreadId: ThreadId): boolean {
-    const ephemeralPool = this.ephemeralPools.delete(poolThreadId);
+  deletePoolRecord(poolId: SubagentBudgetPoolId): boolean {
+    const ephemeralPool = this.ephemeralPools.delete(poolId);
     const persistedChanges = this.db.prepare(
-      'DELETE FROM subagent_budget_pools WHERE pool_thread_id = ?',
-    ).run(poolThreadId).changes;
+      'DELETE FROM subagent_turn_budget_pools WHERE pool_id = ?',
+    ).run(poolId).changes;
     return ephemeralPool || Number(persistedChanges) > 0;
+  }
+
+  /**
+   * Reclaim a settled Turn pool. A capped member keeps its row: the cap is a
+   * per-Thread lifetime constraint, so dropping it here would quietly hand a
+   * re-driven child an unlimited allowance.
+   */
+  reapPool(poolId: SubagentBudgetPoolId): void {
+    for (const member of this.membersForPool(poolId)) {
+      if (member.tokenCap === null) this.deleteMember(member.threadId);
+      else this.rebindMemberPool(member.threadId, null);
+    }
+    this.deletePoolRecord(poolId);
   }
 
   recordSpawnCount(spawnerThreadId: ThreadId, spawnCount: number, ephemeral: boolean): number {
@@ -164,22 +252,22 @@ export class SubagentBudgetLedger {
 
   addUsage(
     threadId: ThreadId,
-    poolThreadId: ThreadId | null,
+    poolId: SubagentBudgetPoolId | null,
     tokens: number,
   ): { readonly member: SubagentBudgetMember | null; readonly pool: SubagentBudgetPool | null } | null {
     if (!Number.isSafeInteger(tokens) || tokens < 0) {
       throw new Error('Subagent budget usage increment must be a non-negative integer');
     }
     const ephemeralMember = this.ephemeralMembers.get(threadId) ?? null;
-    const ephemeralPool = poolThreadId === null ? null : this.ephemeralPools.get(poolThreadId) ?? null;
+    const ephemeralPool = poolId === null ? null : this.ephemeralPools.get(poolId) ?? null;
     if (ephemeralMember || ephemeralPool) {
-      return this.addEphemeralUsage(ephemeralMember, ephemeralPool, poolThreadId, tokens);
+      return this.addEphemeralUsage(ephemeralMember, ephemeralPool, poolId, tokens);
     }
     let member = this.readPersistedMember(threadId);
-    if (member?.poolThreadId !== poolThreadId) {
-      member = this.rebindMemberPool(threadId, poolThreadId);
+    if (member && member.poolId !== poolId) {
+      member = this.rebindMemberPool(threadId, poolId);
     }
-    const pool = poolThreadId === null ? null : this.readPersistedPool(poolThreadId);
+    const pool = poolId === null ? null : this.readPersistedPool(poolId);
     if (!member && !pool) return null;
     if (tokens === 0) {
       return { member, pool };
@@ -192,11 +280,11 @@ export class SubagentBudgetLedger {
         : null;
       if (updatedMember) {
         const memberResult = this.db.prepare(`
-          UPDATE subagent_budget_members SET tokens_used = ? WHERE thread_id = ?
+          UPDATE subagent_turn_budget_members SET tokens_used = ? WHERE thread_id = ?
         `).run(updatedMember.tokensUsed, threadId);
         if (memberResult.changes !== 1) throw new Error(`Subagent budget member not found: ${threadId}`);
       }
-      const updatedPool = poolThreadId === null ? null : this.addPersistedPoolUsage(poolThreadId, tokens);
+      const updatedPool = poolId === null ? null : this.addPersistedPoolUsage(poolId, tokens);
       this.db.exec('COMMIT;');
       return { member: updatedMember, pool: updatedPool };
     } catch (error) {
@@ -205,23 +293,33 @@ export class SubagentBudgetLedger {
     }
   }
 
+  /**
+   * Thread-entity cleanup: the Thread's own membership, plus every pool it
+   * originated and that pool's remaining members. The subtree cascade calls this
+   * for each deleted descendant, so a pool never outlives the Thread that owns it.
+   */
   clearThread(threadId: ThreadId): boolean {
     const ephemeralMember = this.ephemeralMembers.delete(threadId);
-    const ephemeralPool = this.ephemeralPools.delete(threadId);
     const ephemeralSpawnCount = this.ephemeralSpawnCounts.delete(threadId);
-    if (ephemeralPool) {
-      for (const [memberThreadId, member] of this.ephemeralMembers) {
-        if (member.poolThreadId === threadId) this.ephemeralMembers.delete(memberThreadId);
+    let ephemeralPool = false;
+    for (const [poolId, pool] of [...this.ephemeralPools]) {
+      if (pool.originThreadId !== threadId) continue;
+      ephemeralPool = true;
+      this.ephemeralPools.delete(poolId);
+      for (const [memberThreadId, member] of [...this.ephemeralMembers]) {
+        if (member.poolId === poolId) this.ephemeralMembers.delete(memberThreadId);
       }
     }
 
     this.db.exec('BEGIN IMMEDIATE;');
     try {
-      const memberChanges = this.db.prepare(
-        'DELETE FROM subagent_budget_members WHERE thread_id = ? OR pool_thread_id = ?',
-      ).run(threadId, threadId).changes;
+      const memberChanges = this.db.prepare(`
+        DELETE FROM subagent_turn_budget_members
+        WHERE thread_id = ?
+           OR pool_id IN (SELECT pool_id FROM subagent_turn_budget_pools WHERE origin_thread_id = ?)
+      `).run(threadId, threadId).changes;
       const poolChanges = this.db.prepare(
-        'DELETE FROM subagent_budget_pools WHERE pool_thread_id = ?',
+        'DELETE FROM subagent_turn_budget_pools WHERE origin_thread_id = ?',
       ).run(threadId).changes;
       const spawnCountChanges = this.db.prepare(
         'DELETE FROM subagent_spawn_counts WHERE spawner_thread_id = ?',
@@ -242,11 +340,11 @@ export class SubagentBudgetLedger {
   private addEphemeralUsage(
     member: SubagentBudgetMember | null,
     pool: SubagentBudgetPool | null,
-    poolThreadId: ThreadId | null,
+    poolId: SubagentBudgetPoolId | null,
     tokens: number,
   ): { readonly member: SubagentBudgetMember | null; readonly pool: SubagentBudgetPool | null } {
-    if (member && member.poolThreadId !== poolThreadId) {
-      member = this.rebindMemberPool(member.threadId, poolThreadId);
+    if (member && member.poolId !== poolId) {
+      member = this.rebindMemberPool(member.threadId, poolId);
     }
     if (!member && !pool) throw new Error('Ephemeral Subagent budget record not found');
     if (tokens === 0) {
@@ -256,31 +354,34 @@ export class SubagentBudgetLedger {
       ? { ...member, tokensUsed: checkedTotal(member.tokensUsed, tokens) }
       : null;
     if (updatedMember) this.ephemeralMembers.set(updatedMember.threadId, updatedMember);
-    if (poolThreadId === null) return { member: updatedMember, pool: null };
-    if (!pool) throw new Error(`Subagent token pool not found: ${poolThreadId}`);
+    if (poolId === null) return { member: updatedMember, pool: null };
+    if (!pool) throw new Error(`Subagent token pool not found: ${poolId}`);
     const updatedPool = { ...pool, tokensUsed: checkedTotal(pool.tokensUsed, tokens) };
-    this.ephemeralPools.set(poolThreadId, updatedPool);
+    this.ephemeralPools.set(poolId, updatedPool);
     return { member: updatedMember, pool: updatedPool };
   }
 
-  private addPersistedPoolUsage(poolThreadId: ThreadId, tokens: number): SubagentBudgetPool {
-    const pool = this.readPersistedPool(poolThreadId);
-    if (!pool) throw new Error(`Subagent token pool not found: ${poolThreadId}`);
+  private addPersistedPoolUsage(poolId: SubagentBudgetPoolId, tokens: number): SubagentBudgetPool {
+    const pool = this.readPersistedPool(poolId);
+    if (!pool) throw new Error(`Subagent token pool not found: ${poolId}`);
     const tokensUsed = checkedTotal(pool.tokensUsed, tokens);
     const result = this.db.prepare(`
-      UPDATE subagent_budget_pools SET tokens_used = ? WHERE pool_thread_id = ?
-    `).run(tokensUsed, poolThreadId);
-    if (result.changes !== 1) throw new Error(`Subagent token pool not found: ${poolThreadId}`);
+      UPDATE subagent_turn_budget_pools SET tokens_used = ? WHERE pool_id = ?
+    `).run(tokensUsed, poolId);
+    if (result.changes !== 1) throw new Error(`Subagent token pool not found: ${poolId}`);
     return { ...pool, tokensUsed };
   }
 
-  private readPersistedPool(poolThreadId: ThreadId): SubagentBudgetPool | null {
+  private readPersistedPool(poolId: SubagentBudgetPoolId): SubagentBudgetPool | null {
     const row = this.db.prepare(`
-      SELECT pool_thread_id, token_budget, tokens_used
-      FROM subagent_budget_pools WHERE pool_thread_id = ?
-    `).get(poolThreadId) as SubagentBudgetPoolRow | undefined;
+      SELECT pool_id, scope, origin_thread_id, origin_turn_id, token_budget, tokens_used
+      FROM subagent_turn_budget_pools WHERE pool_id = ?
+    `).get(poolId) as SubagentBudgetPoolRow | undefined;
     return row ? {
-      poolThreadId: row.pool_thread_id,
+      poolId: row.pool_id,
+      scope: row.scope === 'thread' ? 'thread' : 'turn',
+      originThreadId: row.origin_thread_id,
+      originTurnId: row.origin_turn_id,
       tokenBudget: row.token_budget,
       tokensUsed: row.tokens_used,
     } : null;
@@ -288,15 +389,10 @@ export class SubagentBudgetLedger {
 
   private readPersistedMember(threadId: ThreadId): SubagentBudgetMember | null {
     const row = this.db.prepare(`
-      SELECT thread_id, pool_thread_id, token_cap, tokens_used
-      FROM subagent_budget_members WHERE thread_id = ?
+      SELECT thread_id, pool_id, origin_turn_id, token_cap, tokens_used
+      FROM subagent_turn_budget_members WHERE thread_id = ?
     `).get(threadId) as SubagentBudgetMemberRow | undefined;
-    return row ? {
-      threadId: row.thread_id,
-      poolThreadId: row.pool_thread_id,
-      tokenCap: row.token_cap,
-      tokensUsed: row.tokens_used,
-    } : null;
+    return row ? memberFromRow(row) : null;
   }
 
   private readPersistedSpawnCount(spawnerThreadId: ThreadId): number {
@@ -305,6 +401,16 @@ export class SubagentBudgetLedger {
     `).get(spawnerThreadId) as SubagentSpawnCountRow | undefined;
     return row?.spawn_count ?? 0;
   }
+}
+
+function memberFromRow(row: SubagentBudgetMemberRow): SubagentBudgetMember {
+  return {
+    threadId: row.thread_id,
+    poolId: row.pool_id,
+    originTurnId: row.origin_turn_id,
+    tokenCap: row.token_cap,
+    tokensUsed: row.tokens_used,
+  };
 }
 
 function positiveSafeInteger(value: number, label: string): void {
