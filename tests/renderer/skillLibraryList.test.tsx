@@ -277,6 +277,43 @@ describe('skill library list', () => {
     expect(checks.at(-1)?.args?.ambient).toBeUndefined();
   });
 
+  test('every skill with a real folder can be opened from its row', async () => {
+    const rendered = await render({
+      skills: [localSkill('user-notes', 'user')],
+      managed: [],
+    });
+
+    await act(async () => {
+      rendered.document
+        .querySelector<HTMLButtonElement>('[aria-label="user-notes actions"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    const reveal = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Show in Finder');
+    if (!reveal) throw new Error('Missing reveal action');
+
+    await act(async () => {
+      reveal.click();
+      await Promise.resolve();
+    });
+
+    const call = rendered.calls.find((entry) => entry.command === 'agent_reveal_skill_directory');
+    expect(call?.args?.path).toBe('/fixtures/user-notes');
+  });
+
+  test('a code-registered built-in offers no folder to open', async () => {
+    // Its rootDir is a display-safe pseudo path, not a location — an action that
+    // cannot open anything is worse than no action.
+    const rendered = await render({
+      skills: [{ ...localSkill('skillify', 'built-in'), rootDir: 'built-in/skillify' }],
+      managed: [],
+    });
+
+    const menu = rendered.document.querySelector('[aria-label="skillify actions"]');
+    expect(menu).toBeNull();
+  });
+
   test('a skill from a bound directory carries the local chip', async () => {
     const rendered = await render({
       skills: [{ ...localSkill('notes', 'user'), rootDir: '/work/skills/notes' }],
@@ -378,6 +415,7 @@ async function render(input: {
         if (command === 'agent_list_all_skills') return input.skills;
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
+        if (command === 'agent_reveal_skill_directory') return { revealed: true };
         if (command === 'agent_managed_skill_catalog') {
           return { ok: true, value: { status: 'fresh', entries: [] } };
         }

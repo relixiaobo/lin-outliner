@@ -181,9 +181,9 @@ export const zhHans: PartialMessages = {
       sourceBuiltIn: '内置',
       sourceUser: '用户',
       sourceProject: '项目',
-      localRevealFailed: ({ directory }: { directory: string }) =>
+      revealFailed: ({ directory }: { directory: string }) =>
         `无法打开 ${directory}，它可能已被移动、重命名或卸载。`,
-      localReveal: '在访达中显示',
+      revealInFinder: '在访达中显示',
       // 「解绑」而非「移除/删除」：Tenon 只是指向该目录，解绑仅去掉指针，不动用户的文件。
       localUnbind: '解绑目录',
       localUnboundNotice: ({ directory }: { directory: string }) =>

@@ -127,7 +127,7 @@ export function SettingsSkillLibrarySection({
     onError(null);
     try {
       const { revealed } = await api.agentRevealSkillDirectory(directory);
-      if (!revealed) onError(t.settings.skills.localRevealFailed({ directory }));
+      if (!revealed) onError(t.settings.skills.revealFailed({ directory }));
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -207,6 +207,29 @@ export function SettingsSkillLibrarySection({
   // Every chip in this column is localized. Returning the raw enum for
   // built-in/user/project while managed and local were translated produced
   // mixed-language chips in one column.
+  /**
+   * Where each Skill actually lives on disk. Code-registered built-ins carry a
+   * display-safe pseudo path (`built-in/<name>`) rather than a real one, so only
+   * absolute paths get a reveal action — offering one that cannot open anything
+   * is worse than not offering it.
+   */
+  const skillRoots = useMemo(() => {
+    const roots = new Map<string, string>();
+    for (const skill of allSkills) {
+      if (skill.rootDir.startsWith('/')) roots.set(skill.name, skill.rootDir);
+    }
+    return roots;
+  }, [allSkills]);
+
+  function revealAction(skillName: string): RowMenuAction[] {
+    const rootDir = skillRoots.get(skillName);
+    if (!rootDir) return [];
+    return [{
+      label: t.settings.skills.revealInFinder,
+      onSelect: () => void revealDirectory(rootDir),
+    }];
+  }
+
   const sourceChipLabel = (source: SkillSourceKind): string => {
     if (source === 'built-in') return t.settings.skills.sourceBuiltIn;
     if (source === 'project') return t.settings.skills.sourceProject;
@@ -258,12 +281,12 @@ export function SettingsSkillLibrarySection({
           void onPersistSkillDisabled(skill.name, false);
         }
       },
-      actions: managedSkillActions(skill, {
+      actions: [...revealAction(skill.name), ...managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),
         preview: () => void managed.previewUpdate(skill),
         rollback: () => managed.openConfirmAction({ kind: 'rollback', skill }),
         uninstall: () => managed.openConfirmAction({ kind: 'uninstall', skill }),
-      }, t, busy),
+      }, t, busy)],
       actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
     } satisfies LibraryRow;
   }), [disabledSkills, managed.busy, managed.skills, onToggleSkill, t]);
@@ -275,7 +298,7 @@ export function SettingsSkillLibrarySection({
       // Trust state is derived in main. Mutable skills are model-usable
       // by default; acceptedHash is only a retained management fact.
       const pending = !skill.ratified;
-      const actions: RowMenuAction[] = [];
+      const actions: RowMenuAction[] = [...revealAction(skill.name)];
       if (skill.accepted) {
         actions.push({
           label: t.settings.skills.revokeAcceptance,
@@ -301,7 +324,7 @@ export function SettingsSkillLibrarySection({
       const localDirectory = directoryContaining(skill.rootDir, additionalSkillDirectories);
       if (localDirectory) {
         actions.push({
-          label: t.settings.skills.localReveal,
+          label: t.settings.skills.revealInFinder,
           onSelect: () => void revealDirectory(localDirectory),
         });
         actions.push({
@@ -428,7 +451,11 @@ export function SettingsSkillLibrarySection({
                   ))}
                 </>
               )}
-              sublabel={row.description}
+              sublabel={(
+                <span className="settings-skill-description" title={row.description}>
+                  {row.description}
+                </span>
+              )}
               trailing={(
                 <>
                   {row.accept ? (
@@ -478,7 +505,7 @@ export function SettingsSkillLibrarySection({
                 <SettingsRowMenu
                   actions={[
                     {
-                      label: t.settings.skills.localReveal,
+                      label: t.settings.skills.revealInFinder,
                       onSelect: () => void revealDirectory(directory),
                     },
                     {

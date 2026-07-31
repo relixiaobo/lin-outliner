@@ -227,10 +227,21 @@ chips, an enable toggle, and its source-specific actions in the row disclosure:
 
 | Source | Row actions |
 |---|---|
+| any, with a real folder | show in Finder |
 | `managed` | check update, preview update, apply, rollback, uninstall |
-| local directory | reveal in Finder, unbind directory |
+| local directory | unbind directory |
 | `user`, `project` | accept, revoke acceptance, undo agent edit |
-| `built-in` | none; enable toggle only |
+| `built-in` | enable toggle only, plus Finder when resource-backed |
+
+Every row whose Skill has a real on-disk root can open it. Code-registered
+built-ins carry a display-safe pseudo path (`built-in/<name>`) rather than a
+location, so they get no such action — one that cannot open anything is worse
+than none.
+
+A Skill's description is written for the model to route on and routinely runs to
+a paragraph. The library is a scan-and-toggle surface, so a row clamps it to two
+lines with the full text on hover; clamping rather than shrinking keeps rows a
+uniform height, so the list does not ripple as descriptions vary.
 
 Managed rows are read from the managed index rather than the loaded catalog, so a
 Skill that is installed but not activated still appears — installed-but-off is a

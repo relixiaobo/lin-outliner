@@ -679,7 +679,9 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
                   <span class="settings-chip">Recommended</span>
                   <span class="settings-chip">Enabled</span>
                 </span>
-                <span class="inset-row-sublabel">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
+                <span class="inset-row-sublabel">
+                  <span title="Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts." class="settings-skill-description">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
+                </span>
               </span>
             </div>
             <div class="inset-row-trailing">
@@ -704,11 +706,20 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
                 <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
                 <span class="settings-chip">Workspace · not accepted</span>
               </span>
-              <span class="inset-row-sublabel">Fixture skill project-lint.</span>
+              <span class="inset-row-sublabel">
+                <span title="Fixture skill project-lint." class="settings-skill-description">Fixture skill project-lint.</span>
+              </span>
             </span>
           </div>
           <div class="inset-row-trailing">
             <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
+            <button type="button" class="settings-row-menu-trigger" aria-label="project-lint actions" aria-haspopup="menu" aria-expanded="false">
+              <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                <circle r="1" cy="12" cx="12" />
+                <circle r="1" cy="12" cx="19" />
+                <circle r="1" cy="12" cx="5" />
+              </svg>
+            </button>
             <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
               <span aria-hidden="true" class="switch-mark">
                 <span class="switch-mark-thumb">
@@ -723,7 +734,9 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
               <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
               <span class="settings-chip">Workspace · not accepted</span>
             </span>
-            <span class="inset-row-sublabel">Fixture skill project-unratified.</span>
+            <span class="inset-row-sublabel">
+              <span title="Fixture skill project-unratified." class="settings-skill-description">Fixture skill project-unratified.</span>
+            </span>
           </span>
         </div>
         <div class="inset-row-trailing">
@@ -748,10 +761,19 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
           <span class="inset-row-text is-wrap">
             <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
           </span>
-          <span class="inset-row-sublabel">Fixture skill skillify.</span>
+          <span class="inset-row-sublabel">
+            <span title="Fixture skill skillify." class="settings-skill-description">Fixture skill skillify.</span>
+          </span>
         </span>
       </div>
       <div class="inset-row-trailing">
+        <button type="button" class="settings-row-menu-trigger" aria-label="skillify actions" aria-haspopup="menu" aria-expanded="false">
+          <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+            <circle r="1" cy="12" cx="12" />
+            <circle r="1" cy="12" cx="19" />
+            <circle r="1" cy="12" cx="5" />
+          </svg>
+        </button>
         <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
           <span aria-hidden="true" class="switch-mark checked">
             <span class="switch-mark-thumb">
@@ -766,7 +788,9 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
           <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
           <span class="settings-chip">Accepted</span>
         </span>
-        <span class="inset-row-sublabel">Fixture skill user-notes.</span>
+        <span class="inset-row-sublabel">
+          <span title="Fixture skill user-notes." class="settings-skill-description">Fixture skill user-notes.</span>
+        </span>
       </span>
     </div>
     <div class="inset-row-trailing">

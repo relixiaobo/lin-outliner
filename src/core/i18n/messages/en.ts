@@ -213,9 +213,9 @@ export const en = {
       sourceBuiltIn: 'built-in',
       sourceUser: 'user',
       sourceProject: 'project',
-      localRevealFailed: ({ directory }: { directory: string }) =>
+      revealFailed: ({ directory }: { directory: string }) =>
         `Could not open ${directory}. It may have been moved, renamed, or unmounted.`,
-      localReveal: 'Reveal in Finder',
+      revealInFinder: 'Show in Finder',
       // "Unbind", never "remove"/"delete": Tenon points at the directory, so
       // this drops the pointer and leaves the user's files untouched.
       localUnbind: 'Unbind directory',
