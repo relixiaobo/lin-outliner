@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Subagent transcript account layer (PR #460, cc)** — every subagent thread
+  now keeps a faithful, human-readable transcript the delegating parent can
+  verify claims against: one canonical turn→text renderer behind two ports —
+  an append-only artifact at `<userData>/subagent-transcripts/<threadId>.md`
+  (extended once per completed child turn, never written into the workspace,
+  reported via `transcriptPath` in terminal outcomes and readable with the
+  existing file tools) and a stateless `bun run agent:dump` stdout projection
+  for forensics on any thread in any state. Deletion drains in-flight appends
+  and removes the artifact; a startup sweep reclaims orphans; all account
+  work is best-effort (A12) and deadline-bounded so it can never cost the
+  delegator its result.
+
 - **Agent thread scroll follow (PR #458, codex-2)** — sending a message anchors
   it at the top of the transcript with runway below for the response to stream
   into; the transcript auto-follows only while the reader is at the bottom,

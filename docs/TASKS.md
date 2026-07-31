@@ -31,10 +31,13 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-30).** Open PR queue: #455 (draft,
-`subagent-budget-propagation` PR C), #457 (draft, plan-only), #460 (draft,
-`subagent-transcript-artifact`), #461 (ready,
-`agent-run-presentation-consistency` PR A). Recently merged: #458
+**In flight (2026-07-31).** Open PR queue: #455 (draft,
+`subagent-budget-propagation` PR C), #457 (draft, plan-only), #461 (ready,
+`agent-run-presentation-consistency` PR A). Recently merged: #460
+(`cc/subagent-transcript-artifact`) after two gate rounds (medium 8 findings →
+PM-ratified structural redesign to app-owned append-only storage; high 7
+findings → all blocking items fixed with revert-verified regression tests) —
+the Delegation Contract's account layer is live; see the item below. #458
 (`codex-2/agent-thread-scroll-follow`) after a medium review gate (8 confirmed
 findings, all addressed same-day in `bfa5e518`; the one e2e failure at the gate
 reproduces identically on the merge base and is filed as
@@ -384,24 +387,23 @@ before any directional/security-sensitive build.
   constants, not settings), and renderer translation of budget failures (user surfaces never
   show token numbers — the user-irrelevance boundary). See
   `docs/plans/subagent-budget-propagation.md`.
-- **subagent-transcript-artifact** (P2, `in-progress` — cc, PR #460 **returned to draft at
-  the 2026-07-30 gate**: 8 findings, 6 CONFIRMED; PM ratified a redesign baseline recorded in
-  the PR comment) — the Delegation Contract's account layer, zero new tools: ONE faithful
-  turn→text renderer (`thread/TranscriptRenderer.ts`, sole authority with anti-parallel-copy
-  clause; compaction's lossy summary exempt by contract) behind two ports — the terminal
-  artifact read by the parent model with existing file tools (reader-pays,
-  liveness/budget-independent), and the stateless `bun run agent:dump` stdout projection for
-  debugging agents and humans (A11: forensics as a command). **Ratified redesign deltas (the
-  Claude Code pattern; five findings dissolve structurally):** transcript lives under
-  `userData`, never the workspace cwd; append-only materialization per *completed* child turn
-  (immutable in the event-sourced store — no rewrite, no memo), driven by turn completion, not
-  the parent's `wait_agent` path; `wait_agent` stays result-first with `transcriptPath` as an
-  absolute app-owned reference (capability layer already resolves absolute paths,
-  `agentCapabilities.ts:391`); deletion race-free against the wait resume it triggers. The
-  plan (main-authored) was revised in place to the ratified design 2026-07-30 — **no
-  one-pager round**: cc reworks the branch directly against the plan. Touches package.json
-  (infrastructure — the PR is the coordinated change). See
-  `docs/plans/subagent-transcript-artifact.md`.
+- **subagent-transcript-artifact** (P2, `done` 2026-07-31; PR #460, cc) — the Delegation
+  Contract's account layer, zero new tools: ONE faithful turn→text renderer
+  (`thread/TranscriptRenderer.ts`, sole authority; compaction's lossy summary exempt by
+  contract) behind two ports — the append-only artifact at
+  `<userData>/subagent-transcripts/<threadId>.md` (extended once per completed child turn,
+  never the workspace; `transcriptPath` in terminal outcomes, read with existing file tools)
+  and the stateless `bun run agent:dump` stdout projection (A11: forensics as a command).
+  Shipped through two gate rounds: the medium review's 8 findings led the PM to ratify a
+  structural redesign (the Claude Code pattern — app-owned append-only storage, result-first
+  `wait_agent`, turn-completion-driven materialization) folded into the plan in place; the
+  high review then confirmed 5 edge-case bugs (drain-ordering no-op, rebuild dedup,
+  stop/archive turn loss, surrogate-pair truncation, wait-path pagination), all fixed with
+  regression tests verified to fail against the pre-fix code, plus a recorded A12/A9
+  judgment: every account-layer filesystem wait is deadline-bounded (2s) so a wedged volume
+  costs accuracy, never the delegator's result. Design folded into
+  `docs/spec/agent-subagent-threads.md`; plan archived at
+  `docs/plans/archive/subagent-transcript-artifact.md`.
 - **agent-subagent-interaction** (P2, `draft` — cc-2, plan merged #454 after gate review;
   shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
   presentation row per child over append-only Items, `agentsStates` widened to
@@ -755,6 +757,12 @@ anything.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
+- **#460 review leftover** (P3, *fast-track, no plan file*) — unify the two truncation-marker
+  dialects over the same `MAX_PERSISTED_*` caps: `TranscriptRenderer.bounded`
+  ('[truncated N bytes]', head-retaining) vs `PiTurnExecutor.boundedText`
+  ('... N chars omitted ...', head+tail) — one exported helper (or at least one marker
+  format) so a transcript never shows two truncation conventions for the same field.
+  Confirmed at the #460 high gate but omitted from the fix list; cosmetic, forensics-only.
 - **scripts-typecheck-coverage** (P3, *fast-track, no plan file*) — `scripts/` sits outside
   tsconfig `include`, so nothing typechecks `scripts/agent-dump.ts` or its hand-rolled
   `bunSqliteAdapter` (surfaced by the #460 gate; repo-wide gap, not #460's blocker). Fix = a
