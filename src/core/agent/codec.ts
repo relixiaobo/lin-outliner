@@ -915,6 +915,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/list':
       decoded = decodeThreadListRequest(value);
       break;
+    case 'thread/descendants':
+      decoded = decodeThreadDescendantsRequest(value);
+      break;
     case 'thread/read':
       decoded = decodeThreadReadRequest(value);
       break;
@@ -997,6 +1000,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
   switch (method) {
     case 'thread/list':
       decoded = decodeThreadListResponse(value);
+      break;
+    case 'thread/descendants':
+      decoded = decodeThreadDescendantsResponse(value);
       break;
     case 'thread/read':
     case 'thread/start':
@@ -1101,6 +1107,12 @@ function decodeThreadListRequest(value: unknown): AgentCoreRequestByMethod['thre
             .map((source, index) => decodeThreadSource(source, `thread/list.threadSources[${index}]`)),
         }),
   });
+}
+
+function decodeThreadDescendantsRequest(value: unknown): AgentCoreRequestByMethod['thread/descendants'] {
+  const record = recordValue(value, 'thread/descendants');
+  exactKeys(record, ['threadId'], 'thread/descendants');
+  return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/descendants.threadId') });
 }
 
 function decodeThreadReadRequest(value: unknown): AgentCoreRequestByMethod['thread/read'] {
@@ -1365,6 +1377,14 @@ function decodeThreadListResponse(value: unknown): AgentCoreResponseByMethod['th
   return deepFreeze({
     data: arrayValue(record.data, 'thread/list response.data').map(decodeThread),
     nextCursor: nullableString(record.nextCursor, 'thread/list response.nextCursor'),
+  });
+}
+
+function decodeThreadDescendantsResponse(value: unknown): AgentCoreResponseByMethod['thread/descendants'] {
+  const record = recordValue(value, 'thread/descendants response');
+  exactKeys(record, ['data'], 'thread/descendants response');
+  return deepFreeze({
+    data: arrayValue(record.data, 'thread/descendants response.data').map(decodeThread),
   });
 }
 

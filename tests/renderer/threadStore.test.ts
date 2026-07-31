@@ -286,8 +286,9 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().threads[0]).toMatchObject({ id: unloaded.id, updatedAt: 110 });
   });
 
-  test('clears latest canonical Turn cache entries when reload drops a Thread', async () => {
+  test('keeps children across a reload while dropping a root the list no longer returns', async () => {
     const owner = thread('thread-1', 2);
+    const dropped = thread('thread-2', 3);
     const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
     let notify: (notification: AgentCoreNotification) => void = () => undefined;
     let listCalls = 0;
@@ -299,7 +300,7 @@ describe('renderer Thread store', () => {
       agentCoreRequest: async (method: string) => {
         if (method === 'thread/list') {
           listCalls += 1;
-          return { data: listCalls === 1 ? [owner, child] : [owner], nextCursor: null };
+          return { data: listCalls === 1 ? [owner, dropped] : [owner], nextCursor: null };
         }
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
@@ -309,14 +310,22 @@ describe('renderer Thread store', () => {
     } as unknown as ThreadStoreClient;
     const store = new ThreadStore(client);
     await store.initialize();
+    notify({ type: 'thread/started', threadId: child.id, thread: child });
     const active = turn('turn-child', 'inProgress', '');
     notify({ type: 'turn/started', threadId: child.id, turnId: active.id, turn: active });
+    const droppedTurn = turn('turn-dropped', 'inProgress', '');
+    notify({ type: 'turn/started', threadId: dropped.id, turnId: droppedTurn.id, turn: droppedTurn });
     expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(true);
 
     await store.reloadThreads();
 
-    expect(store.getSnapshot().threads.map((entry) => entry.id)).toEqual([owner.id]);
-    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(false);
+    // `thread/list` is root-only, so a child's absence proves nothing: it stays
+    // in the catalog, and the transcript keeps its identity and live status.
+    // A ROOT the list no longer returns really is gone.
+    expect(store.getSnapshot().threads.map((entry) => entry.id).toSorted())
+      .toEqual([owner.id, child.id].toSorted());
+    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(true);
+    expect(store.getSnapshot().latestTurnByThread.has(dropped.id)).toBe(false);
   });
 
   test('clears latest canonical Turn cache entries for a deleted subtree', async () => {
@@ -754,6 +763,61 @@ describe('renderer Thread store', () => {
     expect(await store.readItemOutput(owner.id, 'turn-1', item)).toBeNull();
     expect(await store.readItemOutput(owner.id, 'turn-1', item)).toBe('output');
     expect(attempts).toBe(2);
+  });
+
+  test('recovers a child Thread the list never returns, and reports a deleted one', async () => {
+    const owner = thread('thread-1', 2);
+    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input?: unknown) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/read') {
+          const threadId = (input as { threadId: string }).threadId;
+          if (threadId !== child.id) throw new Error(`Thread not found: ${threadId}`);
+          return { thread: child };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    // Not a list row, so the catalog has to recover it through `thread/read`.
+    await store.openThreadById(child.id);
+    expect(store.getSnapshot().selectedThreadId).toBe(child.id);
+    expect(store.getSnapshot().threads.map((entry) => entry.id)).toContain(child.id);
+
+    // A genuinely deleted Thread rejects, so the caller can say so instead of
+    // failing silently behind a bare void call.
+    await expect(store.openThreadById('thread-gone')).rejects.toThrow('Thread not found');
+  });
+
+  test('lists descendants for the parent browse surface and folds them into the catalog', async () => {
+    const owner = thread('thread-1', 3);
+    const child = { ...thread('thread-child', 2), parentThreadId: owner.id, threadSource: 'subagent' as const };
+    const grandchild = { ...thread('thread-grandchild', 1), parentThreadId: child.id, threadSource: 'subagent' as const };
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [child, grandchild] };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    expect((await store.listDescendants(owner.id)).map((entry) => entry.id))
+      .toEqual([child.id, grandchild.id]);
+    expect(store.getSnapshot().threads.map((entry) => entry.id).toSorted())
+      .toEqual([owner.id, child.id, grandchild.id].toSorted());
   });
 });
 

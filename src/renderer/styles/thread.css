@@ -90,6 +90,43 @@
   flex: 0 0 auto;
 }
 
+/* A child Thread's header: one step back to the parent, then the child's own
+   name, so leaving is one click and the reader still knows where they are. */
+.thread-dock-breadcrumb {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.thread-dock-back {
+  flex: 0 1 auto;
+  max-width: 160px;
+}
+
+.thread-dock-back-label {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--font-ui-md);
+  font-weight: 400;
+  line-height: var(--line-ui-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-dock-breadcrumb-separator {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+}
+
+.thread-dock-breadcrumb .thread-dock-title {
+  flex: 0 1 auto;
+  color: var(--text-secondary);
+}
+
 .thread-title-chevron {
   flex: 0 0 auto;
   opacity: 0;
@@ -219,6 +256,76 @@
   line-height: var(--line-code-inline);
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* The parent-side browse surface for child Threads, which are not list rows. */
+.thread-details-subagents {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--separator);
+}
+
+.thread-details-subagents-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.thread-details-subagents-heading h3 {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui-xs-relaxed);
+}
+
+.thread-details-subagent-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-details-subagent {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-radius: var(--radius-sm);
+}
+
+.thread-details-subagent:hover,
+.thread-details-subagent:focus-within {
+  background: var(--fill-2);
+}
+
+.thread-details-subagent-open {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  text-align: left;
+}
+
+.thread-details-subagent-open small {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.thread-details-subagent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-details-history {
@@ -2806,7 +2913,6 @@ button.thread-inline-activity:focus-visible,
   min-height: 38px;
   align-items: center;
   grid-template-columns: minmax(0, 1fr) auto;
-  margin-left: calc(var(--thread-depth) * var(--space-5));
   border-radius: var(--radius-sm);
 }
 
@@ -2836,6 +2942,22 @@ button.thread-inline-activity:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.thread-list-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Neutral, not status: "this conversation has background work running" is a
+   state of the conversation, not a warning about it (B3). */
+.thread-list-activity {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--text-tertiary);
 }
 
 .thread-list-select small {

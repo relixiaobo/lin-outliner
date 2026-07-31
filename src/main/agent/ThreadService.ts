@@ -48,6 +48,8 @@ ThreadItemOutputReadResponse,
 ThreadItemsListRequest,
 ThreadItemsListResponse,
 ThreadListRequest,
+ThreadDescendantsRequest,
+ThreadDescendantsResponse,
 ThreadListResponse,
 ThreadReadRequest,
 ThreadReadResponse,
@@ -536,6 +538,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     switch (method) {
       case 'thread/list':
         return this.listThreads(decoded as AgentCoreRequestByMethod['thread/list']) as AgentCoreResponseByMethod[Method];
+      case 'thread/descendants':
+        return this.listThreadDescendants(
+          decoded as AgentCoreRequestByMethod['thread/descendants'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/read':
         return this.readThread(decoded as AgentCoreRequestByMethod['thread/read']) as AgentCoreResponseByMethod[Method];
       case 'thread/start':
@@ -673,6 +679,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<ResolvedThreadResourceFile | null> { return this.resourceOps.resolveThreadResourceFile(threadId, ref); }
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse { return this.catalogOps.listItems(request); }
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
+  listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
+    return this.catalogOps.listThreadDescendants(request);
+  }
   readThread(request: ThreadReadRequest): ThreadReadResponse { return this.catalogOps.readThread(request); }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
   async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> { return this.catalogOps.setThreadConfiguration(request); }

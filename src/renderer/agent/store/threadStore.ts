@@ -103,13 +103,20 @@ export class ThreadStore {
       threads.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);
-    const selected = this.snapshot.selectedThreadId && threads.some((thread) => thread.id === this.snapshot.selectedThreadId)
+    // `thread/list` is root conversations only, but the store's Thread map is
+    // the renderer's catalog, not the list: child Threads already known stay,
+    // or every Subagent row in the open transcript would lose its identity and
+    // live status on a reload.
+    const known = [...threads, ...this.snapshot.threads.filter((thread) => (
+      thread.parentThreadId !== null && !threads.some((root) => root.id === thread.id)
+    ))];
+    const selected = this.snapshot.selectedThreadId && known.some((thread) => thread.id === this.snapshot.selectedThreadId)
       ? this.snapshot.selectedThreadId
       : threads[0]?.id ?? null;
     this.patch({
-      threads: sortThreads(threads),
+      threads: sortThreads(known),
       selectedThreadId: selected,
-      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(threads.map((thread) => thread.id))),
+      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(known.map((thread) => thread.id))),
       planByThread: new Map(),
       // A reload rebuilds from the server's view, so a banner recorded before
       // it describes an attempt that no longer exists — but only those.
@@ -132,6 +139,21 @@ export class ThreadStore {
       this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
     }
     await this.selectThread(threadId);
+  }
+
+  /**
+   * The parent-side browse surface for children, which are no longer list rows.
+   * Results are folded into the catalog so their names and live status are
+   * available to the transcript without a second read.
+   */
+  async listDescendants(threadId: ThreadId): Promise<readonly Thread[]> {
+    const response = await this.client.agentCoreRequest('thread/descendants', { threadId });
+    if (response.data.length > 0) {
+      let threads = this.snapshot.threads;
+      for (const thread of response.data) threads = upsertById(threads, thread);
+      this.patch({ threads: sortThreads(threads) });
+    }
+    return response.data;
   }
 
   async createThread(input: { name?: string } = {}): Promise<Thread> {

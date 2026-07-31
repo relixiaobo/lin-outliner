@@ -1079,6 +1079,14 @@ export interface ThreadListResponse {
   readonly nextCursor: string | null;
 }
 
+export interface ThreadDescendantsRequest {
+  readonly threadId: ThreadId;
+}
+
+export interface ThreadDescendantsResponse {
+  readonly data: readonly Thread[];
+}
+
 export interface ThreadReadRequest {
   readonly threadId: ThreadId;
   readonly includeTurns?: boolean;
@@ -1329,6 +1337,7 @@ export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 
 export const AGENT_CORE_METHODS = [
   'thread/list',
+  'thread/descendants',
   'thread/read',
   'thread/start',
   'thread/resume',
@@ -1358,6 +1367,7 @@ export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
   readonly 'thread/list': ThreadListRequest;
+  readonly 'thread/descendants': ThreadDescendantsRequest;
   readonly 'thread/read': ThreadReadRequest;
   readonly 'thread/start': RendererThreadStartRequest;
   readonly 'thread/resume': ThreadResumeRequest;
@@ -1385,6 +1395,7 @@ export interface AgentCoreRequestByMethod {
 
 export interface AgentCoreResponseByMethod {
   readonly 'thread/list': ThreadListResponse;
+  readonly 'thread/descendants': ThreadDescendantsResponse;
   readonly 'thread/read': ThreadReadResponse;
   readonly 'thread/start': ThreadStartResponse;
   readonly 'thread/resume': ThreadResumeResponse;

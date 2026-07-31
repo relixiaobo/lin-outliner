@@ -282,8 +282,9 @@ The renderer also consumes the canonical child `turn/started` and
 Turn DTO per Thread when child history is unloaded, allowing the parent row to
 reflect a terminal child before the parent-side activity queue is admitted.
 Persisted terminal parent activity remains authoritative after reload; the
-renderer cache is cleared with catalog reload omissions, rollback, and subtree
-deletion and is never persisted as another execution record.
+renderer cache is cleared with rollback, subtree deletion, and a catalog reload
+that omits a root Thread, and is never persisted as another execution record.
+A reload cannot clear a child that way, because the list returns roots only.
 
 Waiting is interruptible and uses a pending latch scoped to the sender Thread. It
 has no model-controlled polling timeout: while a child is active, it returns only

@@ -9,6 +9,8 @@ import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
   readonly anchorRef: RefObject<HTMLElement | null>;
+  /** Roots whose subtree has a live descendant Turn. */
+  readonly backgroundWorkThreadIds: ReadonlySet<string>;
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
   readonly createDisabled: boolean;
@@ -23,6 +25,7 @@ interface ThreadListProps {
 
 export function ThreadList({
   anchorRef,
+  backgroundWorkThreadIds,
   createDisabled,
   createTitle,
   threads,
@@ -119,14 +122,24 @@ export function ThreadList({
         {threads.map((thread) => {
           const selected = thread.id === selectedThreadId;
           const identity = threadIdentity(thread, t.agent.thread.sources);
+          const backgroundWork = backgroundWorkThreadIds.has(thread.id);
           return (
             <div
               className={`thread-list-row${selected ? ' is-selected' : ''}`}
               key={thread.id}
-              style={{ '--thread-depth': lineageDepth(thread, threads) } as React.CSSProperties}
             >
               <button className="thread-list-select" onClick={() => onSelect(thread.id)} type="button">
-                <span>{thread.name || thread.preview || t.agent.thread.untitled}</span>
+                <span className="thread-list-row-title">
+                  {backgroundWork ? (
+                    <span
+                      aria-label={t.agent.thread.backgroundWork}
+                      className="thread-list-activity"
+                      role="img"
+                      title={t.agent.thread.backgroundWork}
+                    />
+                  ) : null}
+                  {thread.name || thread.preview || t.agent.thread.untitled}
+                </span>
                 <small>
                   {identity ? <>{identity}{' · '}</> : null}
                   {formatRelativeTime(thread.updatedAt)}
@@ -196,23 +209,6 @@ function threadIdentity(
           : labels.feature;
   if (!source) return agent;
   return agent ? `${source} · ${agent}` : source;
-}
-
-function lineageDepth(thread: Thread, threads: readonly Thread[]): number {
-  const byId = new Map(threads.map((candidate) => [candidate.id, candidate]));
-  const seen = new Set<string>();
-  let current = thread;
-  let depth = 0;
-  while (current.parentThreadId) {
-    const parentId = current.parentThreadId;
-    if (!parentId || seen.has(parentId)) break;
-    seen.add(parentId);
-    const parent = byId.get(parentId);
-    if (!parent) break;
-    depth += 1;
-    current = parent;
-  }
-  return Math.min(depth, 3);
 }
 
 function formatRelativeTime(timestamp: number): string {

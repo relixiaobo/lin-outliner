@@ -3593,6 +3593,69 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('pages root conversations only and browses children from the parent instead', async () => {
+    const fixture = await createFixture();
+    const roots: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      roots.push((await fixture.service.startThread({
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+        name: `Root ${index + 1}`,
+      })).thread.id);
+    }
+    const host = roots[0]!;
+    const hostTurn = await fixture.service.startRendererTurn({
+      threadId: host,
+      input: [{ type: 'text', text: 'Delegate two levels' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'list-hygiene-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: host,
+      senderTurnId: hostTurn.turn.id,
+      parentItemId: 'list-hygiene-spawn',
+      taskName: 'listed_child',
+      message: 'Become an execution artifact, not a conversation',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'list-hygiene-grandchild');
+    const grandchild = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: child.thread.id,
+      senderTurnId: child.turn.id,
+      parentItemId: 'list-hygiene-grandchild',
+      taskName: 'nested',
+      message: 'Reachable through the parent, not the list',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    // Paged in full: children never take a keyset slot, so no page can be
+    // short and no root can be displaced between pages.
+    const listed: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = fixture.service.listThreads({ cursor, limit: 2 });
+      listed.push(...page.data.map((thread) => thread.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    // Most recent activity first: the delegating root ran a Turn, so it leads.
+    expect(listed).toEqual([host, ...roots.slice(1).toReversed()]);
+
+    expect(fixture.service.listThreadDescendants({ threadId: host }).data.map((thread) => thread.id))
+      .toEqual(expect.arrayContaining([child.thread.id, grandchild.thread.id]));
+    expect(fixture.service.listThreadDescendants({ threadId: roots[1]! }).data).toEqual([]);
+    expect(fixture.service.readThread({ threadId: child.thread.id }).thread.parentThreadId).toBe(host);
+
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(grandchild.thread.id);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(host);
+    await fixture.service.close();
+  });
+
   test('terminalizes a Turn when an extension start hook throws and releases the active lock', async () => {
     const registry = new ExtensionRegistry();
     let shouldThrow = true;
@@ -4372,7 +4435,14 @@ describe('ThreadService', () => {
     expect(fixture.service.listThreads({ archived: false }).data.map((thread) => thread.id))
       .not.toContain(root.id);
     expect(fixture.service.listThreads({ archived: true }).data.map((thread) => thread.id))
-      .toEqual(expect.arrayContaining([root.id, child.thread.id]));
+      .toContain(root.id);
+    // A child is never a list row, archived or not; it is reachable through its
+    // parent, which is where the archive cascade is observable.
+    expect(fixture.service.listThreads({ archived: true }).data.map((thread) => thread.id))
+      .not.toContain(child.thread.id);
+    expect(fixture.stores.metadata.read(child.thread.id)?.archived).toBe(true);
+    expect(fixture.service.listThreadDescendants({ threadId: root.id }).data.map((thread) => thread.id))
+      .toEqual([child.thread.id]);
     await expect(fixture.service.startRendererTurn({
       threadId: child.thread.id,
       input: [{ type: 'text', text: 'Archived work must not restart' }],
@@ -4380,7 +4450,7 @@ describe('ThreadService', () => {
 
     await fixture.service.setThreadArchived(root.id, false);
     expect(fixture.service.listThreads({ archived: false }).data.map((thread) => thread.id)).toContain(root.id);
-    expect(fixture.service.listThreads({ archived: true }).data.map((thread) => thread.id)).toContain(child.thread.id);
+    expect(fixture.stores.metadata.read(child.thread.id)?.archived).toBe(true);
     await fixture.service.close();
   });
 

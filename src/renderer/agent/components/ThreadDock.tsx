@@ -84,6 +84,35 @@ export function ThreadDock({
     () => new Map(snapshot.threads.map((candidate) => [candidate.id, candidate])),
     [snapshot.threads],
   );
+  // The history list is root conversations only; a child Thread is an execution
+  // artifact of a Turn, reachable from its parent rather than from the list.
+  const rootThreads = useMemo(
+    () => snapshot.threads.filter((candidate) => candidate.parentThreadId === null),
+    [snapshot.threads],
+  );
+  const parentThread = thread?.parentThreadId ? threadsById.get(thread.parentThreadId) ?? null : null;
+  /**
+   * "This conversation has background work running" — derived from catalog
+   * status, so it also covers a fire-and-forget child whose parent Turn already
+   * ended, which is the case the list can no longer show any other way.
+   */
+  const rootsWithBackgroundWork = useMemo(() => {
+    const parentById = new Map(snapshot.threads.map((candidate) => [candidate.id, candidate.parentThreadId]));
+    const roots = new Set<string>();
+    for (const candidate of snapshot.threads) {
+      if (candidate.parentThreadId === null || candidate.status.type !== 'active') continue;
+      const seen = new Set<string>([candidate.id]);
+      let current = candidate.parentThreadId;
+      while (!seen.has(current)) {
+        seen.add(current);
+        const next = parentById.get(current);
+        if (next === undefined || next === null) break;
+        current = next;
+      }
+      roots.add(current);
+    }
+    return roots;
+  }, [snapshot.threads]);
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
@@ -152,6 +181,24 @@ export function ThreadDock({
   }, [refreshProviderSettings, refreshSlashCommands]);
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
+  const parentThreadTitle = parentThread
+    ? parentThread.name || parentThread.preview || t.agent.thread.untitled
+    : null;
+
+  /**
+   * Every transcript and details link goes through here: `openThreadById`
+   * recovers a Thread the catalog does not have, and a genuinely deleted one
+   * surfaces the existing dock feedback instead of throwing behind a bare void.
+   */
+  const openThread = useCallback(async (threadId: string) => {
+    setActionError(null);
+    try {
+      await threadStore.openThreadById(threadId);
+      setListOpen(false);
+    } catch {
+      setActionError(t.agent.thread.threadUnavailable);
+    }
+  }, [t]);
 
   const createThread = useCallback(async () => {
     if (creatingRef.current || providerBlocksCreation) return;
@@ -230,7 +277,26 @@ export function ThreadDock({
     >
       <div className="thread-dock">
         <header className="thread-dock-header">
-          {surface === 'thread' ? (
+          {surface === 'thread' && thread?.parentThreadId ? (
+            // A child Thread is entered from a parent transcript, so the header
+            // is the way back out; deeper lineage collapses to one step, and the
+            // child keeps its own name beside the crumb.
+            <div className="thread-dock-breadcrumb">
+              <button
+                aria-label={parentThreadTitle
+                  ? t.agent.thread.backToParent({ name: parentThreadTitle })
+                  : t.agent.thread.backToParentFallback}
+                className="thread-dock-title-button thread-dock-back"
+                onClick={() => void openThread(thread.parentThreadId!)}
+                type="button"
+              >
+                <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+                <span className="thread-dock-back-label">{parentThreadTitle ?? t.agent.thread.title}</span>
+              </button>
+              <span aria-hidden className="thread-dock-breadcrumb-separator">/</span>
+              <span className="thread-dock-title">{title}</span>
+            </div>
+          ) : surface === 'thread' ? (
             <button
               aria-expanded={listOpen}
               aria-label={t.agent.thread.list}
@@ -311,7 +377,7 @@ export function ThreadDock({
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onOpenNodeReference={onOpenNodeReference}
-              onOpenThread={(threadId) => threadStore.selectThread(threadId)}
+              onOpenThread={openThread}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onSend={(content) => threadStore.send(content, userView)}
@@ -336,7 +402,7 @@ export function ThreadDock({
           <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
             <AutomationsView
               onOpenThread={async (threadId) => {
-                await threadStore.openThreadById(threadId);
+                await openThread(threadId);
                 setSurface('thread');
               }}
               providerSettings={providerSettings}
@@ -358,8 +424,9 @@ export function ThreadDock({
               void runAction(() => threadStore.selectThread(threadId));
               setListOpen(false);
             }}
+            backgroundWorkThreadIds={rootsWithBackgroundWork}
             selectedThreadId={snapshot.selectedThreadId}
-            threads={snapshot.threads}
+            threads={rootThreads}
           />
         ) : null}
       </div>
@@ -396,6 +463,7 @@ export function ThreadDock({
       ) : null}
       {detailsTarget ? (
         <ThreadDetailsDialog
+          onOpenThread={openThread}
           onClose={() => setDetailsTarget(null)}
           thread={detailsTarget}
           turns={snapshot.turnsByThread.get(detailsTarget.id) ?? []}
