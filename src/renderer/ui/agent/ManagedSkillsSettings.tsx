@@ -28,6 +28,13 @@ interface ManagedSkillsAcquisitionProps {
   /** Whether the acquisition panel itself is open. Its dialogs show regardless. */
   open: boolean;
   onClose: () => void;
+  /**
+   * Every Skill name already in the library, whatever its source. Managed
+   * install refuses a name that is taken — including by a `user` or `project`
+   * Skill it does not own — so a recommendation whose name is spoken for must
+   * not offer an Install that is certain to fail.
+   */
+  existingSkillNames: ReadonlySet<string>;
 }
 
 type ConfirmAction = ManagedConfirmAction;
@@ -44,7 +51,12 @@ type ConfirmAction = ManagedConfirmAction;
  * (menus, rails); the `+` menu that opens this panel is that, and it reuses the
  * already-registered popover glass rather than introducing a new surface.
  */
-export function ManagedSkillsSettings({ controller, open, onClose }: ManagedSkillsAcquisitionProps) {
+export function ManagedSkillsSettings({
+  controller,
+  open,
+  onClose,
+  existingSkillNames,
+}: ManagedSkillsAcquisitionProps) {
   const t = useT();
   const acquireTitleId = useId();
   const {
@@ -101,6 +113,10 @@ export function ManagedSkillsSettings({ controller, open, onClose }: ManagedSkil
           />
         ) : catalog?.entries.length ? catalog.entries.map((entry) => {
           const installed = Boolean(entry.installedSkillId) || installedCatalogIds.has(entry.id);
+          // Not installed as managed, but the name is already taken by a Skill
+          // from another source. Install would reach assertNameAvailable and
+          // fail, so say so instead of offering the button.
+          const nameTaken = !installed && existingSkillNames.has(entry.name);
           const installing = busy === `catalog:${entry.id}`;
           return (
             <InsetRow
@@ -109,6 +125,10 @@ export function ManagedSkillsSettings({ controller, open, onClose }: ManagedSkil
               sublabel={entry.description}
               trailing={installed ? (
                 <span className="settings-chip">{t.settings.skills.managedInstalledChip}</span>
+              ) : nameTaken ? (
+                <span className="settings-chip" title={t.settings.skills.managedNameTakenHint({ name: entry.name })}>
+                  {t.settings.skills.managedNameTaken}
+                </span>
               ) : (
                 <Button disabled={busy !== null} onClick={() => void beginDiscovery({ catalogId: entry.id })} size="sm" variant="secondary">
                   {installing ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}

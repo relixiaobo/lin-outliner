@@ -243,7 +243,7 @@ describe('skill library list', () => {
     // every managed mutation does, so drive that and require the count to follow.
     rendered.setManaged([managedSkill()]);
     const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check all skills for updates"]',
+      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
     );
     if (!check) throw new Error('Missing check-for-updates control');
     await act(async () => {
@@ -259,7 +259,7 @@ describe('skill library list', () => {
     const rendered = await render({ skills: [], managed: [managedSkill()] });
 
     const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check all skills for updates"]',
+      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
     );
     if (!check) throw new Error('Missing check-for-updates control');
     expect(check.disabled).toBe(false);
@@ -312,6 +312,90 @@ describe('skill library list', () => {
 
     const menu = rendered.document.querySelector('[aria-label="skillify actions"]');
     expect(menu).toBeNull();
+  });
+
+  test('the check control is absent when nothing is managed', async () => {
+    // Only managed Skills have an upstream to compare against. A user, project,
+    // local, or built-in Skill is the user's own file, so a permanently dead
+    // refresh icon above a list of them explains nothing.
+    const rendered = await render({
+      skills: [localSkill('user-notes', 'user')],
+      managed: [],
+    });
+
+    expect(rendered.document.querySelector('[aria-label="Check managed skills for updates"]')).toBeNull();
+    // The `+` is still there — acquisition does not depend on managed skills.
+    expect(rendered.document.querySelector('.inset-group-header-action button[aria-haspopup="menu"]')).not.toBeNull();
+  });
+
+  test('every managed row can be checked on its own', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill()] });
+
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
+      await Promise.resolve();
+    });
+    const perSkill = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Check for updates');
+    if (!perSkill) throw new Error('Missing per-skill check action');
+
+    await act(async () => {
+      perSkill.click();
+      await Promise.resolve();
+    });
+
+    // Scoped to this skill, and unthrottled like the all-skills check.
+    const call = rendered.calls.filter((entry) => entry.command === 'agent_managed_skill_check_updates').at(-1);
+    expect(call?.args?.skillId).toBe('managed-pdf');
+    expect(call?.args?.ambient).toBeUndefined();
+  });
+
+  test('a recommendation whose name is already taken offers no Install', async () => {
+    // The user has /document from ~/.agents/skills. Managed install refuses a
+    // taken name, so offering Install here is offering a guaranteed failure.
+    const rendered = await render({
+      skills: [localSkill('document', 'user')],
+      managed: [],
+      catalogEntries: [{
+        id: 'document',
+        name: 'document',
+        description: 'Create, edit, review, and verify professional documents.',
+        repository: 'https://github.com/relixiaobo/linlab-skills',
+        subdirectory: 'document',
+        trackingRef: 'main',
+      }],
+    });
+
+    await openAcquire(rendered);
+
+    const panel = rendered.document.querySelector('.skill-acquire-dialog');
+    expect(panel?.textContent).toContain('Already in your library');
+    const install = [...(panel?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+      .find((button) => button.textContent?.trim() === 'Install');
+    expect(install).toBeUndefined();
+  });
+
+  test('a recommendation with a free name still offers Install', async () => {
+    const rendered = await render({
+      skills: [localSkill('user-notes', 'user')],
+      managed: [],
+      catalogEntries: [{
+        id: 'document',
+        name: 'document',
+        description: 'Create, edit, review, and verify professional documents.',
+        repository: 'https://github.com/relixiaobo/linlab-skills',
+        subdirectory: 'document',
+        trackingRef: 'main',
+      }],
+    });
+
+    await openAcquire(rendered);
+
+    const panel = rendered.document.querySelector('.skill-acquire-dialog');
+    expect(panel?.textContent).not.toContain('Already in your library');
+    const install = [...(panel?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+      .find((button) => button.textContent?.trim() === 'Install');
+    expect(install).toBeDefined();
   });
 
   test('a skill from a bound directory carries the local chip', async () => {
@@ -393,6 +477,25 @@ describe('skill library list', () => {
   });
 });
 
+/** Opens the `+` menu and the acquisition panel behind it. */
+async function openAcquire(rendered: Rendered): Promise<void> {
+  const add = rendered.document.querySelector<HTMLButtonElement>(
+    '.inset-group-header-action button[aria-haspopup="menu"]',
+  );
+  if (!add) throw new Error('Missing + control');
+  await act(async () => {
+    add.click();
+    await Promise.resolve();
+  });
+  const entry = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+    .find((button) => button.textContent?.trim() === 'Add Skill…');
+  if (!entry) throw new Error('Missing add-skill menu entry');
+  await act(async () => {
+    entry.click();
+    await Promise.resolve();
+  });
+}
+
 async function render(input: {
   skills: SkillDefinition[];
   managed: ManagedSkillView[];
@@ -402,6 +505,7 @@ async function render(input: {
   onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
   onToggleSkill?: (skillName: string) => void;
   onUpdateCountChange?: (count: number) => void;
+  catalogEntries?: unknown[];
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -417,7 +521,7 @@ async function render(input: {
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
         if (command === 'agent_managed_skill_catalog') {
-          return { ok: true, value: { status: 'fresh', entries: [] } };
+          return { ok: true, value: { status: 'fresh', entries: input.catalogEntries ?? [] } };
         }
         throw new Error(`Unexpected command: ${command}`);
       },

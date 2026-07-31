@@ -376,23 +376,36 @@ export function SettingsSkillLibrarySection({
     [additionalSkillDirectories, allSkills],
   );
 
+  // Every name the library already holds, whatever its source. Managed install
+  // refuses a name that is taken, so the acquisition panel needs this to avoid
+  // offering an Install that cannot succeed.
+  const existingSkillNames = useMemo(
+    () => new Set([...allSkills.map((skill) => skill.name), ...managed.skills.map((skill) => skill.name)]),
+    [allSkills, managed.skills],
+  );
+
   const loading = loadingSkills || managed.loading;
 
   // The `+` is an icon-only chrome control (B6): colour deepens on hover, no box.
   const addControl = (
     <>
-      {/* The explicit check. Both ambient triggers are throttled per record, so
-          without this a record inside its window could only be checked one row
-          at a time from its ⋯ menu. A user-requested check is never throttled. */}
-      <IconButton
-        className="rail-toggle"
-        disabled={managed.busy !== null || managed.skills.length === 0}
-        icon={RefreshIcon}
-        iconSize={ICON_SIZE.menu}
-        label={t.settings.skills.checkUpdatesAriaLabel}
-        onClick={() => void managed.checkUpdates()}
-        variant="chrome"
-      />
+      {/* Check every managed Skill at once. Only managed Skills have an
+          upstream to compare against — a user, project, local, or built-in
+          Skill is the user's own file, with nothing to be newer than it — so
+          this is absent rather than dead when none are installed. Per-Skill
+          checks live in each managed row's ⋯ menu. Both ambient triggers are
+          throttled per record; neither of these is. */}
+      {managed.skills.length > 0 ? (
+        <IconButton
+          className="rail-toggle"
+          disabled={managed.busy !== null}
+          icon={RefreshIcon}
+          iconSize={ICON_SIZE.menu}
+          label={t.settings.skills.checkUpdatesAriaLabel}
+          onClick={() => void managed.checkUpdates()}
+          variant="chrome"
+        />
+      ) : null}
       <IconButton
         aria-expanded={addMenuOpen}
         aria-haspopup="menu"
@@ -423,6 +436,7 @@ export function SettingsSkillLibrarySection({
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
       <ManagedSkillsSettings
         controller={managed}
+        existingSkillNames={existingSkillNames}
         onClose={() => setAcquireOpen(false)}
         open={acquireOpen}
       />
