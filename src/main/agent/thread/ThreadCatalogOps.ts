@@ -1,7 +1,7 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
+import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import { assertContextPayloadDependencies,itemContextPayloadReferences,itemResourceReferences } from '../context/contextDependencies';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { decodeCursor,encodeCursor,pageLimit } from '../persistence/cursor';
@@ -883,7 +883,7 @@ export class ThreadCatalogOps {
         ...turn,
         items,
         status: 'interrupted',
-        error: { message: 'Turn interrupted by host restart', code: RUNTIME_FAILURE_ERROR_CODE },
+        error: { message: 'Turn interrupted by host restart', code: HOST_RESTART_ERROR_CODE },
         completedAt,
         durationMs: Math.max(0, completedAt - turn.startedAt),
       });

@@ -317,10 +317,10 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Pool-covered descendant Turns feed a live in-flight tally from
+Every descendant Turn feeds a live in-flight tally from
 `PiEventNormalizer.completeAssistant`, immediately after the normalizer accumulates each
 assistant message's `totalTokens`. Diagnostics capture is inspection-only and cannot drop
-or duplicate accounting. Covered non-user Turns also expose a live budget port
+or duplicate accounting. Non-user descendant Turns also expose a live budget port
 (`remaining`, `used`, `total`) to the native kernel. Each read resolves the authoritative
 ancestor pool, re-reads persisted usage, and includes every active Turn's observed usage,
 including the current Turn. When a per-child contribution cap has less remaining, the
@@ -332,12 +332,14 @@ denominations cannot falsely interrupt a healthy Turn or bypass an exhausted cap
 uncapped top-level spawner that holds the pool is outside it; an explicitly capped child
 that anchors a pool remains a covered member. Explicit covered descendant user Turns omit
 the port and warning callback while their usage remains in the sibling tally and accrues
-on completion. Uncovered descendants install neither port nor observer. The first model
-call is never blocked. At every later model-call boundary, before draining steering or
-emitting the next `turn_start`, `remaining <= 0` interrupts only genuinely outstanding
-model work, such as completed tool calls. A terminal assistant answer stays completed
-even when exhausted and racing steering remains queued and undelivered. Thus every emitted
-`turn_start` still has its matching `turn_end`.
+on completion. While a descendant is uncovered, the observer retains its usage locally
+and the port returns `null`; if an ancestor pool appears mid-Turn, that contribution joins
+the live pool tally immediately. The first model call is never blocked. At every later
+model-call boundary, before draining steering or emitting the next `turn_start`,
+`remaining <= 0` interrupts only genuinely outstanding model work, such as completed
+tool calls. A terminal assistant answer stays completed even when exhausted and racing
+steering remains queued and undelivered. Thus every emitted `turn_start` still has its
+matching `turn_end`.
 
 The first 80% crossing of the binding constraint requests one host-generated budget
 notice carrying its actual `used` and `total`. The notice uses the same

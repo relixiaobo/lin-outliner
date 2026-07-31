@@ -377,7 +377,7 @@ describe('Agent Core persistence', () => {
     const projected = incremental.listTurns({ threadId, itemsView: 'full' });
     expect(projected.data[0]).toMatchObject({
       status: 'interrupted',
-      error: { code: 'runtime_failure' },
+      error: { code: 'host_restart' },
     });
     expect(projected.data[0]?.items.at(-1)).toMatchObject({
       type: 'agentMessage',

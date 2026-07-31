@@ -148,14 +148,15 @@ Completion accrues usage inside the per-Thread mutex before the active Turn is r
 or idle status is exposed, so racing admission observes the committed total. Failure
 finalization also accrues any execution usage already returned by the executor. A hard
 process crash can still lose usage that existed only in the in-flight process. On every
-completion or failure path, accrual and removal of that Turn's in-memory contribution are
-adjacent synchronous operations with no await between them. No observer can therefore
-see committed usage and the same live contribution at once.
+completion or failure path, accrual and total settlement of that Turn's in-memory
+contribution are adjacent synchronous operations with no await between them. Settlement
+clears both the shared-pool tally entry and the per-Turn counter used by local-cap views,
+so no observer can see committed usage and the same live contribution at once.
 
-At the start of a pool-covered descendant Turn, the lifecycle installs a runtime usage
-observer. `PiEventNormalizer` invokes it immediately after accumulating each assistant
+At the start of every descendant Turn, the lifecycle installs a runtime usage observer.
+`PiEventNormalizer` invokes it immediately after accumulating each assistant
 message's `totalTokens`; Turn diagnostics remain inspection-only and have no accounting
-role. A covered non-user Turn also receives the native-kernel budget port. Each read
+role. A non-user descendant Turn also receives the native-kernel budget port. Each read
 re-runs the authoritative walk, re-reads persisted pool usage, and adds the in-memory
 tally from every active Turn in that pool, including the current Turn. The port returns
 authoritative `remaining` plus the currently binding constraint's `used` and `total` for
@@ -169,14 +170,15 @@ a false exhaustion or disable the tighter cap. Concurrent siblings can overrun o
 one provider call each instead of independently spending the full pool.
 
 Explicit user Turns receive no budget port or warning callback, preserving the bright
-line, but a covered user Turn still receives the runtime usage observer and accrues on
-completion. An uncovered descendant receives neither port nor observer. If a later spawn
-creates an ancestor pool while that Turn is active, completion still resolves ancestry
-again and debits the new pool; its next covered Turn receives live observation. The first
-provider call is always admitted; an already exhausted fresh non-user Turn belongs to the
-admission gate. Reaching the live remainder settles genuinely outstanding model work as
-`interrupted` with the model-facing token-denominated error. The admission gate owns later
-non-user work.
+line, but every descendant user Turn still receives the runtime usage observer and
+accrues on completion. While a descendant is uncovered, the observer records usage
+locally and the non-user port returns `null`. If a later spawn creates an ancestor pool
+while that Turn is active, the recorded contribution joins the live pool tally
+immediately and completion debits the same pool. The first provider call is always
+admitted; an already exhausted fresh non-user Turn belongs to the admission gate.
+Reaching the live remainder settles genuinely outstanding model work as `interrupted`
+with the model-facing token-denominated error. The admission gate owns later non-user
+work.
 
 The exhaustion check runs before steering is drained and before a new `turn_start` is
 emitted. If the preceding assistant message is terminal, the Turn remains `completed`

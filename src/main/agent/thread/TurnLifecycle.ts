@@ -880,8 +880,7 @@ export class TurnLifecycle {
       let thrown: Error | null = null;
       const initialTurn = this.core.readTurn(active.threadId, active.turnId)!;
       const thread = this.core.requireThread(active.threadId).thread;
-      const observedBudget = thread.parentThreadId === null ? null : this.resolveSubagentBudget(active.threadId);
-      const observesSubagentBudget = Boolean(observedBudget?.member || observedBudget?.pool);
+      const isDescendantThread = thread.parentThreadId !== null;
       const hidden = this.core.hiddenEphemeralThreads.has(active.threadId);
       const resourceObservation = this.resourceOps.createResourceObservation(active.threadId, true);
       const createdOutputResources: ThreadResourceReference[] = [];
@@ -954,10 +953,10 @@ export class TurnLifecycle {
             const queued = active.queuedSteering.splice(0);
             for (const input of queued) this.enqueueSteeringDelivery(active, input);
           },
-          ...(observesSubagentBudget ? {
+          ...(isDescendantThread ? {
             onModelCallUsage: (tokens: number) => this.recordSubagentInFlightUsage(active, tokens),
           } : {}),
-          ...(observesSubagentBudget && initialTurn.provenance.trigger.kind !== 'user' ? {
+          ...(isDescendantThread && initialTurn.provenance.trigger.kind !== 'user' ? {
             remainingTokenBudget: () => this.subagentBudgetUsage(
               active.threadId,
               this.resolveSubagentBudget(active.threadId),
@@ -1029,7 +1028,7 @@ export class TurnLifecycle {
           this.resourceOps.threadTurnDiagnosticsReferences(active.threadId),
         ).catch(() => undefined);
         this.accrueSubagentBudgetUsage(active, thread, turn.execution);
-        this.clearSubagentInFlightUsage(active);
+        this.settleSubagentInFlightUsage(active);
         this.activeTurns.delete(active.threadId);
         await this.setStatus(active.threadId, { type: 'idle' });
       });
@@ -1109,6 +1108,10 @@ export class TurnLifecycle {
       poolUsage?.delete(active.threadId);
       if (poolUsage?.size === 0) this.inFlightPoolUsage.delete(active.inFlightPoolThreadId);
       active.inFlightPoolThreadId = null;
+    }
+  private settleSubagentInFlightUsage(active: ActiveTurn): void {
+      this.clearSubagentInFlightUsage(active);
+      active.modelCallTokens = 0;
     }
   private inFlightTokensForPool(poolThreadId: ThreadId): number {
       let total = 0;
@@ -1305,7 +1308,7 @@ export class TurnLifecycle {
             console.error('[agent] failed to accrue Subagent usage during Turn failure', budgetError);
           }
         }
-        this.clearSubagentInFlightUsage(active);
+        this.settleSubagentInFlightUsage(active);
         await Promise.all([
           this.core.payloads.pruneUnreferencedContexts(
             active.threadId,
