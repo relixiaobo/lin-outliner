@@ -39,6 +39,7 @@ import { Button } from '../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
+import { userFacingAgentError } from '../threadErrorMessage';
 import {
   ThreadUsageBreakdown,
   formatCachedShare,
@@ -251,7 +252,10 @@ function TurnOverview({
       </dl>
       {turn.error ? (
         <dl aria-label={t.agent.turnDetails.turnError} className="thread-turn-details-identity-list">
-          <Fact label={t.agent.turnDetails.turnError} value={turn.error.message} />
+          <Fact
+            label={t.agent.turnDetails.turnError}
+            value={userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)}
+          />
           {turn.error.code ? <Identity label={t.agent.turnDetails.errorCode} value={turn.error.code} /> : null}
           {turn.error.detail ? <Fact label={t.agent.turnDetails.errorDetail} value={turn.error.detail} /> : null}
         </dl>

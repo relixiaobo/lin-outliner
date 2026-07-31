@@ -8,6 +8,7 @@ import {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
   isReservedThreadSource,
+  normalizeTurnErrorCode,
   threadFeatureSource,
   type AdditionalContext,
   type AdditionalContextEntry,
@@ -2398,7 +2399,9 @@ function decodeTurnError(value: unknown): Turn['error'] {
   exactKeys(record, ['message', 'code', 'detail'], 'turn.error');
   return deepFreeze({
     message: stringValue(record.message, 'turn.error.message'),
-    ...(record.code === undefined ? {} : { code: stringValue(record.code, 'turn.error.code') }),
+    ...(record.code === undefined
+      ? {}
+      : { code: normalizeTurnErrorCode(stringValue(record.code, 'turn.error.code')) }),
     ...(record.detail === undefined ? {} : { detail: stringValue(record.detail, 'turn.error.detail', true) }),
   });
 }

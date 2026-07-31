@@ -2,6 +2,7 @@ import type { AutomationRun } from '../../../core/agent/automation';
 import { useT } from '../../i18n/I18nProvider';
 import { OpenIcon, PinIcon } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
+import { userFacingAgentError } from '../threadErrorMessage';
 
 interface AutomationRunsViewProps {
   readonly automationName: string;
@@ -14,7 +15,8 @@ interface AutomationRunsViewProps {
 }
 
 export function AutomationRunsView(props: AutomationRunsViewProps) {
-  const t = useT().agent.automations;
+  const messages = useT();
+  const t = messages.agent.automations;
   return (
     <>
       <div className="automation-runs-header">
@@ -60,7 +62,11 @@ export function AutomationRunsView(props: AutomationRunsViewProps) {
                       </time>
                     </small>
                     {run.omission ? <span>{t.omitted({ count: run.omission.count })}</span> : null}
-                    {run.error ? <span className="automation-run-error">{run.error}</span> : null}
+                    {run.error ? (
+                      <span className="automation-run-error">
+                        {userFacingAgentError(run.error, messages.agent.thread.resourceLimitReached)}
+                      </span>
+                    ) : null}
                   </span>
                   {navigable ? <OpenIcon className="automation-run-open" aria-hidden size={12} /> : null}
                 </button>

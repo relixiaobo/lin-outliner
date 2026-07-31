@@ -245,7 +245,8 @@ describe('native turn kernel parity', () => {
     const runtime = createRuntime(gateway, {
       tools: [tool('budget-tool')],
       remainingTokenBudget: () => ({
-        budget: 10,
+        remaining: 4 - gateway.requests.length * USAGE.totalTokens,
+        total: 10,
         used: 6 + gateway.requests.length * USAGE.totalTokens,
       }),
     });
@@ -255,9 +256,10 @@ describe('native turn kernel parity', () => {
     await runtime.prompt(USER);
 
     expect(gateway.requests).toHaveLength(1);
-    expect(runtime.state.interruptionError).toBe(
-      'Token budget exhausted mid-Turn (16 of 10 tokens)',
-    );
+    expect(runtime.state.interruptionError).toEqual({
+      code: 'subagent_budget_exhausted',
+      message: 'Token budget exhausted mid-Turn (16 of 10 tokens)',
+    });
     expect(events.filter((event) => event.type === 'turn_start')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'turn_end')).toHaveLength(1);
     expect(events.at(-1)?.type).toBe('agent_end');
@@ -274,12 +276,13 @@ describe('native turn kernel parity', () => {
       ], 'toolUse')),
       () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
     ]);
-    const warnings: Array<{ budget: number; used: number }> = [];
+    const warnings: Array<{ remaining: number; total: number; used: number }> = [];
     let runtime!: NativeAgentRuntime;
     runtime = createRuntime(gateway, {
       tools: [tool('budget-tool')],
       remainingTokenBudget: () => ({
-        budget: 25,
+        remaining: gateway.requests.length === 0 ? 23 : 3,
+        total: 25,
         used: gateway.requests.length === 0 ? 2 : 22,
       }),
       onBudgetWarning: async (actuals) => {
@@ -291,7 +294,7 @@ describe('native turn kernel parity', () => {
     await runtime.prompt(USER);
 
     expect(gateway.requests).toHaveLength(3);
-    expect(warnings).toEqual([{ budget: 25, used: 22 }]);
+    expect(warnings).toEqual([{ remaining: 3, total: 25, used: 22 }]);
     expect(gateway.requests[1]?.context.messages.map(messageText)).toContain(notice);
   });
 
@@ -307,7 +310,8 @@ describe('native turn kernel parity', () => {
     const runtime = createRuntime(gateway, {
       tools: [tool('budget-tool')],
       remainingTokenBudget: () => ({
-        budget: 100,
+        remaining: gateway.requests.length === 0 ? 100 : 20,
+        total: 100,
         used: gateway.requests.length === 0 ? 0 : 80,
       }),
       onBudgetWarning: async () => { throw warningFailure; },
@@ -336,7 +340,8 @@ describe('native turn kernel parity', () => {
     ]);
     const runtime = createRuntime(gateway, {
       remainingTokenBudget: () => ({
-        budget: 10,
+        remaining: 10 - gateway.requests.length * USAGE.totalTokens,
+        total: 10,
         used: gateway.requests.length * USAGE.totalTokens,
       }),
     });
@@ -354,6 +359,38 @@ describe('native turn kernel parity', () => {
     expect(gateway.requests).toHaveLength(1);
     expect(runtime.state.interruptionError).toBeUndefined();
     expect(delivered).toBe(0);
+  });
+
+  test('survives a binding denomination flip and still enforces the active cap', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'flip-call-1', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'flip-call-2', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'flip-call-3', name: 'budget-tool', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'must not run' }])),
+    ]);
+    const snapshots = [
+      { remaining: 10, total: 100, used: 90 },
+      { remaining: 5, total: 20, used: 15 },
+      { remaining: 0, total: 20, used: 20 },
+    ];
+    const runtime = createRuntime(gateway, {
+      tools: [tool('budget-tool')],
+      remainingTokenBudget: () => snapshots[Math.min(gateway.requests.length - 1, 2)]!,
+    });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests).toHaveLength(3);
+    expect(runtime.state.interruptionError).toEqual({
+      code: 'subagent_budget_exhausted',
+      message: 'Token budget exhausted mid-Turn (20 of 20 tokens)',
+    });
   });
 
   test('keeps a null budget port unlimited across provider calls', async () => {

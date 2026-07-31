@@ -1,6 +1,10 @@
+import { SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE } from '../../core/agent/protocol';
+
 export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_NAME = 'SubagentBudgetExhaustedError';
 
 export class SubagentBudgetExhaustedError extends Error {
+  readonly code = SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE;
+
   constructor(tokensUsed: number, tokenBudget: number) {
     super(
       `Subagent token budget exhausted (${tokensUsed} of ${tokenBudget} tokens); the child refuses new work. `
@@ -10,6 +14,6 @@ export class SubagentBudgetExhaustedError extends Error {
   }
 }
 
-export function isSubagentBudgetExhaustedError(error: unknown): error is Error {
+export function isSubagentBudgetExhaustedError(error: unknown): error is SubagentBudgetExhaustedError {
   return error instanceof Error && error.name === SUBAGENT_BUDGET_EXHAUSTED_ERROR_NAME;
 }

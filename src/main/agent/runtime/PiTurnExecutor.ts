@@ -286,10 +286,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         sessionId: cacheAffinity,
         providerOptions,
         remainingTokenBudget: context.remainingTokenBudget
-          ? () => {
-              const budget = context.remainingTokenBudget?.() ?? null;
-              return budget ? { ...budget, used: budget.used + normalizer.usage.totalTokens } : null;
-            }
+          ? () => context.remainingTokenBudget?.() ?? null
           : undefined,
         onBudgetWarning: context.onBudgetWarning,
       });
@@ -321,7 +318,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return {
           status: 'interrupted',
           ...(agent.state.interruptionError
-            ? { error: { message: agent.state.interruptionError } }
+            ? { error: agent.state.interruptionError }
             : {}),
           execution: persisted.details,
           refreshDiagnostics: persisted.refresh,
@@ -771,6 +768,11 @@ export class PiEventNormalizer {
       });
     }
     addUsage(this.usage, message.usage);
+    try {
+      this.context.onModelCallUsage?.(message.usage.totalTokens);
+    } catch (error) {
+      console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
+    }
     this.stopReason = message.stopReason;
     this.errorMessage = message.errorMessage ?? null;
     this.activeMessageItem = null;

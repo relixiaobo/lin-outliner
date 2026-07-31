@@ -1,4 +1,8 @@
 import { validateToolArguments } from '@earendil-works/pi-ai/compat';
+import {
+  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  type TurnError,
+} from '../../../../core/agent/protocol';
 import { streamWithPolicy } from './retryPolicy';
 import type {
   AgentTool,
@@ -21,7 +25,7 @@ interface KernelContext {
 
 export interface KernelRunResult {
   readonly messages: Message[];
-  readonly interruptionError: string | null;
+  readonly interruptionError: TurnError | null;
 }
 
 export interface KernelSteeringMessage {
@@ -49,11 +53,6 @@ export async function runKernel(
     await emit({ type: 'message_start', message: prompt });
     await emit({ type: 'message_end', message: prompt });
   }
-  const startingBudget = options.remainingTokenBudget?.() ?? null;
-  const turnAllowance = startingBudget
-    ? Math.max(0, startingBudget.budget - startingBudget.used)
-    : null;
-
   let providerCallCount = 0;
   let budgetWarningSent = false;
   let pendingMessages = await getSteeringMessages();
@@ -61,12 +60,12 @@ export async function runKernel(
   while (true) {
     if (providerCallCount > 0) {
       const actuals = options.remainingTokenBudget?.() ?? null;
-      const turnUsage = startingBudget && actuals
-        ? Math.max(0, actuals.used - startingBudget.used)
-        : null;
-      if (actuals && turnAllowance !== null && turnUsage !== null && turnUsage >= turnAllowance) {
+      if (actuals && actuals.remaining <= 0) {
         if (hasMoreToolCalls) {
-          const interruptionError = `Token budget exhausted mid-Turn (${actuals.used} of ${actuals.budget} tokens)`;
+          const interruptionError = {
+            code: SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+            message: `Token budget exhausted mid-Turn (${actuals.used} of ${actuals.total} tokens)`,
+          } satisfies TurnError;
           await emit({ type: 'agent_end', messages: newMessages });
           return { messages: newMessages, interruptionError };
         }
@@ -78,9 +77,7 @@ export async function runKernel(
 
       if (
         actuals
-        && turnAllowance !== null
-        && turnUsage !== null
-        && turnUsage >= Math.ceil(turnAllowance * 0.8)
+        && actuals.used >= Math.ceil(actuals.total * 0.8)
         && !budgetWarningSent
         && options.onBudgetWarning
       ) {

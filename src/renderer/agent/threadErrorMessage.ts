@@ -1,21 +1,42 @@
+import {
+  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  normalizeTurnErrorCode,
+  type TurnError,
+} from '../../core/agent/protocol';
+
 const ERROR_PREVIEW_MAX = 280;
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
 }
 
-function parsedPayloadMessage(text: string): string | null {
+function parsedPayloadError(text: string): TurnError | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return null;
   try {
-    const parsed = JSON.parse(trimmed) as { error?: { message?: unknown } | string; message?: unknown };
+    const parsed = JSON.parse(trimmed) as {
+      error?: { code?: unknown; message?: unknown } | string;
+      code?: unknown;
+      message?: unknown;
+    };
     const message = typeof parsed.error === 'string'
       ? parsed.error
       : parsed.error?.message ?? parsed.message;
-    return typeof message === 'string' && message.trim() ? message.trim() : null;
+    if (typeof message !== 'string' || !message.trim()) return null;
+    const code = typeof parsed.error === 'object' && parsed.error !== null
+      ? parsed.error.code
+      : parsed.code;
+    return {
+      message: message.trim(),
+      ...(typeof code === 'string' && code ? { code: normalizeTurnErrorCode(code) } : {}),
+    };
   } catch {
     return null;
   }
+}
+
+function parsedPayloadMessage(text: string): string | null {
+  return parsedPayloadError(text)?.message ?? null;
 }
 
 function htmlTitle(text: string): string | null {
@@ -45,4 +66,13 @@ export function threadErrorMessage(raw: string): string {
   if (title) return truncate(title, 120);
   if (trimmed.startsWith('<')) return 'Server returned an HTML error page';
   return truncate(trimmed, ERROR_PREVIEW_MAX);
+}
+
+export function userFacingAgentError(raw: TurnError | string, resourceLimitMessage: string): string {
+  const error = typeof raw === 'string'
+    ? parsedPayloadError(raw) ?? { message: raw }
+    : raw;
+  return error.code === SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE
+    ? resourceLimitMessage
+    : threadErrorMessage(error.message);
 }

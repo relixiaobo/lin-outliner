@@ -1137,6 +1137,7 @@ commandPalette: {
       openSettings: 'Open Providers',
       turnFailed: 'Turn failed',
       turnInterrupted: 'Turn interrupted',
+      resourceLimitReached: 'Task reached the system resource limit. Results have been preserved.',
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,

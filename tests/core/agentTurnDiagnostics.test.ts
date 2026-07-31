@@ -24,7 +24,7 @@ const model = {
 } as Model<Api>;
 
 describe('Turn diagnostics', () => {
-  test('records reconstructable ordered requests, pooled prefixes, execution Items, and responses', () => {
+  test('records reconstructable ordered requests, pooled prefixes, execution Items, and responses', async () => {
     const imageBytes = Buffer.from('diagnostic image');
     const firstMessage: UserMessage = {
       role: 'user',

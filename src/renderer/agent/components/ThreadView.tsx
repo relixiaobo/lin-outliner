@@ -77,7 +77,7 @@ import {
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
-import { threadErrorMessage } from '../threadErrorMessage';
+import { userFacingAgentError } from '../threadErrorMessage';
 import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
@@ -1406,6 +1406,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadCwd: string;
   readonly turn: Turn;
 }) {
+  const t = useT();
   const responseItem = lastAgentResponse(turn);
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
@@ -1423,9 +1424,9 @@ const ThreadTurnView = memo(function ThreadTurnView({
     [onReadToolOutput, turn.id],
   );
   const copyTurn = useCallback(async () => {
-    const text = await buildTurnCopyText(turn, readToolOutput);
+    const text = await buildTurnCopyText(turn, readToolOutput, t.agent.thread.resourceLimitReached);
     if (text) await navigator.clipboard.writeText(text);
-  }, [readToolOutput, turn]);
+  }, [readToolOutput, t.agent.thread.resourceLimitReached, turn]);
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     const action = await window.lin?.showThreadMessageContextMenu?.({
@@ -1533,7 +1534,9 @@ function ThreadResponseTail({
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted';
-  const errorText = turn.error ? threadErrorMessage(turn.error.message) : '';
+  const errorText = turn.error
+    ? userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)
+    : '';
   return (
     <>
       {!streaming && errorText ? (
@@ -1723,6 +1726,7 @@ function hasTurnCopyContent(turn: Turn): boolean {
 async function buildTurnCopyText(
   turn: Turn,
   readToolOutput: (item: ThreadToolItem) => Promise<string | null>,
+  resourceLimitMessage: string,
 ): Promise<string> {
   const parts: string[] = [];
   for (const item of turn.items) {
@@ -1739,7 +1743,9 @@ async function buildTurnCopyText(
       parts.push(`\`\`\`${tag}\n${output.trim()}\n\`\`\``);
     }
   }
-  if (parts.length === 0 && turn.error?.message) parts.push(threadErrorMessage(turn.error.message));
+  if (parts.length === 0 && turn.error?.message) {
+    parts.push(userFacingAgentError(turn.error, resourceLimitMessage));
+  }
   return parts.join('\n\n');
 }
 

@@ -55,6 +55,26 @@ export type ThreadStatus =
 export type TurnStatus = 'inProgress' | 'completed' | 'interrupted' | 'failed';
 export type TurnItemsView = 'notLoaded' | 'summary' | 'full';
 
+export const RUNTIME_FAILURE_ERROR_CODE = 'runtime_failure';
+export const HOST_RESTART_ERROR_CODE = 'host_restart';
+export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
+export const SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE = 'subagent_structural_limit';
+export const TURN_ERROR_CODES = [
+  RUNTIME_FAILURE_ERROR_CODE,
+  HOST_RESTART_ERROR_CODE,
+  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE,
+] as const;
+export type TurnErrorCode = typeof TURN_ERROR_CODES[number];
+
+export function isTurnErrorCode(value: unknown): value is TurnErrorCode {
+  return typeof value === 'string' && (TURN_ERROR_CODES as readonly string[]).includes(value);
+}
+
+export function normalizeTurnErrorCode(value: unknown): TurnErrorCode {
+  return isTurnErrorCode(value) ? value : RUNTIME_FAILURE_ERROR_CODE;
+}
+
 export type TurnTrigger =
   | { readonly kind: 'user' }
   | {
@@ -119,7 +139,7 @@ export interface ThreadConfigurationResponse {
 
 export interface TurnError {
   readonly message: string;
-  readonly code?: string;
+  readonly code?: TurnErrorCode;
   readonly detail?: string;
 }
 

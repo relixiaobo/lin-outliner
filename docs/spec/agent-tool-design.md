@@ -162,33 +162,47 @@ standing authorization are specified in
 These tools operate on child Threads as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
-`collaboration.spawn_agent` accepts optional `max_total_tokens`; the host validates a
-positive safe integer and uses it ahead of the runtime-wide `subagentTokenBudget`
-setting. That setting defaults to `1,500,000`, accepts `null` to disable the default,
-and applies uniformly to collaboration and isolated Skill children through their shared
-spawn boundary. Enabled budgets create a host-owned ledger entry before the child starts;
-they do not occupy or modify the child's Goal slot.
-Collaboration views returned by `list_agents` and `wait_agent` include `tokensUsed` and
-nullable `tokenBudget`. Once ledger usage reaches the budget, new non-user Turn admission
-is rejected while explicit user Turn admission and steering of an active Turn remain
-available. `followup_task` atomically removes its mailbox snapshot before awaiting
-admission, preserves concurrently queued messages, and prepends the snapshot again if
-admission is refused. Goal continuation records the complete typed refusal as a deferral;
-automation dispatch records it as a failed run. Completion and failure finalization
-accrue recorded usage before exposing an idle admission window. A budgeted spawner cannot
-spawn after exhaustion; when it omits a child budget, the child receives the lower of the
-global default and the spawner's remaining budget (or the remaining budget alone when the
-global default is `null`). An explicit child budget still takes precedence because this
-contract does not provide aggregate subtree accounting. A budgeted child's non-user Turns
-also carry their Turn-start ledger snapshot into the native kernel; explicit user Turns
-remain unlimited in flight while still accruing usage. The first model call is
-unconditional. Before later calls, and before steering drain or a new kernel Turn boundary,
-accumulated Turn usage at 80% of the starting remainder admits one canonical steering
-notice with actual ledger figures. Reaching the remainder interrupts only outstanding
-model work; a terminal answer remains completed and racing steering remains undelivered.
-Warning delivery failures log and degrade without changing Turn status. Completion then
-accrues usage normally, so the existing admission gate owns all later non-user work.
-Unlimited children and root Threads do not activate these kernel ports.
+The runtime-wide `subagentTokenBudget` default creates one pool on the root-most Thread
+that starts a delegated tree. All descendants, including isolated Skill children, debit
+that pool; the top-level spawner's own Turns do not. The grant is fixed when the pool is
+created, so setting changes apply only to new trees. `collaboration.spawn_agent` accepts optional
+`max_total_tokens` as a positive safe-integer cap on that child's own contribution inside
+the pool. With no ancestor pool, that explicit cap creates a pool of the same size on the
+child; descendants join it. It creates no nested reservation or refund. Neither pool nor
+cap occupies or modifies a Goal slot.
+
+Collaboration views returned by `list_agents` and `wait_agent` include the live
+pool-or-cap `tokensUsed` and nullable `tokenBudget` that controls the next refusal. Once
+the pool or local cap is exhausted, new non-user Turn admission is rejected while
+explicit user Turn admission and steering of an active Turn remain available. A pool
+holder cannot spawn after pool exhaustion. `followup_task` atomically removes its mailbox
+snapshot before awaiting admission, preserves concurrently queued messages, and prepends
+the snapshot again if admission is refused. Goal continuation records the complete typed
+refusal as a deferral; automation dispatch records it as a failed run. Completion and
+failure finalization debit member and pool before exposing an idle admission window.
+Budget rows are created only after earlier fallible spawn work under the Thread-tree
+mutex; rollback deletes only rows created by that spawn before the mutex releases.
+
+Pool-covered Turns feed the complete active-tree in-flight tally from the runtime
+normalizer's own usage accumulation; diagnostics are inspection-only. Covered non-user
+Turns re-read shared persisted usage through a native-kernel port carrying authoritative
+`remaining` and the binding constraint's `used`/`total`; a tighter child cap uses the same
+port. The kernel never computes snapshot differentials, so pool/cap denomination changes
+are harmless. Explicit user Turns have no gate port or warning but still contribute usage
+and accrue. The first model call is unconditional. Before later calls, and before steering
+drain or a new kernel Turn boundary, 80% consumption admits one canonical steering notice
+with actual figures. Reaching zero remaining interrupts only outstanding model work; a
+terminal answer remains completed and racing steering remains undelivered. Warning
+delivery failures log and degrade without changing Turn status. Completion and failure
+accrual clear the corresponding live tally without an intervening await.
+
+Collaboration spawn rejects a child deeper than `/root/a/b` and rejects a seventeenth
+direct collaboration child from one Thread. Isolated Skill children are exempt from both
+gates and the lifetime count. Both are fixed host constants with distinct typed errors.
+Model-facing budget text remains token-denominated. Renderer transcript, Details, copy,
+and Automation error surfaces classify stable error codes and translate budget failures
+into localized resource-limit copy without token counts. The shared `Turn.error.code` set
+is closed; unknown strings normalize to `runtime_failure`.
 
 `collaboration.wait_agent` is event-driven rather than a model polling primitive.
 It takes no timeout argument, remains locally blocked while children are running,

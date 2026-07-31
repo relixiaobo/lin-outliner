@@ -14,6 +14,7 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from 'typebox';
+import type { TurnError } from '../../../../core/agent/protocol';
 import type { ModelGateway } from './ModelGateway';
 
 export type {
@@ -87,7 +88,7 @@ export interface AgentState {
   readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: ReadonlySet<string>;
   readonly errorMessage?: string;
-  readonly interruptionError?: string;
+  readonly interruptionError?: TurnError;
 }
 
 export type KernelEvent =
@@ -130,7 +131,8 @@ export interface ProviderRetryLifecycleEvent {
 }
 
 export interface TokenBudgetUsage {
-  readonly budget: number;
+  readonly remaining: number;
+  readonly total: number;
   readonly used: number;
 }
 

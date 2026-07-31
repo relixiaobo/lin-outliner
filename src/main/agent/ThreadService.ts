@@ -392,7 +392,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.turnLifecycle,
       this.collaboration,
       (threadId) => this.goals.clear(threadId),
-      (threadId) => { this.subagentBudgets.clear(threadId); },
+      (threadId) => { this.subagentBudgets.clearThread(threadId); },
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
