@@ -215,3 +215,96 @@ active runtime from persisted provenance; undo also reloads the restored bytes a
 appends a catalog delta before the next provider request when the content hash changed.
 An unchanged trust-only catalog comparison emits no Item. Settings never rewrite
 Thread history.
+
+### The Skill library
+
+The Skills category is **one list over every source** — `built-in`, `user`,
+`project`, a bound local directory, and `managed` — sorted by the name the user
+reads. Provenance is an attribute of a row (a source chip), never a section: a
+user thinks "my Skills", so the page is not split by where a Skill came from.
+Each row carries the `/name`, the description, a source chip, its trust or status
+chips, an enable toggle, and its source-specific actions in the row disclosure:
+
+| Source | Row actions |
+|---|---|
+| `managed` | check update, preview update, apply, rollback, uninstall |
+| local directory | reveal in Finder, unbind directory |
+| `user`, `project` | accept, revoke acceptance, undo agent edit |
+| `built-in` | none; enable toggle only |
+
+Managed rows are read from the managed index rather than the loaded catalog, so a
+Skill that is installed but not activated still appears — installed-but-off is a
+state the user owns and must be able to see and reverse.
+
+### One enable predicate, two writers
+
+"On" has one meaning — *available to the model right now*:
+
+```
+enabled(skill) = activation(skill) && !disabledSkills.includes(skill.name)
+```
+
+`activation` is the managed index's per-record flag for `managed` Skills and
+constant-true for every other source. The predicate lives in main
+(`isSkillEnabled`, `agentSkills.ts`) so the model-facing catalog and the UI cannot
+disagree; the library row applies the same predicate rather than reporting the
+activation flag alone.
+
+The two **stores** stay separate on purpose. `disabledSkills` is a user setting
+keyed by name; the activation flag is per-installed-record and participates in
+install / rollback / uninstall, which is what makes "install, but do not enable
+yet" possible. Merging them would put managed lifecycle state into settings, or
+settings into an index that does not own the Skills they describe. The toggle
+routes by source; what it *means* never branches on source.
+
+### Acquisition behind `+`
+
+Acquiring a Skill is occasional, so it does not occupy the page. The list header
+carries an icon-only `+` (B6) whose menu has two entries:
+
+1. **Add Skill** — one panel holding the recommended catalog *and* a GitHub URL
+   field, because browsing and pasting are two inputs to the same act. The
+   existing compatibility/integrity review still gates the install.
+2. **Add Local Directory** — a native directory picker appending to
+   `additionalSkillDirectories`.
+
+The panel is a dialog-class surface: opaque `--bg-elevated` at
+`--overlay-shadow-level-2`, matching `.confirm-dialog`. Translucent material is
+level-1 chrome (rails, menus); the `+` menu is that and reuses the registered
+popover glass, so the library adds no new material surface.
+
+### Local directories are pointed at, never copied
+
+A bound directory stays the user's: edits are live, there is no snapshot to
+drift, and **unbinding only drops Tenon's pointer — it never deletes files.** The
+row label, the notice, and the handler all say *unbind* for that reason. A bound
+directory that currently yields no Skills is still listed, so pointing at the
+wrong folder stays reversible. Local Skills are ordinary `user`/`project` Skills
+to the runtime; a row is identified as local by whether its `rootDir` sits under
+a bound directory.
+
+### Update visibility
+
+Managed update checks resolve each record's tracking ref and set `updateCommit`
+when it differs. Two triggers, both ambient and both throttled per record on the
+record's `lastCheckedAt` (6 hours): once per launch, deferred until after first
+paint, and once when the Skills pane opens. An explicit per-row "check update"
+is never throttled. There is no periodic polling, no background download, and no
+auto-apply.
+
+Availability surfaces as a **count badge on the Skills row in the settings
+navigation** — a neutral count, not a status colour. A failed check is recorded
+on the record and does nothing else (A12): it never blocks launch, raises an
+alert, or changes any Skill's enabled state.
+
+### The recommended catalog is a production artifact
+
+`catalog/managed-skills-v1.json` is fetched live from `main` by every installed
+Tenon, so it reaches users without a release. It is validated by
+`scripts/validate-managed-skill-catalog.ts` (covered in `tests/core`), which runs
+the *runtime* parser — `parseCatalogDocument` — rather than a second
+implementation, so guard and loader cannot drift. On top of the runtime parse it
+requires `compatibilityRange` on every entry, requires each `name` to satisfy the
+install path's `SKILL_NAME_PATTERN`, and caps total bytes at
+`MANAGED_SKILL_LIMITS.catalogBytes`; the loader stays permissive about all three
+because it parses bytes it did not author.

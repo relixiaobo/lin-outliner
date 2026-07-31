@@ -457,6 +457,26 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
 });
+// An available Skill update should be visible without going looking for it, but
+// nothing about that is urgent enough to spend the launch path on. So: one
+// throttled sweep per launch, deferred until after first paint, fire-and-forget.
+// No periodic polling while the app sits open, no auto-download, no auto-apply.
+const MANAGED_SKILL_UPDATE_THROTTLE_MS = 6 * 60 * 60 * 1_000;
+const MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS = 30_000;
+
+function scheduleManagedSkillUpdateCheck(): void {
+  const timer = setTimeout(() => {
+    // Failure is recorded by the service and is invisible here by design (A12):
+    // a network blip at launch must not surface an alert, block anything, or
+    // change any Skill's enabled state.
+    void managedSkillService
+      .checkUpdates(undefined, { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS })
+      .catch(() => { /* recorded on the record; retried next launch */ });
+  }, MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS);
+  // Never hold the event loop open on this.
+  timer.unref?.();
+}
+
 // Scratch holds only ephemeral, app-owned data (attachment observations, web-fetch binaries, bash
 // overflow logs, and PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -3497,7 +3517,12 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_managed_skill_list':
       return managedSkillCommand(() => managedSkillService.list());
     case 'agent_managed_skill_check_updates':
-      return managedSkillCommand(() => managedSkillService.checkUpdates(typeof args.skillId === 'string' ? args.skillId : undefined));
+      // The throttle window is main's policy, so the renderer only says whether
+      // the check was ambient — it never carries the number.
+      return managedSkillCommand(() => managedSkillService.checkUpdates(
+        typeof args.skillId === 'string' ? args.skillId : undefined,
+        args.ambient === true ? { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS } : undefined,
+      ));
     case 'agent_managed_skill_preview_update':
       return managedSkillCommand(() => managedSkillService.previewUpdate({
         skillId: String(args.skillId ?? ''),
@@ -3634,6 +3659,7 @@ if (!app.requestSingleInstanceLock()) {
     configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
+    scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),

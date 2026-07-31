@@ -204,6 +204,8 @@ export const en = {
       addAriaLabel: 'Add a skill',
       addMenuAriaLabel: 'Add skill options',
       addSkill: 'Add Skill…',
+      updatesAvailable: ({ count }: { count: number }) =>
+        `${count} skill${count === 1 ? ' has' : 's have'} an update available`,
       acquireTitle: 'Add Skill',
       acquireClose: 'Done',
       addLocalDirectory: 'Add Local Directory…',

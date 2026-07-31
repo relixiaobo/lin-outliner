@@ -173,6 +173,7 @@ export const zhHans: PartialMessages = {
       addAriaLabel: '添加技能',
       addMenuAriaLabel: '添加技能选项',
       addSkill: '添加 Skill…',
+      updatesAvailable: ({ count }: { count: number }) => `${count} 个技能有可用更新`,
       acquireTitle: '添加 Skill',
       acquireClose: '完成',
       addLocalDirectory: '添加本地目录…',

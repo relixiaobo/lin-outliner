@@ -659,6 +659,89 @@ describe('managed skill service', () => {
       'spreadsheet',
     ]);
   });
+
+  test('throttles the ambient update check on lastCheckedAt but never an explicit one', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    github.onUpdateCheckStarted = () => { checks += 1; };
+    // A clock the test moves by hand, so the window is exercised rather than waited on.
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    const window = 6 * 60 * 60 * 1_000;
+    checks = 0;
+
+    // Never checked before, so the first ambient sweep runs.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // Inside the window: skipped entirely, no request made.
+    clock += window - 1;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // An explicit user request ignores the throttle — "check for updates" must check.
+    await service.checkUpdates();
+    expect(checks).toBe(2);
+
+    // Past the window, the ambient sweep runs again.
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(3);
+  });
+
+  test('a failed update check records the failure and changes no enabled state', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+    const activeBefore = await service.activeRuntimeRoots();
+
+    github.offline = true;
+    // This is the launch-path call. It must not throw, and it must leave the
+    // Skill exactly as enabled and as invocable as it was (A12).
+    const after = await service.checkUpdates(undefined, { throttleMs: 6 * 60 * 60 * 1_000 });
+
+    expect(after[0]?.enabled).toBe(true);
+    expect(after[0]?.diagnostic).toEqual({ code: 'unexpected_error' });
+    expect(after[0]?.active.contentHash).toBe(installed.active.contentHash);
+    expect(await service.activeRuntimeRoots()).toEqual(activeBefore);
+  });
 });
 
 class FakeGitHub {

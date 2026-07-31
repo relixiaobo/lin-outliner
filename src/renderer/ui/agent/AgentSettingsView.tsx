@@ -119,11 +119,28 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // How many managed Skills have an update waiting. The shell tracks this itself
+  // rather than reading it from the Skill library, because the badge has to show
+  // while the user is looking at some other category — the library is not
+  // mounted then.
+  const [skillUpdateCount, setSkillUpdateCount] = useState(0);
   const mountedRef = useRef(false);
   const settingsRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
   const t = useT();
   const categoryLabel = t.settings.categories[category].label;
+
+  useEffect(() => {
+    let active = true;
+    // Read-only, and silent on failure: a badge that cannot be computed is
+    // simply absent. It never blocks the page or raises an alert.
+    void api.agentManagedSkillList()
+      .then((skills) => {
+        if (active) setSkillUpdateCount(skills.filter((skill) => skill.updateCommit).length);
+      })
+      .catch(() => { /* no badge */ });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -409,6 +426,14 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                   <span className="settings-nav-copy">
                     <span className="settings-nav-label">{cat.label}</span>
                   </span>
+                  {id === 'skills' && skillUpdateCount > 0 ? (
+                    <span
+                      aria-label={t.settings.skills.updatesAvailable({ count: skillUpdateCount })}
+                      className="settings-nav-badge"
+                    >
+                      {skillUpdateCount}
+                    </span>
+                  ) : null}
                 </ButtonControl>
               );
             })}

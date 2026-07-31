@@ -228,15 +228,38 @@ describe('settings page DOM', () => {
       expect(formatMarkup(root.outerHTML)).toMatchSnapshot();
     });
   }
+
+  test('badges the Skills nav row when managed updates are waiting', async () => {
+    // The badge lives in the shell, not the library, so it must show while a
+    // different category is on screen — here, General.
+    const rendered = await renderCategory('general', [
+      { ...MANAGED_SKILLS[0]!, updateCommit: 'f'.repeat(40) },
+    ]);
+
+    const badge = rendered.document.querySelector('.settings-nav-badge');
+    expect(badge?.textContent).toBe('1');
+    expect(badge?.getAttribute('aria-label')).toBe('1 skill has an update available');
+  });
+
+  test('shows no badge when nothing has an update', async () => {
+    const rendered = await renderCategory('general');
+    expect(rendered.document.querySelector('.settings-nav-badge')).toBeNull();
+  });
 });
 
-async function renderCategory(category: SettingsCategoryTarget): Promise<Rendered> {
+async function renderCategory(
+  category: SettingsCategoryTarget,
+  managedSkills: ManagedSkillView[] = MANAGED_SKILLS,
+): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   Object.assign(window, {
     lin: {
       initialLanguage: 'en',
       invoke: async (name: string) => {
+        if (name === 'agent_managed_skill_list' || name === 'agent_managed_skill_check_updates') {
+          return { ok: true, value: managedSkills };
+        }
         if (!(name in INVOKE_RESULTS)) throw new Error(`Unstubbed settings channel: ${name}`);
         return INVOKE_RESULTS[name];
       },

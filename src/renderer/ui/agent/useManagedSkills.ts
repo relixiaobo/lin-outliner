@@ -67,7 +67,9 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
       setCatalog(nextCatalog);
       setSkills(installed);
       if (checkUpdatesOnLoad && installed.length > 0) {
-        void api.agentManagedSkillCheckUpdates()
+        // Opening the pane is not a request to check — it is ambient, so main
+        // throttles it on each record's lastCheckedAt.
+        void api.agentManagedSkillCheckUpdates(undefined, { ambient: true })
           .then((checked) => { if (mounted.current) setSkills(checked); })
           .catch((cause) => { if (mounted.current) setError(managedSkillErrorFromUnknown(cause)); });
       }

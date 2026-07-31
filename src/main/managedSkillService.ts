@@ -336,10 +336,29 @@ export class ManagedSkillService {
     }
   }
 
-  async checkUpdates(skillId?: string): Promise<ManagedSkillView[]> {
+  /**
+   * Resolves each record's tracking ref and records whether an update exists.
+   *
+   * `throttleMs` skips records checked within that window, using the
+   * `lastCheckedAt` each record already stores. It is for the ambient
+   * background check at startup; an explicit user request passes no throttle,
+   * because "check for updates" must always actually check.
+   *
+   * A failure here is recorded and nothing else (A12): this runs on the launch
+   * path, where a network blip must never block startup, surface an alert, or
+   * change any Skill's enabled state.
+   */
+  async checkUpdates(skillId?: string, options?: { throttleMs?: number }): Promise<ManagedSkillView[]> {
     await this.ready;
     const index = await this.options.store.readIndex();
-    const targets = skillId ? [requireRecord(index, skillId)] : index.skills;
+    const requested = skillId ? [requireRecord(index, skillId)] : index.skills;
+    const throttleMs = options?.throttleMs;
+    const now = this.now();
+    const targets = throttleMs === undefined
+      ? requested
+      : requested.filter((record) => (
+        record.lastCheckedAt === undefined || now - record.lastCheckedAt >= throttleMs
+      ));
     for (const target of targets) {
       try {
         const commit = await this.github.resolveTrackingCommit({

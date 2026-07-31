@@ -424,8 +424,16 @@ export const api = {
     managedCommand<ManagedSkillView>('agent_managed_skill_install', input),
   agentManagedSkillList: () =>
     managedCommand<ManagedSkillView[]>('agent_managed_skill_list'),
-  agentManagedSkillCheckUpdates: (skillId?: string) =>
-    managedCommand<ManagedSkillView[]>('agent_managed_skill_check_updates', skillId ? { skillId } : undefined),
+  /**
+   * `ambient: true` marks a check the user did not ask for (opening the pane),
+   * which main throttles on each record's lastCheckedAt. An explicit "check for
+   * updates" leaves it off, because that must always actually check.
+   */
+  agentManagedSkillCheckUpdates: (skillId?: string, options?: { ambient?: boolean }) =>
+    managedCommand<ManagedSkillView[]>('agent_managed_skill_check_updates', {
+      ...(skillId ? { skillId } : {}),
+      ...(options?.ambient ? { ambient: true } : {}),
+    }),
   agentManagedSkillPreviewUpdate: (skillId: string, expectedActiveHash: string) =>
     managedCommand<ManagedSkillUpdatePreviewView>('agent_managed_skill_preview_update', { skillId, expectedActiveHash }),
   agentManagedSkillApplyUpdate: (input: {
