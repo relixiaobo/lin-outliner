@@ -10,6 +10,22 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Changed
+
+- **Tool rows say what the agent did, and show status without a mystery glyph
+  (PR #461, cc-2)** — a tool row in the transcript now keeps its own icon and
+  reads as a sentence about the work: "Read \"Chapter Three\"" rather than
+  "Used node_read", with single rows and grouped rows speaking one vocabulary.
+  Status is carried by colour on that same glyph plus a word — a failed row
+  tints `--status-danger` and says so, and a collapsed group appends per-status
+  tallies where only the tally is tinted, so one failure out of six no longer
+  paints the whole line red. The generic red pill is gone. A command row
+  renders the caller's own bash `description` when there is one, while its
+  tooltip always keeps the real shell text, so a description can never mask
+  what actually ran; when there is none, the label strips heredoc bodies,
+  `cd X &&` scaffolding, and the thread's own working-directory prefix. Four
+  icons were re-picked (file delete, `web_fetch`, MCP vs unknown tool, skill).
+
 ### Added
 
 - **Subagent transcript account layer (PR #460, cc)** — every subagent thread

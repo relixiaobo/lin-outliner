@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331, tool-row-status-visuals #461; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -32,8 +32,14 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-31).** Open PR queue: #455 (draft,
-`subagent-budget-propagation` PR C), #457 (draft, plan-only), #461 (ready,
-`agent-run-presentation-consistency` PR A). Recently merged: #460
+`subagent-budget-propagation` PR C), #457 (draft, plan-only). Recently merged:
+#461 (`cc-2/tool-row-status-visuals`) after a high-effort multi-agent review
+(10 verified findings, 9 fixed + 1 deferred by design) plus two gate-found
+regressions (a bare-word here-string truncating its own label; `display: flex`
+collapsing the " · " separator to zero width — invisible to text-content
+assertions, caught only by looking) — `agent-run-presentation-consistency` PR A
+and the whole `agent-tool-label-vocabulary` plan are live; see *Recently
+completed*. #460
 (`cc/subagent-transcript-artifact`) after two gate rounds (medium 8 findings →
 PM-ratified structural redesign to app-owned append-only storage; high 7
 findings → all blocking items fixed with revert-verified regression tests) —
@@ -659,19 +665,24 @@ archived `done` (see Recently completed). Remaining active work:
 
 ### UI quality (design-system consistency)
 
-- **agent-run-presentation-consistency** (P3, `draft` — cc-2, plan merged #454; shape (b):
-  three complete PRs, independently claimable) — PR A tool-row status visuals (failed rows keep
-  the tool's own glyph, status by `--status-danger` tint incl. a dark-mode token-layer fix per
-  B1/B11), PR B process-state truthfulness (no lying "Working" labels/timers/flash states,
-  blocked-on-user surfacing for the PARENT), PR C centered plan-progress pill + the
-  `update_plan` Turn-diagnostics leak fix. See `docs/plans/agent-run-presentation-consistency.md`.
+- **agent-run-presentation-consistency** (P3, `in-progress` — cc-2, plan merged #454; shape (b):
+  three complete PRs, independently claimable) — **PR A tool-row status visuals shipped #461**
+  (failed rows keep the tool's own glyph, status by `--status-danger` tint incl. a dark-mode
+  token-layer fix per B1/B11); PR B process-state truthfulness (no lying "Working"
+  labels/timers/flash states, blocked-on-user surfacing for the PARENT), PR C centered
+  plan-progress pill + the `update_plan` Turn-diagnostics leak fix remain unclaimed.
+  See `docs/plans/agent-run-presentation-consistency.md`.
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
 — see Recently completed. Remaining Layer-3 lanes:
 
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
-  unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened).
+  unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened). #461
+  re-picked four glyphs (file delete, `web_fetch`, MCP vs unknown, skill) under a
+  `threadToolIcons` guard and left it one open question: an interrupted tool row
+  shares `--text-faint` with a completed one, so the two read alike — giving
+  interrupted its own hue is a B4 call this lane owns.
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges. PR #377 already landed the central dark
@@ -754,6 +765,18 @@ anything.
   the `refocusComposerFromClick` rAF racing the menu focus-in/restore effects in
   `useMenuKeyboard`. Reproduce the focus loss outside the harness before touching product code —
   it may be test-only state leakage.
+- **red-e2e-on-main** (P2, *fast-track, no plan file*, filed 2026-07-31 at the #461 gate) — three
+  e2e specs fail on `main` itself, independent of any branch; verified by running them directly on
+  `origin/main` (e9ca8bc7, then 9771c431) with identical errors, so they are not #461's doing but
+  they do mean `test:e2e` is no longer a clean signal at the gate. (1)
+  `file-attachments.spec.ts:178` *"/attachment creates a lightweight file name row…"* — the
+  attachment preview row assertion; (2) `typography-tokens.spec.ts:1094` *"keeps material
+  backgrounds scoped to registered chrome and overlay surfaces"* and (3) `:1102` *"keeps backdrop
+  filters scoped to material surfaces and preview HUD controls"* — these two are **B5 guards**
+  (Liquid-Glass two-layer model), so something is painting material or a backdrop filter outside
+  registered chrome; per B11 fix the CSS rather than the guard. Also seen once and not since:
+  `file-attachments.spec.ts:1212` (EPUB translation consent), so treat that one as flaky. Bisect
+  each to the commit that turned it red before touching product code.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
@@ -770,6 +793,40 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **tool-row-status-visuals + agent-tool-label-vocabulary**
+  (`cc-2/tool-row-status-visuals`, PR #461, cc-2, merged 2026-07-31,
+  plan-track; `agent-run-presentation-consistency` PR A, and the whole
+  `agent-tool-label-vocabulary` plan archived at
+  `docs/plans/archive/agent-tool-label-vocabulary.md`) — a tool row now keeps
+  its own glyph and says what the agent *did* in the user's terms, with status
+  carried by colour plus a word instead of a generic red pill: failed rows tint
+  the tool's glyph `--status-danger`, group summaries append per-status tallies
+  where only the tally is tinted, and single rows joined the same activity
+  vocabulary groups already used ("Read \"Chapter Three\"", not "Used
+  node_read"), pinned by a 52-case copy table. A command row renders the
+  caller's own bash `description` — `CommandExecutionThreadItem` gains
+  `description: string | null` — while its tooltip always keeps the real shell
+  text, so prose can never mask what ran. **Gate (main):** high-effort
+  multi-agent review confirmed 10 findings — a decode default that broke the
+  terminal-Item byte-equality invariant and could wedge a crashed Turn at
+  startup after upgrade (fixed at the right boundary per A12: the check now
+  compares canonical decoded Items, not stored bytes), model-authored prose
+  masking the real command, failure and interruption cues demoted to
+  ellipsis-truncatable trailing text, naive `<<` heredoc truncation, `cwd: '/'`
+  deleting every slash in a label, `nodeSearch` queries resolved as node ids,
+  duplicate subject keys inflating counts, and a documented-but-absent full-list
+  tooltip — 9 fixed, 1 (interrupted-row hue) deferred to `icon-semantics` as a
+  B4 call. Two further regressions were found *at* the gate and fixed: a
+  bare-word here-string (`cat <<< hello`) truncating to `cat <`, and
+  `display: flex` blockifying the tally so the " · " separator collapsed to zero
+  width. That second one passed every text-content assertion — `toHaveText`
+  normalizes whitespace — and was caught only by visual verification; its guard
+  now measures the separator as laid out, via a Range over the rendered glyph.
+  Each fix carries a revert-verified regression test. Typecheck + core 1573/0 +
+  renderer 885/0 + light/dark visual verification at full and 620px width green;
+  e2e 531 pass / 3 fail, all three reproducing identically on the merge base
+  (see *Deferred follow-ups*).
 
 - **agent-thread-scroll-follow**
   (`codex-2/agent-thread-scroll-follow`, PR #458, codex-2, merged 2026-07-30,
