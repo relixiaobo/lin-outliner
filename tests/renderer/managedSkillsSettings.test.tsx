@@ -292,6 +292,7 @@ function renderComponent(
         disabledSkills={[]}
         onDirectoriesChange={async () => undefined}
         onPersistSkillDisabled={async () => undefined}
+        onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}
         onError={() => undefined}
         onNotice={() => undefined}
@@ -333,7 +334,7 @@ function installDomGlobals(window: Window): void {
  * asserting on the catalog / URL surface.
  */
 async function openAcquisition(rendered: Rendered): Promise<void> {
-  const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button');
+  const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button[aria-haspopup="menu"]');
   if (!add) throw new Error('Missing + control');
   await act(async () => {
     add.click();

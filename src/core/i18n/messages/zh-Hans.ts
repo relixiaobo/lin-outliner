@@ -220,6 +220,7 @@ export const zhHans: PartialMessages = {
       managedInstalledEmpty: '尚未安装托管技能。',
       managedUpdateCheckLabel: '可用更新',
       managedCheckUpdates: '检查',
+      checkUpdatesAriaLabel: '检查所有技能的更新',
       managedCheckedNotice: '更新检查完成',
       managedPreviewUpdate: '预览更新',
       managedApplyUpdate: '应用更新',

@@ -15,6 +15,10 @@ import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/Setting
 interface Rendered {
   cleanup: () => void;
   document: Document;
+  /** Every bridge command the section issued, in order. */
+  calls: Array<{ command: string; args?: Record<string, unknown> }>;
+  /** Replaces what the managed list command answers with, for the next fetch. */
+  setManaged: (next: ManagedSkillView[]) => void;
 }
 
 const mounted: Rendered[] = [];
@@ -145,7 +149,7 @@ describe('skill library list', () => {
     // Exactly one empty row, and it stays inside the group so the `+` that fixes
     // the empty state is still reachable from it.
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(1);
-    expect(rendered.document.querySelector('.inset-group-header-action button')).not.toBeNull();
+    expect(rendered.document.querySelector('.inset-group-header-action button[aria-haspopup="menu"]')).not.toBeNull();
   });
 
   test('enabling a suppressed managed skill persists both halves, not one', async () => {
@@ -221,6 +225,58 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).not.toContain('Managed fixture.');
   });
 
+  test('reports the update count up, and revises it when one is applied', async () => {
+    // The shell reads the count once, before the ambient check has run and
+    // before anything is applied. Left at that, the badge reported work that no
+    // longer existed until the window was reopened.
+    const counts: number[] = [];
+    const withUpdate = managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) });
+    const rendered = await render({
+      skills: [],
+      managed: [withUpdate],
+      onUpdateCountChange: (count) => { counts.push(count); },
+    });
+
+    expect(counts.at(-1)).toBe(1);
+
+    // Applying an update clears updateCommit on the record. Re-listing is what
+    // every managed mutation does, so drive that and require the count to follow.
+    rendered.setManaged([managedSkill()]);
+    const check = rendered.document.querySelector<HTMLButtonElement>(
+      '.inset-group-header-action button[aria-label="Check all skills for updates"]',
+    );
+    if (!check) throw new Error('Missing check-for-updates control');
+    await act(async () => {
+      check.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(counts.at(-1)).toBe(0);
+  });
+
+  test('offers an explicit check that the ambient throttle cannot suppress', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill()] });
+
+    const check = rendered.document.querySelector<HTMLButtonElement>(
+      '.inset-group-header-action button[aria-label="Check all skills for updates"]',
+    );
+    if (!check) throw new Error('Missing check-for-updates control');
+    expect(check.disabled).toBe(false);
+
+    await act(async () => {
+      check.click();
+      await Promise.resolve();
+    });
+
+    // Opening the pane already fired an ambient check; the click must be the
+    // unthrottled kind. No `ambient` flag means main applies no throttle.
+    const checks = rendered.calls.filter((entry) => entry.command === 'agent_managed_skill_check_updates');
+    expect(checks.length).toBeGreaterThanOrEqual(2);
+    expect(checks[0]?.args?.ambient).toBe(true);
+    expect(checks.at(-1)?.args?.ambient).toBeUndefined();
+  });
+
   test('a skill from a bound directory carries the local chip', async () => {
     const rendered = await render({
       skills: [{ ...localSkill('notes', 'user'), rootDir: '/work/skills/notes' }],
@@ -281,7 +337,7 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).not.toContain('Public repository or skill URL');
     expect(rendered.document.querySelector('.skill-acquire-dialog')).toBeNull();
 
-    const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button');
+    const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button[aria-haspopup="menu"]');
     if (!add) throw new Error('Missing + control');
     await act(async () => {
       add.click();
@@ -308,16 +364,20 @@ async function render(input: {
   onDirectoriesChange?: (next: string[]) => Promise<void>;
   onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
   onToggleSkill?: (skillName: string) => void;
+  onUpdateCountChange?: (count: number) => void;
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  let managed = input.managed;
   Object.assign(window, {
     lin: {
       initialLanguage: 'en',
-      invoke: async (command: string) => {
+      invoke: async (command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, ...(args ? { args } : {}) });
         if (command === 'agent_list_all_skills') return input.skills;
-        if (command === 'agent_managed_skill_list') return { ok: true, value: input.managed };
-        if (command === 'agent_managed_skill_check_updates') return { ok: true, value: input.managed };
+        if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
+        if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_catalog') {
           return { ok: true, value: { status: 'fresh', entries: [] } };
         }
@@ -341,13 +401,19 @@ async function render(input: {
           onNotice={() => undefined}
           onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
+          onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}
         />
       </I18nProvider>,
     );
   });
   await act(async () => { await Promise.resolve(); });
 
-  const rendered = { cleanup: () => act(() => root.unmount()), document };
+  const rendered = {
+    cleanup: () => act(() => root.unmount()),
+    document,
+    calls,
+    setManaged: (next: ManagedSkillView[]) => { managed = next; },
+  };
   mounted.push(rendered);
   return rendered;
 }

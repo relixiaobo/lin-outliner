@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManagedSkillView, SkillDefinition, SkillSourceKind } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 import { Button } from '../primitives/Button';
@@ -30,6 +30,12 @@ interface SettingsSkillLibrarySectionProps {
    * managed toggle, whose activation half is already immediate.
    */
   onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<void>;
+  /**
+   * Reports how many managed Skills currently have an update waiting. The shell
+   * owns the nav badge and cannot see this list, so while the library is mounted
+   * it is the authority on that count.
+   */
+  onUpdateCountChange: (count: number) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   onApplied: () => Promise<void>;
@@ -80,6 +86,7 @@ export function SettingsSkillLibrarySection({
   onDirectoriesChange,
   onToggleSkill,
   onPersistSkillDisabled,
+  onUpdateCountChange,
   onError,
   onNotice,
   onApplied,
@@ -168,6 +175,14 @@ export function SettingsSkillLibrarySection({
     void reloadSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the shell's nav badge honest for as long as this list is mounted: the
+  // shell's own read happens once, before the ambient check has run and before
+  // the user applies anything.
+  useEffect(() => {
+    onUpdateCountChange(managed.skills.filter((skill) => skill.updateCommit).length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managed.skills]);
 
   const runSkillTrustAction = (action: () => Promise<SkillDefinition[]>) => {
     setSkillTrustBusy(true);
@@ -324,6 +339,18 @@ export function SettingsSkillLibrarySection({
   // The `+` is an icon-only chrome control (B6): colour deepens on hover, no box.
   const addControl = (
     <>
+      {/* The explicit check. Both ambient triggers are throttled per record, so
+          without this a record inside its window could only be checked one row
+          at a time from its ⋯ menu. A user-requested check is never throttled. */}
+      <IconButton
+        className="rail-toggle"
+        disabled={managed.busy !== null || managed.skills.length === 0}
+        icon={RefreshIcon}
+        iconSize={ICON_SIZE.menu}
+        label={t.settings.skills.checkUpdatesAriaLabel}
+        onClick={() => void managed.checkUpdates()}
+        variant="chrome"
+      />
       <IconButton
         aria-expanded={addMenuOpen}
         aria-haspopup="menu"

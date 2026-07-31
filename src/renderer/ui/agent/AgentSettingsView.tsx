@@ -119,10 +119,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // How many managed Skills have an update waiting. The shell tracks this itself
-  // rather than reading it from the Skill library, because the badge has to show
-  // while the user is looking at some other category — the library is not
-  // mounted then.
+  // How many managed Skills have an update waiting. The shell reads this once so
+  // the badge is right while the user is in some other category — the library is
+  // not mounted then. Whenever the library IS mounted it owns the list, so it
+  // pushes the count back through onUpdateCountChange; without that the badge
+  // would keep reporting the mount-time value, missing an update discovered
+  // afterwards and still claiming one the user had just applied.
   const [skillUpdateCount, setSkillUpdateCount] = useState(0);
   const mountedRef = useRef(false);
   const settingsRequestRef = useRef(0);
@@ -499,6 +501,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 onNotice={setNotice}
                 onPersistSkillDisabled={persistSkillDisabled}
                 onToggleSkill={toggleSkill}
+                onUpdateCountChange={setSkillUpdateCount}
               />
             )}
 

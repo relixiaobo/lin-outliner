@@ -253,6 +253,7 @@ export const en = {
       managedInstalledEmpty: 'No managed skills installed.',
       managedUpdateCheckLabel: 'Available updates',
       managedCheckUpdates: 'Check',
+      checkUpdatesAriaLabel: 'Check all skills for updates',
       managedCheckedNotice: 'Update check completed',
       managedPreviewUpdate: 'Preview update',
       managedApplyUpdate: 'Apply update',
