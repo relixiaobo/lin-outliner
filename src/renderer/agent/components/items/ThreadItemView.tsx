@@ -1722,7 +1722,12 @@ function commandDisplayText(command: string, cwd: string): string {
   // Only a real heredoc opener: `<<WORD` / `<<-'WORD'`. Not `<<<` (here-string)
   // and not `1<<20` (bit shift), both of which would truncate mid-command.
   const heredoc = /<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/.exec(text);
-  if (heredoc && heredoc.index > 0 && !text.startsWith('<<<', heredoc.index)) {
+  // In `cat <<< hello` the delimiter match starts on the SECOND `<`, so looking
+  // forward for `<<<` is not enough — the character before it has to be checked
+  // too, or a bare-word here-string truncates to `cat <`.
+  const hereString = heredoc !== null
+    && (text.startsWith('<<<', heredoc.index) || text[heredoc.index - 1] === '<');
+  if (heredoc && heredoc.index > 0 && !hereString) {
     text = text.slice(0, heredoc.index).trim();
   }
   // A leading `cd X &&` is scaffolding for the command that follows it.

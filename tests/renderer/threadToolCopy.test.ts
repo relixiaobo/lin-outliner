@@ -279,9 +279,17 @@ describe('review regressions — each of these shipped broken once', () => {
       .toBe('Ran "awk \'BEGIN{print 1<<20}\' data.txt"');
     expect(summarizeThreadToolItem(shell('grep foo <<< "$text"'), labels))
       .toBe('Ran "grep foo <<< \"$text\""');
-    // A genuine heredoc still collapses.
+    // A here-string whose word IS a valid delimiter: the delimiter match lands
+    // on the second `<`, so a guard that only looks forward for `<<<` misses.
+    expect(summarizeThreadToolItem(shell('cat <<< hello'), labels))
+      .toBe('Ran "cat <<< hello"');
+    expect(summarizeThreadToolItem(shell('x <<<word'), labels))
+      .toBe('Ran "x <<<word"');
+    // Genuine heredocs still collapse, in all three spellings.
     expect(summarizeThreadToolItem(shell("python3 - <<'PY'\nprint(1)\nPY"), labels))
       .toBe('Ran "python3 -"');
+    expect(summarizeThreadToolItem(shell('cat <<EOF\nx\nEOF'), labels)).toBe('Ran "cat"');
+    expect(summarizeThreadToolItem(shell('cat <<-EOF\nx\nEOF'), labels)).toBe('Ran "cat"');
   });
 
   test('the outcome is a segment of its own so it cannot be ellipsized away', () => {
