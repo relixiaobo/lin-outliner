@@ -31,12 +31,18 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue is **empty** — the plan-track review queue
-has room for two. PM staffing next: `agent-subagent-interaction` PR 2 (navigation +
-Thread-list hygiene) and PR 3 (delegation card + interrupt) are both unblocked now
-that PR 1 has landed, and PR 3's standing collision with #467 is released now that
-the pill has merged; `agent-browser-control` implementation is **shelved** pending
-upstream Browser Pilot stabilization (PM ruling 2026-07-31).
+**In flight (2026-07-31).** Open PR queue: **#469** (codex,
+`agent-transcript-disclosure-anchor`) is a Draft claim carrying its plan commit only.
+**One claim is missing:** `cc/agent-skill-library-settings` is 8 commits ahead of
+`main` with no PR open, so the widest unmerged change in the repo is invisible on the
+collision radar — cc opens the Draft PR, then the review queue is at two and full.
+PM staffing after that: `agent-subagent-interaction` PR 2 (navigation + Thread-list
+hygiene) and PR 3 (delegation card + interrupt) are both unblocked now that PR 1 has
+landed, and PR 3's standing collision with #467 is released now that the pill has
+merged — but the two attach to the same divider region, where the plan warns that
+extraction refactors merge silently wrong, so **stagger them rather than running both
+at once**. `agent-browser-control` implementation is **shelved** pending upstream
+Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #467 + #468 (both `cc-2`) as a pair, closing
 `agent-run-presentation-consistency` — see *Recently completed* for both. The pair is
 worth remembering for one reason: #467's L4 ("filter `update_plan` out of Turn
@@ -525,8 +531,10 @@ before any directional/security-sensitive build.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
-- **agent-skill-library-settings** (P2, `draft` — main-authored 2026-07-31 at the PM's
-  request, **unclaimed**; shape (b): three complete PRs) — Skill settings are split by
+- **agent-skill-library-settings** (P2, `in-progress` — main-authored 2026-07-31 at the
+  PM's request; **built on `cc/agent-skill-library-settings` (8 commits) but no PR is
+  open, so the claim is invisible to every sibling clone — cc should open it**;
+  shape (a): one complete PR in eight staged commits) — Skill settings are split by
   *provenance*, which is an implementation detail: `AgentSettingsView.tsx:980-1010`
   renders the managed panel and then a second list filtered
   `source !== 'managed'`, while `ManagedSkillsSettings.tsx` keeps catalog browse and a
