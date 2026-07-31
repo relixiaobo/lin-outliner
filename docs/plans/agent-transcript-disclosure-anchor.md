@@ -80,6 +80,7 @@ priority over bottom follow for their layout transaction.
 - `src/renderer/agent/components/items/ThreadItemView.tsx`
 - `src/renderer/ui/interactions/disclosureScrollAnchor.ts`
 - `tests/renderer/disclosureScrollAnchor.test.tsx`
+- `tests/renderer/threadItemView.test.tsx`
 - `tests/e2e/agent-thread.spec.ts`
 - `docs/spec/agent-thread-rendering.md`
 
@@ -99,10 +100,10 @@ priority over bottom follow for their layout transaction.
 ## Collision Result
 
 PR #467 touched `ThreadView.tsx`, `agent-thread.spec.ts`, and the rendering spec,
-but merged into `main` before this branch was created. Open PR #468 touches
-`ThreadItemView.tsx` and the same spec for `update_plan` visibility; its intended
-hunks are separate from disclosure interaction code. Rebase on its merged result
-before marking this PR ready if it lands first.
+but merged into `main` before this branch was created. PR #468 touched
+`ThreadItemView.tsx` and the same spec for `update_plan` visibility at separate
+hunks; its merged result was integrated without conflict before this PR was marked
+ready.
 
 ## Open Questions
 
