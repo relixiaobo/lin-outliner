@@ -649,7 +649,6 @@ export class PiEventNormalizer {
   private activeMessageItem: Extract<ThreadItem, { type: 'agentMessage' }> | null = null;
   private activeReasoningItem: Extract<ThreadItem, { type: 'reasoning' }> | null = null;
   private readonly toolItems = new Map<string, { item: ThreadItem; startedAt: number }>();
-  private readonly transientToolCallIds = new Set<string>();
   private tail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -782,11 +781,6 @@ export class PiEventNormalizer {
   private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
     const identity = canonicalIdentity(providerName);
     const startedAt = Date.now();
-    if (identity.namespace === null && identity.name === 'update_plan') {
-      this.transientToolCallIds.add(callId);
-      this.executionObserver?.started?.({ callId, toolName: providerName, itemId: null, startedAt });
-      return;
-    }
     const item = startedToolItem(this.context, callId, identity, args);
     const started = await this.context.recorder.started(item);
     this.toolItems.set(callId, { item: started, startedAt });
@@ -794,10 +788,6 @@ export class PiEventNormalizer {
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
-    if (this.transientToolCallIds.delete(callId)) {
-      this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
-      return;
-    }
     const active = this.toolItems.get(callId);
     if (!active) return;
     const completed = await this.context.recorder.completed(await completedToolItem(

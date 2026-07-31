@@ -1175,6 +1175,8 @@ commandPalette: {
         listedAgents: '列出了子智能体',
         interruptingAgent: '正在中断子智能体',
         interruptedAgent: '中断了子智能体',
+        updatingPlan: '正在更新计划',
+        updatedPlan: ({ count }) => count === 1 ? '更新了计划' : `更新了 ${count} 次计划`,
         searchingWebActivity: '正在搜索网页',
         searchedWebActivity: '已搜索网页',
         collaborating: ({ count }) => `正在与 ${count} 个智能体协作`,

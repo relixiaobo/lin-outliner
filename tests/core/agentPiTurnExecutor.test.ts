@@ -188,7 +188,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('keeps update_plan out of the recorded tool Item stream', async () => {
+  test('records update_plan like any other tool call', async () => {
     const fixture = createContext();
     const observed: unknown[] = [];
     const normalizer = new PiEventNormalizer(fixture.context, {
@@ -210,14 +210,18 @@ describe('PiTurnExecutor event normalization', () => {
     });
     await normalizer.flush();
 
-    expect(fixture.notifications).toEqual([]);
-    expect(fixture.recorder.orderedItems()).toEqual([]);
+    // The session shows the real process: a Plan update is an execution the
+    // agent performed, so it is recorded like every other one (PM ruling
+    // 2026-07-31, reversing #438's transient exclusion).
+    const items = fixture.recorder.orderedItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: 'dynamicToolCall', tool: 'update_plan', status: 'completed' });
     expect(observed).toEqual([
       expect.objectContaining({
         phase: 'started',
         callId: 'call-plan-1',
         toolName: 'update_plan',
-        itemId: null,
+        itemId: items[0]!.id,
       }),
       expect.objectContaining({ phase: 'completed', callId: 'call-plan-1', failed: false }),
     ]);

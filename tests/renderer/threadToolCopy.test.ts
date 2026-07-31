@@ -138,6 +138,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['skill', dynamic('skill', { skill: 'dataviz' }), 'Used the dataviz skill'],
     ['request_user_input', dynamic('request_user_input', { question: 'which?' }), 'Asked a question'],
     ['outline_undo_stack', dynamic('outline_undo_stack', {}), 'Checked history'],
+    ['update_plan', dynamic('update_plan', { plan: [] }), 'Updated the plan'],
     ['command', shell('npm test'), 'Ran "npm test"'],
     ['file change', changes('/w/a.ts'), 'Changed a.ts'],
     ['file change, three', changes('/w/a.ts', '/w/b.ts', '/w/c.ts'), 'Changed a.ts, b.ts and 1 more'],
@@ -355,6 +356,12 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('file_read', {}, 'completed', { id: 'u-1' }),
     ], 'Read 2 files'],
     ['commands', [shell('ls', 'completed', 'c-1'), shell('pwd', 'completed', 'c-2')], 'Ran 2 commands'],
+    // Repeated Plan updates collapse rather than stacking identical rows.
+    ['repeated plan updates', [
+      dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-1' }),
+      dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-2' }),
+      dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-3' }),
+    ], 'Updated the plan 3 times'],
     ['two agents', [collab('spawn_agent', 'completed', 'r1'), collab('wait_agent', 'completed', 'r2')],
       'Worked with 2 agents'],
     // Two calls aimed at the same agent are one agent worked with, not two.
