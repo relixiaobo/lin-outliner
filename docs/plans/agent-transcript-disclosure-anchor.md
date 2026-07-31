@@ -28,17 +28,29 @@ layout transaction. Capture a stable element and its viewport top before the
 state update, restore it after the React layout commit, and keep that temporary
 anchor authoritative while delayed measurements settle. A queued or newly
 scheduled bottom pin must not override an active disclosure anchor.
+Capture starts a fallback restore loop immediately, so a local disclosure that
+unmounts before its layout effect runs cannot leave the anchor latched. Work
+requested by canonical Turn changes while the anchor owns the layout is replayed
+after release; ResizeObserver work caused only by the disclosure itself is not,
+because replaying that pin would move the activated surface at the end of the
+transaction.
 
 After the anchor settles, retain the existing position-derived follow state.
 Later streaming content may therefore continue following when the resulting
 geometry remains near the bottom. Wheel, pointer, touch, keyboard, or independent
-scroll input continues to cancel the temporary anchor immediately.
+scroll input continues to cancel the temporary anchor immediately. Sending a
+message or choosing Jump to latest also cancels it before applying the newer
+scroll intent. Send-anchor layout that was already pending is resumed after an
+ordinary anchor release instead of being dropped.
 
 When a disclosure grows content above its control and the transcript has less
 natural scroll range than the required correction, add only the missing amount as
 a transient renderer runway on the transcript content. Keep it outside React state
 and exclude it from real-content metrics; collapse, later content, or independent
-scroll consumes the runway without moving the activated surface.
+scroll consumes the runway without moving the activated surface. A bottom-clamped
+collapse that removes content below its control may itself require runway to keep
+that control fixed; that necessary range remains transient until later content or
+independent navigation can consume it.
 
 Reuse the existing `usePendingDisclosureAnchor` mechanism and transient refs;
 do not add React state that rerenders the transcript merely to track a
@@ -70,6 +82,10 @@ assert less than one pixel of anchor movement after multiple animation frames:
 Retain coverage that user scroll cancels delayed anchor correction, asynchronous
 tool output holds its anchor until the read settles, Jump to latest restores
 follow, and virtualized transcript measurement compensation remains stable.
+The asynchronous hold has a three-second safety bound so a lost output-read reply
+cannot disable transcript scrolling indefinitely. Virtual row compensation yields
+to an active explicit anchor because the clicked element already accounts for the
+same geometry change.
 
 Update `docs/spec/agent-thread-rendering.md` so explicit user toggles take
 priority over bottom follow for their layout transaction.

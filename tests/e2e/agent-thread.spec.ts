@@ -3694,6 +3694,137 @@ test.describe('canonical agent Thread surface', () => {
     ))).toBeLessThanOrEqual(1);
   });
 
+  test('lets a keyboard send supersede a pending disclosure anchor', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill(Array.from(
+      { length: 80 },
+      (_, index) => `Pending disclosure evidence ${index + 1}.`,
+    ).join(' '));
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const disclosure = page.locator('.thread-user-expand-button');
+    await expect(disclosure).toHaveAccessibleName('Show more');
+    await composer.fill('Send while the disclosure anchor is pending.');
+    await page.evaluate(() => {
+      const toggle = document.querySelector<HTMLButtonElement>('.thread-user-expand-button');
+      const editor = document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message this Thread"]');
+      if (!toggle || !editor) throw new Error('Missing disclosure or composer');
+      toggle.click();
+      editor.focus();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        code: 'Enter',
+        key: 'Enter',
+      }));
+    });
+
+    const sentMessage = page.locator('.thread-user-message').filter({
+      hasText: 'Send while the disclosure anchor is pending.',
+    });
+    await expect(sentMessage).toBeVisible();
+    await expect.poll(() => sentMessage.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+    await expect.poll(() => page.locator('.thread-transcript-content').evaluate((element) => (
+      element.style.paddingBottom
+    ))).toBe('');
+  });
+
+  test('replays bottom follow after a streaming update waits on a disclosure anchor', async ({ page }) => {
+    await createNewThread(page);
+    await seedOverflowingTranscript(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000fb01';
+      const userItemId = '01910000-0000-7000-8000-00000000fb02';
+      const reasoningItemId = '01910000-0000-7000-8000-00000000fb03';
+      const responseItemId = '01910000-0000-7000-8000-00000000fb04';
+      const provenance = (originItemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userItemId,
+              type: 'userMessage',
+              provenance: provenance(userItemId),
+              content: [{ type: 'text', text: 'Keep following this short live response.' }],
+            },
+            {
+              id: reasoningItemId,
+              type: 'reasoning',
+              provenance: provenance(reasoningItemId),
+              summary: ['Inspect'],
+              content: [],
+            },
+            {
+              id: responseItemId,
+              type: 'agentMessage',
+              provenance: provenance(responseItemId),
+              text: 'Streaming follow checkpoint.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: 3,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { responseItemId, threadId, turnId };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const thought = page.locator('.thread-reasoning-toggle').last();
+    await expect(thought).toHaveAttribute('aria-expanded', 'false');
+    await setTranscriptFollowingBottom(page);
+    const anchoredTop = await thought.evaluate((element) => element.getBoundingClientRect().top);
+    await page.evaluate(({ responseItemId, threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const toggle = document.querySelectorAll<HTMLButtonElement>('.thread-reasoning-toggle');
+      toggle[toggle.length - 1]?.click();
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/delta',
+        threadId,
+        turnId,
+        itemId: responseItemId,
+        delta: { type: 'agentMessageText', delta: ' continued' },
+      });
+    }, fixture);
+    await expect(thought).toHaveAttribute('aria-expanded', 'true');
+    await page.evaluate(async () => {
+      for (let frame = 0; frame < 4; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+    });
+    expect(Math.abs(await thought.evaluate((element) => (
+      element.getBoundingClientRect().top
+    )) - anchoredTop)).toBeLessThan(1);
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+  });
+
   test('does not pull the transcript down after the reader scrolls upward', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {

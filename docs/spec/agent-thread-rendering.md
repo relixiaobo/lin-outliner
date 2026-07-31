@@ -677,13 +677,23 @@ measurements settle, so frame-level bottom follow yields instead of moving the
 surface the user just activated. The image gallery anchors its persistent container
 because the `+N` control unmounts when the full grid replaces it. Follow is derived
 from the resulting geometry after the anchor settles rather than released by the
-toggle. If growth above the activated control needs more scroll range than the
+toggle. Capture starts its fallback restore loop immediately, so an owning row that
+unmounts before its layout effect cannot latch the transcript. Bottom-follow work
+caused by canonical Turn changes is replayed after release, while disclosure-only
+ResizeObserver work is discarded because replaying it would move the activated
+surface. If growth above the activated control needs more scroll range than the
 transcript naturally has, a transient renderer-only tail runway supplies exactly
 the missing range. It is excluded from real-content metrics and is consumed by a
-collapse, later content, or independent scrolling. An asynchronous tool-output read
-holds that anchor until the expanded content lands, while wheel, pointer, touch,
-keyboard, or independent scroll intent still cancels the pending correction
-immediately.
+collapse when geometry permits, later content, or independent scrolling. A
+bottom-clamped collapse that removes content below its control may itself need this
+temporary range to keep the control fixed; the range remains only until content or
+navigation can consume it. An asynchronous tool-output read holds that anchor until
+the expanded content lands, with a three-second safety bound so a lost reply cannot
+latch scrolling. Wheel, pointer, touch, keyboard, or independent scroll intent still
+cancels the pending correction immediately. Sending or choosing Jump to latest
+explicitly supersedes the anchor; pending send-anchor layout otherwise resumes on
+release. Virtual row compensation yields while the explicit anchor is active,
+because that anchor is authoritative for concurrent geometry changes.
 
 ## Pagination And Notifications
 
