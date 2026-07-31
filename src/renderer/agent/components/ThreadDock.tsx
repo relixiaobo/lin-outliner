@@ -297,6 +297,8 @@ export function ThreadDock({
               goal={goal}
               index={index}
               inputRequest={userInput ?? null}
+              waitingOnUserInput={thread.status.type === 'active'
+                && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (

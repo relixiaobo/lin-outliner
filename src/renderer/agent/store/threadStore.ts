@@ -105,6 +105,9 @@ export class ThreadStore {
       threads: sortThreads(threads),
       selectedThreadId: selected,
       planByThread: new Map(),
+      // A reload rebuilds from the server's view; a retry banner recorded
+      // before it describes a connection attempt that no longer exists.
+      providerRetryByThread: new Map(),
       loading: false,
       error: null,
     });
@@ -419,6 +422,10 @@ export class ThreadStore {
         return;
       case 'turn/started': {
         const planByThread = new Map(this.snapshot.planByThread);
+        // A new Turn means the previous Turn's reconnect banner is stale; it
+        // would otherwise keep spinning over work that has already moved on.
+        const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+        providerRetryByThread.delete(notification.threadId);
         planByThread.delete(notification.threadId);
         const preview = threadPreviewFromTurn(notification.turn);
         this.updateThread(notification.threadId, (thread) => ({
@@ -426,8 +433,9 @@ export class ThreadStore {
           preview: thread.preview.trim() ? thread.preview : preview,
           updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
         }));
-        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { planByThread });
-        else this.patch({ planByThread });
+        if (historyLoaded) {
+          this.updateTurn(notification.threadId, notification.turn, { planByThread, providerRetryByThread });
+        } else this.patch({ planByThread, providerRetryByThread });
         return;
       }
       case 'turn/completed': {

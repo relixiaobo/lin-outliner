@@ -670,6 +670,39 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('finalizes a completed Turn open Items as interrupted, never as failed', async () => {
+    // A Turn that succeeded has no business painting a red failure mark on the
+    // work it just did: an Item it finished without closing was cut off.
+    const root = await mkdtemp(join(tmpdir(), 'tenon-open-items-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const executor = new OpenToolItemExecutor();
+    const opened = await openFixture(root, executor, () => ++now);
+    await opened.service.initialize();
+    const thread = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    await opened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Run something' }],
+    });
+    const readLastTurn = () => opened.service
+      .listTurns({ threadId: thread.id, itemsView: 'full', limit: 100 }).data.at(-1);
+    for (let attempt = 0; attempt < 200 && readLastTurn()?.status === 'inProgress'; attempt += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    const turn = readLastTurn();
+    expect(turn?.status).toBe('completed');
+    const command = turn?.items.find((item) => item.type === 'commandExecution');
+    expect(command).toBeDefined();
+    expect((command as { status: string }).status).toBe('interrupted');
+    await opened.service.close();
+  });
+
   test('falls back to the preview when terminal Turn name generation returns no name', async () => {
     const nameGenerator = new ControlledNameGenerator();
     const fixture = await createFixture(undefined, { nameGenerator });
@@ -7471,6 +7504,30 @@ interface Fixture {
   executor: ControlledExecutor;
   clock: () => number;
   stores: ThreadServiceStores;
+}
+
+/** Starts a tool Item and returns without ever completing it, so the Turn has
+ *  to finalize an open Item on an otherwise successful run. */
+class OpenToolItemExecutor implements TurnExecutor {
+  async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    const itemId = context.recorder.createItemId();
+    await context.recorder.started({
+      type: 'commandExecution',
+      id: itemId,
+      provenance: context.recorder.localProvenance(itemId),
+      command: 'sleep 30',
+      description: null,
+      cwd: '/tmp',
+      processId: null,
+      status: 'inProgress',
+      outputRef: null,
+      commandActions: [],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    });
+    return completedExecutionResult();
+  }
 }
 
 async function createFixture(

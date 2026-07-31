@@ -125,12 +125,10 @@ mechanisms.
   renderer clock with `Math.round` (`ThreadView.tsx:1528-1552`, `1587`); the
   final label uses server `turn.durationMs` (`:1556`) — "Working for 4s" can
   be followed by "Worked for 3s".
-- **P7 — `/compact` and `/clear` flash a bogus working block.** The service
-  emits `turn/started` then `turn/completed` back-to-back
-  (`ThreadService.ts:1843-1861`), and
-  `isStandaloneContextBoundaryTurn` requires terminal status
-  (`ThreadView.tsx:1048-1049`), so one frame renders divider + streaming blob
-  + action tail before vanishing.
+- **P7 — ~~`/compact` and `/clear` flash a bogus working block~~ — already
+  fixed, dropped from PR B.** Re-validated on `main` at `a27fb99b`:
+  `isStandaloneContextBoundaryTurn` no longer requires terminal status, it
+  checks item count, trigger kind, and item type only. Nothing to do.
 - **P8 — Present-tense group counts over historical work.**
   `summarizeThreadToolActivity` ORs `running` across the bucket but reports
   the whole subject count — "Reading 6 files" when 5 finished
@@ -146,10 +144,11 @@ mechanisms.
   reduced-motion reset (`thread.css:2550-2564`); the retry status is not
   cleared by `turn/started` or `reloadThreads`
   (`threadStore.ts:104-110`, `419-420`, `434-436`, `458-460`).
-- **P11 — An interrupted-with-open-items completion path marks items
-  `failed` on an otherwise completed turn** (`ThreadService.ts:2860-2861`),
-  showing a red mark on successful work. (Fix belongs in the service; small,
-  bounded.)
+- **P11 — A completed turn marks its still-open items `failed`**, showing a red
+  mark on successful work. Re-validated: the site moved during #451's
+  ThreadService decomposition and is now
+  `TurnLifecycle.ts:882` — `finishOpenItems(status === 'completed' ? 'failed' :
+  status)`. An item the turn finished without closing was cut off, not errored.
 
 ### Plan progress (PR C)
 
@@ -249,10 +248,6 @@ mechanisms.
   origin (`startedAt`), and the interval tick aligns its phase to `startedAt`
   so seconds do not skip; accept a ≤1s live/final delta and clamp the final
   label to never read lower than the last live value shown.
-- **P7:** `isStandaloneContextBoundaryTurn` drops its terminal-status
-  requirement (`ThreadView.tsx:1048-1049`) — a turn whose items are exclusively
-  context-boundary rows renders as a boundary from the first frame; no
-  divider, blob, or action tail flash.
 - **P8:** group phrases split the running subset: "Read 5 files · reading 1"
   (new i18n keys), with counts derived per-status instead of OR-ing `running`
   across the bucket.
@@ -262,10 +257,17 @@ mechanisms.
   gets the same `thread-item` class as the populated branch.
 - **P10:** add `.thread-provider-retry svg` to the reduced-motion reset;
   clear `providerRetryByThread` on `turn/started` and in `reloadThreads`.
-- **P11:** `ThreadService` finalization marks still-open items on a completed
-  turn `interrupted` (not `failed`) — they were cut off, they did not error
-  (`ThreadService.ts:2860-2861`); with PR A's muted interrupted treatment this
-  stops painting red on successful turns.
+- **P11:** `finishOpenItems` marks still-open items on a **completed** turn
+  `interrupted` rather than `failed` (`TurnLifecycle.ts:882`) — they were cut
+  off, they did not error; with PR A's muted interrupted treatment this stops
+  painting red on successful turns. A failed or interrupted turn keeps its own
+  status, unchanged.
+
+**Re-validation note (2026-07-31).** The `file:line` references above were taken
+against `main` at `7bd60a04`; PR B was built against `a27fb99b`, after #458
+rewrote much of `ThreadView.tsx`. Every item was re-checked before implementation:
+P3 shipped with PR A, P7 was already fixed independently, P11 moved to
+`TurnLifecycle`, and P1/P2/P4/P5/P6/P8/P9/P10 were confirmed still live.
 
 ### PR C — plan progress pill
 

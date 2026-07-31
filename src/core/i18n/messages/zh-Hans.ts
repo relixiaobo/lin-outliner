@@ -1063,6 +1063,7 @@ commandPalette: {
       interrupt: '中断本轮',
       continueInNewChat: '在新对话中继续',
       working: '处理中',
+      worked: '已处理',
       workingFor: ({ duration }) => `处理中 ${duration}`,
       workedFor: ({ duration }) => `用时 ${duration}`,
       waitingOnUserInput: '等待输入',
