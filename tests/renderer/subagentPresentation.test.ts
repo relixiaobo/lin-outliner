@@ -9,6 +9,7 @@ import { projectSubagentsForTurn } from '../../src/renderer/agent/subagentPresen
 
 const PARENT_ID = 'thread-parent';
 const CHILD_ID = 'thread-child';
+const SKILL_CHILD_ID = 'thread-skill-child';
 
 describe('Subagent parent-Turn presentation projection', () => {
   test('keeps the first canonical slot while the latest terminal Item owns status and error', () => {
@@ -90,6 +91,47 @@ describe('Subagent parent-Turn presentation projection', () => {
     });
   });
 
+  test('projects an isolated Skill child as delegated work a wait is not waiting for', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_research_ab12cd34ef56',
+    };
+    const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
+    const projection = projectSubagentsForTurn(
+      parentTurn([wait, skillStarted]),
+      new Map([
+        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
+        [SKILL_CHILD_ID, skillChildThread()],
+      ]),
+      new Map([
+        [CHILD_ID, childTurn('child-active', 'inProgress', 150, 'spawn-from-prior-turn')],
+      ]),
+    );
+
+    // Both are live delegated children and both get a row...
+    expect(projection.activeThreadIds).toEqual(expect.arrayContaining([CHILD_ID, SKILL_CHILD_ID]));
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
+      displayName: 'skill_research_ab12cd34ef56',
+      form: 'isolatedSkill',
+      status: 'running',
+    });
+    // ...but only the collaboration child is what the wait is blocked on.
+    expect(projection.byThreadId.get(CHILD_ID)?.form).toBe('collaboration');
+  });
+
+  test('leaves a Skill child out of the wait-time direct-child expansion', () => {
+    const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
+    const projection = projectSubagentsForTurn(
+      parentTurn([wait]),
+      new Map([[SKILL_CHILD_ID, skillChildThread()]]),
+      new Map(),
+    );
+
+    expect(projection.byThreadId.size).toBe(0);
+    expect(projection.activeThreadIds).toEqual([]);
+  });
+
   test('keeps persisted identity after deletion without treating the snapshot as live truth', () => {
     const item = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID);
     const projection = projectSubagentsForTurn(parentTurn([item]), new Map(), new Map());
@@ -165,6 +207,16 @@ function childThread(status: Thread['status']): Thread {
     updatedAt: 1,
     status,
     historyMode: 'paginated',
+  };
+}
+
+function skillChildThread(): Thread {
+  return {
+    ...childThread({ type: 'active', activeFlags: [] }),
+    id: SKILL_CHILD_ID,
+    agentNickname: null,
+    agentRole: 'explorer',
+    source: 'agent.skill',
   };
 }
 

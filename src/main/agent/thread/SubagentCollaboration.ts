@@ -38,6 +38,13 @@ export interface PendingSubagentActivity {
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
   readonly error: Turn['error'];
+  /**
+   * Which delegated form produced this. Every form is recorded as parent-visible
+   * activity, but only `collaboration` is deliverable through the collaboration
+   * result channel — an isolated Skill's outcome belongs to its `skill` tool row
+   * alone, and must never surface again as `wait_agent` work.
+   */
+  readonly form: 'collaboration' | 'isolatedSkill';
 }
 /**
  * Ceiling on any filesystem wait the account layer puts in front of a delegator.
@@ -302,16 +309,17 @@ export class SubagentCollaboration {
         if (stagedThreadId) await this.catalog.deleteThread(stagedThreadId).catch(() => undefined);
         throw error;
       }
-      if (result.thread.source === 'collaboration') {
-        await this.recordSubagentActivity(
-          input.parentThreadId,
-          input.parentTurnId,
-          result.thread.id,
-          result.taskPath,
-          'started',
-          null,
-        );
-      }
+      // Every delegated form gets a per-child row, not only collaboration: an
+      // isolated Skill otherwise runs behind one in-progress `skill` row with no
+      // sign that a delegated agent is working and no way in.
+      await this.recordSubagentActivity(
+        input.parentThreadId,
+        input.parentTurnId,
+        result.thread.id,
+        result.taskPath,
+        'started',
+        null,
+      );
       return result;
     }
 
@@ -540,7 +548,9 @@ export class SubagentCollaboration {
       this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
 
-      if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {
+      // Only collaboration activity can end a wait. Skill activity still flushes
+      // into the transcript as rows, but it is not a deliverable outcome here.
+      if (this.pendingCollaborationActivityCount(senderThreadId) > 0) {
         this.takePendingCollaborationActivity(senderThreadId);
         const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
         return this.collaborationWaitResult(senderThreadId, 'terminal', activities);
@@ -577,11 +587,17 @@ export class SubagentCollaboration {
       });
       this.takePendingCollaborationActivity(senderThreadId);
       const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+      const collaboration = activities.filter((activity) => activity.form === 'collaboration');
       return this.collaborationWaitResult(
         senderThreadId,
-        activities.length > 0 ? 'terminal' : 'steering',
+        collaboration.length > 0 ? 'terminal' : 'steering',
         activities,
       );
+    }
+  private pendingCollaborationActivityCount(threadId: ThreadId): number {
+      return (this.pendingSubagentActivities.get(threadId) ?? [])
+        .filter((activity) => activity.form === 'collaboration')
+        .length;
     }
   /**
    * Re-delegating to an idle child is a NEW request, so it joins the pool of the
@@ -700,6 +716,10 @@ export class SubagentCollaboration {
     ): Promise<CollaborationWaitResult> {
       const updates: CollaborationTerminalOutcome[] = [];
       for (const activity of activities) {
+        // An isolated Skill child is absent from this channel by contract: its
+        // `skill` tool call is the single parent-facing owner of its outcome,
+        // and replaying it here would offer the same work twice.
+        if (activity.form !== 'collaboration') continue;
         if (activity.kind === 'started') continue;
         updates.push(await this.collaborationTerminalOutcome(
           activity.agentThreadId,
@@ -921,11 +941,10 @@ export class SubagentCollaboration {
       );
     }
   queueChildTurnActivity(thread: Thread, turn: Turn): void {
-      // Every delegated form gets an account, so the append runs before the
-      // collaboration-only activity queueing below: an isolated-Skill child is
-      // not a `collaboration` source but is owed the same transcript.
+      // Every delegated form gets an account and a parent-visible row; only
+      // collaboration gets the result channel.
       this.enqueueTranscriptTurn(thread, turn);
-      if (!thread.parentThreadId || thread.source !== 'collaboration') return;
+      if (!thread.parentThreadId) return;
       const agentPath = this.taskPathForThread(thread.id);
       if (!agentPath) return;
       const kind: PendingSubagentActivity['kind'] = turn.status === 'completed'
@@ -933,10 +952,16 @@ export class SubagentCollaboration {
         : turn.status === 'interrupted'
           ? 'interrupted'
           : 'errored';
+      const form: PendingSubagentActivity['form'] = thread.source === 'collaboration'
+        ? 'collaboration'
+        : 'isolatedSkill';
       const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
-      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error });
+      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error, form });
       this.pendingSubagentActivities.set(thread.parentThreadId, queued);
-      this.signalCollaborationActivity(thread.parentThreadId);
+      // An isolated Skill is absent from `wait_agent` by contract, so its
+      // terminal transition must not wake a parent blocked on collaboration
+      // children — the `skill` call that is already awaiting it owns its outcome.
+      if (form === 'collaboration') this.signalCollaborationActivity(thread.parentThreadId);
     }
   async flushPendingSubagentActivities(
       threadId: ThreadId,

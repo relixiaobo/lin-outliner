@@ -4574,12 +4574,62 @@ describe('ThreadService', () => {
         tokenBudget: null,
       }],
     });
-    expect(fixture.executor.contexts[0]!.recorder.orderedItems().some((item) => (
-      item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id
-    ))).toBe(false);
+    // The isolated Skill child is absent from the collaboration result channel
+    // above, and present as parent-visible process: the two are separate
+    // questions, and the row is what makes a running Skill child legible at all.
+    expect(fixture.executor.contexts[0]!.recorder.orderedItems().flatMap((item) => (
+      item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id ? [item.kind] : []
+    ))).toEqual(['started', 'completed']);
 
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('records an isolated Skill child as parent process without offering it as collaboration work', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Run one isolated Skill' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'isolated-skill-item',
+      skillName: 'research',
+      prompt: 'Investigate in isolation',
+      allowedTools: [],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    // Live, while the `skill` call is still in flight: without this row the
+    // parent shows one in-progress tool and no sign an agent is working.
+    expect(fixture.executor.contexts[0]!.recorder.orderedItems().flatMap((item) => (
+      item.type === 'subAgentActivity' ? [{ kind: item.kind, agentThreadId: item.agentThreadId }] : []
+    ))).toEqual([{ kind: 'started', agentThreadId: isolated.thread.id }]);
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(isolated.thread.id);
+    // A Skill child is not collaboration work: it cannot end a wait, cannot be
+    // delivered as an outcome, and does not appear in the child tree.
+    expect(await fixture.service.waitForCollaborationActivity(root.id, rootTurn.turn.id))
+      .toMatchObject({ reason: 'idle', updates: [], agents: [] });
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    const rootItems = fixture.service.readThread({ threadId: root.id, includeTurns: true })
+      .thread.turns?.at(-1)?.items ?? [];
+    expect(rootItems.flatMap((item) => (
+      item.type === 'subAgentActivity' ? [item.kind] : []
+    ))).toEqual(['started', 'completed']);
     await fixture.service.close();
   });
 

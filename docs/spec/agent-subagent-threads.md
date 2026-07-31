@@ -258,6 +258,16 @@ Spawning records a `collabAgentToolCall` in the sender and a
 status queues a parent-scoped `completed`, `interrupted`, or `errored` activity
 Item bound to the exact child Turn; the Item copies that Turn's complete typed
 `TurnError`, while a started or successful activity carries `error: null`.
+
+Every delegated form produces those Items, not collaboration alone: an isolated
+Skill child is a child Thread doing delegated work, so the parent shows the same
+per-child row with live status, elapsed time, and a way in, instead of one
+in-progress `skill` tool row standing for the whole run. Only the collaboration
+form is deliverable through the collaboration result channel — a queued Skill
+activity never ends a `wait_agent`, never appears in its outcomes, and never
+wakes a parent blocked on collaboration children, because the invoking `skill`
+call is already the single parent-facing owner of that outcome. A parent-visible
+row and a deliverable result are separate questions.
 `collabAgentToolCall.agentsStates` persists each reported child's status together
 with nullable task path, nickname, and Role so its identity survives catalog
 deletion. This is a historical result snapshot, not a second source of live

@@ -242,7 +242,11 @@ export function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const collaborationThreadIds = subagents ? [...subagents.keys()] : undefined;
+  // A collaboration tool row accounts for collaboration children only; an
+  // isolated Skill child has its own row and its own `skill` call.
+  const collaborationThreadIds = subagents
+    ? [...subagents.values()].filter((entry) => entry.form === 'collaboration').map((entry) => entry.agentThreadId)
+    : undefined;
   const segments = threadToolActivitySegments(items, t.agent.thread.activity, index, { collaborationThreadIds });
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.

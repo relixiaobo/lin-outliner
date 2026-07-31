@@ -140,7 +140,13 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   expressions and URL text are not treated as concrete local paths, and
   main-process preview checks remain authoritative
 - collaboration Items and Subagent activity link directly to their canonical
-  child Thread. Within one parent Turn, all `subAgentActivity` Items for the same
+  child Thread. Every delegated form is projected the same way, including an
+  isolated Skill child, whose row is the parent's only live signal that a
+  delegated agent is working while its `skill` call is still in flight. A row
+  records which form it describes: a wait counts only collaboration children,
+  and a collaboration tool row is accountable only for those, so a Skill child
+  is never counted as work the parent is waiting for. Within one parent Turn,
+  all `subAgentActivity` Items for the same
   child collapse into one presentation row at the first Item's position. A
   terminal activity Item is authoritative; otherwise the row combines the
   Thread catalog with the latest canonical child `turn/started` or
