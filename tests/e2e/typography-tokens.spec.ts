@@ -76,6 +76,9 @@ const stateLayoutDeclarationAllowlist = new Map([
 const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
   ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
+  // This transient navigation surface floats above the transcript viewport, so it
+  // is level-1 chrome rather than document or Thread content.
+  ['src/renderer/styles/thread.css|.thread-jump-latest', 'Thread jump-to-latest navigation overlay.'],
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
