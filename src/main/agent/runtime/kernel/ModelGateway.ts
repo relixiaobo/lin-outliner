@@ -109,7 +109,10 @@ async function forwardProviderStream(
   return false;
 }
 
-function providerPreparationFailure(model: Model<Api>, error: unknown): AssistantMessageEvent {
+function providerPreparationFailure(
+  model: Model<Api>,
+  error: unknown,
+): Extract<AssistantMessageEvent, { type: 'error' }> {
   const message: AssistantMessage = {
     role: 'assistant',
     content: [],
