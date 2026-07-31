@@ -325,6 +325,24 @@ projection* over them (same pattern as the existing Turn process projection,
     become reachable from their invoking `skill` tool row via the same
     supplemental child-Thread link affordance collaboration rows have
     (`docs/spec/agent-thread-rendering.md:140-141`).
+- **Isolated-Skill delegation gets a status row, not just a link** (PM ruling
+  2026-07-31). `subAgentActivity` is recorded behind two gates that admit only
+  `source === 'collaboration'` — `SubagentCollaboration.recordSubagentActivity`
+  at spawn and the terminal enqueue in `queueChildTurnActivity`. An isolated
+  Skill child (`source: 'agent.skill'`) therefore produces no per-child row: the
+  parent shows one in-progress `skill` tool row for the whole child run, with no
+  indication a delegated agent is working, no live elapsed, and no way in. The
+  `skill` call *is* awaited, so the child's outcome does reach the row's status,
+  and `enqueueTranscriptTurn` already runs for every delegated form — the
+  account exists; the **process** does not. Widen both gates from
+  `source === 'collaboration'` to "any child Thread with a `parentThreadId`", so
+  every delegated form is projected by the #466 projection that already handles
+  dedupe, latest-state precedence, and the live catalog fallback. This is the
+  same defect as the link (S12) seen from the other side, and shipping only the
+  link would leave a child you can open but cannot tell is running. The judgment
+  it answers is the one #468 settled: a session shows the complete, actual
+  process, and isolated Skills are that rule's largest surviving exception.
+  Spec: `docs/spec/agent-subagent-threads.md` changes in the same PR.
 - Spec: rewrite `docs/spec/agent-thread-rendering.md:14-16` and the Thread
   list section in the same change — child Threads are not Thread-list rows;
   they are reachable from the parent transcript and parent Thread Details.
@@ -395,7 +413,10 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   children while the parent row shows the activity indicator during a live
   child run; Thread Details children section opens a child and deletes
   finished ones; skill-row child link; renderer test for `openThreadById`
-  fallback feedback; core test for the root-only `thread/list` page shape.
+  fallback feedback; core test for the root-only `thread/list` page shape; core
+  test that an isolated-Skill child records `subAgentActivity` at spawn and at
+  terminal, and E2E that its live row is in the parent transcript while the
+  `skill` call is still in flight.
 - PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
   a running child, and parent-Stop cascade interrupting live descendants;
   light + dark visual verification for card and indicators.
