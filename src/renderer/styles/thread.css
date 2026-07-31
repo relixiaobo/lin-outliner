@@ -278,7 +278,7 @@
   margin: 0;
   color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
-  font-weight: var(--weight-medium);
+  font-weight: 400;
   line-height: var(--line-ui-xs-relaxed);
 }
 
