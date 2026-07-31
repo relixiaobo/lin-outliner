@@ -190,3 +190,52 @@ the settled projection boundary while preserving these invariants.
   marker.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, the
   relevant Agent E2E scope, `bun run docs:check`, and `git diff --check`.
+
+## Gate rulings (main, 2026-07-31 — plan accepted)
+
+Diagnosis verified against `main` end-to-end, not taken on trust:
+`ContextProjector.ts:290-297` does author `` `[Reasoning]\n…` `` assistant text
+from canonical `reasoning` Items, and `PiTurnExecutor`'s `transformContext`
+(`:219-244`) rebuilds the whole canonical context before **every** provider
+call with `items: currentTurnItems(context)` — so the active Turn's own
+reasoning Items are re-projected as prose into the next call of the same Turn.
+That is exactly the six `output_text` blocks in the captured request. The
+shape-(a) single-PR call is right and is NOT overturned: dropping unsigned
+reasoning without restoring signed in-Turn replay would trade a corrupt
+continuity for none at all, which is why these are two halves of one behavior
+rather than two shippable features.
+
+1. **Name the failure class, then scope it deliberately.** The defect is not
+   "reasoning"; it is that **Tenon authors bracketed markers into the
+   assistant channel, and the assistant channel is a few-shot demonstration
+   the model imitates.** `[Subagent <kind>: …]` (`:298-302`) and
+   `[Viewed image: …]` (`:304-306`) are the same construction and survive this
+   PR. State in the plan why: the model must know it delegated and that it saw
+   an image, whereas replayed reasoning is neither durable context nor
+   representable in its native contract. Flag `[Subagent …]` for a separate
+   look — an imitated `[Subagent spawn: …]` is a **hallucinated delegation**,
+   a strictly worse failure than a stray reasoning label. Do not "fix" the
+   other two by symmetry inside this PR.
+2. **Make the second-authority risk impossible, not merely tested against.**
+   The in-memory retention may only **re-attach reasoning parts onto messages
+   canonical projection already produced**, keyed to
+   `(turnId, provider, api, model)`. It may never contribute a message, a tool
+   call, a tool result, or an ordering. Then "the kernel transcript became a
+   competing history authority" is unreachable by construction rather than a
+   risk a test has to chase. (Same move as the budget line's ruling 10: kill
+   the class, don't patch the instance.)
+3. **Identity mismatch degrades, never throws (A12).** The plan's "fail closed
+   by omitting the reasoning part" is the correct reading of fail-closed here —
+   this is the user path, so a mismatched or unrecognised signature drops the
+   part and continues. No `throw` reaches turn execution.
+4. **Verification must capture the negative directly.** Across ≥3 provider
+   calls in one live Turn, assert **zero** Tenon-authored `[Reasoning]`
+   strings in ANY outgoing payload, and assert that signed native thinking
+   blocks ARE present from call 2 onward. The observed call burned **zero
+   reasoning tokens** — the model stopped thinking natively because we showed
+   it thinking-as-prose, so token-level evidence of restored native reasoning
+   belongs in the run notes.
+5. **Provider-specific evidence, provider-agnostic fix.** All three observed
+   leaks were on the custom OpenAI Responses route; the fix (stop authoring
+   the marker) is correctly route-independent. Do not add a provider
+   conditional.

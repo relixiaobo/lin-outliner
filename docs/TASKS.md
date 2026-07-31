@@ -31,7 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: #457 (draft, plan-only). Recently merged:
+**In flight (2026-07-31).** Open PR queue: #463 (cc-2, `agent-run-presentation-consistency`
+PR B claim). PM staffing next: `red-e2e-on-main` and `agent-subagent-interaction` PR 1/2;
+`agent-browser-control` implementation is **shelved** pending upstream Browser Pilot
+stabilization (PM ruling 2026-07-31), and `agent-reasoning-replay-fidelity` is claimable.
+Recently merged: #457 (plan-only, five gate rulings folded in);
 #455 (`subagent-budget-propagation` PR C) after three gate rounds — the budget
 line is now closed end-to-end (per-child breaker + tree-pool conservation +
 depth/count legibility gates); and
@@ -451,6 +455,25 @@ before any directional/security-sensitive build.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
+- **agent-reasoning-replay-fidelity** (P2, `draft` — codex-4 authored, plan merged #457
+  2026-07-31 with five gate rulings; **implementation unclaimed and claimable now**, no
+  dependency on anything in flight) — Tenon authors `` `[Reasoning]\n…` `` assistant text
+  into the provider's own assistant channel (`context/ContextProjector.ts:290-297`), and
+  `PiTurnExecutor.transformContext` rebuilds that context before **every** provider call
+  including the active Turn's own Items — so the model sees six examples of
+  thinking-written-as-prose and imitates them, emitting `[Reasoning]` as a visible
+  commentary `agentMessage` while burning **zero reasoning tokens** for that call. We
+  taught it to stop thinking. Fix is one complete feature: signed native reasoning
+  survives the tool loop within a Turn under strict `(turnId, provider, api, model)`
+  identity, unsigned canonical reasoning is omitted from rebuilt provider context rather
+  than prosified, and no renderer heuristic is added (a `[Reasoning]` filter would hide
+  the symptom while still teaching the model). Gate rulings: the failure class is
+  *Tenon-authored bracketed markers in the assistant channel*, of which `[Subagent …]`
+  survives and warrants a separate look (an imitated spawn marker is a **hallucinated
+  delegation**); the in-memory retention may only re-attach reasoning parts onto messages
+  canonical projection already produced, so "second history authority" is unreachable by
+  construction; identity mismatch degrades per A12. See
+  `docs/plans/agent-reasoning-replay-fidelity.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -532,10 +555,17 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1, design updated #443, revised #459;
-  **implementation CLAIMABLE NOW — #455 and #460 both landed 2026-07-31, and
-  #456's catalog byte-stability judge guards the landing zone**) —
-  Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
+- **agent-browser-control** (P1 design, **implementation `shelved` by PM ruling
+  2026-07-31**; design updated #443, revised #459) — the in-repo blockers cleared
+  (#455/#460 landed, #456's catalog byte-stability judge guards the landing zone), but
+  **Browser Pilot's own integration surface and feature set are still iterating
+  upstream**, and A7 forbids building against a mechanism we are about to replace —
+  that is the same discipline that killed the first UI-refactor round, applied at the
+  dependency boundary. Revisit when upstream stabilizes; the design below stays valid
+  and needs only an evidence re-validation pass at claim time. Do not claim without a
+  fresh PM go-ahead.
+
+  The shelved design: Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
   its classified `bash` path rather than reimplementing browser automation or
   exposing a Tenon-native tool family. One complete feature PR first establishes
   prepared execution and durable projection, then adds deterministic distribution,
