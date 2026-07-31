@@ -171,6 +171,15 @@ export function ManagedSkillsSettings({ controller, open, onClose }: ManagedSkil
             wrap
           />
         </InsetGroup>
+          {/* Installing is not "confirming" this panel — each entry commits
+              through its own review dialog — so the only action here is to
+              dismiss it. Without a visible one, the panel could be left only by
+              Escape or a backdrop click. */}
+          <div className="confirm-dialog-actions">
+            <Button onClick={onClose} variant="secondary">
+              {t.settings.skills.acquireClose}
+            </Button>
+          </div>
         </Dialog>
       ) : null}
 
