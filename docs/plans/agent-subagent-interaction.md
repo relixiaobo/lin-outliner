@@ -347,6 +347,68 @@ projection* over them (same pattern as the existing Turn process projection,
   list section in the same change — child Threads are not Thread-list rows;
   they are reachable from the parent transcript and parent Thread Details.
 
+#### The descendant budget pool is scoped to a user Turn, not to a Thread
+
+PM ruling 2026-07-31, adopting the Claude Code scope. **This is a persistence
+change riding in a navigation PR — it is the widest thing in PR 2, it crosses a
+fail-closed write boundary (A12), and it carries a schema change. Gate PR 2 at
+`/code-review ultra` accordingly, and put the dev-userData wipe in the PR body.**
+
+**The defect.** `SubagentCollaboration.spawnChild` keys the pool on the *parent
+Thread* when no explicit `max_total_tokens` is given
+(`const poolThreadId = tokenCap === null ? parent.thread.id : thread.id`), so
+`subagent_budget_pools.tokens_used` accumulates across every Turn of that
+Thread's life against the 1.5M default (`agentSettings.ts:126`). Once it
+crosses, `TurnLifecycle.assertResolvedSubagentBudgetAvailable` throws
+`SubagentBudgetExhaustedError` on *every* later spawn, forever. The only reset
+is `SubagentBudgetLedger.clearThread`, reachable solely from the subtree-delete
+path (`ThreadService.ts:395` ← `ThreadCatalogOps.ts:503,538`); `/clear` does not
+touch the ledger and no statement zeroes `tokens_used`. So a long conversation
+silently and permanently loses the ability to delegate, while the user — who by
+design never sees token numbers — gets no cause and no recovery. That is the
+worst of both: no decision *and* no way out.
+
+**The rule.** Separate the two kinds of limit by what each defends against:
+
+- **Spend is request-scoped.** A pool belongs to the explicit **user Turn** that
+  initiated the delegation, and every descendant spawned inside that Turn's
+  subtree shares it. A new user Turn gets a new pool. What the circuit breaker
+  defends against is runaway recursion inside one request; "how much this
+  conversation has done over two weeks" is not an anomaly signal and must not be
+  one.
+- **Structure stays Thread-lifetime.** Depth 2 and the durable 16-direct-children
+  count are unchanged — they defend against topology, and topology is a property
+  of the conversation. `docs/spec/agent-subagent-threads.md` already declares the
+  count deliberately non-resettable; keep that sentence and do not generalize it
+  to spend.
+
+This closes the principle the product runs on: the user states a need and never
+reasons about tokens, so restating the need must be a real recovery path. Under
+Thread-scoped spend it is not.
+
+**Fire-and-forget children (decide here, do not discover it in code).** A child
+can outlive the Turn that spawned it, so "the Turn's pool" needs a lifetime rule:
+the pool is keyed by its originating user Turn and **survives that Turn's end**,
+staying chargeable until every member Thread is terminal; it is reaped after.
+A child therefore keeps charging the request that asked for it, even when the
+parent Turn has already returned — the alternative (migrating orphans to the
+next Turn's pool) would let one runaway child eat a budget the user never spent
+it on.
+
+**Resolution gets simpler, not harder.** Today `resolveSubagentBudgetFrom` walks
+the Thread parent chain looking for a pool. With a Turn-keyed pool the member row
+already carries the reference — `createMember(threadId, poolId, …)` — so
+resolution reads the member instead of walking. Validate that this holds for
+inherited budgets and for the local-cap case (`tokenCap !== null` still keys its
+own pool on the child Thread) before assuming the walk can be deleted.
+
+Pre-release policy applies: change the column, delete the old reader, wipe
+`~/.lin-outliner-*` — no migration.
+
+Spec: `docs/spec/agent-subagent-threads.md` — the budget section states pool
+lifetime explicitly, which it does not today; that silence is what let the
+Thread-scoped reading look intended.
+
 ### PR 3 — live delegation card + user interrupt
 
 Ratified shape (Q1/Q2, PM 2026-07-30):
@@ -416,7 +478,14 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   fallback feedback; core test for the root-only `thread/list` page shape; core
   test that an isolated-Skill child records `subAgentActivity` at spawn and at
   terminal, and E2E that its live row is in the parent transcript while the
-  `skill` call is still in flight.
+  `skill` call is still in flight. For the Turn-scoped pool: a core test that
+  exhausting a pool blocks further spawns **within** that user Turn while the
+  next user Turn spawns successfully (the regression that motivated the change);
+  that a fire-and-forget child outliving its parent Turn still charges the
+  originating pool, and that the pool is reaped only once its last member is
+  terminal; and that depth-2 plus the durable 16-child count are **unchanged**
+  by the rescope — the structural limits must not follow spend into request
+  scope.
 - PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
   a running child, and parent-Stop cascade interrupting live descendants;
   light + dark visual verification for card and indicators.
