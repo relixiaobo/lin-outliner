@@ -19,6 +19,7 @@ export type {
   OAuthLoginEvent,
   OAuthLoginEventEnvelope,
   SkillDefinition,
+  SkillSourceKind,
   ManagedSkillCatalogView,
   ManagedSkillCommandResult,
   ManagedSkillDiscoveryCandidateView,

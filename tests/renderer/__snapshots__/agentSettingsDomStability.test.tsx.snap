@@ -711,37 +711,13 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
         </div>
       </div>
       <div class="inset-group">
-        <div class="inset-group-header">Managed Skills</div>
-        <div role="list" class="inset-card" aria-label="Tenon-managed skills">
+        <div class="inset-group-header">Skills</div>
+        <div role="list" class="inset-card" aria-label="Installed skills">
           <div role="listitem" class="inset-row">
             <div class="inset-row-main is-static">
-              <span class="inset-row-text">
-                <span class="inset-row-label">Available updates</span>
-              </span>
-            </div>
-            <div class="inset-row-trailing">
-              <button type="button" class="button button-ghost button-sm">
-                <svg aria-hidden="true" class="lucide lucide-refresh-cw" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                  <path d="M21 3v5h-5" />
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                  <path d="M8 16H3v5" />
-                </svg>
-                <span>Check</span>
-              </button>
-            </div>
-          </div>
-          <div role="listitem" class="inset-row">
-            <div class="inset-row-main is-static">
-              <span class="inset-row-leading">
-                <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-                  <path d="M22 10v6" />
-                  <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
-                </svg>
-              </span>
               <span class="inset-row-text is-wrap">
-                <span class="inset-row-label">/pdf<span class="settings-chip">Recommended</span>
+                <span class="inset-row-label">/pdf<span class="settings-chip">managed</span>
+                <span class="settings-chip">Recommended</span>
                 <span class="settings-chip">Enabled</span>
               </span>
               <span class="inset-row-sublabel">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
@@ -763,22 +739,19 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
             </button>
           </div>
         </div>
-      </div>
-    </div>
-    <div class="inset-group">
-      <div class="inset-group-header">Installed Capabilities</div>
-      <div role="list" class="inset-card" aria-label="Installed capabilities">
-        <div role="listitem" class="inset-row">
+        <div role="listitem" class="inset-row is-disabled">
           <div class="inset-row-main is-static">
             <span class="inset-row-text is-wrap">
-              <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
+              <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
+              <span class="settings-chip">Workspace · not accepted</span>
             </span>
-            <span class="inset-row-sublabel">Fixture skill skillify.</span>
+            <span class="inset-row-sublabel">Fixture skill project-lint.</span>
           </span>
         </div>
         <div class="inset-row-trailing">
-          <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
-            <span aria-hidden="true" class="switch-mark checked">
+          <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
+          <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
+            <span aria-hidden="true" class="switch-mark">
               <span class="switch-mark-thumb">
               </span>
             </span>
@@ -788,21 +761,22 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
       <div role="listitem" class="inset-row">
         <div class="inset-row-main is-static">
           <span class="inset-row-text is-wrap">
-            <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
-            <span class="settings-chip">Accepted</span>
+            <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
+            <span class="settings-chip">Workspace · not accepted</span>
           </span>
-          <span class="inset-row-sublabel">Fixture skill user-notes.</span>
+          <span class="inset-row-sublabel">Fixture skill project-unratified.</span>
         </span>
       </div>
       <div class="inset-row-trailing">
-        <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
+        <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-unratified for automatic use">Accept</button>
+        <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
           <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
             <circle r="1" cy="12" cx="12" />
             <circle r="1" cy="12" cx="19" />
             <circle r="1" cy="12" cx="5" />
           </svg>
         </button>
-        <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
+        <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
           <span aria-hidden="true" class="switch-mark checked">
             <span class="switch-mark-thumb">
             </span>
@@ -810,19 +784,17 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
         </button>
       </div>
     </div>
-    <div role="listitem" class="inset-row is-disabled">
+    <div role="listitem" class="inset-row">
       <div class="inset-row-main is-static">
         <span class="inset-row-text is-wrap">
-          <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
-          <span class="settings-chip">Workspace · not accepted</span>
+          <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
         </span>
-        <span class="inset-row-sublabel">Fixture skill project-lint.</span>
+        <span class="inset-row-sublabel">Fixture skill skillify.</span>
       </span>
     </div>
     <div class="inset-row-trailing">
-      <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
-      <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
-        <span aria-hidden="true" class="switch-mark">
+      <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
+        <span aria-hidden="true" class="switch-mark checked">
           <span class="switch-mark-thumb">
           </span>
         </span>
@@ -832,22 +804,21 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
   <div role="listitem" class="inset-row">
     <div class="inset-row-main is-static">
       <span class="inset-row-text is-wrap">
-        <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
-        <span class="settings-chip">Workspace · not accepted</span>
+        <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
+        <span class="settings-chip">Accepted</span>
       </span>
-      <span class="inset-row-sublabel">Fixture skill project-unratified.</span>
+      <span class="inset-row-sublabel">Fixture skill user-notes.</span>
     </span>
   </div>
   <div class="inset-row-trailing">
-    <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-unratified for automatic use">Accept</button>
-    <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
+    <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
       <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
         <circle r="1" cy="12" cx="12" />
         <circle r="1" cy="12" cx="19" />
         <circle r="1" cy="12" cx="5" />
       </svg>
     </button>
-    <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
+    <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
       <span aria-hidden="true" class="switch-mark checked">
         <span class="switch-mark-thumb">
         </span>

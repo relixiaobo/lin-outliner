@@ -193,10 +193,13 @@ export const en = {
     },
     skills: {
       sectionAriaLabel: 'Skills',
-      loadingInstalled: 'Loading installed skills…',
-      noneInstalled: 'No skills installed in ~/.agents/skills or .agents/skills.',
-      installedGroup: 'Installed Capabilities',
-      installedAriaLabel: 'Installed capabilities',
+      loadingInstalled: 'Loading skills…',
+      // One list-level empty state: the list now covers every source, so it can
+      // no longer name a single directory.
+      noneInstalled: 'No skills yet. Add one with the + button.',
+      installedGroup: 'Skills',
+      installedAriaLabel: 'Installed skills',
+      sourceManaged: 'managed',
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
       pendingChip: 'Pending acceptance',
       pendingWorkspaceChip: 'Workspace · not accepted',
