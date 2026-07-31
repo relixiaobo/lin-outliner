@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331, tool-row-status-visuals #461; authored plans #302/#303, both shipped 2026-06-19) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/process-state-truthfulness` | `agent-run-presentation-consistency` PR B (#463, draft claim) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -526,8 +526,8 @@ before any directional/security-sensitive build.
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
 - **agent-browser-control** (P1, design updated #443, revised #459;
-  **implementation ready to claim once draft #455 and draft #460 land or
-  close**) —
+  **implementation CLAIMABLE NOW — #455 and #460 both landed 2026-07-31, and
+  #456's catalog byte-stability judge guards the landing zone**) —
   Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
   its classified `bash` path rather than reimplementing browser automation or
   exposing a Tenon-native tool family. One complete feature PR first establishes
@@ -550,7 +550,9 @@ before any directional/security-sensitive build.
   conversation-only authorization remediation) are folded in. The claiming
   dev rebases on the landed #455/#460 catalog baseline and repeats the
   open-PR scope check before claiming code. URL Preview remains wholly
-  independent. See `docs/plans/agent-browser-control.md`.
+  independent. See `docs/plans/agent-browser-control.md`. **This is the single
+  largest unclaimed P1;** codex-3 authored the #459 revision and holds the most
+  context, but the claim is open.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
