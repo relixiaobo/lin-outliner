@@ -25,6 +25,11 @@ interface SettingsSkillLibrarySectionProps {
   additionalSkillDirectories: readonly string[];
   onDirectoriesChange: (next: string[]) => Promise<void>;
   onToggleSkill: (skillName: string) => void;
+  /**
+   * Persists one name's `disabledSkills` membership immediately. Used by the
+   * managed toggle, whose activation half is already immediate.
+   */
+  onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<void>;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   onApplied: () => Promise<void>;
@@ -74,6 +79,7 @@ export function SettingsSkillLibrarySection({
   additionalSkillDirectories,
   onDirectoriesChange,
   onToggleSkill,
+  onPersistSkillDisabled,
   onError,
   onNotice,
   onApplied,
@@ -209,10 +215,14 @@ export function SettingsSkillLibrarySection({
       toggleLabel: t.settings.skills.managedEnableToggle({ name: skill.name }),
       onToggle: (next: boolean) => {
         void managed.setEnabled(skill, next);
-        // A managed Skill can also be named in disabledSkills. Clearing it on
-        // enable keeps the control from looking stuck: activation alone would
-        // not be enough to turn the row back on.
-        if (next && disabledSkills.includes(skill.name)) onToggleSkill(skill.name);
+        // A managed Skill can also be named in disabledSkills, and activation
+        // alone would not turn the row back on. This half persists immediately
+        // too — the activation write already did, and splitting one action
+        // across two commit models is what let Cancel leave the Skill
+        // activated-but-suppressed.
+        if (next && disabledSkills.includes(skill.name)) {
+          void onPersistSkillDisabled(skill.name, false);
+        }
       },
       actions: managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),

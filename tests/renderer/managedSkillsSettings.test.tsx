@@ -291,6 +291,7 @@ function renderComponent(
         additionalSkillDirectories={[]}
         disabledSkills={[]}
         onDirectoriesChange={async () => undefined}
+        onPersistSkillDisabled={async () => undefined}
         onApplied={async () => undefined}
         onError={() => undefined}
         onNotice={() => undefined}

@@ -148,6 +148,79 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.inset-group-header-action button')).not.toBeNull();
   });
 
+  test('enabling a suppressed managed skill persists both halves, not one', async () => {
+    // Activation goes to the managed index immediately. If clearing the
+    // disabledSkills entry were only a draft, Cancel would leave the Skill
+    // activated on disk but still suppressed by the predicate — invisible to
+    // the model, and back to off with no explanation on reopen.
+    const persisted: Array<[string, boolean]> = [];
+    const drafted: string[] = [];
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf'],
+      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); },
+      onToggleSkill: (name) => { drafted.push(name); },
+    });
+
+    const control = switchFor(rendered.document, 'Enable pdf');
+    expect(control.getAttribute('aria-checked')).toBe('false');
+    await act(async () => {
+      control.click();
+      await Promise.resolve();
+    });
+
+    expect(persisted).toEqual([['pdf', false]]);
+    expect(drafted).toEqual([]);
+  });
+
+  test('a non-managed toggle stays a draft the footer Save commits', async () => {
+    const persisted: Array<[string, boolean]> = [];
+    const drafted: string[] = [];
+    const rendered = await render({
+      skills: [localSkill('user-notes', 'user')],
+      managed: [],
+      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); },
+      onToggleSkill: (name) => { drafted.push(name); },
+    });
+
+    await act(async () => {
+      switchFor(rendered.document, 'Toggle user-notes').click();
+      await Promise.resolve();
+    });
+
+    expect(drafted).toEqual(['user-notes']);
+    expect(persisted).toEqual([]);
+  });
+
+  test('a failed update check keeps the skill description', async () => {
+    // An offline launch produces this for every installed Skill, from an action
+    // the user never requested; it must not repaint the library.
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill({
+        status: 'failed',
+        diagnostic: { code: 'github_unavailable' },
+      })],
+    });
+
+    expect(rendered.document.body.textContent).toContain('Managed fixture.');
+  });
+
+  test('an integrity fault does replace the description', async () => {
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill({
+        status: 'modified',
+        diagnostic: { code: 'skill_modified', detail: 'pdf' },
+      })],
+    });
+
+    // Here the Skill's own content is what is untrustworthy, so it must not be
+    // the thing the row shows.
+    expect(rendered.document.body.textContent).not.toContain('Managed fixture.');
+  });
+
   test('a skill from a bound directory carries the local chip', async () => {
     const rendered = await render({
       skills: [{ ...localSkill('notes', 'user'), rootDir: '/work/skills/notes' }],
@@ -233,6 +306,8 @@ async function render(input: {
   disabledSkills?: string[];
   directories?: string[];
   onDirectoriesChange?: (next: string[]) => Promise<void>;
+  onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
+  onToggleSkill?: (skillName: string) => void;
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -264,7 +339,8 @@ async function render(input: {
           onApplied={async () => undefined}
           onError={() => undefined}
           onNotice={() => undefined}
-          onToggleSkill={() => undefined}
+          onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => undefined)}
+          onToggleSkill={input.onToggleSkill ?? (() => undefined)}
         />
       </I18nProvider>,
     );

@@ -284,6 +284,43 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     }
   }
 
+  /**
+   * Persists one Skill's `disabledSkills` membership immediately.
+   *
+   * The managed toggle activates through the managed index at once, so its other
+   * half cannot be a draft the footer Save commits later: flipping a managed
+   * Skill on and then cancelling would leave it activated on disk but still
+   * named in disabledSkills, which the unified predicate reads as off — the
+   * model could not invoke it and the row would come back off with no
+   * explanation. One user action, one commit model.
+   *
+   * The write is derived from the PERSISTED list, not the draft, so it cannot
+   * smuggle a user's other pending toggles onto disk; the draft is then adjusted
+   * by the same single change so it will not re-add the name on the next Save.
+   */
+  async function persistSkillDisabled(skillName: string, disabled: boolean) {
+    const persisted = settings?.agent.disabledSkills ?? [];
+    const next = disabled
+      ? [...new Set([...persisted, skillName])]
+      : persisted.filter((name) => name !== skillName);
+    const requestId = beginRequest('mutation');
+    setSaving(true);
+    try {
+      const updated = await api.agentUpdateRuntimeSettings({ disabledSkills: next });
+      if (isCurrentRequest('mutation', requestId)) {
+        setSettings(updated);
+        setSkillDraft((current) => ({
+          disabledSkills: disabled
+            ? [...new Set([...current.disabledSkills, skillName])]
+            : current.disabledSkills.filter((name) => name !== skillName),
+        }));
+      }
+      await onApplied();
+    } finally {
+      if (isCurrentRequest('mutation', requestId)) setSaving(false);
+    }
+  }
+
   function toggleSkill(skillName: string) {
     setSkillDraft((current) => {
       const disabled = current.disabledSkills.includes(skillName)
@@ -460,6 +497,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 onDirectoriesChange={changeSkillDirectories}
                 onError={setError}
                 onNotice={setNotice}
+                onPersistSkillDisabled={persistSkillDisabled}
                 onToggleSkill={toggleSkill}
               />
             )}
