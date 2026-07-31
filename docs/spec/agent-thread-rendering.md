@@ -162,6 +162,24 @@ An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized
 vertical interval on either side of the separator.
 
+The status line never claims more than the run is doing. A settled Turn is
+described in the past — it never falls through to the live `Working` label —
+and when a Turn is **blocked on the user** (`waitingOnUserInput`) the line says
+so, the spinner stops, and the elapsed clock freezes: waiting for an answer is
+not work, and a timer that keeps counting says the agent is still busy. Exactly
+one element owns a Turn's terminal status: with no final response the divider
+states it and the synthetic response tail renders actions only, and when the
+response tail owns it the divider is suppressed but the timeline still keeps a
+neutral, status-free header rather than becoming an unlabelled list of rows.
+Counted activity reports finished and in-flight work separately — "Read 5 files
+· reading 1", never one present-tense count covering work that has already
+finished. A live reasoning disclosure stays open while it is the tail of a
+running Turn, so a newly arriving Item cannot snap it shut and shift the layout
+under the reader, and the empty placeholder carries the same classes as the
+populated one so the first token does not restyle the element. The reconnect
+banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
+the Thread list reloads, so it cannot outlive the attempt it describes.
+
 An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both
 empty and streaming responses; Markdown does not add a second caret. The

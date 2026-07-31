@@ -1898,7 +1898,9 @@ function ThreadProcessBlock({
         // needs a name — otherwise it is an unlabelled list of rows.
         <div className="thread-work-divider">
           <span className="thread-process-title">
-            {threadProcessNeutralHeader(turn, items, t, index)}
+            {turn.durationMs !== null
+              ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
+              : threadProcessNeutralHeader(turn, items, t, index)}
           </span>
         </div>
       ) : null}

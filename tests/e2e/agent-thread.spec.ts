@@ -2243,10 +2243,14 @@ test.describe('canonical agent Thread surface', () => {
     // name — it used to render as an unlabelled list of rows.
     const withResponse = blocks.last();
     await expect(withResponse.locator('.thread-process-timeline')).toHaveCount(1);
+    // A neutral, status-free name for the timeline: the duration when known,
+    // never a status claim and never the live "Working" label.
     const header = withResponse.locator('.thread-process-title');
     await expect(header).toHaveCount(1);
-    await expect(header).not.toHaveText('Working');
-    await expect(header).toContainText('sleep 30');
+    await expect(header).toHaveText('Worked for <1s');
+    // Exactly one owner per Turn: the divider for the Turn without a response,
+    // the response tail for the Turn with one — two in total, never three.
+    await expect(page.getByText('Turn interrupted')).toHaveCount(2);
   });
 
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
