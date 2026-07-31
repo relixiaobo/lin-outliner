@@ -499,7 +499,16 @@ before any directional/security-sensitive build.
   presentation row per child over append-only Items, `agentsStates` widened to
   `{status, taskPath, nickname, role}`, product language, failure tinting), PR 2 navigation +
   Thread-list hygiene (**children leave the history list entirely** — root conversations only,
-  background-activity indicator, Thread Details children section, back-to-parent), PR 3 live
+  background-activity indicator, Thread Details children section, back-to-parent) **plus two
+  scope additions ruled in on 2026-07-31**: isolated-Skill children get a `subAgentActivity`
+  status row rather than only a link (both recording gates admit `source === 'collaboration'`
+  today, so a Skill child runs behind one in-progress `skill` row with no elapsed and no way
+  in), and the descendant budget pool is rescoped from the Thread to the initiating **user
+  Turn** (it is keyed on the parent Thread and accumulates for that Thread's whole life, so
+  crossing the 1.5M default permanently kills delegation in that conversation — only subtree
+  delete resets it, `/clear` does not). **PR 2 therefore gates at `/code-review ultra`**: it
+  now carries a persistence write boundary and a schema change, and needs the dev-userData
+  wipe note in its body. PR 3 live
   delegation card + user interrupt with **parent Stop cascading to live descendants**; no
   dock-level agents panel (the #160 panel lived and was dissolved — reconsider only on
   demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
