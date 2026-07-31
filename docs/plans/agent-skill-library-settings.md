@@ -126,7 +126,8 @@ never a rounded square. The acquisition panel is an overlay → B5 material with
 `prefers-reduced-transparency` opaque fallback, B10 tiered elevation (level-2 for
 a dialog-class surface), and it must be registered in the
 `typography-tokens.spec.ts` material allowlist in the same change — an
-unregistered material surface is what turned that guard red on `main`. No
+unregistered material surface is exactly what turned that guard red on `main`
+until #464 registered `.thread-jump-latest`. No
 `cursor: pointer` on non-links. Rows must not reflow on hover (B7).
 
 **Files:** `AgentSettingsView.tsx`, `ManagedSkillsSettings.tsx` (stops being a
@@ -234,7 +235,6 @@ a release, and nothing validates it.
 - Visual verification in **light and dark**, plus `prefers-reduced-transparency`
   and `prefers-reduced-motion`.
 - `bun run typecheck`, `test:core`, `test:renderer`, relevant e2e, `docs:check`.
-  Note that three e2e specs are red on `main` independently of this work (board:
-  `red-e2e-on-main`) — do not relax a guard to make them pass, and do not count
-  them as this branch's failures.
+  `main`'s e2e baseline was restored in #464, so `test:e2e` is a clean signal
+  again — a red spec on this branch is this branch's.
 - Update `docs/spec/agent-skills.md` (Settings section) in the same change.
