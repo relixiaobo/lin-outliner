@@ -1175,7 +1175,16 @@ commandPalette: {
       goalUsage: ({ used, budget }: { used: string; budget: string }) => `${used} / ${budget} tokens`,
       goalUnboundedUsage: ({ used }: { used: string }) => `${used} tokens`,
       inputNeeded: 'Input needed',
-      planProgress: ({ current, total }: { current: number; total: number }) => `Step ${current} / ${total}`,
+      planProgress: ({ current, total }: { current: number; total: number }) => `${current}/${total}`,
+      planCurrentStep: ({ progress, step }: { progress: string; step: string }) => `${progress} · ${step}`,
+      planComplete: 'Plan complete',
+      planStepStatus: {
+        completed: 'Completed',
+        in_progress: 'Current step',
+        pending: 'Pending',
+      },
+      planProgressAnnouncement: ({ progress, step }: { progress: string; step: string }) =>
+        `Plan progress ${progress}, current step: ${step}`,
       inputProgress: ({ current, total }: { current: number; total: number }) => `${current} of ${total}`,
       inputBack: 'Previous question',
       inputNext: 'Next',
@@ -1183,7 +1192,6 @@ commandPalette: {
       other: 'Other',
       otherPlaceholder: 'Enter another answer...',
       item: {
-        plan: 'Plan',
         reasoning: 'Reasoning',
         command: 'Command',
         fileChange: 'File changes',

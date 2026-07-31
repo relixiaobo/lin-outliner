@@ -1257,8 +1257,18 @@ export function ThreadView({
           </ButtonControl>
         ) : null}
       </div>
+      {/* A watched child or automation Thread has no composer, but `update_plan`
+          is `anyThread`-scoped — so it has a Plan, and used to have nowhere to
+          show it. Read-only there: no composer to hand focus back to. */}
+      {!composerEnabled && activePlan ? (
+        <div className="thread-composer-region thread-plan-progress-region">
+          <ThreadPlanProgress plan={activePlan} />
+        </div>
+      ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
-        {activePlan ? <ThreadPlanProgress plan={activePlan} /> : null}
+        {activePlan ? (
+          <ThreadPlanProgress onClosed={() => composerRef.current?.focus()} plan={activePlan} />
+        ) : null}
         <div
           className={`thread-composer-surface${dragActive ? ' is-dragging' : ''}`}
           onDragEnter={handleDragEnter}
@@ -1708,7 +1718,21 @@ function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryS
   );
 }
 
-function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
+/**
+ * The transient Plan, as a pill above the composer. The persistent affordance is
+ * the **current step's text**, not a bare counter: `2/5 · Draft the summary`
+ * tells the reader what is happening, where `Step 2 / 5` told them only that
+ * something was.
+ */
+function ThreadPlanProgress({
+  onClosed,
+  plan,
+}: {
+  /** Where focus goes when the checklist closes. Absent on a Thread with no
+   *  composer, where it returns to the pill instead. */
+  readonly onClosed?: () => void;
+  readonly plan: ActiveTurnPlan;
+}) {
   const t = useT();
   const summaryId = useId();
   const popoverId = useId();
@@ -1719,27 +1743,45 @@ function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
   if (total === 0) return null;
   const activeIndex = plan.plan.findIndex((step) => step.status === 'in_progress');
   const pendingIndex = plan.plan.findIndex((step) => step.status === 'pending');
-  const current = activeIndex >= 0 ? activeIndex + 1 : pendingIndex >= 0 ? pendingIndex + 1 : total;
   const complete = plan.plan.every((step) => step.status === 'completed');
+  // A finished plan is not "on" its last step; saying `5/5` alongside a check
+  // was distinguishable from step five only by the icon.
+  const currentIndex = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : total - 1;
+  const progress = t.agent.thread.planProgress({ current: currentIndex + 1, total });
+  const currentStep = plan.plan[currentIndex]?.step ?? '';
+  const label = complete
+    ? t.agent.thread.planComplete
+    : t.agent.thread.planCurrentStep({ progress, step: currentStep });
+  const close = (restoreFocus: boolean) => {
+    setOpen(false);
+    if (!restoreFocus) return;
+    // Deliberate close hands focus back to the composer, per the terminal model
+    // — the pill is a status affordance, not a destination. With no composer,
+    // focus lands on the pill: the popover it was on is about to become
+    // `visibility: hidden`, which would drop focus to <body>.
+    if (onClosed) onClosed();
+    else summaryRef.current?.focus();
+  };
   return (
     <div
       className={`thread-plan-progress${open ? ' is-open' : ''}`}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) close(false);
       }}
     >
       <button
         aria-controls={popoverId}
         aria-expanded={open}
-        aria-live="polite"
         className="thread-plan-progress-summary"
         id={summaryId}
         onClick={() => {
           const nextOpen = !open;
-          setOpen(nextOpen);
-          if (nextOpen) {
-            window.requestAnimationFrame(() => popoverRef.current?.focus());
+          if (!nextOpen) {
+            close(true);
+            return;
           }
+          setOpen(true);
+          window.requestAnimationFrame(() => popoverRef.current?.focus());
         }}
         ref={summaryRef}
         type="button"
@@ -1747,8 +1789,15 @@ function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
         {complete
           ? <CheckIcon aria-hidden size={ICON_SIZE.tiny} />
           : <LoaderIcon aria-hidden className="thread-plan-progress-spinner" size={ICON_SIZE.tiny} />}
-        <span>{t.agent.thread.planProgress({ current, total })}</span>
+        <span className="thread-plan-progress-label">{label}</span>
       </button>
+      {/* The announcement carries the step text, not just the counter — a
+          counter alone tells a screen-reader user nothing changed but a number. */}
+      <span aria-live="polite" className="thread-visually-hidden">
+        {complete
+          ? t.agent.thread.planComplete
+          : t.agent.thread.planProgressAnnouncement({ progress, step: currentStep })}
+      </span>
       <div
         aria-labelledby={summaryId}
         className="thread-plan-progress-popover"
@@ -1756,8 +1805,7 @@ function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
         onKeyDown={(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
-          setOpen(false);
-          summaryRef.current?.focus();
+          close(true);
         }}
         ref={popoverRef}
         role="region"
@@ -1771,7 +1819,12 @@ function ThreadPlanProgress({ plan }: { readonly plan: ActiveTurnPlan }) {
                 {step.status === 'completed' ? <CheckIcon size={ICON_SIZE.tiny} /> : null}
                 {step.status === 'in_progress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
               </span>
-              <span>{step.step}</span>
+              <span>
+                <span className="thread-visually-hidden">
+                  {`${t.agent.thread.planStepStatus[step.status]}: `}
+                </span>
+                {step.step}
+              </span>
             </li>
           ))}
         </ol>

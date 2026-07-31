@@ -2942,6 +2942,129 @@ test.describe('canonical agent Thread surface', () => {
     await expect(preview.locator('.file-preview-content')).toContainText('Mock preview text.');
   });
 
+  test('shows a Plan on a Thread that has no composer', async ({ page }) => {
+    // `update_plan` is `anyThread`-scoped, so a watched child or automation
+    // Thread has a Plan — and the chip used to mount only inside the composer
+    // branch, so it had nowhere to appear.
+    await createNewThread(page);
+    const childThreadId = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin
+        ?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const parent = response?.data[0];
+      if (!parent) throw new Error('Mock Thread not found');
+      const thread = {
+        ...parent,
+        id: '01910000-0000-7000-8000-00000000ce01',
+        parentThreadId: parent.id,
+        name: 'Child agent',
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', thread });
+      return thread.id;
+    });
+
+    // Select before seeding: notifications for a Thread whose Turns are not yet
+    // loaded are dropped, and selecting reloads them.
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' }).getByText('Child agent').click();
+    await page.evaluate((threadId) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const turnId = '01910000-0000-7000-8000-00000000ce02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId,
+        explanation: null,
+        plan: [
+          { step: 'Gather the sources', status: 'completed' },
+          { step: 'Cross-check the citations', status: 'in_progress' },
+        ],
+      });
+    }, childThreadId);
+
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const pill = page.locator('.thread-plan-progress-summary');
+    await expect(pill).toHaveText('2/2 · Cross-check the citations');
+
+    // With no composer to return to, Escape must still land focus somewhere
+    // reachable rather than dropping it to the document body.
+    await pill.click();
+    await expect(page.locator('.thread-plan-progress-popover')).toBeFocused();
+    await page.locator('.thread-plan-progress-popover').press('Escape');
+    await expect(pill).toBeFocused();
+
+    // The checklist gets the Thread's width here, not the pill's.
+    await pill.click();
+    const widths = await page.evaluate(() => {
+      const popover = document.querySelector('.thread-plan-progress-popover');
+      const region = document.querySelector('.thread-composer-region');
+      return {
+        popover: popover?.getBoundingClientRect().width ?? 0,
+        region: region?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    expect(widths.popover).toBeGreaterThan(widths.region * 0.5);
+  });
+
+  test('reads an all-complete Plan as complete, not as its last step', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000e101';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId, items: [], itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress', error: null, startedAt: Date.now(), completedAt: null, durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId,
+        explanation: null,
+        plan: [
+          { step: 'Read the source', status: 'completed' },
+          { step: 'Write the summary', status: 'completed' },
+        ],
+      });
+    });
+
+    // `2/2` beside a check was distinguishable from "on step two" only by the
+    // icon; a finished Plan is not "on" its last step.
+    await expect(page.locator('.thread-plan-progress-summary')).toHaveText('Plan complete');
+  });
+
   test('shows Turn-local Plan progress only while the Turn is active', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
@@ -3010,15 +3133,22 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const progress = page.locator('.thread-plan-progress-summary');
-    await expect(progress).toHaveText('Step 2 / 24');
+    // The persistent affordance is the current step's text, not a bare counter.
+    await expect(progress).toHaveText('2/24 · Implement the transient projection');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();
     const checklist = page.locator('.thread-plan-progress-popover');
     await expect(checklist).toBeVisible();
     await expect(checklist).toContainText('Working through the interaction contract');
     await expect(checklist.locator('li')).toHaveCount(24);
-    await expect(checklist.locator('li').first()).toHaveText('Inspect the current behavior');
-    await expect(checklist.locator('li').last()).toHaveText('Verify interaction checkpoint 24');
+    // Each row states its status for assistive tech; the icons are decorative.
+    await expect(checklist.locator('li').first()).toHaveText('Completed: Inspect the current behavior');
+    await expect(checklist.locator('li').last()).toHaveText('Pending: Verify interaction checkpoint 24');
+    // The current step is marked by weight and colour, so the cue survives
+    // reduced motion, where the spinner stops.
+    const currentStep = checklist.locator('li.is-in_progress');
+    await expect(currentStep).toHaveCount(1);
+    await expect(currentStep).toHaveCSS('font-weight', '600');
     expect(await checklist.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
     await checklist.hover();
@@ -3037,8 +3167,10 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await checklist.press('Escape');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
-    await expect(progress).toBeFocused();
     await expect(checklist).not.toBeVisible();
+    // Closing hands focus back to the composer, not to the pill: the Plan is a
+    // transient status affordance, not a destination to be stranded in.
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeFocused();
 
     await page.evaluate(({ threadId, turn }) => {
       const e2eWindow = window as Window & {

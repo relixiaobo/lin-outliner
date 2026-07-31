@@ -623,14 +623,35 @@ The selected Thread shows the established live reconnecting row while retrying
 and removes it when the provider recovers or the Turn becomes terminal.
 
 `turn/plan/updated` is also transient execution state, not an Item. The selected
-Thread keeps only the latest snapshot for its active Turn and shows compact
-`Step n / total` progress above the composer. Hover previews the complete
-checklist; activating the summary opens the same scrollable checklist and moves
-keyboard focus into it. Escape closes it and restores focus to the summary. A
+Thread keeps only the latest snapshot for its active Turn and shows it as a
+compact pill, horizontally centered above the composer. The pill's persistent
+affordance is **the current step's text**, not a bare counter: `2/5 · Draft the
+summary`, ellipsized to one line, on a fixed single-line height so it never
+reflows the composer. A Plan whose every step is complete reads as complete
+rather than as its last step. The current step is the first `in_progress` step,
+then the first `pending` one.
+
+The pill also renders on a Thread that has **no composer** — a watched child or
+automation Thread — because `update_plan` is `anyThread`-scoped and such a
+Thread has a Plan to show. It is equally interactive there; only the focus
+destination differs, since there is no composer to return to.
+
+Hover previews the complete checklist; activating the summary opens the same
+scrollable checklist and moves keyboard focus into it. The current step is
+marked by weight and text colour rather than by the spinning icon alone, whose
+cue disappears entirely under reduced motion; completed steps stay dimmed. Step
+rows carry their status as text for assistive technology, since the icons are
+decorative, and the live announcement includes the current step's text rather
+than only a counter. Deliberately closing it — Escape, or re-activating the
+summary — restores focus to the composer: the Plan is a status affordance, not
+a destination to be stranded in. On a Thread with no composer that focus
+returns to the pill, never to the document body. Closing by blur moves focus
+nowhere, because the blur already took it somewhere the reader chose. Steps
+render at the transcript's own text scale. A
 replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
-or application restart removes it. It never appears in transcript history, Turn
-Details, response copy, or as `Used update_plan`.
+or application restart removes it. The pill is the Plan's *content* surface —
+the current step — and does not replace the record that the tool ran.
 
 Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;

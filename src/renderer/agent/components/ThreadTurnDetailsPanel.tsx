@@ -382,7 +382,8 @@ function ToolExecutionBatchActivity({
   readonly turnId: string;
 }) {
   const t = useT();
-  const failed = activity.executions.some((execution) => execution.status === 'failed');
+  const executions = activity.executions;
+  const failed = executions.some((execution) => execution.status === 'failed');
   const relation = activity.consumedByCallIndex === null
     ? t.agent.turnDetails.afterCall({ index: activity.sourceCallIndex + 1 })
     : t.agent.turnDetails.betweenCalls({
@@ -394,10 +395,10 @@ function ToolExecutionBatchActivity({
       defaultOpen={failed}
       metadata={relation}
       resetKey={`tools:${activity.sourceCallIndex}:${activity.consumedByCallIndex ?? 'none'}`}
-      title={t.agent.turnDetails.toolExecutionBatch({ count: activity.executions.length })}
+      title={t.agent.turnDetails.toolExecutionBatch({ count: executions.length })}
       render={() => (
         <div className="thread-turn-details-item-list">
-          {activity.executions.map((execution) => {
+          {executions.map((execution) => {
             const item = execution.itemId ? itemsById.get(execution.itemId) : null;
             return item ? (
               <CanonicalItemRow item={item} key={execution.callId} threadId={threadId} turnId={turnId} />
