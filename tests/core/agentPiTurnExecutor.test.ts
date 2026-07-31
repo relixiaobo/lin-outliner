@@ -8,6 +8,7 @@ import type {
 } from '../../src/main/agent/runtime/kernel/types';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
+import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type {
   AgentCoreNotification,
@@ -2031,6 +2032,8 @@ describe('PiTurnExecutor event normalization', () => {
         },
       }),
       createAgent: (options) => {
+        expect(options.transformContext).toBeUndefined();
+        expect(options.recoverContextOverflow).toBeUndefined();
         initialState = options.initialState;
         const runtime = new NativeAgentRuntime(options);
         return {
@@ -2079,7 +2082,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('reconstructs canonical tool calls, results, and reasoning for later Turns', async () => {
+  test('reconstructs canonical tool calls and results while omitting unsigned reasoning for later Turns', async () => {
     const fixture = createContext();
     const threadId = fixture.context.thread.id;
     const turnId = fixture.context.turn.id;
@@ -2109,6 +2112,8 @@ describe('PiTurnExecutor event normalization', () => {
             exitCode: 0,
             durationMs: 5,
           },
+          { type: 'agentMessage', id: 'agent-2', provenance: provenance('agent-2'), text: 'Continuing.', phase: 'commentary', memoryCitation: null },
+          { type: 'reasoning', id: 'reason-2', provenance: provenance('reason-2'), summary: ['Need documentation'], content: ['Search the docs'] },
           {
             type: 'mcpToolCall',
             id: 'call-2',
@@ -2129,19 +2134,30 @@ describe('PiTurnExecutor event normalization', () => {
 
     const messages = await new CanonicalContextProjector(testModel, context)
       .projectTurns(context.historyBeforeTurn);
-    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult', 'toolResult']);
+    expect(messages.map((message) => message.role)).toEqual([
+      'user', 'assistant', 'toolResult', 'assistant', 'toolResult',
+    ]);
     expect(messages[1]).toMatchObject({
       role: 'assistant',
       stopReason: 'toolUse',
       content: [
         { type: 'text', text: 'Checking.' },
-        { type: 'text', text: '[Reasoning]\nNeed evidence\nInspect the workspace' },
         { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pwd', cwd: '/workspace' } },
-        { type: 'toolCall', id: 'call-2', name: 'docs__search', arguments: { query: 'Thread' } },
       ],
     });
     expect(messages[2]).toMatchObject({ role: 'toolResult', toolCallId: 'call-1', content: [{ text: '/workspace' }] });
-    expect(messages[3]).toMatchObject({ role: 'toolResult', toolCallId: 'call-2', content: [{ text: '{"matches":2}' }] });
+    expect(messages[3]).toMatchObject({
+      role: 'assistant',
+      stopReason: 'toolUse',
+      content: [
+        { type: 'text', text: 'Continuing.' },
+        { type: 'toolCall', id: 'call-2', name: 'docs__search', arguments: { query: 'Thread' } },
+      ],
+    });
+    expect(messages[4]).toMatchObject({ role: 'toolResult', toolCallId: 'call-2', content: [{ text: '{"matches":2}' }] });
+    expect(JSON.stringify(messages)).not.toContain('[Reasoning]');
+    expect(JSON.stringify(messages)).not.toContain('Need evidence');
+    expect(JSON.stringify(messages)).not.toContain('Need documentation');
   });
 
   test('bounds persisted tool projections and stores typed image sources instead of base64', async () => {
@@ -2336,6 +2352,219 @@ describe('PiTurnExecutor provider payload', () => {
       reasoning: { effort: 'high', summary: 'detailed' },
     });
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
+  });
+
+  test('reattaches signed same-Turn thinking without authoring reasoning markers across three provider calls', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    const outgoingPayloads: Array<{ readonly model: string; readonly input: unknown[] }> = [];
+    const signatures = [
+      openAIReasoningSignature('rs_first'),
+      openAIReasoningSignature('rs_second'),
+      openAIReasoningSignature('rs_final'),
+    ];
+    const reasoningTokens = [5, 6, 7];
+    let providerCalls = 0;
+    let toolExecutions = 0;
+    const recoveringTool: AgentTool = {
+      ...testTool('replay_tool', 'Reasoning replay test tool'),
+      execute: async () => {
+        toolExecutions += 1;
+        if (toolExecutions === 1) throw new Error('Recoverable tool failure');
+        return { content: [{ type: 'text', text: 'recovered' }], details: {} };
+      },
+    };
+    const responses = [
+      reasoningAssistantMessage(
+        'First native thought',
+        signatures[0]!,
+        reasoningTokens[0]!,
+        [{ type: 'toolCall', id: 'replay-call-1', name: 'replay_tool', arguments: {} }],
+      ),
+      reasoningAssistantMessage(
+        'Second native thought',
+        signatures[1]!,
+        reasoningTokens[1]!,
+        [{ type: 'toolCall', id: 'replay-call-2', name: 'replay_tool', arguments: {} }],
+      ),
+      reasoningAssistantMessage(
+        'Final native thought',
+        signatures[2]!,
+        reasoningTokens[2]!,
+        [{ type: 'text', text: 'Completed after recovery' }],
+        'stop',
+      ),
+    ];
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [recoveringTool],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          const message = responses[providerCalls];
+          if (!message) throw new Error(`Unexpected provider call ${providerCalls + 1}`);
+          providerCalls += 1;
+          providerContexts.push(structuredClone(providerContext.messages));
+          const payload = {
+            model: model.id,
+            input: convertResponsesMessages(
+              model,
+              providerContext,
+              new Set([model.provider]),
+              { includeSystemPrompt: false },
+            ) as unknown[],
+          };
+          outgoingPayloads.push(payload);
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(async () => {
+            await options.onPayload?.(payload, model);
+            emitAssistantMessage(stream, message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(providerCalls).toBe(3);
+    expect(toolExecutions).toBe(2);
+    for (const payload of outgoingPayloads) {
+      expect(JSON.stringify(payload).match(/\[Reasoning\]/g) ?? []).toHaveLength(0);
+    }
+    expect(outboundThinkingSignatures(providerContexts[0] ?? [])).toEqual([]);
+    expect(outboundThinkingSignatures(providerContexts[1] ?? [])).toEqual([signatures[0]]);
+    expect(outboundThinkingSignatures(providerContexts[2] ?? [])).toEqual(signatures.slice(0, 2));
+    expect(outboundReasoningItemIds(outgoingPayloads[0]!.input)).toEqual([]);
+    expect(outboundReasoningItemIds(outgoingPayloads[1]!.input)).toEqual(['rs_first']);
+    expect(outboundReasoningItemIds(outgoingPayloads[2]!.input)).toEqual(['rs_first', 'rs_second']);
+    expect(fixture.recorder.orderedItems()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'dynamicToolCall', id: 'replay-call-1', status: 'failed' }),
+      expect.objectContaining({ type: 'dynamicToolCall', id: 'replay-call-2', status: 'completed' }),
+    ]));
+    expect(fixture.diagnosticsPayloads[0]?.providerCalls.map((call) => call.response?.usage.reasoning))
+      .toEqual(reasoningTokens);
+  });
+
+  test('drops signed thinking on provider identity mismatch without failing the Turn', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('mismatch_tool', 'Identity mismatch test tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          providerContexts.push(structuredClone(providerContext.messages));
+          providerCalls += 1;
+          const message = providerCalls === 1
+            ? {
+                ...reasoningAssistantMessage(
+                  'Foreign native thought',
+                  'not-a-valid-openai-reasoning-item',
+                  4,
+                  [
+                    { type: 'text', text: 'Foreign commentary' },
+                    { type: 'toolCall', id: 'mismatch-call', name: 'mismatch_tool', arguments: {} },
+                  ],
+                ),
+                model: 'foreign-model',
+              }
+            : assistantMessage([{ type: 'text', text: 'Continued without foreign reasoning' }]);
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(async () => {
+            await options.onPayload?.({
+              model: model.id,
+              input: convertResponsesMessages(
+                model,
+                providerContext,
+                new Set([model.provider]),
+                { includeSystemPrompt: false },
+              ),
+            }, model);
+            emitAssistantMessage(stream, message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(providerCalls).toBe(2);
+    expect(outboundThinkingSignatures(providerContexts[1] ?? [])).toEqual([]);
+    expect(JSON.stringify(providerContexts[1])).toContain('Foreign commentary');
+    expect(JSON.stringify(providerContexts[1])).toContain('mismatch-call');
+    expect(JSON.stringify(providerContexts[1])).not.toContain('[Reasoning]');
+  });
+
+  test('retries payload preparation without same-identity thinking when its signature is unrecognised', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    const outgoingPayloads: unknown[] = [];
+    let providerAttempts = 0;
+    let preparedCalls = 0;
+    const invalidSignature = 'not-a-valid-openai-reasoning-item';
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [testTool('signature_tool', 'Signature fallback test tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          providerAttempts += 1;
+          providerContexts.push(structuredClone(providerContext.messages));
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(async () => {
+            try {
+              const payload = {
+                model: model.id,
+                input: convertResponsesMessages(
+                  model,
+                  providerContext,
+                  new Set([model.provider]),
+                  { includeSystemPrompt: false },
+                ),
+              };
+              await options.onPayload?.(payload, model);
+              outgoingPayloads.push(payload);
+              preparedCalls += 1;
+              const message = preparedCalls === 1
+                ? reasoningAssistantMessage(
+                    'Native thought with an unrecognised signature',
+                    invalidSignature,
+                    4,
+                    [{ type: 'toolCall', id: 'signature-call', name: 'signature_tool', arguments: {} }],
+                  )
+                : assistantMessage([{ type: 'text', text: 'Continued without invalid thinking' }]);
+              emitAssistantMessage(stream, message);
+            } catch (error) {
+              const message = {
+                ...assistantMessage([]),
+                stopReason: 'error' as const,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              };
+              stream.push({ type: 'error', reason: 'error', error: message });
+              stream.end(message);
+            }
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(providerAttempts).toBe(3);
+    expect(preparedCalls).toBe(2);
+    expect(outboundThinkingSignatures(providerContexts[0] ?? [])).toEqual([]);
+    expect(outboundThinkingSignatures(providerContexts[1] ?? [])).toEqual([invalidSignature]);
+    expect(outboundThinkingSignatures(providerContexts[2] ?? [])).toEqual([]);
+    expect(JSON.stringify(outgoingPayloads)).not.toContain(invalidSignature);
+    expect(JSON.stringify(outgoingPayloads)).not.toContain('[Reasoning]');
   });
 
   test('applies one runtime policy to provider requests and retries overflow after canonical compaction', async () => {
@@ -2932,4 +3161,72 @@ function assistantMessage(content: AssistantMessage['content']): AssistantMessag
     stopReason: 'stop',
     timestamp: 1_720_000_000_200,
   };
+}
+
+function reasoningAssistantMessage(
+  thinking: string,
+  thinkingSignature: string,
+  reasoningTokens: number,
+  content: AssistantMessage['content'],
+  stopReason: AssistantMessage['stopReason'] = 'toolUse',
+): AssistantMessage {
+  const base = assistantMessage([
+    { type: 'thinking', thinking, thinkingSignature },
+    ...content,
+  ]);
+  return {
+    ...base,
+    stopReason,
+    usage: {
+      ...base.usage,
+      output: reasoningTokens + 4,
+      reasoning: reasoningTokens,
+      totalTokens: reasoningTokens + 7,
+    },
+  };
+}
+
+function openAIReasoningSignature(id: string): string {
+  return JSON.stringify({
+    type: 'reasoning',
+    id,
+    encrypted_content: `encrypted-${id}`,
+    summary: [{ type: 'summary_text', text: id }],
+  });
+}
+
+function outboundThinkingSignatures(messages: readonly Message[]): string[] {
+  return messages.flatMap((message) => message.role === 'assistant'
+    ? message.content.flatMap((part) => (
+        part.type === 'thinking' && part.thinkingSignature ? [part.thinkingSignature] : []
+      ))
+    : []);
+}
+
+function outboundReasoningItemIds(input: readonly unknown[]): string[] {
+  return input.flatMap((item) => (
+    typeof item === 'object'
+    && item !== null
+    && 'type' in item
+    && item.type === 'reasoning'
+    && 'id' in item
+    && typeof item.id === 'string'
+      ? [item.id]
+      : []
+  ));
+}
+
+function emitAssistantMessage(
+  stream: ReturnType<typeof createAssistantMessageEventStream>,
+  message: AssistantMessage,
+): void {
+  stream.push({ type: 'start', partial: message });
+  message.content.forEach((part, contentIndex) => {
+    if (part.type !== 'thinking') return;
+    stream.push({ type: 'thinking_start', contentIndex, partial: message });
+    stream.push({ type: 'thinking_delta', contentIndex, delta: part.thinking, partial: message });
+    stream.push({ type: 'thinking_end', contentIndex, content: part.thinking, partial: message });
+  });
+  stream.push({ type: 'done', reason: message.stopReason, message });
+  stream.end(message);
 }

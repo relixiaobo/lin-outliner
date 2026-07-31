@@ -1,12 +1,14 @@
 import type {
   Api,
   AssistantMessage,
+  AssistantMessageEvent,
   AssistantMessageEventStream,
   Context,
   Model,
   ProviderResponse,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { piStreamSimple } from '../../../piModels';
 import type { ModelError, StreamFn } from './types';
 
@@ -32,13 +34,99 @@ export class PiModelGateway implements ModelGateway {
 
   async stream(request: ModelGatewayRequest): Promise<AssistantMessageEventStream> {
     await this.hooks.onProviderContext?.(request.context);
-    return await (this.hooks.streamSimple ?? piStreamSimple)(request.model, request.context, {
+    const streamSimple = this.hooks.streamSimple ?? piStreamSimple;
+    const streamOptions = {
       ...request.options,
       maxRetries: 0,
       onPayload: this.hooks.onPayload,
       onResponse: this.hooks.onResponse,
+    };
+    if (!hasSignedThinking(request.context)) {
+      return await streamSimple(request.model, request.context, streamOptions);
+    }
+
+    let payloadPrepared = false;
+    const source = await streamSimple(request.model, request.context, {
+      ...streamOptions,
+      onPayload: async (payload, model) => {
+        payloadPrepared = true;
+        return await this.hooks.onPayload?.(payload, model);
+      },
     });
+    const output = createAssistantMessageEventStream();
+    void (async () => {
+      try {
+        const shouldRetry = await forwardProviderStream(source, output, () => !payloadPrepared);
+        if (!shouldRetry) return;
+        const fallback = await streamSimple(
+          request.model,
+          withoutSignedThinking(request.context),
+          streamOptions,
+        );
+        await forwardProviderStream(fallback, output, () => false);
+      } catch (error) {
+        output.push(providerPreparationFailure(request.model, error));
+      }
+    })();
+    return output;
   }
+}
+
+function hasSignedThinking(context: Context): boolean {
+  return context.messages.some((message) => message.role === 'assistant'
+    && message.content.some((part) => part.type === 'thinking' && Boolean(part.thinkingSignature)));
+}
+
+function withoutSignedThinking(context: Context): Context {
+  return {
+    ...context,
+    messages: context.messages.map((message) => message.role === 'assistant'
+      ? {
+          ...message,
+          content: message.content.filter((part) => (
+            part.type !== 'thinking' || !part.thinkingSignature
+          )),
+        }
+      : message),
+  };
+}
+
+async function forwardProviderStream(
+  source: AssistantMessageEventStream,
+  output: AssistantMessageEventStream,
+  shouldDropPreparationError: () => boolean,
+): Promise<boolean> {
+  let finalMessage: AssistantMessage | undefined;
+  for await (const event of source) {
+    if (event.type === 'error' && shouldDropPreparationError()) return true;
+    if (event.type === 'done') finalMessage = event.message;
+    if (event.type === 'error') finalMessage = event.error;
+    output.push(event);
+  }
+  output.end(finalMessage);
+  return false;
+}
+
+function providerPreparationFailure(model: Model<Api>, error: unknown): AssistantMessageEvent {
+  const message: AssistantMessage = {
+    role: 'assistant',
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: 'error',
+    errorMessage: error instanceof Error ? error.message : String(error),
+    timestamp: Date.now(),
+  };
+  return { type: 'error', reason: 'error', error: message };
 }
 
 const RESPONSES_API_STATUS_RE = /\b(?:Azure )?OpenAI API error \((\d{3})\):/i;

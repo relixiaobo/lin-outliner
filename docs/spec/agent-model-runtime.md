@@ -56,9 +56,21 @@ messages from prior canonical Turns plus the active `ItemRecorder`. The awaited
 event subscriber makes completed assistant and tool Items durable before the
 next provider request can begin. Tool calls and results remain paired, and
 provider-visible timestamps come from persisted `acceptedAt`/`Turn.startedAt`
-rather than terminalization time or the current clock. Internal Memory Turns do
+rather than terminalization time or the current clock. Unsigned canonical
+`reasoning` Items never become assistant text. Within the active Turn only, the
+runtime retains provider-signed thinking in memory and re-attaches it to the
+assistant message that canonical projection already produced for the same
+canonical Item. The retention key is the Turn ID plus provider, API, and model;
+an identity mismatch omits thinking and continues without failing the Turn. If
+a matching provider cannot prepare a payload from an unrecognised signature,
+the gateway retries payload preparation once with signed thinking removed. The
+fallback is provider-neutral and is available only before payload preparation;
+provider, transport, and post-preparation failures remain unchanged. Retention
+cannot add a message, tool call, tool result, or ordering, so the kernel
+transcript cannot become a second history authority. Internal Memory Turns do
 not install that projection port or overflow recovery; they send a top-level
-snapshot of their raw in-memory transcript.
+snapshot of their raw in-memory transcript, which already preserves
+same-execution provider parts without canonical re-projection.
 
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all
@@ -124,17 +136,22 @@ cross an initialization boundary and still reach the provider.
 
 Prior and active provider input is rebuilt from the effective canonical Item sequence
 after context-reset and compaction reduction.
-Messages become assistant content, while reasoning becomes explicitly labelled
-assistant text because canonical history does not retain provider-private
-reasoning signatures. Command, file, MCP, dynamic,
+Messages become assistant content, while canonical reasoning contributes no
+provider message because canonical history does not retain provider-private
+reasoning signatures. The runtime never substitutes `[Reasoning]` or another
+text marker. Command, file, MCP, dynamic,
 collaboration, and web Items become paired provider tool-call and tool-result
 messages using the frozen projection recorded for each complete output. Dynamic tool
 results retain their ordered text, JSON, and actual image content at the provider
 boundary. Each image is preceded by a stable identity marker derived from its alt text
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
-reset Items select context state rather than becoming user prose; Subagent activity
-and viewed images become textual context. A compaction serializes its lossy summary, uses
+reset Items select context state rather than becoming user prose. Subagent activity
+and viewed images intentionally remain textual context because the model must know that
+it delegated work and observed an image; neither fact has an equivalent private native
+replay contract. The `[Subagent ...]` marker's imitation risk, including hallucinated
+delegation, is a separate follow-up rather than a reason to broaden the reasoning fix.
+A compaction serializes its lossy summary, uses
 its validated reducer checkpoint to restore complete Skill/Role catalogs, inline Skill
 instructions, user view, Thread state, file/Node observations, and optional durable
 instructions, then continues with its declared preserved tail. Checkpoint hashes and
@@ -488,8 +505,11 @@ results. The sidecar is not provider input and does not affect message bytes, or
 budgeting, or cache affinity. Diagnostics persists it with each prepared window, and the
 codec rejects any message or part-count mismatch. The renderer uses only this typed
 sidecar to label context evidence; literal user text that spells a `system-reminder` or
-`context-evidence` wrapper remains a regular text part. Post-adapter payload fragments
-have no invented provenance and are presented according to their recorded wire shape.
+`context-evidence` wrapper remains a regular text part. Ephemeral same-Turn signed
+thinking uses assistant-history provenance because its canonical assistant message owns
+the position; that classification does not make the signature durable or available to a
+later Turn. Post-adapter payload fragments have no invented provenance and are presented
+according to their recorded wire shape.
 
 Turn-wide audit facts record the exact context epoch and cache affinity, L0/L1/L2
 stable-prompt source blocks and fingerprints, canonical-sorted tool schema pool,
