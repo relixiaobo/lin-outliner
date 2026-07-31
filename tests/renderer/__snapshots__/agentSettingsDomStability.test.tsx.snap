@@ -652,106 +652,83 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
     <div class="settings-content">
       <section aria-label="Skills" class="agent-settings-section settings-skills-section">
         <div class="inset-group">
-          <div class="inset-group-header">Linlab Catalog</div>
-          <div role="list" class="inset-card" aria-label="Linlab recommended skills">
+          <div class="inset-group-header has-action">
+            <span class="inset-group-header-label">Skills</span>
+            <span class="inset-group-header-action">
+              <button type="button" title="Add a skill" class="icon-button icon-button-chrome rail-toggle" aria-label="Add a skill" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M5 12h14" />
+                  <path d="M12 5v14" />
+                </svg>
+              </button>
+            </span>
+          </div>
+          <div role="list" class="inset-card" aria-label="Installed skills">
             <div role="listitem" class="inset-row">
               <div class="inset-row-main is-static">
                 <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">pdf<span class="settings-chip">Recommended</span>
+                  <span class="inset-row-label">/pdf<span class="settings-chip">managed</span>
+                  <span class="settings-chip">Recommended</span>
+                  <span class="settings-chip">Enabled</span>
                 </span>
                 <span class="inset-row-sublabel">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
               </span>
             </div>
             <div class="inset-row-trailing">
-              <span class="settings-chip">Installed</span>
+              <button type="button" class="settings-row-menu-trigger" aria-label="pdf actions" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                  <circle r="1" cy="12" cx="12" />
+                  <circle r="1" cy="12" cx="19" />
+                  <circle r="1" cy="12" cx="5" />
+                </svg>
+              </button>
+              <button type="button" role="switch" aria-label="Enable pdf" aria-checked="true">
+                <span aria-hidden="true" class="switch-mark checked">
+                  <span class="switch-mark-thumb">
+                  </span>
+                </span>
+              </button>
             </div>
           </div>
-          <div role="listitem" class="inset-row">
+          <div role="listitem" class="inset-row is-disabled">
             <div class="inset-row-main is-static">
               <span class="inset-row-text is-wrap">
-                <span class="inset-row-label">spreadsheet<span class="settings-chip">Recommended</span>
+                <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
+                <span class="settings-chip">Workspace · not accepted</span>
               </span>
-              <span class="inset-row-sublabel">Create, inspect, validate, and package spreadsheet workbooks.</span>
+              <span class="inset-row-sublabel">Fixture skill project-lint.</span>
             </span>
           </div>
           <div class="inset-row-trailing">
-            <button type="button" class="button button-secondary button-sm">
-              <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 12h14" />
-                <path d="M12 5v14" />
-              </svg>
-              <span>Install</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="inset-group">
-      <div class="inset-group-header">Install from GitHub</div>
-      <div role="list" class="inset-card" aria-label="Install a public GitHub skill">
-        <div role="listitem" class="inset-row">
-          <div class="inset-row-main is-static">
-            <span class="inset-row-text is-wrap">
-              <span class="inset-row-label">Public repository or skill URL</span>
-            </span>
-          </div>
-          <div class="inset-row-trailing">
-            <div class="managed-skill-source-control">
-              <input type="text" class="input-control input-bare input-md" aria-label="Public repository or skill URL" spellCheck="false" placeholder="https://github.com/owner/repository" maxLength="2048" autoCorrect="off" autoCapitalize="none">
-                <button type="button" class="button button-secondary button-sm" disabled>
-                  <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 12h14" />
-                    <path d="M12 5v14" />
-                  </svg>
-                  <span>Add</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="inset-group">
-        <div class="inset-group-header">Skills</div>
-        <div role="list" class="inset-card" aria-label="Installed skills">
-          <div role="listitem" class="inset-row">
-            <div class="inset-row-main is-static">
-              <span class="inset-row-text is-wrap">
-                <span class="inset-row-label">/pdf<span class="settings-chip">managed</span>
-                <span class="settings-chip">Recommended</span>
-                <span class="settings-chip">Enabled</span>
-              </span>
-              <span class="inset-row-sublabel">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
-            </span>
-          </div>
-          <div class="inset-row-trailing">
-            <button type="button" class="settings-row-menu-trigger" aria-label="pdf actions" aria-haspopup="menu" aria-expanded="false">
-              <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                <circle r="1" cy="12" cx="12" />
-                <circle r="1" cy="12" cx="19" />
-                <circle r="1" cy="12" cx="5" />
-              </svg>
-            </button>
-            <button type="button" role="switch" aria-label="Enable pdf" aria-checked="true">
-              <span aria-hidden="true" class="switch-mark checked">
+            <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
+            <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
+              <span aria-hidden="true" class="switch-mark">
                 <span class="switch-mark-thumb">
                 </span>
               </span>
             </button>
           </div>
         </div>
-        <div role="listitem" class="inset-row is-disabled">
+        <div role="listitem" class="inset-row">
           <div class="inset-row-main is-static">
             <span class="inset-row-text is-wrap">
-              <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
+              <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
               <span class="settings-chip">Workspace · not accepted</span>
             </span>
-            <span class="inset-row-sublabel">Fixture skill project-lint.</span>
+            <span class="inset-row-sublabel">Fixture skill project-unratified.</span>
           </span>
         </div>
         <div class="inset-row-trailing">
-          <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
-          <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
-            <span aria-hidden="true" class="switch-mark">
+          <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-unratified for automatic use">Accept</button>
+          <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
+            <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <circle r="1" cy="12" cx="12" />
+              <circle r="1" cy="12" cx="19" />
+              <circle r="1" cy="12" cx="5" />
+            </svg>
+          </button>
+          <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
+            <span aria-hidden="true" class="switch-mark checked">
               <span class="switch-mark-thumb">
               </span>
             </span>
@@ -761,22 +738,13 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
       <div role="listitem" class="inset-row">
         <div class="inset-row-main is-static">
           <span class="inset-row-text is-wrap">
-            <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
-            <span class="settings-chip">Workspace · not accepted</span>
+            <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
           </span>
-          <span class="inset-row-sublabel">Fixture skill project-unratified.</span>
+          <span class="inset-row-sublabel">Fixture skill skillify.</span>
         </span>
       </div>
       <div class="inset-row-trailing">
-        <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-unratified for automatic use">Accept</button>
-        <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
-          <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-            <circle r="1" cy="12" cx="12" />
-            <circle r="1" cy="12" cx="19" />
-            <circle r="1" cy="12" cx="5" />
-          </svg>
-        </button>
-        <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
+        <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
           <span aria-hidden="true" class="switch-mark checked">
             <span class="switch-mark-thumb">
             </span>
@@ -787,13 +755,21 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
     <div role="listitem" class="inset-row">
       <div class="inset-row-main is-static">
         <span class="inset-row-text is-wrap">
-          <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
+          <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
+          <span class="settings-chip">Accepted</span>
         </span>
-        <span class="inset-row-sublabel">Fixture skill skillify.</span>
+        <span class="inset-row-sublabel">Fixture skill user-notes.</span>
       </span>
     </div>
     <div class="inset-row-trailing">
-      <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
+      <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
+        <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+          <circle r="1" cy="12" cx="12" />
+          <circle r="1" cy="12" cx="19" />
+          <circle r="1" cy="12" cx="5" />
+        </svg>
+      </button>
+      <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
         <span aria-hidden="true" class="switch-mark checked">
           <span class="switch-mark-thumb">
           </span>
@@ -801,31 +777,6 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
       </button>
     </div>
   </div>
-  <div role="listitem" class="inset-row">
-    <div class="inset-row-main is-static">
-      <span class="inset-row-text is-wrap">
-        <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
-        <span class="settings-chip">Accepted</span>
-      </span>
-      <span class="inset-row-sublabel">Fixture skill user-notes.</span>
-    </span>
-  </div>
-  <div class="inset-row-trailing">
-    <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
-      <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-        <circle r="1" cy="12" cx="12" />
-        <circle r="1" cy="12" cx="19" />
-        <circle r="1" cy="12" cx="5" />
-      </svg>
-    </button>
-    <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
-      <span aria-hidden="true" class="switch-mark checked">
-        <span class="switch-mark-thumb">
-        </span>
-      </span>
-    </button>
-  </div>
-</div>
 </div>
 </div>
 </section>

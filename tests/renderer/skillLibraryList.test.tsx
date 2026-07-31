@@ -142,7 +142,36 @@ describe('skill library list', () => {
     const rendered = await render({ skills: [], managed: [] });
 
     expect(rendered.document.body.textContent).toContain('No skills yet.');
-    expect(rendered.document.querySelectorAll('.agent-settings-empty')).toHaveLength(1);
+    // Exactly one empty row, and it stays inside the group so the `+` that fixes
+    // the empty state is still reachable from it.
+    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(1);
+    expect(rendered.document.querySelector('.inset-group-header-action button')).not.toBeNull();
+  });
+
+  test('acquisition is behind the + control, not on the page', async () => {
+    const rendered = await render({ skills: [], managed: [] });
+
+    // The catalog and the URL field are two inputs to the same act and live in
+    // one panel; neither occupies the page until asked for.
+    expect(rendered.document.body.textContent).not.toContain('Public repository or skill URL');
+    expect(rendered.document.querySelector('.skill-acquire-dialog')).toBeNull();
+
+    const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button');
+    if (!add) throw new Error('Missing + control');
+    await act(async () => {
+      add.click();
+      await Promise.resolve();
+    });
+    const entry = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Add Skill…');
+    if (!entry) throw new Error('Missing add-skill menu entry');
+    await act(async () => {
+      entry.click();
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector('.skill-acquire-dialog')).not.toBeNull();
+    expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
   });
 });
 

@@ -28,6 +28,22 @@
   user-select: none;
 }
 
+/* A group-level action sits at the end of the header row. The control itself is
+   icon-only chrome (B6) and supplies its own hover treatment; the header only
+   provides the layout, and the row height is set by the header text so adding or
+   removing the action never reflows the list (B7). */
+.inset-group-header.has-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.inset-group-header-action {
+  display: inline-flex;
+  align-items: center;
+}
+
 /* The card clips its rows so the first/last row's neutral selection fill follows
    the rounded corners (concentric, B9). overflow:hidden would clip an OUTER focus
    ring, so rows use the INSET focus token below. */

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManagedSkillView, SkillDefinition, SkillSourceKind } from '../../api/types';
 import { api } from '../../api/client';
-import { LoaderIcon } from '../icons';
+import { AddIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
+import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 import { Button } from '../primitives/Button';
 import { EmptyState } from '../primitives/FeedbackState';
+import { IconButton } from '../primitives/IconButton';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
@@ -66,9 +68,19 @@ export function SettingsSkillLibrarySection({
   // while a mutation is in flight.
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [acquireOpen, setAcquireOpen] = useState(false);
+  const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
   const managed = useManagedSkills(onApplied);
+
+  // Acquisition lives behind `+` instead of occupying the page. The menu is the
+  // level-1 chrome surface here and reuses the registered popover glass, which
+  // carries the prefers-reduced-transparency opaque fallback with it.
+  const addActions: AnchoredMenuAction[] = [
+    { label: t.settings.skills.addSkill, onSelect: () => setAcquireOpen(true) },
+  ];
 
   useEffect(() => {
     mountedRef.current = true;
@@ -214,16 +226,59 @@ export function SettingsSkillLibrarySection({
 
   const loading = loadingSkills || managed.loading;
 
+  // The `+` is an icon-only chrome control (B6): colour deepens on hover, no box.
+  const addControl = (
+    <>
+      <IconButton
+        aria-expanded={addMenuOpen}
+        aria-haspopup="menu"
+        className="rail-toggle"
+        icon={AddIcon}
+        iconSize={ICON_SIZE.menu}
+        label={t.settings.skills.addAriaLabel}
+        onClick={() => setAddMenuOpen((current) => !current)}
+        ref={addAnchorRef}
+        variant="chrome"
+      />
+      {addMenuOpen ? (
+        <AnchoredActionMenu
+          actions={addActions}
+          anchorRef={addAnchorRef}
+          ariaLabel={t.settings.skills.addMenuAriaLabel}
+          className="settings-row-menu"
+          itemClassName="settings-row-menu-item"
+          itemLabelClassName="settings-row-menu-item-label"
+          onClose={() => setAddMenuOpen(false)}
+          width={208}
+        />
+      ) : null}
+    </>
+  );
+
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
-      <ManagedSkillsSettings controller={managed} />
+      <ManagedSkillsSettings
+        controller={managed}
+        onClose={() => setAcquireOpen(false)}
+        open={acquireOpen}
+      />
 
       {loading && rows.length === 0 ? (
         <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.skills.loadingInstalled} />
       ) : rows.length === 0 ? (
-        <EmptyState className="agent-settings-empty" size="inline" title={t.settings.skills.noneInstalled} />
+        <InsetGroup
+          ariaLabel={t.settings.skills.installedAriaLabel}
+          headerAction={addControl}
+          label={t.settings.skills.installedGroup}
+        >
+          <InsetRow disabled label={t.settings.skills.noneInstalled} />
+        </InsetGroup>
       ) : (
-        <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
+        <InsetGroup
+          ariaLabel={t.settings.skills.installedAriaLabel}
+          headerAction={addControl}
+          label={t.settings.skills.installedGroup}
+        >
           {rows.map((row) => (
             <InsetRow
               dimmed={row.dimmed}

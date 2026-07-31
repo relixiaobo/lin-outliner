@@ -27,6 +27,17 @@
   flex: 1 1 auto;
 }
 
+/* The acquisition panel. Browsing the catalog and pasting a URL are two inputs to
+   the same act, so they share one dialog rather than two page sections. It is a
+   dialog-class surface: opaque --bg-elevated at level-2, the same treatment as
+   .confirm-dialog and the managed review dialogs. Translucent material in this
+   app is level-1 chrome (menus, rails) — the `+` menu that opens this panel is
+   that, and it reuses the already-registered popover glass, so this change adds
+   no new material surface. */
+.skill-acquire-dialog .inset-group:first-of-type {
+  margin-top: var(--space-5);
+}
+
 .managed-skill-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 48px));

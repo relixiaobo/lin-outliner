@@ -14,6 +14,12 @@ import { cx } from '../primitives/cx';
 interface InsetGroupProps {
   /** Sentence-case section header above the card (e.g. "Configured"). */
   label?: string;
+  /**
+   * Optional control aligned to the end of the header row — an icon-only chrome
+   * control that acts on the whole group (e.g. the Skill library's `+`). Keep it
+   * icon-only per B6: colour deepens on hover, no box.
+   */
+  headerAction?: ReactNode;
   /** Optional explanatory footnote under the card. */
   footnote?: ReactNode;
   /** Accessible name for the list region; falls back to `label`. */
@@ -22,10 +28,17 @@ interface InsetGroupProps {
   children: ReactNode;
 }
 
-export function InsetGroup({ label, footnote, ariaLabel, className, children }: InsetGroupProps) {
+export function InsetGroup({ label, headerAction, footnote, ariaLabel, className, children }: InsetGroupProps) {
   return (
     <div className={cx('inset-group', className)}>
-      {label ? <div className="inset-group-header">{label}</div> : null}
+      {/* Without an action the header keeps its original single-element shape, so
+          adding this slot cannot disturb the panes that do not use it. */}
+      {headerAction ? (
+        <div className="inset-group-header has-action">
+          <span className="inset-group-header-label">{label}</span>
+          <span className="inset-group-header-action">{headerAction}</span>
+        </div>
+      ) : label ? <div className="inset-group-header">{label}</div> : null}
       <div aria-label={ariaLabel ?? label} className="inset-card" role="list">
         {children}
       </div>

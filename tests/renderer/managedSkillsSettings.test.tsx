@@ -51,6 +51,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     expect(rendered.document.body.textContent).toContain('Catalog unavailable');
     expect(rendered.document.body.textContent).toContain('GitHub is unavailable');
@@ -80,6 +81,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -131,6 +133,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     expect(rendered.document.body.textContent).toContain('Update available');
     expect(rendered.document.body.textContent).toContain('Modified');
@@ -151,6 +154,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -180,6 +184,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     }, 'zh-Hans');
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === '安装');
     if (!catalogInstall) throw new Error('Missing localized catalog install button');
@@ -224,6 +229,7 @@ describe('Skill library — managed sources', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -317,6 +323,26 @@ function installDomGlobals(window: Window): void {
   });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: window.navigator });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+}
+
+/**
+ * Acquisition now lives behind the library's `+`, so these specs open it before
+ * asserting on the catalog / URL surface.
+ */
+async function openAcquisition(rendered: Rendered): Promise<void> {
+  const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button');
+  if (!add) throw new Error('Missing + control');
+  await act(async () => {
+    add.click();
+    await Promise.resolve();
+  });
+  const entry = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Add Skill…'
+    || button.textContent?.trim() === '添加 Skill…');
+  if (!entry) throw new Error('Missing add-skill menu entry');
+  await act(async () => {
+    entry.click();
+    await Promise.resolve();
+  });
 }
 
 function buttons(document: Document): HTMLButtonElement[] {

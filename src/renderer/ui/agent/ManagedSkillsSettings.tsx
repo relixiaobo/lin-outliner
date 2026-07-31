@@ -25,6 +25,9 @@ import type { ManagedConfirmAction, ManagedInstallReview, ManagedSkillsControlle
 
 interface ManagedSkillsAcquisitionProps {
   controller: ManagedSkillsController;
+  /** Whether the acquisition panel itself is open. Its dialogs show regardless. */
+  open: boolean;
+  onClose: () => void;
 }
 
 type ConfirmAction = ManagedConfirmAction;
@@ -33,9 +36,17 @@ type ConfirmAction = ManagedConfirmAction;
  * Acquiring a managed skill: the recommended catalog, a GitHub URL, and the
  * review/confirm dialogs the two share. Installed skills are NOT listed here —
  * they are rows in the one Skill library list, alongside every other source.
+ *
+ * Browsing the catalog and pasting a URL are two inputs to the same act, so they
+ * are one panel rather than two page sections. The panel is a dialog-class
+ * surface: opaque `--bg-elevated` at level-2, matching .confirm-dialog and the
+ * managed review dialogs. Translucent material in this app is level-1 chrome
+ * (menus, rails); the `+` menu that opens this panel is that, and it reuses the
+ * already-registered popover glass rather than introducing a new surface.
  */
-export function ManagedSkillsSettings({ controller }: ManagedSkillsAcquisitionProps) {
+export function ManagedSkillsSettings({ controller, open, onClose }: ManagedSkillsAcquisitionProps) {
   const t = useT();
+  const acquireTitleId = useId();
   const {
     busy,
     catalog,
@@ -64,7 +75,16 @@ export function ManagedSkillsSettings({ controller }: ManagedSkillsAcquisitionPr
   } = controller;
   return (
     <>
-      <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
+      {open ? (
+        <Dialog
+          backdropClassName="confirm-dialog-backdrop"
+          labelledBy={acquireTitleId}
+          onBackdropMouseDown={onClose}
+          onEscapeKeyDown={onClose}
+          surfaceClassName="managed-skill-dialog skill-acquire-dialog"
+        >
+          <h2 className="confirm-dialog-title" id={acquireTitleId}>{t.settings.skills.acquireTitle}</h2>
+          <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
         {loading && !catalog ? (
           <InsetRow disabled label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
         ) : catalog?.status === 'unavailable' ? (
@@ -148,9 +168,11 @@ export function ManagedSkillsSettings({ controller }: ManagedSkillsAcquisitionPr
               </Button>
             </div>
           )}
-          wrap
-        />
-      </InsetGroup>
+            wrap
+          />
+        </InsetGroup>
+        </Dialog>
+      ) : null}
 
       {error && !installReview && !updatePreview && !confirmAction ? (
         <div className="agent-settings-alert" role="alert">
