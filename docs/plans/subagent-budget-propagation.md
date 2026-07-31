@@ -323,6 +323,38 @@ any conflicting earlier wording):**
     set with `runtime_failure` fallback — arbitrary error `.code` strings
     never cross the seam.
 
+**Round-3 additions (gate pass 2026-07-31, 1 defect + 2 cleanups):**
+
+15. **Settlement is total, not partial.** Accrual writes the Turn's tokens
+    into the ledger, so EVERY live structure that still carries the same
+    tokens must be settled in the same synchronous step — both the pool map
+    entry and the per-Turn counter that feeds cap in-flight. Clearing only
+    the pool entry leaves the cap dimension double-counted for the length of
+    the following await. Ruling 13's real invariant is the one the spec
+    states: *no observer can see committed usage and the same live
+    contribution at once* — it binds per DIMENSION, not per structure. Keep
+    the pool-only clear for mid-Turn pool re-binding; settlement is a
+    distinct operation used at the two accrual sites.
+16. **The observer's install predicate is "descendant Thread", not
+    "currently covered".** Ruling 11's closing phrase was imprecise: its
+    intent was to stop root Threads paying for a per-call no-op, not to
+    freeze coverage at Turn start. Coverage is resolved live everywhere else
+    (gate, accrual, port, views); an install-time snapshot reintroduces the
+    one place it is not, so a Turn that becomes pool-covered mid-flight stays
+    invisible to the live tally it debits at completion. Install the usage
+    observer — and, for non-user triggers, the budget port — for every
+    descendant Turn (`parentThreadId !== null`). Both closures already
+    resolve live and return null/no-op while uncovered, so this costs
+    nothing, deletes the `observesSubagentBudget` snapshot, and removes the
+    "uncovered descendants install neither" special case from the spec.
+17. **The closed code set is ours to enumerate, not to shrink.** Ruling 14
+    closed `Turn.error.code` against FOREIGN strings (`ENOENT`-class) leaking
+    through `error.code`; it never licensed dropping a code the host itself
+    emits. `host_restart` is a distinct, already-shipped, semantically
+    correct code on an `interrupted` Turn — collapsing it into
+    `runtime_failure` is a category error, and editing the persistence test
+    to match is a guard relaxed to pass (B11). Keep it in the set.
+
 
 One complete feature: close the mint. PR A/B bound the SLOPE of runaway spend
 (per-child breakers, mid-Turn stop); PR C bounds the TOTAL by construction and
