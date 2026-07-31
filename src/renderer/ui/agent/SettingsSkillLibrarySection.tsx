@@ -185,11 +185,19 @@ export function SettingsSkillLibrarySection({
     // claim a Skill is on while the model cannot see it.
     const enabled = skill.enabled && !disabledSkills.includes(skill.name);
     const busy = managed.busy !== null;
+    // Only an integrity problem makes the Skill's own description untrustworthy;
+    // those replace it. Everything else — notably a failed update check, which
+    // an offline launch produces for every installed Skill from an action the
+    // user never requested — keeps the description and reports itself in a chip.
+    const integrityFault = skill.diagnostic?.code === 'skill_modified'
+      || skill.diagnostic?.code === 'duplicate_skill_name';
     return {
       key: `managed:${skill.id}`,
       name: skill.name,
       displayName: skill.name,
-      description: skill.diagnostic ? managedSkillErrorMessage(skill.diagnostic, t) : skill.description,
+      description: integrityFault && skill.diagnostic
+        ? managedSkillErrorMessage(skill.diagnostic, t)
+        : skill.description,
       sourceChip: t.settings.skills.sourceManaged,
       chips: [
         skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified,

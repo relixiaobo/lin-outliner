@@ -293,9 +293,18 @@ is never throttled. There is no periodic polling, no background download, and no
 auto-apply.
 
 Availability surfaces as a **count badge on the Skills row in the settings
-navigation** — a neutral count, not a status colour. A failed check is recorded
-on the record and does nothing else (A12): it never blocks launch, raises an
-alert, or changes any Skill's enabled state.
+navigation** — a neutral count, not a status colour.
+
+A failed check records an `update_failed` diagnostic on that record and does
+nothing else (A12): it never blocks launch, raises an alert, or changes any
+Skill's enabled state or pinned version. A throttled check stamps
+`lastCheckedAt` on failure as well as on success, so a record that keeps failing
+is retried on the same schedule as one that succeeds instead of on every launch
+and every pane mount. Because that diagnostic is produced by an action the user
+did not request, the library keeps showing the Skill's own description and
+reports the failure in a status chip; only an integrity fault (`skill_modified`,
+`duplicate_skill_name`) replaces the description, because only then is the
+Skill's own content untrustworthy.
 
 ### The recommended catalog is a production artifact
 

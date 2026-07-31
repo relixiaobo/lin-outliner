@@ -344,9 +344,12 @@ export class ManagedSkillService {
    * background check at startup; an explicit user request passes no throttle,
    * because "check for updates" must always actually check.
    *
-   * A failure here is recorded and nothing else (A12): this runs on the launch
-   * path, where a network blip must never block startup, surface an alert, or
-   * change any Skill's enabled state.
+   * A failure records an `update_failed` diagnostic on the record and changes
+   * nothing else (A12): it never blocks startup, raises an alert, or changes any
+   * Skill's enabled state or pinned version. A throttled (ambient) check also
+   * stamps `lastCheckedAt` on failure, so a persistently failing record is
+   * retried on the same schedule as a succeeding one instead of on every launch
+   * and every pane mount.
    */
   async checkUpdates(skillId?: string, options?: { throttleMs?: number }): Promise<ManagedSkillView[]> {
     await this.ready;
@@ -379,7 +382,9 @@ export class ManagedSkillService {
           }));
         });
       } catch (error) {
-        await this.recordUpdateFailure(target, error, 'Update check failed');
+        await this.recordUpdateFailure(target, error, 'Update check failed', {
+          stampCheckedAt: throttleMs !== undefined,
+        });
       }
     }
     return this.list();
@@ -784,7 +789,19 @@ export class ManagedSkillService {
     }
   }
 
-  private async recordUpdateFailure(expected: ManagedSkillRecord, error: unknown, prefix: string): Promise<void> {
+  /**
+   * `stampCheckedAt` marks the attempt as having happened even though it failed.
+   * Without it a record that keeps failing is never filtered by the throttle, so
+   * every launch and every pane mount re-fires one request per installed Skill —
+   * an offline or rate-limited client would retry unboundedly against the very
+   * endpoint that is failing. A failed attempt is still an attempt.
+   */
+  private async recordUpdateFailure(
+    expected: ManagedSkillRecord,
+    error: unknown,
+    prefix: string,
+    options?: { stampCheckedAt?: boolean },
+  ): Promise<void> {
     const view = managedSkillErrorView(error);
     const message = `${prefix}: ${errorMessage(error)}`;
     await this.withMutation(async () => {
@@ -794,6 +811,7 @@ export class ManagedSkillService {
           && record.diagnostic?.code !== 'modified'
           && record.diagnostic?.code !== 'name_conflict' ? {
           ...record,
+          ...(options?.stampCheckedAt ? { lastCheckedAt: this.now() } : {}),
           diagnostic: {
             code: 'update_failed' as const,
             message,

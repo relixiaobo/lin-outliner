@@ -742,6 +742,101 @@ describe('managed skill service', () => {
     expect(after[0]?.active.contentHash).toBe(installed.active.contentHash);
     expect(await service.activeRuntimeRoots()).toEqual(activeBefore);
   });
+
+  test('a record that keeps failing is throttled like one that succeeds', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    // Count the attempt itself: the fake throws before its onUpdateCheckStarted
+    // hook when offline, and a failed attempt is exactly what this measures.
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    const window = 6 * 60 * 60 * 1_000;
+    github.offline = true;
+    checks = 0;
+
+    // A failed attempt is still an attempt. Without stamping lastCheckedAt on
+    // failure, an offline client re-fires one request per Skill on every launch
+    // and every pane mount — unbounded retry against the endpoint that is down.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    clock += window - 1;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(2);
+
+    // An explicit request still ignores the throttle even while failing.
+    await service.checkUpdates();
+    expect(checks).toBe(3);
+  });
+
+  test('an unthrottled failed check does not stamp lastCheckedAt', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    // Count the attempt itself: the fake throws before its onUpdateCheckStarted
+    // hook when offline, and a failed attempt is exactly what this measures.
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    github.offline = true;
+    checks = 0;
+    // An explicit failing check must not silently start a throttle window the
+    // user never asked for: the next ambient check still runs.
+    await service.checkUpdates();
+    expect(checks).toBe(1);
+    await service.checkUpdates(undefined, { throttleMs: 6 * 60 * 60 * 1_000 });
+    expect(checks).toBe(2);
+  });
 });
 
 class FakeGitHub {

@@ -466,9 +466,11 @@ const MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS = 30_000;
 
 function scheduleManagedSkillUpdateCheck(): void {
   const timer = setTimeout(() => {
-    // Failure is recorded by the service and is invisible here by design (A12):
-    // a network blip at launch must not surface an alert, block anything, or
-    // change any Skill's enabled state.
+    // Failure records an update_failed diagnostic on the record and does nothing
+    // else (A12): no alert, nothing blocked, no Skill's enabled state or pinned
+    // version touched. The throttle stamps lastCheckedAt on failure too, so a
+    // record that keeps failing is retried on the same schedule as one that
+    // succeeds rather than on every launch.
     void managedSkillService
       .checkUpdates(undefined, { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS })
       .catch(() => { /* recorded on the record; retried next launch */ });
