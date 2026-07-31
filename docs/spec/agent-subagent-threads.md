@@ -455,9 +455,15 @@ above all, since those are the CLI's primary forensic inputs — through the
 usage/exit-2 path instead of an unhandled-rejection stack trace.
 **3. Receipt (internalized, never user-facing).** What the delegation
 consumed. The token budget is a system fail-safe — a circuit breaker sized at
-definitely-anomalous, not an allocation: humans never see or set token
-numbers; user surfaces speak time/status first and money at most; model-facing
-surfaces stay token-denominated as system internals. Enforcement lives where
+definitely-anomalous, not an allocation. The test is **not whether a number is
+visible but whether anyone is asked to decide on it**: a user states a need and
+never reasons in tokens, so no product surface may require a token judgement of
+them — delegation rows, cards, failure copy, and the Turn Details reading flow
+speak time and status first and money at most, and the budget has no product
+settings UI. Token-denominated surfaces are the ones where nobody is deciding:
+model-facing tools, warning steering, and typed errors as system internals, and
+the Turn Diagnostics Model Interactions inspector as a forensic surface for
+whoever is debugging a run. Enforcement lives where
 the resource is consumed: the shared descendant pool closes subtree minting,
 Turn admission gates new work, the kernel port bounds in-flight work, and fixed
 depth/count limits keep delegation legible. The user's explicit Turn remains

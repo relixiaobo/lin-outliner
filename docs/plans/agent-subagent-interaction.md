@@ -28,8 +28,10 @@ once through #463's extraction.
 - No child composer. Child Threads stay read-only per
   `docs/spec/agent-thread-rendering.md:442-445`; user control is limited to
   interrupt.
-- No token numbers on user surfaces (Delegation Contract §3: receipts are
-  internal; user surfaces speak time/status).
+- No token judgement asked of the user (Delegation Contract §3: receipts are
+  internal; product surfaces speak time/status). The Turn Diagnostics Model
+  Interactions inspector stays token-denominated — it is forensic, not a
+  decision surface.
 - No transcript-artifact work (owned by the queued
   `subagent-transcript-artifact` item).
 
@@ -215,11 +217,15 @@ rather than line number.
   `src/core/agent/codec.ts` — a pre-release clean cut with no legacy reader, so
   **wipe `~/.lin-outliner-*` dev userData before running any branch off this
   point**.
-- **Constraints PR 2 and PR 3 must preserve.** No token quantities on any user
-  surface (visible text, title, accessible text, Turn copy, Turn Details);
-  failures classified only by `Turn.error.code`, never by message text; raw
-  collaboration output stays out of user surfaces; child Threads stay
-  composer-less.
+- **Constraints PR 2 and PR 3 must preserve.** No token quantities on a product
+  surface — delegation rows, cards, failure copy, and the Turn Details reading
+  flow, counting the non-visual leak paths (`title`, accessible text, Turn copy)
+  that are easiest to forget. The Turn Diagnostics Model Interactions inspector
+  is the deliberate exception and stays token-denominated: the rule is that no
+  user is asked to *decide* on a token number, not that no number exists
+  anywhere. Also: failures classified only by `Turn.error.code`, never by
+  message text; raw collaboration output stays out of user surfaces; child
+  Threads stay composer-less.
 
 ### PR 1 — status truth in the parent transcript
 
