@@ -71,11 +71,16 @@ export interface ProjectedUserBoundary extends ProjectedTurnBoundary {
   readonly itemId: string;
 }
 
+export interface ProjectedAssistantBoundary extends ProjectedTurnBoundary {
+  readonly itemIds: readonly string[];
+}
+
 export interface CanonicalContextProjection {
   readonly messages: Message[];
   readonly messagePartProvenance: readonly (readonly TurnDiagnosticsMessagePartProvenance[])[];
   readonly turnBoundaries: readonly ProjectedTurnBoundary[];
   readonly userBoundaries: readonly ProjectedUserBoundary[];
+  readonly assistantBoundaries: readonly ProjectedAssistantBoundary[];
 }
 
 export class CanonicalContextProjector {
@@ -101,6 +106,7 @@ export class CanonicalContextProjector {
     const messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][] = [];
     const turnBoundaries: ProjectedTurnBoundary[] = [];
     const userBoundaries: ProjectedUserBoundary[] = [];
+    const assistantBoundaries: ProjectedAssistantBoundary[] = [];
     for (const turn of selectedTurns) {
       const projected = await this.projectTurn(turn, turns);
       if (projected.messages.length === 0) continue;
@@ -109,10 +115,14 @@ export class CanonicalContextProjector {
         ...boundary,
         messageIndex: messages.length + boundary.messageIndex,
       })));
+      assistantBoundaries.push(...projected.assistantBoundaries.map((boundary) => ({
+        ...boundary,
+        messageIndex: messages.length + boundary.messageIndex,
+      })));
       messages.push(...projected.messages);
       messagePartProvenance.push(...projected.messagePartProvenance);
     }
-    return { messages, messagePartProvenance, turnBoundaries, userBoundaries };
+    return { messages, messagePartProvenance, turnBoundaries, userBoundaries, assistantBoundaries };
   }
 
   private async prepareToolOutputProjections(turns: readonly Turn[]): Promise<void> {
@@ -170,14 +180,17 @@ export class CanonicalContextProjector {
     readonly messages: Message[];
     readonly messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][];
     readonly userBoundaries: ProjectedUserBoundary[];
+    readonly assistantBoundaries: ProjectedAssistantBoundary[];
   }> {
     const messages: Message[] = [];
     const messagePartProvenance: TurnDiagnosticsMessagePartProvenance[][] = [];
     const userBoundaries: ProjectedUserBoundary[] = [];
+    const assistantBoundaries: ProjectedAssistantBoundary[] = [];
     let pendingUserContent: Array<TextContent | ImageContent> = [];
     let pendingUserProvenance: TurnDiagnosticsMessagePartProvenance[] = [];
     let pendingContextBlocks: ProjectedContextBlock[] = [];
     let assistantContent: Array<TextContent | ToolCall> = [];
+    let assistantItemIds: string[] = [];
     let toolResults: ToolResultMessage[] = [];
     const flushContextBlocks = () => {
       if (pendingContextBlocks.length === 0) return;
@@ -198,6 +211,7 @@ export class CanonicalContextProjector {
     };
     const flushAssistant = () => {
       if (assistantContent.length > 0) {
+        const messageIndex = messages.length;
         messages.push(assistantHistoryMessage(
           assistantContent,
           turn.startedAt,
@@ -205,12 +219,14 @@ export class CanonicalContextProjector {
           toolResults.length > 0 ? 'toolUse' : 'stop',
         ));
         messagePartProvenance.push(assistantContent.map(() => ({ source: 'assistantHistory' })));
+        assistantBoundaries.push({ turnId: turn.id, messageIndex, itemIds: assistantItemIds });
       }
       for (const result of toolResults) {
         messages.push(result);
         messagePartProvenance.push(result.content.map(() => ({ source: 'toolResult' })));
       }
       assistantContent = [];
+      assistantItemIds = [];
       toolResults = [];
     };
     const flushPendingUser = (timestamp: number) => {
@@ -278,6 +294,7 @@ export class CanonicalContextProjector {
           ? this.toolOutputProjections.get(outputReferenceKey(item.outputRef)) ?? null
           : null;
         const tool = await historyTool(item, turn.startedAt, this.resources, projection);
+        assistantItemIds.push(item.id);
         assistantContent.push(tool.call);
         toolResults.push(tool.result);
         continue;
@@ -285,30 +302,28 @@ export class CanonicalContextProjector {
       if (toolResults.length > 0) flushAssistant();
       switch (item.type) {
         case 'agentMessage':
+          assistantItemIds.push(item.id);
           if (item.text) assistantContent.push({ type: 'text', text: item.text });
           break;
         case 'reasoning':
-          if (item.summary.length > 0 || item.content.length > 0) {
-            assistantContent.push({
-              type: 'text',
-              text: `[Reasoning]\n${[...item.summary, ...item.content].join('\n')}`,
-            });
-          }
+          assistantItemIds.push(item.id);
           break;
         case 'subAgentActivity':
+          assistantItemIds.push(item.id);
           assistantContent.push({
             type: 'text',
             text: `[Subagent ${item.kind}: ${item.agentPath} (${item.agentThreadId})]`,
           });
           break;
         case 'imageView':
+          assistantItemIds.push(item.id);
           assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
           break;
       }
     }
     if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
     flushAssistant();
-    return { messages, messagePartProvenance, userBoundaries };
+    return { messages, messagePartProvenance, userBoundaries, assistantBoundaries };
   }
 
   private async projectCompaction(

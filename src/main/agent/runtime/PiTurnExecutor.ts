@@ -184,7 +184,11 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      const reasoningReplay = internalMemory ? null : new ActiveTurnReasoningReplay(context.turn.id);
       const normalizer = new PiEventNormalizer(context, {
+        ...(reasoningReplay ? {
+          assistantCompleted: ({ itemId, message }) => reasoningReplay.retain(itemId, message),
+        } : {}),
         started: (execution) => diagnostics.captureToolExecutionStarted(
           execution.callId,
           execution.toolName,
@@ -237,6 +241,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               systemPrompt,
               tools,
               prompt,
+              reasoningReplay,
               {
                 prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
                 compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
@@ -363,6 +368,7 @@ async function projectCanonicalProviderContext(
   systemPrompt: string,
   tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
+  reasoningReplay: ActiveTurnReasoningReplay | null,
   observer?: {
     readonly prepared?: (input: {
       readonly messages: readonly Message[];
@@ -385,7 +391,8 @@ async function projectCanonicalProviderContext(
       },
     ];
     const projector = new CanonicalContextProjector(model, context);
-    const projection = await projector.projectTurnsWithBoundaries(sourceTurns);
+    const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
+    const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
     const initialUser = context.turn.items.find((item) => (
       item.type === 'userMessage' && item.acceptedAt === preparedInitialPrompt.timestamp
     ));
@@ -495,6 +502,67 @@ function currentTurnItems(context: TurnExecutionContext): readonly ThreadItem[] 
     ...context.turn.items.map((item) => recordedById.get(item.id) ?? item),
     ...recorded.filter((item) => !initialIds.has(item.id)),
   ];
+}
+
+type SignedThinkingContent = Extract<AssistantMessage['content'][number], { type: 'thinking' }> & {
+  readonly thinkingSignature: string;
+};
+
+class ActiveTurnReasoningReplay {
+  private readonly retained = new Map<string, Map<string, readonly SignedThinkingContent[]>>();
+
+  constructor(private readonly turnId: string) {}
+
+  retain(itemId: string, message: AssistantMessage): void {
+    const thinking = message.content.flatMap((part): SignedThinkingContent[] => (
+      part.type === 'thinking' && typeof part.thinkingSignature === 'string' && part.thinkingSignature.trim()
+        ? [{ ...part, thinkingSignature: part.thinkingSignature }]
+        : []
+    ));
+    if (thinking.length === 0) return;
+    const key = reasoningReplayIdentity(this.turnId, message.provider, message.api, message.model);
+    const messages = this.retained.get(key) ?? new Map<string, readonly SignedThinkingContent[]>();
+    messages.set(itemId, thinking);
+    this.retained.set(key, messages);
+  }
+
+  reattach(projection: CanonicalContextProjection, model: Model<Api>): CanonicalContextProjection {
+    const retained = this.retained.get(reasoningReplayIdentity(
+      this.turnId,
+      model.provider,
+      model.api,
+      model.id,
+    ));
+    if (!retained) return projection;
+
+    const byMessageIndex = new Map<number, SignedThinkingContent[]>();
+    for (const boundary of projection.assistantBoundaries) {
+      if (boundary.turnId !== this.turnId) continue;
+      const thinking = boundary.itemIds.flatMap((itemId) => retained.get(itemId) ?? []);
+      if (thinking.length === 0) continue;
+      const message = projection.messages[boundary.messageIndex];
+      if (message?.role !== 'assistant') continue;
+      byMessageIndex.set(boundary.messageIndex, thinking);
+    }
+    if (byMessageIndex.size === 0) return projection;
+
+    const messages = [...projection.messages];
+    const messagePartProvenance = projection.messagePartProvenance.map((parts) => [...parts]);
+    for (const [messageIndex, thinking] of byMessageIndex) {
+      const message = messages[messageIndex];
+      if (message?.role !== 'assistant') continue;
+      messages[messageIndex] = { ...message, content: [...thinking, ...message.content] };
+      messagePartProvenance[messageIndex] = [
+        ...thinking.map(() => ({ source: 'assistantHistory' as const })),
+        ...(messagePartProvenance[messageIndex] ?? []),
+      ];
+    }
+    return { ...projection, messages, messagePartProvenance };
+  }
+}
+
+function reasoningReplayIdentity(turnId: string, provider: string, api: Api, model: string): string {
+  return `${turnId}\0${provider}\0${api}\0${model}`;
 }
 
 export function agentProviderPayload(
@@ -656,6 +724,10 @@ export class PiEventNormalizer {
   constructor(
     private readonly context: TurnExecutionContext,
     private readonly executionObserver?: {
+      readonly assistantCompleted?: (completion: {
+        readonly itemId: string;
+        readonly message: AssistantMessage;
+      }) => void;
       readonly started?: (execution: {
         readonly callId: string;
         readonly toolName: string;
@@ -768,6 +840,7 @@ export class PiEventNormalizer {
           .map((part) => part.thinking),
       });
     }
+    this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
     addUsage(this.usage, message.usage);
     try {
       this.context.onModelCallUsage?.(message.usage.totalTokens);
