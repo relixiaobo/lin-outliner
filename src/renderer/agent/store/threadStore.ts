@@ -91,6 +91,9 @@ export class ThreadStore {
 
   async reloadThreads(): Promise<void> {
     this.patch({ loading: true, error: null });
+    // Captured before the round trips: a retry that arrives while they are in
+    // flight is a different entry and must survive the clear below.
+    const staleRetries = new Map(this.snapshot.providerRetryByThread);
     const threads: Thread[] = [];
     let cursor: string | null = null;
     do {
@@ -105,6 +108,9 @@ export class ThreadStore {
       threads: sortThreads(threads),
       selectedThreadId: selected,
       planByThread: new Map(),
+      // A reload rebuilds from the server's view, so a banner recorded before
+      // it describes an attempt that no longer exists — but only those.
+      providerRetryByThread: retriesOutliving(staleRetries, this.snapshot.providerRetryByThread),
       loading: false,
       error: null,
     });
@@ -419,6 +425,10 @@ export class ThreadStore {
         return;
       case 'turn/started': {
         const planByThread = new Map(this.snapshot.planByThread);
+        // A new Turn means the previous Turn's reconnect banner is stale; it
+        // would otherwise keep spinning over work that has already moved on.
+        const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+        providerRetryByThread.delete(notification.threadId);
         planByThread.delete(notification.threadId);
         const preview = threadPreviewFromTurn(notification.turn);
         this.updateThread(notification.threadId, (thread) => ({
@@ -426,8 +436,9 @@ export class ThreadStore {
           preview: thread.preview.trim() ? thread.preview : preview,
           updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
         }));
-        if (historyLoaded) this.updateTurn(notification.threadId, notification.turn, { planByThread });
-        else this.patch({ planByThread });
+        if (historyLoaded) {
+          this.updateTurn(notification.threadId, notification.turn, { planByThread, providerRetryByThread });
+        } else this.patch({ planByThread, providerRetryByThread });
         return;
       }
       case 'turn/completed': {
@@ -621,6 +632,16 @@ function descendantThreadIds(threads: readonly Thread[], rootThreadId: ThreadId)
     }
   }
   return deletedIds;
+}
+
+/** Drops the retry entries that were present before a reload started, keeping
+ *  any that arrived while it was in flight. */
+function retriesOutliving<K, V>(stale: ReadonlyMap<K, V>, current: ReadonlyMap<K, V>): Map<K, V> {
+  const next = new Map(current);
+  for (const [key, value] of stale) {
+    if (next.get(key) === value) next.delete(key);
+  }
+  return next;
 }
 
 function sortThreads(threads: readonly Thread[]): Thread[] {

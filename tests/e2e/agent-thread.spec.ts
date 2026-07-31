@@ -2089,6 +2089,300 @@ test.describe('canonical agent Thread surface', () => {
     await expect(commandDetails).not.toContainText('exit 2');
   });
 
+  test('never claims a settled Turn is still working, and states the wait as a wait', async ({ page }) => {
+    await createNewThread(page);
+    const ids = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c001';
+      const toolId = '01910000-0000-7000-8000-00000000c002';
+      // A settled Turn with tool work and no final response: the divider used to
+      // fall through to the live "Working" label.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: toolId,
+            type: 'dynamicToolCall',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+            namespace: null,
+            tool: 'file_read',
+            arguments: { file_path: '/mock/workspace/notes.md' },
+            status: 'completed',
+            outputRef: null,
+            contentItems: null,
+            success: true,
+            durationMs: 3,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 5,
+          durationMs: 4,
+        },
+      });
+      return { threadId };
+    });
+
+    const divider = page.locator('.thread-process-title').first();
+    await expect(divider).toHaveText('Read notes.md');
+    await expect(page.locator('.thread-process-block')).not.toContainText('Working');
+
+    // Blocked on the user: the label says so, and the spinner stops claiming work.
+    await page.evaluate(async ({ threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const liveTurnId = '01910000-0000-7000-8000-00000000c003';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId: liveTurnId,
+        turn: {
+          id: liveTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/status/changed',
+        threadId,
+        status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+      });
+    }, ids);
+
+    const live = page.locator('.thread-process-block').last();
+    await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
+    await expect(live.locator('.thread-process-spinner')).toHaveCount(0);
+  });
+
+  test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const emit = (suffix: string, hasResponse: boolean) => {
+        const turnId = `01910000-0000-7000-8000-00000000c1${suffix}`;
+        const toolId = `01910000-0000-7000-8000-00000000c2${suffix}`;
+        const answerId = `01910000-0000-7000-8000-00000000c3${suffix}`;
+        const items: unknown[] = [{
+          id: toolId,
+          type: 'commandExecution',
+          provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+          command: 'sleep 30',
+          description: null,
+          cwd: '/mock/workspace',
+          processId: null,
+          status: 'interrupted',
+          outputRef: null,
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: 2,
+        }];
+        if (hasResponse) {
+          items.push({
+            id: answerId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: answerId },
+            text: 'Partial answer.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          });
+        }
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId,
+          turnId,
+          turn: {
+            id: turnId,
+            items,
+            itemsView: 'full',
+            provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+            status: 'interrupted',
+            error: null,
+            startedAt: 1,
+            completedAt: 5,
+            durationMs: 4,
+          },
+        });
+      };
+      emit('01', false);
+      emit('02', true);
+    });
+
+    const blocks = page.locator('.thread-process-block');
+    await expect(blocks).toHaveCount(2);
+
+    // No response: exactly one "Turn interrupted", owned by the divider.
+    const noResponse = blocks.first();
+    await expect(noResponse.getByText('Turn interrupted')).toHaveCount(1);
+
+    // With a response the tail owns the status, but the timeline still needs a
+    // name — it used to render as an unlabelled list of rows.
+    const withResponse = blocks.last();
+    await expect(withResponse.locator('.thread-process-timeline')).toHaveCount(1);
+    // A neutral, status-free name for the timeline: the duration when known,
+    // never a status claim and never the live "Working" label.
+    const header = withResponse.locator('.thread-process-title');
+    await expect(header).toHaveCount(1);
+    await expect(header).toHaveText('Worked for <1s');
+    // Exactly one owner per Turn: the divider for the Turn without a response,
+    // the response tail for the Turn with one — two in total, never three.
+    await expect(page.getByText('Turn interrupted')).toHaveCount(2);
+  });
+
+  test('states an interrupted Turn that produced nothing at all', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c401';
+      const userId = '01910000-0000-7000-8000-00000000c402';
+      // Interrupted before any process Item existed: no tool call, no
+      // reasoning, no response. `groupTurnContent` renders no process block at
+      // all here, so there is no divider to own the status.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: userId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userId },
+            clientId: null,
+            content: [{ type: 'text', text: 'Stop right away.' }],
+            acceptedAt: 1,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'interrupted',
+          error: null,
+          startedAt: 1,
+          completedAt: 5,
+          durationMs: 4,
+        },
+      });
+    });
+
+    await expect(page.locator('.thread-process-block')).toHaveCount(0);
+    // The status must still be stated — by the response tail, since nothing
+    // else can.
+    await expect(page.getByText('Turn interrupted')).toHaveCount(1);
+  });
+
+  test('keeps a live reasoning disclosure open when a newer Item lands', async ({ page }) => {
+    await createNewThread(page);
+    const ids = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c501';
+      const reasoningId = '01910000-0000-7000-8000-00000000c502';
+      const toolId = '01910000-0000-7000-8000-00000000c503';
+      const reasoning = {
+        id: reasoningId,
+        type: 'reasoning',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
+        summary: ['Deciding which file to open'],
+        content: [],
+      };
+      const liveTurn = (items: unknown[]) => ({
+        id: turnId,
+        items,
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: Date.now(),
+        completedAt: null,
+        durationMs: null,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started', threadId, turnId, turn: liveTurn([reasoning]),
+      });
+      return { threadId, turnId, toolId, reasoning };
+    });
+
+    // Open while it is the streaming tail.
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
+
+    // A tool call lands: the reasoning is no longer the tail. It must not snap
+    // shut and shift the layout under the reader.
+    await page.evaluate(({ threadId, turnId, toolId, reasoning }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [reasoning, {
+            id: toolId,
+            type: 'dynamicToolCall',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+            namespace: null,
+            tool: 'file_read',
+            arguments: { file_path: '/mock/workspace/notes.md' },
+            status: 'inProgress',
+            outputRef: null,
+            contentItems: null,
+            success: null,
+            durationMs: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    }, ids);
+
+    await expect(page.locator('.thread-tool')).toHaveCount(1);
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
+
+    // An explicit collapse still wins over the latch.
+    await page.locator('.thread-reasoning-toggle').click();
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+  });
+
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
     await createNewThread(page);
     await seedMixedStatusToolTurn(page);

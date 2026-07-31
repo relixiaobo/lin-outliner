@@ -162,6 +162,36 @@ An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized
 vertical interval on either side of the separator.
 
+The status line never claims more than the run is doing. A settled Turn is
+described in the past — it never falls through to the live `Working` label —
+and when a Turn is **blocked on the user** (`waitingOnUserInput`) the line says
+so and the spinner stops, because a spinner claims work is happening. The
+elapsed time is deliberately **not** adjusted: it is wall-clock since the Turn
+started, the same span the server records as `durationMs`, so the live label
+and the settled one measure the same thing and cannot contradict each other.
+The wait is named rather than subtracted. Exactly
+one element owns a Turn's terminal status, and something always does: the
+divider states it when there is no final response **and a process block
+actually renders**, and the synthetic response tail then shows actions only.
+A Turn with no process Items renders no process block at all, so there the tail
+keeps the status. When the tail owns it the divider is suppressed, but the
+timeline still keeps a neutral, status-free header rather than becoming an
+unlabelled list of rows.
+Counted activity reports finished and in-flight work separately — "Read 5 files
+· reading 1", never one present-tense count covering work that has already
+finished. A reasoning disclosure that opened by default **latches** open for the rest of
+the session: the default is otherwise recomputed each render from live state,
+so a newly arriving Item retracted it and snapped the disclosure shut mid-run,
+shifting the layout under the reader. An explicit collapse is recorded and
+still wins over the latch. The latch is Thread-session state, not a persisted
+override — it survives a Turn row unmounting to virtualization, and a reloaded
+transcript rests at the settled default rather than permanently expanding every
+reasoning Item a reader once watched live. The
+empty placeholder carries the same classes as the populated one so the first
+token does not restyle the element. The reconnect
+banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
+the Thread list reloads, so it cannot outlive the attempt it describes.
+
 An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both
 empty and streaming responses; Markdown does not add a second caret. The

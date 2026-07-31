@@ -552,8 +552,14 @@ function ReasoningDisclosure({
   const t = useT();
   const text = parts.join('\n\n');
   const trimmed = text.trim();
-  if (!trimmed) return streaming ? <div className="thread-reasoning is-thinking">{t.agent.thinking.thinking}</div> : null;
-  const expanded = expandState.isExpanded(disclosureId, defaultExpanded || streaming);
+  if (!trimmed) {
+    // Same class set as the populated branch: the first token must not change
+    // the element's classes underneath the reader.
+    return streaming
+      ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
+      : null;
+  }
+  const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
   const gist = expanded ? '' : reasoningGist(trimmed);
   return (
     <div className="thread-item thread-reasoning">
@@ -1160,9 +1166,11 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
 ];
 
 interface ToolActivityBucket {
+  /** Insertion-ordered subject keys. */
   readonly subjects: Set<string>;
-  readonly names: string[];
-  running: boolean;
+  /** Display name per subject key, when the call carried one. */
+  readonly names: Map<string, string>;
+  readonly runningSubjects: Set<string>;
 }
 
 export interface ToolActivitySegment {
@@ -1197,10 +1205,11 @@ export function threadToolActivitySegments(
   const limit = options.subjectLimit ?? NAMED_SUBJECT_LIMIT;
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
   const add = (kind: ToolActivityKind, subject: string, running: boolean, name?: string) => {
-    const bucket = buckets.get(kind) ?? { subjects: new Set<string>(), names: [], running: false };
-    if (!bucket.subjects.has(subject) && name !== undefined) bucket.names.push(name);
+    const bucket = buckets.get(kind)
+      ?? { subjects: new Set<string>(), names: new Map<string, string>(), runningSubjects: new Set<string>() };
+    if (name !== undefined) bucket.names.set(subject, name);
     bucket.subjects.add(subject);
-    bucket.running ||= running;
+    if (running) bucket.runningSubjects.add(subject);
     buckets.set(kind, bucket);
   };
 
@@ -1245,10 +1254,24 @@ export function threadToolActivitySegments(
   const segments: ToolActivitySegment[] = TOOL_ACTIVITY_ORDER.flatMap((kind) => {
     const bucket = buckets.get(kind);
     if (!bucket || bucket.subjects.size === 0) return [];
-    return [{
-      text: toolActivityPhrase(kind, bucket.subjects.size, bucket.names, bucket.running, labels, limit),
-      tone: 'neutral' as const,
-    }];
+    // Report what finished in the past tense and what is still in flight
+    // separately: "Read 5 files · reading 1", never "Reading 6 files".
+    const keys = [...bucket.subjects];
+    const settledKeys = keys.filter((key) => !bucket.runningSubjects.has(key));
+    const runningKeys = keys.filter((key) => bucket.runningSubjects.has(key));
+    const namesFor = (subset: readonly string[]): readonly string[] => {
+      const named = subset.flatMap((key) => {
+        const name = bucket.names.get(key);
+        return name === undefined ? [] : [name];
+      });
+      return named.length === subset.length ? named : [];
+    };
+    return [settledKeys, runningKeys].flatMap((subset, position) => (
+      subset.length === 0 ? [] : [{
+        text: toolActivityPhrase(kind, subset.length, namesFor(subset), position === 1, labels, limit),
+        tone: 'neutral' as const,
+      }]
+    ));
   });
   if (segments.length === 0) {
     segments.push({ text: labels.ranTools({ count: items.length }), tone: 'neutral' });

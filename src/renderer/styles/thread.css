@@ -2741,6 +2741,7 @@ button.thread-inline-activity:focus-visible,
   .thread-plan-progress-spinner,
   .thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg,
   .thread-process-spinner,
+  .thread-provider-retry svg,
   .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
   .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
     animation: none;

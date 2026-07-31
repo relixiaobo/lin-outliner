@@ -989,7 +989,11 @@ export class TurnLifecycle {
       const aborted = active.controller.signal.aborted;
       const executionError = active.fatalError ?? thrown;
       const status = executionError ? 'failed' : aborted ? 'interrupted' : result.status ?? 'completed';
-      await active.recorder.finishOpenItems(status === 'completed' ? 'failed' : status);
+      // An Item the Turn finished without closing was cut off, not errored —
+      // a completed Turn has no business painting a red failure mark on the
+      // work it just succeeded at. A failed or interrupted Turn keeps its own
+      // status for its open Items.
+      await active.recorder.finishOpenItems(status === 'completed' ? 'interrupted' : status);
       const completedAt = this.now();
       let turn = decodeTurn({
         id: active.turnId,

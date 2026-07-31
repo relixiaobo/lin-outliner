@@ -1129,6 +1129,7 @@ commandPalette: {
       interrupt: 'Interrupt Turn',
       continueInNewChat: 'Continue in new chat',
       working: 'Working',
+      worked: 'Worked',
       workingFor: ({ duration }: { duration: string }) => `Working for ${duration}`,
       workedFor: ({ duration }: { duration: string }) => `Worked for ${duration}`,
       waitingOnUserInput: 'Waiting for input',

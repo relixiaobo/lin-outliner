@@ -326,30 +326,38 @@ function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Doc
 
 interface RenderItemOptions {
   readonly expanded?: boolean;
+  readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
+  readonly streaming?: boolean;
 }
 
 function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
   readonly document: Document;
   readonly rerender: (nextItem: ThreadItem) => void;
+  readonly rerenderWith: (nextItem: ThreadItem, next: RenderItemOptions) => void;
 } {
   const { document, root } = installDom();
-  const holdAnchorUntilSettled = options.holdAnchorUntilSettled ?? (() => null);
   const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
-  const render = (nextItem: ThreadItem) => act(() => root.render(
+  const renderWith = (nextItem: ThreadItem, next: RenderItemOptions) => act(() => root.render(
     <I18nProvider>
       <ThreadItemProbe
-        holdAnchorUntilSettled={holdAnchorUntilSettled}
-        initiallyExpanded={options.expanded === true}
+        expandState={next.expandState ?? options.expandState}
+        holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
+        initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
         onReadToolOutput={onReadToolOutput}
+        streaming={(next.streaming ?? options.streaming) === true}
       />
     </I18nProvider>,
   ));
-  render(item);
+  renderWith(item, options);
   mounted.push(() => act(() => root.unmount()));
-  return { document, rerender: render };
+  return {
+    document,
+    rerender: (nextItem: ThreadItem) => renderWith(nextItem, options),
+    rerenderWith: renderWith,
+  };
 }
 
 function renderTree(tree: ReactNode): { readonly document: Document } {
@@ -385,15 +393,19 @@ function installDom(): { readonly document: Document; readonly root: ReturnType<
 }
 
 function ThreadItemProbe({
+  expandState,
   holdAnchorUntilSettled,
   initiallyExpanded,
   item,
   onReadToolOutput,
+  streaming,
 }: {
+  readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+  readonly streaming: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
@@ -401,7 +413,7 @@ function ThreadItemProbe({
       agentResponseTail={null}
       canEditUserMessage={false}
       defaultReasoningExpanded={false}
-      expandState={{
+      expandState={expandState ?? {
         holdAnchorUntilSettled,
         isExpanded: () => expanded,
         toggle: (_id, currentlyExpanded) => setExpanded(!currentlyExpanded),
@@ -414,7 +426,7 @@ function ThreadItemProbe({
       onOpenThread={async () => undefined}
       onReadToolOutput={onReadToolOutput}
       showMessageActions={false}
-      streaming={false}
+      streaming={streaming}
       threadCwd="/workspace"
       threadId="thread-1"
     />

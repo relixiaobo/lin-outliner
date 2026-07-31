@@ -318,8 +318,19 @@ describe('group summaries name up to two subjects, then elide', () => {
     ['two reads', [read('/w/a.xhtml'), read('/w/b.xhtml')], 'Read a.xhtml, b.xhtml'],
     ['six reads', ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => read(`/w/${n}.xhtml`)),
       'Read a.xhtml, b.xhtml and 4 more'],
+    // P8: the finished half is past tense, the in-flight half is present — the
+    // old bucket OR-ed `running` and reported the whole count as in progress.
     ['one still running', [read('/w/a.md'), read('/w/b.md', 'inProgress')],
-      'Reading a.md, b.md'],
+      'Read a.md · reading b.md'],
+    ['five done, one running', [
+      ...['a', 'b', 'c', 'd', 'e'].map((n) => read(`/w/${n}.md`)),
+      read('/w/f.md', 'inProgress'),
+    ], 'Read a.md, b.md and 3 more · reading f.md'],
+    ['unnameable split still counts each side', [
+      dynamic('file_read', {}, 'completed', { id: 'u-1' }),
+      dynamic('file_read', {}, 'completed', { id: 'u-2' }),
+      dynamic('file_read', {}, 'inProgress', { id: 'u-3' }),
+    ], 'Read 2 files · reading a file'],
     ['one failed', [read('/w/a.md'), read('/w/b.md'), read('/w/c.md', 'failed')],
       'Read a.md, b.md and 1 more · 1 failed'],
     ['mixed kinds', [
