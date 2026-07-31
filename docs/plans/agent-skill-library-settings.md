@@ -15,7 +15,7 @@ update visible without going looking for it.
   acquiring and applying stay explicit user actions.
 - No non-GitHub managed sources.
 - No copying a local Skill directory into Tenon storage. Local directories are
-  **pointed at**, never imported (see Design → PR 2).
+  **pointed at**, never imported (see Design → commits 4-8).
 - No migration. Installed Skills are already indexed; only presentation and the
   enable predicate change.
 - Not a Skill authoring surface. `skillify` and the file tools remain the way
@@ -23,35 +23,41 @@ update visible without going looking for it.
 
 ## Shape
 
-Shape **(b): two independent complete features**, two PRs.
+Shape **(a): one complete feature in one PR**, built in **eight staged
+commits**, in this order:
 
-- **PR 1 — the catalog guard** (validator + test, plus the Browser Pilot
-  recommendation entry). A CI guard over a data file, touching no UI. **Do this
-  first.** Not for shape purity — because `catalog/managed-skills-v1.json`
-  reaches every installed Tenon from `main` today with nothing validating it,
-  and parking that behind a settings redesign leaves a live artifact unguarded
-  for no reason. Small enough to fast-track.
-- **PR 2 — the settings decomposition and the Skill library, together.** One PR,
-  **six staged commits**, in this order:
+1. the catalog guard — validator + test (+ the Browser Pilot entry when its
+   values arrive)
+2. the settings DOM-snapshot judge, **captured on `main` before anything moves**
+3. decompose the settings page into one component per category (**pure move**)
+4. the single enable predicate
+5. one list, every source
+6. the `+` acquisition panel
+7. local directories
+8. update visibility
 
-  1. decompose the settings page into one component per category (**pure move**)
-  2. the single enable predicate
-  3. one list, every source
-  4. the `+` acquisition panel
-  5. local directories
-  6. update visibility
+Commits 1 and 3 would each stand alone as complete work — a data-file guard and
+a refactor. They are carried here at the PM's direction because each piece is
+small and a second gate would cost more than it returns. Commits 4-8 are build
+order inside one feature (cf. A7 foundation-before-consumers), never shippable
+slices.
 
-  Commits 2-6 are build order inside one feature (cf. A7), not shippable
-  slices. Commit 1 is a complete refactor that would stand alone; it is carried
-  here at the PM's direction because both pieces are small.
+**The staging is what makes a PR this wide reviewable, so it is not optional.**
+A guard, a pure move, and a UI redesign in one undifferentiated diff cost the
+reviewer the ability to tell which lines changed behaviour. Two commits are
+therefore judges that must land before what they judge: commit 1 protects the
+catalog before any entry is added to it, and commit 2 freezes the settings DOM
+before commit 3 touches it. Commit 3 must be provably behaviour-free — snapshots
+byte-unchanged, **no test file edited in that commit** — so it reads as a move
+and commits 4-8 carry the only behaviour in the PR. This is the #451 pattern
+(one PR, four staged extractions, a frozen-surface proof, zero review findings)
+combined with #456's judge-before-change.
 
-  **The staging is what makes that safe, so it is not optional.** A pure move
-  and a behaviour change in one undifferentiated diff cost the reviewer the
-  ability to tell which lines changed behaviour. Commit 1 must therefore be
-  provably behaviour-free — snapshot judge first (see Design), no test edits in
-  that commit — so it can be reviewed as a move and commits 2-6 read as the only
-  behaviour in the PR. This is the #451 pattern: one PR, four staged
-  extractions, a frozen-surface proof, zero review findings.
+Ordering note: commit 1 is first for a reason that survives the merge into one
+PR. `catalog/managed-skills-v1.json` is unguarded on `main` today, and the
+Browser Pilot entry is a push to that file; the guard must exist before the
+entry does. What the single-PR shape gives up is only this: if the settings work
+stalls, the guard stalls with it.
 
 ## Current state (verified against `main`, 2026-07-31)
 
@@ -89,7 +95,7 @@ Shape **(b): two independent complete features**, two PRs.
 
 ## Design
 
-### PR 2, commit 1 — Decompose the settings page (pure move)
+### Commits 2-3 — Freeze, then decompose the settings page (pure move)
 
 `AgentSettingsView.tsx` is 1,281 lines holding **seventeen** `useState` across
 four unrelated domains — providers (`settings`, `creatingCustom`, four derived
@@ -117,7 +123,7 @@ DOM snapshot per settings category on `main` **first**, commit that judge, then
 perform the move and show the snapshots byte-unchanged. **No test file may be
 edited in this commit.** If a snapshot moves, the move was not a move.
 
-### PR 2, commits 2-6 — One library, acquisition behind `+`
+### Commits 4-8 — One library, acquisition behind `+`
 
 **One list, one row shape, every source.** Sources rendered together:
 `built-in`, `user`, `project`, local directory, `managed`. Each row carries the
@@ -186,7 +192,7 @@ i18n `en.ts` + `zh-Hans.ts`, and a new settings IPC pair for adding/removing an
 predicate is placed there rather than in the renderer's view model — prefer main,
 so the model-facing catalog and the UI cannot disagree about what is enabled.
 
-#### PR 2, commit 6 — an update you do not have to go looking for
+#### Commit 8 — an update you do not have to go looking for
 
 - **Throttle on the existing record field.** Check at most once per record per
   window using `lastCheckedAt`; recommend **6 hours**. Trigger at app start once
@@ -201,7 +207,7 @@ so the model-facing catalog and the UI cannot disagree about what is enabled.
   any Skill's enabled state — it degrades and records (A12).
 - Explicitly not in scope: auto-update, background download, update-on-schedule.
 
-### PR 1 — The catalog is a production artifact; guard it
+### Commit 1 — The catalog is a production artifact; guard it
 
 `catalog/managed-skills-v1.json` is fetched live from `main` by every installed
 Tenon. It is the only file in this repository whose contents reach users without
@@ -233,7 +239,7 @@ a release, and nothing validates it.
   ```
 
   This is a data change gated on an external party and is **not a blocker for
-  this PR** — ship the guard, add the entry when the values arrive. Tenon ships no
+  this commit or this PR** — ship the guard, add the entry when the values arrive. Tenon ships no
   Browser Pilot binary and requires no code for this: the Skill it installs owns
   its own preflight and version pairing (`docs/spec/agent-skills.md` →
   *Third-Party Tool Integration*).
