@@ -20,23 +20,29 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463) |
-| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/plan-progress-pill` | plan-progress pill — Draft PR #467 (shipped tool-row-status-visuals #461, process-state-truthfulness #463) |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-subagent-status-truth` | subagent status truth — PR #466 ready for gate (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-reasoning-replay-fidelity` | reasoning replay fidelity — PR #465 ready for gate (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: empty. PM staffing next: `red-e2e-on-main`
-and `agent-subagent-interaction` PR 1/2; `agent-run-presentation-consistency` PR C is
-now the plan's only unclaimed unit; `agent-browser-control` implementation is
-**shelved** pending upstream Browser Pilot stabilization (PM ruling 2026-07-31), and
-`agent-reasoning-replay-fidelity` is claimable.
-Recently merged: #463 (`cc-2/process-state-truthfulness`,
+**In flight (2026-07-31).** Open PR queue: **#465** (codex-4,
+`agent-reasoning-replay-fidelity`) and **#466** (codex-2, `agent-subagent-status-truth`)
+are ready for the gate — two plan-track changes awaiting review, i.e. the WIP cap is
+full; **#467** (cc-2, plan-progress pill) is a Draft claim. PM staffing next:
+`agent-run-presentation-consistency` PR C is the plan's only unclaimed unit;
+`agent-browser-control` implementation is **shelved** pending upstream Browser Pilot
+stabilization (PM ruling 2026-07-31).
+Recently merged: #464 (`codex/red-e2e-on-main`) — `test:e2e` is a clean gate signal
+again; the two deterministic B5 guard failures bisected to one real omission (the
+jump-to-latest pill's material was never registered) and the third filed spec no longer
+reproduces at all.
+#463 (`cc-2/process-state-truthfulness`,
 `agent-run-presentation-consistency` PR B) after a medium review gate that took three
 rounds — the first pass found the status-owner guard erasing the status entirely from a
 Turn interrupted before it produced any process Item, and a `reasoningDefaultExpanded`
@@ -855,18 +861,13 @@ anything.
   the `refocusComposerFromClick` rAF racing the menu focus-in/restore effects in
   `useMenuKeyboard`. Reproduce the focus loss outside the harness before touching product code —
   it may be test-only state leakage.
-- **red-e2e-on-main** (P2, *fast-track, no plan file*, filed 2026-07-31 at the #461 gate) — three
-  e2e specs fail on `main` itself, independent of any branch; verified by running them directly on
-  `origin/main` (e9ca8bc7, then 9771c431) with identical errors, so they are not #461's doing but
-  they do mean `test:e2e` is no longer a clean signal at the gate. (1)
-  `file-attachments.spec.ts:178` *"/attachment creates a lightweight file name row…"* — the
-  attachment preview row assertion; (2) `typography-tokens.spec.ts:1094` *"keeps material
-  backgrounds scoped to registered chrome and overlay surfaces"* and (3) `:1102` *"keeps backdrop
-  filters scoped to material surfaces and preview HUD controls"* — these two are **B5 guards**
-  (Liquid-Glass two-layer model), so something is painting material or a backdrop filter outside
-  registered chrome; per B11 fix the CSS rather than the guard. Also seen once and not since:
-  `file-attachments.spec.ts:1212` (EPUB translation consent), so treat that one as flaky. Bisect
-  each to the commit that turned it red before touching product code.
+- **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
+  #464 gate) — `agent-thread.spec.ts:1247` *"streams a pathless image in bounded chunks and records
+  only a managed reference"* fails under full-suite parallel load but passes in isolation (1 fail
+  in the gate's 538-test run, then 1/1 pass solo; #464's own probe saw 3 pass / 2 fail across five
+  runs). The total byte count stays correct in the failing runs, so the suspicion is a
+  chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
+  split deterministically before touching product code.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
@@ -883,6 +884,26 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **red-e2e-on-main** (`codex/red-e2e-on-main`, PR #464, codex, merged 2026-07-31,
+  fast-track, no plan file) — `test:e2e` is a clean signal at the gate again. Of the
+  three specs filed as red at the #461 gate, the two deterministic ones were both B5
+  guards firing on the same real omission: the jump-to-latest pill added by
+  `51d7cab8` (agent thread scroll follow) paints `--material-popover` plus a
+  backdrop filter but was never registered as a chrome/overlay surface — bisected to
+  that commit, with `910c457a` as the good boundary. The fix registers the exact
+  `.thread-jump-latest` selector with a comment stating why it qualifies (transient
+  level-1 navigation chrome floating above the transcript viewport, matching the
+  Thread rendering spec's own description of the control), rather than
+  de-materializing a surface the design already intends to be glass — a deliberate
+  B11 widening, not a relaxed guard; the guard's parsing and matching stay strict.
+  The third, `file-attachments.spec.ts:178`, no longer reproduces anywhere (5/5 on
+  main, 6/6 on `9771c431`, plus full-suite runs) and was left untouched rather than
+  fixed by invention. **Gate (main):** `/code-review low` had nothing in scope
+  (test-file-only diff), so the gate was the behavioral one — the guard was verified
+  red on the merge base (2 failed / 43 passed) and green with the patch (45/45), then
+  the full suite at 537 pass / 1 fail, that one failure passing 1/1 in isolation and
+  now filed as `flaky-pathless-image-chunking-e2e` under *Deferred follow-ups*.
 
 - **tool-row-status-visuals + agent-tool-label-vocabulary**
   (`cc-2/tool-row-status-visuals`, PR #461, cc-2, merged 2026-07-31,

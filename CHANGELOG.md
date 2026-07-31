@@ -105,6 +105,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **The e2e suite is a clean gate signal again (PR #464, codex)** — the two
+  deterministic B5 guard failures that had been red on `main` since
+  `51d7cab8` were one real omission, not two: the "Jump to latest" pill paints
+  `--material-popover` with a backdrop filter but was never registered as a
+  chrome/overlay surface. It is registered now, by exact selector and with a
+  comment stating why it qualifies — transient level-1 navigation chrome
+  floating above the transcript viewport, which is what the Thread rendering
+  spec already calls it — rather than stripping glass off a surface the design
+  intends to have it; the guard's parsing and matching are unchanged. The
+  third spec filed as red, the `/attachment` file-name row, no longer
+  reproduces anywhere and was deliberately left alone instead of being
+  "fixed" by invention.
+
 - **Browser Control plan refresh (PR #459, codex-3, plan-only)** — the
   `agent-browser-control` plan now matches the shipped runtime
   (#444/#445/#451/#456) and the PM's pre-implementation rulings: prepared
