@@ -66,6 +66,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
+import { basenameForPath } from '../../../../core/referenceMarkup';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
@@ -243,7 +244,11 @@ export function ThreadToolActivityGroup({
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
   const segments = threadToolActivitySegments(items, t.agent.thread.activity, index);
-  const label = segments.map((segment) => segment.text).join(' · ');
+  // The tooltip re-derives the summary with no elision, so the names the row
+  // could not fit are still reachable.
+  const title = summarizeThreadToolActivity(
+    items, t.agent.thread.activity, index, { subjectLimit: Number.POSITIVE_INFINITY },
+  );
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
       <ButtonControl
@@ -253,18 +258,7 @@ export function ThreadToolActivityGroup({
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, groupGlyph(items))} />
-        <span className="thread-tool-activity-summary" title={label}>
-          {segments.flatMap((segment, index) => {
-            const text = segment.tone === 'neutral'
-              ? segment.text
-              : (
-                <span className={`thread-tool-activity-count-${segment.tone}`} key={`segment-${index}`}>
-                  {segment.text}
-                </span>
-              );
-            return index === 0 ? [text] : [' · ', text];
-          })}
-        </span>
+        <ToolSummaryText className="thread-tool-activity-summary" segments={segments} title={title} />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-activity-members">
@@ -648,7 +642,15 @@ function ToolItemDisclosure({
     };
   }, [expanded, holdAnchorUntilSettled, onReadOutput, outputLoaded, outputRefId]);
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
-  const label = summarizeThreadToolItem(item, t.agent.thread.activity, index);
+  const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
+  // A caller-authored description replaces the shell text in the label, so the
+  // tooltip has to keep the command itself visible without expanding the row —
+  // the description is a claim, the command is the fact.
+  const title = item.type === 'commandExecution' && item.description
+    ? `${item.description}\n${item.command}`
+    : summarizeThreadToolItem(item, t.agent.thread.activity, index, {
+      subjectLimit: Number.POSITIVE_INFINITY,
+    });
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -663,7 +665,7 @@ function ToolItemDisclosure({
         }}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
-        <span className="thread-tool-label" title={label}>{label}</span>
+        <ToolSummaryText className="thread-tool-label" segments={segments} title={title} />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-body">
@@ -709,6 +711,34 @@ function ToolDetailSection({
       <header><span>{label}</span></header>
       {children}
     </section>
+  );
+}
+
+/**
+ * A tool summary as a flex row: the act ellipsizes, the status tally never
+ * does. A trailing "· failed" that could truncate away would leave the row
+ * asserting the act succeeded.
+ */
+function ToolSummaryText({
+  className,
+  segments,
+  title,
+}: {
+  readonly className: string;
+  readonly segments: readonly ToolActivitySegment[];
+  readonly title: string;
+}) {
+  const act = segments.filter((segment) => segment.tone === 'neutral').map((segment) => segment.text).join(' · ');
+  const tallies = segments.filter((segment) => segment.tone !== 'neutral');
+  return (
+    <span className={className} title={title}>
+      <span className="thread-tool-summary-act">{act}</span>
+      {tallies.map((segment, index) => (
+        <span className={`thread-tool-activity-count-${segment.tone}`} key={`${segment.tone}-${index}`}>
+          {` · ${segment.text}`}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -920,17 +950,36 @@ export function summarizeThreadToolItem(
   item: ThreadToolItem,
   labels: Messages['agent']['thread']['activity'],
   index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
 ): string {
-  const act = toolItemAct(item, labels, index);
-  if (item.status === 'failed') return labels.actionFailed({ action: act });
-  if (item.status === 'interrupted') return labels.actionInterrupted({ action: act });
-  return act;
+  return joinSegmentText(threadToolItemSegments(item, labels, index, options));
+}
+
+/**
+ * The act and its outcome are separate segments so the outcome can be rendered
+ * unshrinkable: a trailing "· failed" that ellipsizes away would leave the row
+ * asserting the act succeeded.
+ */
+export function threadToolItemSegments(
+  item: ThreadToolItem,
+  labels: Messages['agent']['thread']['activity'],
+  index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
+): readonly ToolActivitySegment[] {
+  const act: ToolActivitySegment = {
+    text: toolItemAct(item, labels, index, options.subjectLimit ?? NAMED_SUBJECT_LIMIT),
+    tone: 'neutral',
+  };
+  if (item.status === 'failed') return [act, { text: labels.statusFailed, tone: 'failed' }];
+  if (item.status === 'interrupted') return [act, { text: labels.statusInterrupted, tone: 'interrupted' }];
+  return [act];
 }
 
 function toolItemAct(
   item: ThreadToolItem,
   labels: Messages['agent']['thread']['activity'],
   index: DocumentIndex | undefined,
+  limit: number,
 ): string {
   const running = item.status === 'inProgress';
   switch (item.type) {
@@ -945,9 +994,9 @@ function toolItemAct(
       const count = item.changes.length;
       // A change set spans add/update/delete, so the verb stays "changed"; the
       // paths are what the user actually wants to see.
-      const names = item.changes.map((change) => fileDisplayName(change.path));
+      const names = item.changes.map((change) => basenameForPath(change.path) || change.path);
       if (names.length > 0) {
-        const subjects = joinSubjects(names, labels);
+        const subjects = joinSubjects(names, labels, limit);
         return running ? labels.changingNamed({ subjects }) : labels.changedNamed({ subjects });
       }
       return running ? labels.changingFiles({ count }) : labels.changedFiles({ count });
@@ -964,7 +1013,7 @@ function toolItemAct(
       const name = [item.namespace, item.tool].filter(Boolean).join('.');
       if (kind === 'tool') return namedToolAct(name, running, labels);
       const subjects = dynamicToolSubjects(item, kind, index);
-      return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels);
+      return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels, limit);
     }
     case 'collabAgentToolCall':
       return collaborationAct(item.tool, running, labels);
@@ -1050,12 +1099,14 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
  */
 function groupGlyph(items: readonly ThreadToolItem[]): ReactNode {
   const first = items[0];
-  if (first === undefined) return <GenericToolIcon size={ICON_SIZE.tiny} />;
+  // Same slot, same size: the shared-tool path renders at ICON_SIZE.menu, so
+  // the mixed fallback must too or the group glyph visibly changes size.
+  if (first === undefined) return <GenericToolIcon size={ICON_SIZE.menu} />;
   const shared = items.every((item) => item.type === first.type
     && (item.type !== 'dynamicToolCall' || dynamicToolActivityKind(item) === dynamicToolActivityKind(
       first as Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
     )));
-  return shared ? toolIcon(first) : <GenericToolIcon size={ICON_SIZE.tiny} />;
+  return shared ? toolIcon(first) : <GenericToolIcon size={ICON_SIZE.menu} />;
 }
 
 function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
@@ -1123,8 +1174,13 @@ export function summarizeThreadToolActivity(
   items: readonly ThreadToolItem[],
   labels: Messages['agent']['thread']['activity'],
   index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
 ): string {
-  return threadToolActivitySegments(items, labels, index).map((segment) => segment.text).join(' · ');
+  return joinSegmentText(threadToolActivitySegments(items, labels, index, options));
+}
+
+function joinSegmentText(segments: readonly ToolActivitySegment[]): string {
+  return segments.map((segment) => segment.text).join(' · ');
 }
 
 /**
@@ -1136,7 +1192,9 @@ export function threadToolActivitySegments(
   items: readonly ThreadToolItem[],
   labels: Messages['agent']['thread']['activity'],
   index?: DocumentIndex,
+  options: ToolSummaryOptions = {},
 ): readonly ToolActivitySegment[] {
+  const limit = options.subjectLimit ?? NAMED_SUBJECT_LIMIT;
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
   const add = (kind: ToolActivityKind, subject: string, running: boolean, name?: string) => {
     const bucket = buckets.get(kind) ?? { subjects: new Set<string>(), names: [], running: false };
@@ -1159,7 +1217,7 @@ export function threadToolActivitySegments(
             : change.kind === 'delete'
               ? 'fileDelete'
               : 'fileEdit';
-          add(kind, change.path, running, fileDisplayName(change.path));
+          add(kind, change.path, running, basenameForPath(change.path) || change.path);
         }
         break;
       case 'webSearch':
@@ -1188,7 +1246,7 @@ export function threadToolActivitySegments(
     const bucket = buckets.get(kind);
     if (!bucket || bucket.subjects.size === 0) return [];
     return [{
-      text: toolActivityPhrase(kind, bucket.subjects.size, bucket.names, bucket.running, labels),
+      text: toolActivityPhrase(kind, bucket.subjects.size, bucket.names, bucket.running, labels, limit),
       tone: 'neutral' as const,
     }];
   });
@@ -1218,42 +1276,36 @@ type SubjectPhraseKey = {
 
 /** Verbs shared by the file and node families: with a subject named, the phrase
  *  does not need to repeat the noun — "Read intro.xhtml" already says it is a
- *  file. Kinds absent here have no subject a person would recognise. */
-const SUBJECT_VERBS: Partial<Record<ToolActivityKind, SubjectPhraseKey>> = {
-  fileCreate: 'createdNamed',
-  fileEdit: 'editedNamed',
-  fileDelete: 'deletedNamed',
-  fileRead: 'readNamed',
-  fileSearch: 'searchedNamed',
-  nodeCreate: 'createdNamed',
-  nodeEdit: 'editedNamed',
-  nodeDelete: 'deletedNamed',
-  nodeRestore: 'restoredNamed',
-  nodeRead: 'readNamed',
-  nodeSearch: 'searchedNamed',
-  webFetch: 'fetchedNamed',
-  skill: 'usedSkillNamed',
-};
-
-const RUNNING_SUBJECT_VERBS: Partial<Record<ToolActivityKind, SubjectPhraseKey>> = {
-  fileCreate: 'creatingNamed',
-  fileEdit: 'editingNamed',
-  fileDelete: 'deletingNamed',
-  fileRead: 'readingNamed',
-  fileSearch: 'searchingNamed',
-  nodeCreate: 'creatingNamed',
-  nodeEdit: 'editingNamed',
-  nodeDelete: 'deletingNamed',
-  nodeRestore: 'restoringNamed',
-  nodeRead: 'readingNamed',
-  nodeSearch: 'searchingNamed',
-  webFetch: 'fetchingNamed',
-  skill: 'usingSkillNamed',
+ *  file. Kinds absent here have no subject a person would recognise. One map
+ *  holds both tenses so the pair cannot drift apart. */
+const SUBJECT_VERBS: Partial<Record<
+  ToolActivityKind,
+  { readonly past: SubjectPhraseKey; readonly present: SubjectPhraseKey }
+>> = {
+  fileCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  fileEdit: { past: 'editedNamed', present: 'editingNamed' },
+  fileDelete: { past: 'deletedNamed', present: 'deletingNamed' },
+  fileRead: { past: 'readNamed', present: 'readingNamed' },
+  fileSearch: { past: 'searchedNamed', present: 'searchingNamed' },
+  nodeCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  nodeEdit: { past: 'editedNamed', present: 'editingNamed' },
+  nodeDelete: { past: 'deletedNamed', present: 'deletingNamed' },
+  nodeRestore: { past: 'restoredNamed', present: 'restoringNamed' },
+  nodeRead: { past: 'readNamed', present: 'readingNamed' },
+  nodeSearch: { past: 'searchedNamed', present: 'searchingNamed' },
+  webFetch: { past: 'fetchedNamed', present: 'fetchingNamed' },
+  skill: { past: 'usedSkillNamed', present: 'usingSkillNamed' },
 };
 
 /** How many subjects a summary names before eliding (PM-ratified 2026-07-30).
- *  The full list stays in the row's `title`. */
+ *  The row's `title` re-derives the same summary with no limit, so the full
+ *  list is one hover away. */
 const NAMED_SUBJECT_LIMIT = 2;
+
+/** Display uses the elided form; `title` passes Infinity for the full list. */
+export interface ToolSummaryOptions {
+  readonly subjectLimit?: number;
+}
 
 function toolActivityPhrase(
   kind: ToolActivityKind,
@@ -1261,11 +1313,12 @@ function toolActivityPhrase(
   names: readonly string[],
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
+  limit: number = NAMED_SUBJECT_LIMIT,
 ): string {
   // Only name subjects when every one of them is nameable; a partly-named bucket
   // would silently drop the work it could not name.
   if (names.length === count && names.length > 0) {
-    const named = namedSubjectPhrase(kind, names, running, labels);
+    const named = namedSubjectPhrase(kind, names, running, labels, limit);
     if (named !== null) return named;
   }
   switch (kind) {
@@ -1297,25 +1350,28 @@ function namedSubjectPhrase(
   names: readonly string[],
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
+  limit: number,
 ): string | null {
   // The web-search family already ships subject-bearing phrasing of its own.
   if (kind === 'web') {
-    const query = joinSubjects(names, labels);
+    const query = joinSubjects(names, labels, limit);
     return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
   }
   // "Used the dataviz, run skill" is not a sentence; past one, count instead.
   if (kind === 'skill' && names.length > 1) return null;
-  const key = running ? RUNNING_SUBJECT_VERBS[kind] : SUBJECT_VERBS[kind];
-  if (key === undefined) return null;
-  return labels[key]({ subjects: joinSubjects(names, labels) });
+  const verbs = SUBJECT_VERBS[kind];
+  if (verbs === undefined) return null;
+  const key = running ? verbs.present : verbs.past;
+  return labels[key]({ subjects: joinSubjects(names, labels, limit) });
 }
 
 function joinSubjects(
   names: readonly string[],
   labels: Messages['agent']['thread']['activity'],
+  limit: number,
 ): string {
-  const shown = names.slice(0, NAMED_SUBJECT_LIMIT).join(', ');
-  const remaining = names.length - NAMED_SUBJECT_LIMIT;
+  const shown = names.slice(0, limit).join(', ');
+  const remaining = names.length - limit;
   return remaining > 0 ? labels.subjectsWithMore({ subjects: shown, more: remaining }) : shown;
 }
 
@@ -1386,8 +1442,12 @@ function dynamicToolSubjects(
     if (!Array.isArray(value)) return [];
     return value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()));
   });
-  if (values.length === 0) return { keys: [item.id], names: [] };
-  return { keys: values, names: values.map((value) => subjectDisplayName(kind, value, index)) };
+  // `SUBJECT_ARGUMENT_KEYS` reads both singular and plural argument spellings,
+  // so the same subject can arrive twice; the grouped path dedupes through its
+  // bucket Set and the single-row path has to match it.
+  const keys = [...new Set(values)];
+  if (keys.length === 0) return { keys: [item.id], names: [] };
+  return { keys, names: keys.map((value) => subjectDisplayName(kind, value, index)) };
 }
 
 function subjectDisplayName(
@@ -1395,18 +1455,16 @@ function subjectDisplayName(
   value: string,
   index: DocumentIndex | undefined,
 ): string {
-  if (kind === 'webFetch') return value;
+  // Search kinds first: `nodeSearch` starts with "node" but its subject is a
+  // query string, not an id — resolving it as a Node would rename the query.
+  if (kind === 'fileSearch' || kind === 'nodeSearch' || kind === 'web') return quoteSubject(value);
+  if (kind === 'webFetch') return quoteSubject(value);
   if (kind.startsWith('node')) {
     // The same title resolution user-message Node references use, so the
     // transcript never shows a raw id where it can show a title.
     return quoteSubject(threadNodeReferenceDisplayLabel('', value, index, value));
   }
-  if (kind === 'fileSearch' || kind === 'nodeSearch' || kind === 'web') return quoteSubject(value);
-  return fileDisplayName(value);
-}
-
-function fileDisplayName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  return basenameForPath(value) || value;
 }
 
 function normalizedToolIdentity(namespace: string | null, tool: string): string {
@@ -1661,13 +1719,19 @@ function firstLine(text: string): string {
  */
 function commandDisplayText(command: string, cwd: string): string {
   let text = firstLine(command);
-  const heredoc = text.indexOf('<<');
-  if (heredoc > 0) text = text.slice(0, heredoc).trim();
+  // Only a real heredoc opener: `<<WORD` / `<<-'WORD'`. Not `<<<` (here-string)
+  // and not `1<<20` (bit shift), both of which would truncate mid-command.
+  const heredoc = /<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/.exec(text);
+  if (heredoc && heredoc.index > 0 && !text.startsWith('<<<', heredoc.index)) {
+    text = text.slice(0, heredoc.index).trim();
+  }
   // A leading `cd X &&` is scaffolding for the command that follows it.
   const chained = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*(.+)$/.exec(text);
   if (chained?.[1]) text = chained[1].trim();
+  // Shorten paths inside the Thread's own working directory. A root cwd has no
+  // prefix worth stripping — doing it anyway would delete every slash.
   const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`;
-  return cwd ? text.split(prefix).join('') : text;
+  return prefix.length > 1 ? text.split(prefix).join('') : text;
 }
 
 function quoteSubject(value: string): string {

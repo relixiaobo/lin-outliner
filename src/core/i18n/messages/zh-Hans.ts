@@ -1212,8 +1212,8 @@ commandPalette: {
         usingSkillNamed: ({ subjects }) => `正在使用 ${subjects} 技能`,
         usedSkillNamed: ({ subjects }) => `使用了 ${subjects} 技能`,
         subjectsWithMore: ({ subjects, more }) => `${subjects} 等 ${more} 项`,
-        actionFailed: ({ action }) => `${action} · 失败`,
-        actionInterrupted: ({ action }) => `${action} · 已中断`,
+        statusFailed: '失败',
+        statusInterrupted: '已中断',
       },
     },
     turnDetails: {

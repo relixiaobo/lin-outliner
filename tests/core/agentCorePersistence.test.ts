@@ -218,6 +218,39 @@ describe('Agent Core persistence', () => {
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1, 2]);
   });
 
+  test('finalizes a Turn whose Items were persisted before the protocol grew a field', async () => {
+    // A crashed Turn from an older build is finalized after upgrade. The Item
+    // did not change, so the terminal-mutation invariant must not fire — it
+    // compares canonical decoded Items, not stored bytes.
+    const root = await tempRoot();
+    const threadId = uuidV7(2_600);
+    const path = join(root, 'thread_history.sqlite');
+    const rollout = new RolloutStore(join(root, 'rollouts'));
+    for (const notification of commandLifecycle(threadId)) await rollout.append(threadId, notification);
+    const entries = await rollout.read(threadId);
+    const store = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    store.applyMany(entries.slice(0, -1));
+    store.close();
+
+    // Rewrite the stored row exactly as an older build would have written it.
+    const db = testDatabase(path);
+    const row = db.prepare(
+      'SELECT item_id, item_json FROM thread_items WHERE thread_id = ?',
+    ).get(threadId) as { item_id: string; item_json: string };
+    const legacy = JSON.parse(row.item_json) as Record<string, unknown>;
+    expect(legacy.description).toBeNull();
+    delete legacy.description;
+    db.prepare('UPDATE thread_items SET item_json = ? WHERE thread_id = ? AND item_id = ?')
+      .run(JSON.stringify(legacy), threadId, row.item_id);
+    db.close();
+
+    const reopened = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    expect(() => reopened.applyMany([entries.at(-1)!])).not.toThrow();
+    const turns = reopened.listTurns({ threadId, itemsView: 'full' });
+    expect(turns.data[0]?.status).toBe('completed');
+    reopened.close();
+  });
+
   test('rebuilds paginated Turn and Item projections exactly from rollout JSONL', async () => {
     const root = await tempRoot();
     const rollout = new RolloutStore(join(root, 'rollouts'));
@@ -555,6 +588,49 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
       completedAt: 4_090,
     },
     { type: 'turn/completed', threadId, turnId, turn: completedTurn },
+  ];
+}
+
+function commandLifecycle(threadId: string): AgentCoreNotification[] {
+  const turnId = uuidV7(2_601);
+  const running: ThreadItem = {
+    type: 'commandExecution',
+    id: 'item-command-2601',
+    provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: 'item-command-2601' },
+    command: 'bun run typecheck',
+    description: null,
+    cwd: '/tmp/project',
+    processId: null,
+    status: 'inProgress',
+    outputRef: null,
+    commandActions: [],
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const item: ThreadItem = { ...running, status: 'completed', exitCode: 0, durationMs: 10 };
+  const startedTurn: Turn = {
+    id: turnId,
+    items: [],
+    itemsView: 'full',
+    provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+    status: 'inProgress',
+    error: null,
+    execution: turnExecution,
+    startedAt: 2_600,
+    completedAt: null,
+    durationMs: null,
+  };
+  return [
+    { type: 'turn/started', threadId, turnId, turn: startedTurn },
+    { type: 'item/started', threadId, turnId, itemId: running.id, item: running, startedAt: 2_601 },
+    { type: 'item/completed', threadId, turnId, itemId: item.id, item, completedAt: 2_602 },
+    {
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: { ...startedTurn, items: [item], status: 'completed', completedAt: 2_603, durationMs: 3 },
+    },
   ];
 }
 

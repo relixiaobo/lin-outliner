@@ -1282,8 +1282,8 @@ commandPalette: {
         usedSkillNamed: ({ subjects }: { subjects: string }) => `Used the ${subjects} skill`,
         subjectsWithMore: ({ subjects, more }: { subjects: string; more: number }) =>
           `${subjects} and ${more} more`,
-        actionFailed: ({ action }: { action: string }) => `${action} · failed`,
-        actionInterrupted: ({ action }: { action: string }) => `${action} · interrupted`,
+        statusFailed: 'failed',
+        statusInterrupted: 'interrupted',
       },
     },
     turnDetails: {

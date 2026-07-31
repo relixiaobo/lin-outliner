@@ -582,7 +582,13 @@ export class ThreadHistoryProjectionStore {
     if (rows.length !== items.length) throw new Error(`Terminal Turn Items do not match recorded Items: ${turnId}`);
     for (const [index, item] of items.entries()) {
       const row = rows[index]!;
-      if (row.item_id !== item.id || row.item_json !== JSON.stringify(decodeThreadItem(item))) {
+      // Compare canonical decoded forms, not stored bytes. The invariant is
+      // "this terminal Item did not change" — a row written before the protocol
+      // gained an optional field is the same Item, and byte equality would call
+      // it a mutation and wedge the Thread at startup (A12: the check belongs
+      // on the Item, not on its serialization).
+      const stored = JSON.stringify(decodeThreadItem(JSON.parse(row.item_json)));
+      if (row.item_id !== item.id || stored !== JSON.stringify(decodeThreadItem(item))) {
         throw new Error(`Terminal Turn Item mutation is not allowed: ${item.id}`);
       }
       if (row.completed_at === null) throw new Error(`Terminal Turn contains an unfinished Item: ${item.id}`);

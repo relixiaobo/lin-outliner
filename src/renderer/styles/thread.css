@@ -1263,12 +1263,34 @@
   color: var(--text-strong);
 }
 
-.thread-text-disclosure-toggle > span:last-child,
-.thread-tool-label,
-.thread-tool-activity-summary {
+.thread-text-disclosure-toggle > span:last-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A tool summary ellipsizes its ACT, never its outcome: the act is the
+   shrinking item and each status tally is pinned. A trailing "· failed" that
+   could truncate away would leave the row asserting the act succeeded, and a
+   collapsed group would lose its only failure cue on a narrow pane. */
+.thread-tool-label,
+.thread-tool-activity-summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.thread-tool-summary-act {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-tool-activity-count-failed,
+.thread-tool-activity-count-interrupted {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -1378,11 +1400,11 @@
 /* A group summarizes mixed outcomes, so only the tally of what went wrong is
    coloured. Painting the whole line — or the group's glyph — would read as "all
    of this failed" when one call out of six did. */
-.thread-tool-activity-summary .thread-tool-activity-count-failed {
+.thread-tool-activity-count-failed {
   color: var(--status-danger);
 }
 
-.thread-tool-activity-summary .thread-tool-activity-count-interrupted {
+.thread-tool-activity-count-interrupted {
   color: var(--text-faint);
 }
 

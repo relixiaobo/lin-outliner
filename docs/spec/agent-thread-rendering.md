@@ -46,20 +46,26 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
   explanation. A failure that never produced an exit code — a timeout, a kill —
   keeps a null code and says only that the command failed; the renderer never
-  borrows a plausible code the shell did not report.
+  borrows a plausible code the shell did not report. Every other tool failure
+  surfaces its own message, or, when it has none, states plainly that it failed
+  without one; failure prose is never presented under a neutral result heading
 - a command row is labelled by the **caller's own description** of the command
   when there is one. The `bash` contract already requires a one-line account in
   active voice, so the transcript states intent rather than shell syntax, and
-  three identical `python3 - <<'PY'` heredocs read as three different acts. The
-  shell text is always one expand away. `description` is optional on the Item;
-  Items persisted before it existed decode with a null description rather than
-  failing. When it is absent the row falls back to the command text with the
-  parts that are provably not the point removed — a heredoc body, a leading
-  `cd X &&`, and the Thread working directory prefix — so the label's length
-  budget is spent on the operative text. The renderer does not otherwise try to
-  interpret shell syntax. Every other tool failure
-  surfaces its own message, or, when it has none, states plainly that it failed
-  without one; failure prose is never presented under a neutral result heading
+  three identical `python3 - <<'PY'` heredocs read as three different acts.
+  Because that description displaces the shell text, the row's title always
+  carries the command itself: the description is the caller's *claim*, the
+  command is what actually ran, and a transcript must never let the claim stand
+  alone. The command is also one expand away under Arguments
+- `description` is optional on the Item, and Items persisted before the field
+  existed decode with a null description rather than failing. When it is absent
+  the row falls back to the command text with the parts that are provably not
+  the point removed — a heredoc body, a leading `cd X &&`, and the Thread
+  working-directory prefix — so the label's budget is spent on the operative
+  text. Those removals are deliberately narrow: a heredoc opener is recognised
+  only as `<<WORD`, never a here-string or a bit shift, and a root working
+  directory has no prefix worth stripping. The renderer does not otherwise
+  interpret shell syntax
 - a tool row keeps its own tool-type icon in every terminal state, so a broken
   row still says which tool broke; only the running state substitutes a glyph,
   because there the spinner *is* the state. Status is carried by colour on that
@@ -71,8 +77,7 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   by the disclosure chevron. A running row likewise keeps its spinner through
   hover, focus, and expansion, and a group only ever animates its own glyph, not
   the finished children inside it. The indicator is decorative to assistive
-  technology: the label text and `aria-expanded` carry the state, and the label
-  exposes its untruncated text as a title
+  technology: the label text and `aria-expanded` carry the state
 - a tool row says **what the agent did**, in the user's terms, and never shows a
   model-facing tool identifier for a tool the renderer can map: built-in tool
   calls resolve to one shared activity vocabulary, and the identifier survives
@@ -82,19 +87,25 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - a row names its subject wherever the call carries one — the file's basename,
   the Node's title (resolved like any Node reference, falling back to the id),
   the search pattern or query, the fetched URL, the Skill — and a summary names
-  up to two subjects before eliding ("Read intro.xhtml, ch01.xhtml and 4 more"),
-  with the full list in the row's title. A subject phrase drops the redundant
+  up to two subjects before eliding ("Read intro.xhtml, ch01.xhtml and 4 more");
+  the row's title re-derives the same summary with no elision, so the names the
+  label could not fit stay one hover away. A subject phrase drops the redundant
   noun, because the subject already supplies it. When only some of a bucket's
   subjects are nameable, the summary counts instead of naming: a partly-named
   summary would read as if the unnamed work never happened
 - terminal status is **one** idiom for every tool kind — the act, then the
   outcome as an annotation (`Read intro.xhtml · failed`) — rather than a
-  per-kind failure sentence. A scanning user learns the pattern once
+  per-kind failure sentence. A scanning user learns the pattern once. The act
+  and the outcome are separate elements: the act ellipsizes when the pane is
+  narrow, the outcome never does. A truncatable outcome would leave a failed
+  row asserting the act succeeded, and would strip a collapsed group of its only
+  failure cue
 - every tool a row can show resolves to a **distinct** glyph, judged at the
   14px the transcript actually renders: opposite actions never differ by a
   single stroke (file delete is an X, not a minus beside create's plus), a
   connected MCP tool never wears the unknown-tool fallback glyph, and a fetched
-  page is not drawn as a document. Glyph choices app-wide remain
+  page is not drawn as a document; a group's glyph is the same size whether its
+  members agree on a tool or not. Glyph choices app-wide remain
   `docs/plans/icon-semantics.md`'s; these tool-row rows are recorded there
 - a counted activity group summarizes mixed outcomes, so it is **not** painted by
   its worst member: its glyph and its activity phrase stay neutral, and only the

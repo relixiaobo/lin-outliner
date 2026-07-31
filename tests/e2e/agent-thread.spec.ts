@@ -2171,7 +2171,13 @@ test.describe('canonical agent Thread surface', () => {
           textFaint: token('--text-faint'),
           textSoft: token('--text-soft'),
           group: {
-            summaryColor: channels(getComputedStyle(summary).color).slice(0, 3),
+            summaryColor: channels(
+              getComputedStyle(summary.querySelector('.thread-tool-summary-act')!).color,
+            ).slice(0, 3),
+            // The act shrinks and the tally is pinned, so a narrow pane can
+            // never ellipsize the only failure cue away.
+            actFlexShrink: getComputedStyle(summary.querySelector('.thread-tool-summary-act')!).flexShrink,
+            tallyFlexShrink: getComputedStyle(tally).flexShrink,
             glyphColor: channels(
               getComputedStyle(document.querySelector('.thread-tool-activity-toggle .thread-disclosure-status')!).color,
             ).slice(0, 3),
@@ -2205,12 +2211,14 @@ test.describe('canonical agent Thread surface', () => {
       // A mixed-outcome group stays neutral apart from its tally: one failed
       // call out of three must not paint the line, or the whole group reads as
       // broken. The group glyph stays neutral for the same reason.
-      expect(probe.group.tallyText).toBe('1 failed');
+      expect(probe.group.tallyText).toBe(' · 1 failed');
       expect(probe.group.tallyColor).toEqual(probe.statusDanger.slice(0, 3));
       expect(probe.group.summaryColor).not.toEqual(probe.statusDanger.slice(0, 3));
       expect(probe.group.summaryColor).toEqual(probe.textSoft.slice(0, 3));
       expect(probe.group.glyphColor).not.toEqual(probe.statusDanger.slice(0, 3));
       expect(probe.group.glyphColor).toEqual(probe.textFaint.slice(0, 3));
+      expect(probe.group.tallyFlexShrink).toBe('0');
+      expect(probe.group.actFlexShrink).not.toBe('0');
 
       // The tint has to survive interaction — the chevron swap used to erase it.
       await page.locator('.thread-tool-failed.thread-tool .thread-tool-toggle').hover();

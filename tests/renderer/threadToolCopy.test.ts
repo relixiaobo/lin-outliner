@@ -5,6 +5,7 @@ import { en } from '../../src/core/i18n';
 import {
   summarizeThreadToolActivity,
   summarizeThreadToolItem,
+  threadToolItemSegments,
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import type { DocumentIndex } from '../../src/renderer/state/document';
@@ -49,6 +50,7 @@ function shell(
   status: ItemExecutionStatus = 'completed',
   id = 'command-1',
   description: string | null = null,
+  cwd = '/w',
 ): ThreadToolItem {
   return {
     ...base(id),
@@ -57,7 +59,7 @@ function shell(
     outputRef: null,
     command,
     description,
-    cwd: '/w',
+    cwd,
     processId: null,
     commandActions: [],
     aggregatedOutput: null,
@@ -247,6 +249,56 @@ describe('node subjects prefer the title over the id', () => {
       .toBe('Edited "Chapter Three", "Appendix"');
     expect(summarizeThreadToolItem(dynamic('node_read', { node_id: 'node-missing' }), labels, index))
       .toBe('Read "node-missing"');
+  });
+});
+
+describe('review regressions — each of these shipped broken once', () => {
+  test('a search query is never resolved as if it were a node id', () => {
+    // `'nodeSearch'.startsWith('node')` sent queries through title resolution,
+    // so a query equal to a node uuid rendered as that node's title.
+    const index = nodeIndex();
+    expect(summarizeThreadToolItem(dynamic('node_search', { query: 'node-a' }), labels, index))
+      .toBe('Searched for "node-a"');
+  });
+
+  test('a repeated subject is counted once, single row and group alike', () => {
+    // The bucket Set deduped; the single-row path did not.
+    expect(summarizeThreadToolItem(dynamic('node_read', { node_id: 'a', node_ids: ['a'] }), labels))
+      .toBe('Read "a"');
+    expect(summarizeThreadToolItem(dynamic('node_read', { node_ids: ['a', 'a', 'b'] }), labels))
+      .toBe('Read "a", "b"');
+  });
+
+  test('a root working directory does not delete every slash in the command', () => {
+    expect(summarizeThreadToolItem(shell('ls /usr/local/bin && cat /etc/hosts', 'completed', 'c', null, '/'), labels))
+      .toBe('Ran "ls /usr/local/bin && cat /etc/hosts"');
+  });
+
+  test('bit shifts and here-strings are not mistaken for heredocs', () => {
+    expect(summarizeThreadToolItem(shell("awk 'BEGIN{print 1<<20}' data.txt"), labels))
+      .toBe('Ran "awk \'BEGIN{print 1<<20}\' data.txt"');
+    expect(summarizeThreadToolItem(shell('grep foo <<< "$text"'), labels))
+      .toBe('Ran "grep foo <<< \"$text\""');
+    // A genuine heredoc still collapses.
+    expect(summarizeThreadToolItem(shell("python3 - <<'PY'\nprint(1)\nPY"), labels))
+      .toBe('Ran "python3 -"');
+  });
+
+  test('the outcome is a segment of its own so it cannot be ellipsized away', () => {
+    const segments = threadToolItemSegments(
+      dynamic('file_edit', { file_path: '/w/config.json' }, 'failed'), labels,
+    );
+    expect(segments.map((segment) => segment.tone)).toEqual(['neutral', 'failed']);
+    expect(segments[0]!.text).toBe('Edited config.json');
+    expect(segments[1]!.text).toBe('failed');
+  });
+
+  test('the tooltip carries the full subject list the label elided', () => {
+    const reads = ['a', 'b', 'c', 'd'].map((n) =>
+      dynamic('file_read', { file_path: `/w/${n}.ts` }, 'completed', { id: `r-${n}` }));
+    expect(summarizeThreadToolActivity(reads, labels)).toBe('Read a.ts, b.ts and 2 more');
+    expect(summarizeThreadToolActivity(reads, labels, undefined, { subjectLimit: Number.POSITIVE_INFINITY }))
+      .toBe('Read a.ts, b.ts, c.ts, d.ts');
   });
 });
 

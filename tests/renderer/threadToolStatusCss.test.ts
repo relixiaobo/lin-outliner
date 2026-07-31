@@ -24,12 +24,27 @@ describe('thread tool row status CSS guards', () => {
     );
   });
 
-  test('colours only the tally in a group summary, never the whole line or its glyph', () => {
+  test('never lets a status tally be ellipsized away', () => {
+    // The act shrinks; the outcome is pinned. Otherwise a narrow pane renders
+    // "Changed config.json" for a row that actually failed.
     expect(threadCss).toMatch(
-      /\.thread-tool-activity-summary \.thread-tool-activity-count-failed \{\s*color:\s*var\(--status-danger\);/,
+      /\.thread-tool-summary-act \{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/s,
     );
     expect(threadCss).toMatch(
-      /\.thread-tool-activity-summary \.thread-tool-activity-count-interrupted \{\s*color:\s*var\(--text-faint\);/,
+      /\.thread-tool-activity-count-failed,\s*\.thread-tool-activity-count-interrupted \{\s*flex:\s*0 0 auto;/,
+    );
+    // The containers must be flex for the pin to hold.
+    expect(threadCss).toMatch(
+      /\.thread-tool-label,\s*\.thread-tool-activity-summary \{\s*display:\s*flex;/,
+    );
+  });
+
+  test('colours only the tally in a group summary, never the whole line or its glyph', () => {
+    expect(threadCss).toMatch(
+      /\.thread-tool-activity-count-failed \{\s*color:\s*var\(--status-danger\);/,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-tool-activity-count-interrupted \{\s*color:\s*var\(--text-faint\);/,
     );
     // A mixed-outcome group must not be painted wholesale by its worst member.
     for (const status of ['failed', 'interrupted']) {
