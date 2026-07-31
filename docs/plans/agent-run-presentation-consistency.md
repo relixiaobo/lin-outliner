@@ -163,11 +163,12 @@ mechanisms.
   back to the first `pending` index (`ThreadView.tsx:1291-1292`); all-done
   shows `Step N / N` distinguishable only by a check icon (`:1293`,
   `1317-1320`).
-- **L4 — `update_plan` leaks into Turn Diagnostics.** Transient executions
-  render as `update_plan · completed · call_…` rows
-  (`ThreadTurnDetailsPanel.tsx:391-399`) with zero step content, contradicting
-  `docs/spec/agent-thread-rendering.md:461-462` ("never appears in … Turn
-  Details").
+- **L4 — ~~`update_plan` leaks into Turn Diagnostics~~ — dropped from PR C.**
+  Implemented and then reverted: the PM ruled on 2026-07-31 that the session
+  must show the complete, actual process, which is the opposite of hiding a
+  real execution. Making the Plan visible in the transcript is its own unit
+  (`docs/plans/agent-plan-visibility.md`); Turn Diagnostics keeps its rows in
+  the meantime.
 - **L5 — Focus is stolen and the popover cannot pin.** Activating the summary
   focuses the popover region and only Escape/blur exits
   (`ThreadView.tsx:1297-1313`, `1326-1334`); open state is ephemeral local
@@ -297,11 +298,6 @@ above the composer, always carrying the current step's text.
 - Non-composer threads (L6): the pill renders read-only above the transcript
   footer for child/automation threads (outside the `composerEnabled` gate), so
   a watched subagent shows its own progress. No composer, no focus handoff.
-- Turn Diagnostics leak (L4): the Turn Details presentation filters transient
-  executions whose `toolName` is `update_plan` (itemId-null rows,
-  `ThreadTurnDetailsPanel.tsx:391-399`); the diagnostics record itself is
-  unchanged (it remains the truthful internal account; the spec sentence
-  governs presentation).
 - Spec: update the `turn/plan/updated` presentation paragraph
   (`docs/spec/agent-thread-rendering.md:454-462`) in the same PR.
 

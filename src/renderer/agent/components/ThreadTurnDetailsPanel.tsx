@@ -202,9 +202,7 @@ function TurnOverview({
   const modelCallCount = diagnostics?.providerCalls.length ?? null;
   const toolExecutionCount = diagnostics
     ? diagnostics.activities.reduce((count, activity) => (
-        activity.type === 'toolExecutionBatch'
-          ? count + presentableExecutions(activity.executions).length
-          : count
+        activity.type === 'toolExecutionBatch' ? count + activity.executions.length : count
       ), 0)
     : null;
   const timeRange = turn.completedAt
@@ -338,10 +336,6 @@ function TurnTimeline({
           ) : null;
         }
         if (activity.type === 'toolExecutionBatch') {
-          // A lone `update_plan` call is how the Plan gets set; with it
-          // filtered there is nothing left to show, so the activity itself
-          // must not render as an empty "Tool Execution (0)".
-          if (presentableExecutions(activity.executions).length === 0) return null;
           return (
             <ToolExecutionBatchActivity
               activity={activity}
@@ -384,7 +378,7 @@ function ToolExecutionBatchActivity({
   readonly turnId: string;
 }) {
   const t = useT();
-  const executions = presentableExecutions(activity.executions);
+  const executions = activity.executions;
   const failed = executions.some((execution) => execution.status === 'failed');
   const relation = activity.consumedByCallIndex === null
     ? t.agent.turnDetails.afterCall({ index: activity.sourceCallIndex + 1 })
@@ -416,22 +410,6 @@ function ToolExecutionBatchActivity({
       )}
     />
   );
-}
-
-/**
- * The transient Plan is a `turn/plan/updated` snapshot, never an Item, and the
- * spec says it must not appear in Turn Details. Its executions surfaced anyway
- * as `update_plan · completed · call_…` rows carrying no step content at all.
- * The diagnostics record itself is unchanged — this governs presentation only.
- */
-function isPresentableExecution(execution: { readonly toolName: string }): boolean {
-  return execution.toolName !== 'update_plan';
-}
-
-function presentableExecutions<T extends { readonly toolName: string }>(
-  executions: readonly T[],
-): readonly T[] {
-  return executions.filter(isPresentableExecution);
 }
 
 function ProviderRetryActivity({

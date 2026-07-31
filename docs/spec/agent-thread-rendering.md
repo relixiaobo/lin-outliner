@@ -619,8 +619,8 @@ nowhere, because the blur already took it somewhere the reader chose. Steps
 render at the transcript's own text scale. A
 replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
-or application restart removes it. It never appears in transcript history, Turn
-Details, response copy, or as `Used update_plan`.
+or application restart removes it. The pill is the Plan's *content* surface —
+the current step — and does not replace the record that the tool ran.
 
 Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;
