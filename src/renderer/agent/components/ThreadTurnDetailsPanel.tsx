@@ -390,10 +390,12 @@ function ToolExecutionBatchActivity({
       defaultOpen={failed}
       metadata={relation}
       resetKey={`tools:${activity.sourceCallIndex}:${activity.consumedByCallIndex ?? 'none'}`}
-      title={t.agent.turnDetails.toolExecutionBatch({ count: activity.executions.length })}
+      title={t.agent.turnDetails.toolExecutionBatch({
+        count: activity.executions.filter(isPresentableExecution).length,
+      })}
       render={() => (
         <div className="thread-turn-details-item-list">
-          {activity.executions.map((execution) => {
+          {activity.executions.filter(isPresentableExecution).map((execution) => {
             const item = execution.itemId ? itemsById.get(execution.itemId) : null;
             return item ? (
               <CanonicalItemRow item={item} key={execution.callId} threadId={threadId} turnId={turnId} />
@@ -409,6 +411,16 @@ function ToolExecutionBatchActivity({
       )}
     />
   );
+}
+
+/**
+ * The transient Plan is a `turn/plan/updated` snapshot, never an Item, and the
+ * spec says it must not appear in Turn Details. Its executions surfaced anyway
+ * as `update_plan · completed · call_…` rows carrying no step content at all.
+ * The diagnostics record itself is unchanged — this governs presentation only.
+ */
+function isPresentableExecution(execution: { readonly toolName: string }): boolean {
+  return execution.toolName !== 'update_plan';
 }
 
 function ProviderRetryActivity({

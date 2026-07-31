@@ -1951,31 +1951,67 @@ button.thread-inline-activity:focus-visible,
   flex: 0 0 auto;
 }
 
+/* Text that exists only for assistive technology: the step icons are decorative
+   and `aria-hidden`, so each row's status has to be readable some other way. */
+.thread-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The Plan is centered above the composer and never reflows it: one line,
+   fixed height, the step text ellipsized rather than wrapped. */
 .thread-plan-progress {
   position: relative;
   z-index: var(--z-raised);
   display: flex;
   min-width: 0;
+  justify-content: center;
   padding: var(--space-2) var(--agent-content-x);
+}
+
+.thread-plan-progress-region {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--space-3);
 }
 
 .thread-plan-progress-summary {
   appearance: none;
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
+  height: var(--control-size-sm, 24px);
   align-items: center;
   gap: var(--space-3);
   margin: 0;
   border: 0;
-  background: transparent;
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  box-shadow: var(--outline-subtle);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
   color: var(--text-soft);
   font-family: inherit;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   outline: none;
-  padding: 0;
+  padding: 0 var(--space-4);
   text-align: start;
   user-select: none;
+}
+
+.thread-plan-progress-summary:hover {
+  color: var(--text-strong);
+}
+
+.thread-plan-progress-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-plan-progress-summary:focus-visible {
@@ -2041,20 +2077,30 @@ button.thread-inline-activity:focus-visible,
   list-style: none;
 }
 
+/* Transcript content scale, not chrome scale — these are the agent's own words
+   about what it is doing. */
 .thread-plan-progress-popover li {
   display: grid;
   min-width: 0;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: start;
   gap: var(--space-3);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* The current step is marked by weight and text colour, never by the spinning
+   icon alone: that cue disappears entirely under reduced motion, and colour
+   alone is not a state. */
+.thread-plan-progress-popover li.is-in_progress {
+  color: var(--text-strong);
+  font-weight: 600;
 }
 
 .thread-plan-step-status {
   display: inline-flex;
   width: 14px;
-  height: var(--line-ui-sm);
+  height: var(--line-meta);
   align-items: center;
   justify-content: center;
   color: var(--text-faint);

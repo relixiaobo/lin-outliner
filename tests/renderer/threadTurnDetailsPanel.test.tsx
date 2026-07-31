@@ -359,6 +359,45 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(rendered.document.body.textContent).toContain('"source": "steering"');
   });
 
+  test('keeps the transient Plan out of Turn Diagnostics', async () => {
+    // The Plan is a `turn/plan/updated` snapshot, never an Item, and the spec
+    // says it must not appear here. Its executions surfaced anyway as
+    // `update_plan · completed · call_…` rows carrying no step content.
+    const detail = detailsResponse('thread-a', 'turn-a', 'timeline-a');
+    if (!detail.diagnostics) throw new Error('Missing diagnostics fixture');
+    const activities = detail.diagnostics.payload.activities.map((activity) => (
+      activity.type === 'toolExecutionBatch'
+        ? {
+          ...activity,
+          executions: [
+            ...activity.executions,
+            {
+              callId: 'plan-call',
+              toolName: 'update_plan',
+              itemId: null,
+              startedAt: 30,
+              completedAt: 31,
+              status: 'completed' as const,
+            },
+          ],
+        }
+        : activity
+    ));
+    const withPlan: ThreadTurnDetailsReadResponse = {
+      ...detail,
+      diagnostics: { ...detail.diagnostics, payload: { ...detail.diagnostics.payload, activities } },
+    };
+    const rendered = renderPanel(async () => withPlan);
+    rendered.render('thread-a', 'turn-a');
+    await flush();
+
+    const text = rendered.document.querySelector('.thread-turn-details-timeline')?.textContent ?? '';
+    expect(text).not.toContain('update_plan');
+    expect(text).not.toContain('plan-call');
+    // The batch count reflects what is shown, not what was filtered away.
+    expect(text).toContain('Tool Execution (1)');
+  });
+
   test('cannot apply an old context response after switching Turn targets', async () => {
     const stale = deferred<ReturnType<typeof contextResponse>>();
     const rendered = renderPanel(async (method, input) => {
