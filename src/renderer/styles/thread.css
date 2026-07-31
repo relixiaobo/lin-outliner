@@ -1973,9 +1973,10 @@ button.thread-inline-activity:focus-visible,
   padding: var(--space-2) var(--agent-content-x);
 }
 
+/* No flex here: `.thread-plan-progress` centers its own pill, and shrinking
+   this wrapper to the pill's width would drag the absolutely-positioned
+   checklist down to the same width. */
 .thread-plan-progress-region {
-  display: flex;
-  justify-content: center;
   padding-bottom: var(--space-3);
 }
 
@@ -1984,7 +1985,7 @@ button.thread-inline-activity:focus-visible,
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
-  height: var(--control-size-sm, 24px);
+  height: var(--control-size-sm);
   align-items: center;
   gap: var(--space-3);
   margin: 0;
@@ -2015,8 +2016,7 @@ button.thread-inline-activity:focus-visible,
 }
 
 .thread-plan-progress-summary:focus-visible {
-  border-radius: var(--radius-xs);
-  box-shadow: var(--focus-ring-shadow);
+  box-shadow: var(--outline-subtle), var(--focus-ring-shadow);
 }
 
 .thread-plan-progress-summary > span {

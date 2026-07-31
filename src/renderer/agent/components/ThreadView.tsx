@@ -1249,7 +1249,7 @@ export function ThreadView({
           show it. Read-only there: no composer to hand focus back to. */}
       {!composerEnabled && activePlan ? (
         <div className="thread-composer-region thread-plan-progress-region">
-          <ThreadPlanProgress plan={activePlan} readOnly />
+          <ThreadPlanProgress plan={activePlan} />
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
@@ -1703,11 +1703,11 @@ function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryS
 function ThreadPlanProgress({
   onClosed,
   plan,
-  readOnly = false,
 }: {
+  /** Where focus goes when the checklist closes. Absent on a Thread with no
+   *  composer, where it returns to the pill instead. */
   readonly onClosed?: () => void;
   readonly plan: ActiveTurnPlan;
-  readonly readOnly?: boolean;
 }) {
   const t = useT();
   const summaryId = useId();
@@ -1730,13 +1730,17 @@ function ThreadPlanProgress({
     : t.agent.thread.planCurrentStep({ progress, step: currentStep });
   const close = (restoreFocus: boolean) => {
     setOpen(false);
-    // Closing by any path hands focus back to the composer, per the terminal
-    // model — the pill is a transient status affordance, not a destination.
-    if (restoreFocus) onClosed?.();
+    if (!restoreFocus) return;
+    // Deliberate close hands focus back to the composer, per the terminal model
+    // — the pill is a status affordance, not a destination. With no composer,
+    // focus lands on the pill: the popover it was on is about to become
+    // `visibility: hidden`, which would drop focus to <body>.
+    if (onClosed) onClosed();
+    else summaryRef.current?.focus();
   };
   return (
     <div
-      className={`thread-plan-progress${open ? ' is-open' : ''}${readOnly ? ' is-read-only' : ''}`}
+      className={`thread-plan-progress${open ? ' is-open' : ''}`}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) close(false);
       }}
@@ -1756,7 +1760,6 @@ function ThreadPlanProgress({
           window.requestAnimationFrame(() => popoverRef.current?.focus());
         }}
         ref={summaryRef}
-        title={label}
         type="button"
       >
         {complete

@@ -602,7 +602,8 @@ then the first `pending` one.
 
 The pill also renders on a Thread that has **no composer** — a watched child or
 automation Thread — because `update_plan` is `anyThread`-scoped and such a
-Thread has a Plan to show. There it is read-only, with no focus handoff.
+Thread has a Plan to show. It is equally interactive there; only the focus
+destination differs, since there is no composer to return to.
 
 Hover previews the complete checklist; activating the summary opens the same
 scrollable checklist and moves keyboard focus into it. The current step is
@@ -610,9 +611,12 @@ marked by weight and text colour rather than by the spinning icon alone, whose
 cue disappears entirely under reduced motion; completed steps stay dimmed. Step
 rows carry their status as text for assistive technology, since the icons are
 decorative, and the live announcement includes the current step's text rather
-than only a counter. Closing by any path — Escape, blur, outside click —
-restores focus to the composer: the Plan is a transient status affordance, not
-a destination. Steps render at the transcript's own text scale. A
+than only a counter. Deliberately closing it — Escape, or re-activating the
+summary — restores focus to the composer: the Plan is a status affordance, not
+a destination to be stranded in. On a Thread with no composer that focus
+returns to the pill, never to the document body. Closing by blur moves focus
+nowhere, because the blur already took it somewhere the reader chose. Steps
+render at the transcript's own text scale. A
 replacement snapshot overwrites the prior one;
 terminal completion, failure, interruption, Thread deletion, catalog reload,
 or application restart removes it. It never appears in transcript history, Turn

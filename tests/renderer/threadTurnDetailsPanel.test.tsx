@@ -396,6 +396,47 @@ describe('ThreadTurnDetailsPanel', () => {
     expect(text).not.toContain('plan-call');
     // The batch count reflects what is shown, not what was filtered away.
     expect(text).toContain('Tool Execution (1)');
+    // …and the overview total agrees with it. One panel must not report two
+    // different numbers for the same executions.
+    const overview = rendered.document.querySelector('.thread-turn-details-overview')?.textContent ?? '';
+    expect(overview).toContain('Tool executions: 1');
+  });
+
+  test('drops a batch whose only execution is the transient Plan', async () => {
+    // A lone `update_plan` call is how the Plan gets set. Filtering its row but
+    // keeping the activity left an empty collapsible titled "Tool Execution (0)".
+    const detail = detailsResponse('thread-a', 'turn-a', 'timeline-a');
+    if (!detail.diagnostics) throw new Error('Missing diagnostics fixture');
+    const activities = detail.diagnostics.payload.activities.map((activity) => (
+      activity.type === 'toolExecutionBatch'
+        ? {
+          ...activity,
+          executions: [{
+            callId: 'plan-only-call',
+            toolName: 'update_plan',
+            itemId: null,
+            startedAt: 30,
+            completedAt: 31,
+            // A rejected Plan input is reachable, and used to auto-expand an
+            // empty batch through `defaultOpen`.
+            status: 'failed' as const,
+          }],
+        }
+        : activity
+    ));
+    const planOnly: ThreadTurnDetailsReadResponse = {
+      ...detail,
+      diagnostics: { ...detail.diagnostics, payload: { ...detail.diagnostics.payload, activities } },
+    };
+    const rendered = renderPanel(async () => planOnly);
+    rendered.render('thread-a', 'turn-a');
+    await flush();
+
+    const timeline = rendered.document.querySelector('.thread-turn-details-timeline')?.textContent ?? '';
+    expect(timeline).not.toContain('Tool Execution');
+    expect(timeline).not.toContain('update_plan');
+    const overview = rendered.document.querySelector('.thread-turn-details-overview')?.textContent ?? '';
+    expect(overview).toContain('Tool executions: 0');
   });
 
   test('cannot apply an old context response after switching Turn targets', async () => {

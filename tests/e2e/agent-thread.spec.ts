@@ -2736,50 +2736,84 @@ test.describe('canonical agent Thread surface', () => {
     // Thread has a Plan — and the chip used to mount only inside the composer
     // branch, so it had nowhere to appear.
     await createNewThread(page);
-  const info = await page.evaluate(async () => {
-    const target = window as Window & {
-      lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
-      __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
-    };
-    const r = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
-    const parent = r!.data[0]! as Record<string, unknown>;
-    // A watched child Thread: nested under its parent, so no composer.
-    const thread = {
-      ...parent,
-      id: '01910000-0000-7000-8000-0000000000ch',
-      parentThreadId: parent.id,
-      name: 'Child agent',
-    };
-    target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', thread });
-    return { threadId: thread.id as string };
-  });
-  await page.getByRole('button', { name: 'Show Threads' }).click();
-  await page.getByRole('dialog', { name: 'Threads' }).getByText('Child agent').click();
-  await page.evaluate((threadId) => {
-    const target = window as Window & {
-      __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
-    };
-    const turnId = '01910000-0000-7000-8000-00000000e201';
-    target.__LIN_E2E__?.emitAgentCoreNotification({
-      type: 'turn/started', threadId, turnId,
-      turn: { id: turnId, items: [], itemsView: 'full',
-        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
-        status: 'inProgress', error: null, startedAt: Date.now(), completedAt: null, durationMs: null },
+    const childThreadId = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin
+        ?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const parent = response?.data[0];
+      if (!parent) throw new Error('Mock Thread not found');
+      const thread = {
+        ...parent,
+        id: '01910000-0000-7000-8000-00000000ce01',
+        parentThreadId: parent.id,
+        name: 'Child agent',
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', thread });
+      return thread.id;
     });
-    target.__LIN_E2E__?.emitAgentCoreNotification({
-      type: 'turn/plan/updated', threadId, turnId, explanation: null,
-      plan: [
-        { step: 'Gather the sources', status: 'completed' },
-        { step: 'Cross-check the citations', status: 'in_progress' },
-      ],
-    });
-  }, info.threadId);
-  await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-  await expect(page.locator('.thread-plan-progress-summary')).toHaveText('2/2 · Cross-check the citations');
+
+    // Select before seeding: notifications for a Thread whose Turns are not yet
+    // loaded are dropped, and selecting reloads them.
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' }).getByText('Child agent').click();
+    await page.evaluate((threadId) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const turnId = '01910000-0000-7000-8000-00000000ce02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId,
+        explanation: null,
+        plan: [
+          { step: 'Gather the sources', status: 'completed' },
+          { step: 'Cross-check the citations', status: 'in_progress' },
+        ],
+      });
+    }, childThreadId);
+
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    await expect(page.locator('.thread-plan-progress-summary')).toHaveText('2/2 · Cross-check the citations');
-    // Read-only: there is no composer to hand focus back to.
-    await expect(page.locator('.thread-plan-progress.is-read-only')).toHaveCount(1);
+    const pill = page.locator('.thread-plan-progress-summary');
+    await expect(pill).toHaveText('2/2 · Cross-check the citations');
+
+    // With no composer to return to, Escape must still land focus somewhere
+    // reachable rather than dropping it to the document body.
+    await pill.click();
+    await expect(page.locator('.thread-plan-progress-popover')).toBeFocused();
+    await page.locator('.thread-plan-progress-popover').press('Escape');
+    await expect(pill).toBeFocused();
+
+    // The checklist gets the Thread's width here, not the pill's.
+    await pill.click();
+    const widths = await page.evaluate(() => {
+      const popover = document.querySelector('.thread-plan-progress-popover');
+      const region = document.querySelector('.thread-composer-region');
+      return {
+        popover: popover?.getBoundingClientRect().width ?? 0,
+        region: region?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    expect(widths.popover).toBeGreaterThan(widths.region * 0.5);
   });
 
   test('reads an all-complete Plan as complete, not as its last step', async ({ page }) => {
