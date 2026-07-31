@@ -39,7 +39,6 @@ describe('managed skill runtime integration', () => {
       rootDir: fixture.versionRoot,
       managedContentHash: fixture.hash,
     });
-    runtime.updateDisabledSkills(['runtime-skill']);
     const catalogEntry = (await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => (
       entry.name === 'runtime-skill'
     ));
