@@ -85,12 +85,12 @@ export interface ManagedSkillServiceOptions {
   findNameConflict?: (name: string, excludingManagedSkillId?: string) => Promise<ManagedSkillNameConflict | null>;
 }
 
-interface CatalogDocument {
+export interface CatalogDocument {
   schemaVersion: 1;
   entries: CatalogEntry[];
 }
 
-interface CatalogEntry {
+export interface CatalogEntry {
   id: string;
   name: string;
   description: string;
@@ -1010,7 +1010,7 @@ function nameConflictDiagnostic(record: ManagedSkillRecord, conflict: ManagedSki
   return `Managed skill ${record.name} is suppressed by a ${conflict.source} skill at ${conflict.location}.`;
 }
 
-function parseCatalogDocument(value: unknown): CatalogDocument {
+export function parseCatalogDocument(value: unknown): CatalogDocument {
   if (!isRecord(value) || value.schemaVersion !== CATALOG_SCHEMA_VERSION || !Array.isArray(value.entries)) {
     throw new ManagedSkillServiceError('invalid_catalog', 'Linlab Catalog has an unsupported schema.');
   }

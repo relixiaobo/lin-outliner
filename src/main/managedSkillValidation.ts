@@ -18,7 +18,7 @@ const SOURCE_METADATA_NAMES = new Set(['.DS_Store', '.gitattributes', '.gitignor
 const SCRIPT_EXTENSIONS = new Set(['.bash', '.cjs', '.js', '.mjs', '.py', '.sh', '.ts', '.zsh']);
 const BINARY_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.pdf', '.png', '.webp']);
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: true });
-const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+export const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 export type ManagedSkillValidationCode =
   | 'invalid_path'
