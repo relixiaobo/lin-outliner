@@ -672,7 +672,7 @@ in that sibling uniqueness rule.
 | Selected options reference value | ArrowUp/Down moves through field options, Enter selects, and Escape closes the options list before clearing the selected reference row. | `outliner-triggers.spec.ts` |
 | Type `@` in a plain field value draft | Open the standard reference suggestions. A whole-value pick becomes a structural reference child when left unchanged; a pick inside surrounding text becomes an inline reference in the plain value node. | `outliner-triggers.spec.ts` |
 | `LINKS_TO` query rule | Match linked references only: tree references, inline node references, and reference-valued field children whose target is the query target. Do not match unlinked textual mentions. | `searchEngine` |
-| Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outliner-parity.test.ts`, `outliner-selection-keyboard.spec.ts` |
+| Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Permanently delete a target node | Remove tree references and inline references to that target. Undo restores both. | `core.test.ts` |
 | Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |
 | Reference to a reference | Normalize to the effective target. Nested reference nodes should not point to reference nodes. | `core.test.ts` |

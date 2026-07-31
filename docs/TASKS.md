@@ -435,7 +435,14 @@ before any directional/security-sensitive build.
   demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
   the standing "task contract meta doc" idea is folded here rather than written separately.
   PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 1/2
-  independent and claimable now; PR 3 after PR 1. See `docs/plans/agent-subagent-interaction.md`.
+  independent and claimable now; PR 3 after PR 1. **Evidence warning:** the plan's ~15
+  `ThreadService.ts:NNNN` citations predate #451's decomposition — that file is now 875
+  lines (citations reach 3659, i.e. past EOF) and the concerns moved to
+  `thread/TurnLifecycle.ts` (turn lifecycle, `activeFlags`, pending child activity),
+  `thread/SubagentCollaboration.ts` (spawn, rows, terminal outcome),
+  `thread/ThreadCatalogOps.ts` (thread list, subtree). The DEFECTS are still real; only
+  the pointers rotted — re-locate each before building.
+  See `docs/plans/agent-subagent-interaction.md`.
 - **toolruntime-handler-contribution** (P2, `done` 2026-07-30; PR #456, codex-2) —
   collaboration handlers moved verbatim into `thread/SubagentCollaboration.ts` via the
   extension contribution seam; `ToolRuntime` is dispatch/assembly only (572→488 lines) and the
@@ -686,7 +693,11 @@ archived `done` (see Recently completed). Remaining active work:
   (failed rows keep the tool's own glyph, status by `--status-danger` tint incl. a dark-mode
   token-layer fix per B1/B11); PR B process-state truthfulness (no lying "Working"
   labels/timers/flash states, blocked-on-user surfacing for the PARENT), PR C centered
-  plan-progress pill + the `update_plan` Turn-diagnostics leak fix remain unclaimed.
+  plan-progress pill + the `update_plan` Turn-diagnostics leak fix remain unclaimed
+  (PR B claimed by #463). **Evidence warning:** this plan's `ThreadService.ts:NNNN`
+  citations predate #451 — that file is now 875 lines and the cited concerns moved to
+  `thread/TurnLifecycle.ts` / `thread/SubagentCollaboration.ts` / `thread/ThreadCatalogOps.ts`.
+  Re-locate before trusting any of them; #463 is doing exactly that for PR B's scope.
   See `docs/plans/agent-run-presentation-consistency.md`.
 The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
 `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +

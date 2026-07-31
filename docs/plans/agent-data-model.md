@@ -34,8 +34,12 @@ the same change, per AGENTS.md A6.
 - **Clean ownership.** A conversation owns the objective *record*; an agent owns its
   subjective *memory*; a run owns its *execution detail*. They do not absorb each
   other.
-- **Runs on pi-agent-core unchanged** — the engine is stateless transcript-replay;
-  everything stateful is assembled by Tenon at two seams (read / write).
+- **Runs on the per-turn engine unchanged** — the engine is stateless
+  transcript-replay; everything stateful is assembled by Tenon at two seams
+  (read / write). *(Correction 2026-07-31: written when that engine was the
+  third-party `pi-agent-core`, deleted in #445; the loop is now in-repo under
+  `src/main/agent/runtime/kernel/`. The property this bullet depends on —
+  stateless replay — is unchanged.)*
 - **Cache-disciplined context.** A per-turn assembly ordered by volatility with a
   single volatile tail, so Anthropic prefix caching keeps hitting.
 

@@ -72,7 +72,7 @@ isolation gate (M3-B), per-agent POV (M3-C), and parallel execution (see `agent-
   `~/.lin-outliner-*` dev userData, and delete old `session` storage/API shapes
   rather than preserving migration aliases.
 - No change to the document/node model or command mutation surface.
-- No replacement of pi-agent-core (it stays the per-turn engine — §Runtime).
+- No replacement of the per-turn engine from *this* plan's side (§Runtime).
 - **A user-configurable hooks subsystem.** Out of scope here. Notifications are a
   *trusted internal* consumer of a typed event bus; a pluggable / untrusted **hooks**
   layer is a separate future subsystem on the *same* bus (see §Background tasks →
@@ -570,9 +570,21 @@ configuring others. The single-agent `config` tool is built in
 plan's (it needs multiple agents → P3). Unresolved cut: **main-agent-first vs every
 specialist self-configuring from the start** (Open questions).
 
-### Runtime — pi-agent-core stays the per-turn engine
+### Runtime — the per-turn engine stays below this redesign
 
-The redesign lives **above** the engine. `@earendil-works/pi-agent-core` runs one
+> **Factual correction (2026-07-31, main).** This section was written when the
+> engine was the third-party `@earendil-works/pi-agent-core`. That package was
+> absorbed and deleted in #445 (`native-turn-kernel`); the per-turn loop is now
+> in-repo (`src/main/agent/runtime/kernel/`, driven by
+> `runtime/PiTurnExecutor.ts`), and only the `@earendil-works/pi-ai` transport
+> remains a dependency. The file references below (`agentRuntime.ts:NNN`) are
+> dead — that file no longer exists. **The design this section argues is
+> unaffected and in fact now stronger**: the split is still stateless per-turn
+> loop below, everything stateful in Tenon above; we simply own both sides of
+> it. Current behavior is `docs/spec/agent-model-runtime.md`. Re-anchor any
+> line reference against real code before relying on it.
+
+The redesign lives **above** the engine. The engine runs one
 turn (assembled messages + tools + model → loop) and exposes `transformContext`.
 **Tenon already owns history and context**: `session.agent.state.messages` is
 assigned from Tenon's `deriveRuntimePiMessages` (`agentRuntime.ts:690,716,741,765`);
