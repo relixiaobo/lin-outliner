@@ -380,6 +380,10 @@ export function ThreadView({
   );
   const readDisclosures = useCallback(() => threadDisclosureSnapshot(threadId), [threadId]);
   const disclosureOverrides = useSyncExternalStore(subscribeToDisclosures, readDisclosures);
+  // Session-scoped, per Thread (ThreadView is keyed by Thread): reasoning Items
+  // that have been open by default stay open even after their row unmounts to
+  // virtualization. Deliberately not persisted — see the latch comment below.
+  const latchedReasoning = useRef(new Set<string>()).current;
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
@@ -1202,6 +1206,7 @@ export function ThreadView({
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
                         onReadToolOutput={onReadToolOutput}
+                        latchedReasoning={latchedReasoning}
                         threadId={threadId}
                         threadCwd={threadCwd}
                         turn={turn}
@@ -1386,6 +1391,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   canEditUserMessage,
   expandState,
   index,
+  latchedReasoning,
   onDisclosureToggle,
   onEditUserMessage,
   onContinueInNewChat,
@@ -1401,6 +1407,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly canEditUserMessage: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
+  /** Reasoning Item ids that have been open by default this session. */
+  readonly latchedReasoning: Set<string>;
   readonly onDisclosureToggle: (anchorElement: HTMLElement | null) => void;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
@@ -1415,6 +1423,19 @@ const ThreadTurnView = memo(function ThreadTurnView({
 }) {
   const t = useT();
   const responseItem = lastAgentResponse(turn);
+  // A reasoning disclosure that has been open by default stays open for the
+  // rest of the session. `isExpanded` re-reads the default every render, so a
+  // default derived from live state retracts the instant the Turn moves on and
+  // snaps the disclosure shut under the reader. The latch lives here rather
+  // than in the disclosure component so a Turn row unmounting to virtualization
+  // does not silently re-collapse it, and rather than in the persisted
+  // overrides so watching a run live does not permanently expand every
+  // reasoning Item the reader never touched.
+  const reasoningExpandedByDefault = (candidateTurn: Turn, item: ThreadItem): boolean => {
+    const live = candidateTurn.status === 'inProgress' && candidateTurn.items.at(-1)?.id === item.id;
+    if (live || isSoloResultlessReasoning(candidateTurn, item)) latchedReasoning.add(item.id);
+    return latchedReasoning.has(item.id);
+  };
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
   const contentBlocks = groupTurnContent(turn);
@@ -1465,7 +1486,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
       canEditUserMessage={canEditUserMessage && showMessageActions}
-      defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
+      defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
       expandState={expandState}
       index={index}
       item={item}
@@ -1859,10 +1880,8 @@ function ThreadProcessBlock({
   const t = useT();
   const disclosureId = `process:${turn.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
-  // While the run is blocked on the user, the clock stops: the wait is not work,
-  // and a timer that keeps counting says the agent is still busy.
   const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
-  const liveElapsedMs = useTurnElapsedMs(turn, blockedOnUser);
+  const liveElapsedMs = useTurnElapsedMs(turn);
   const collapsible = turn.status === 'completed'
     && hasFinalResponse
     && turn.durationMs !== null
@@ -1933,16 +1952,22 @@ function ThreadStreamingIndicator() {
   );
 }
 
-function useTurnElapsedMs(turn: Turn, frozen = false): number | null {
+/**
+ * Wall-clock elapsed since the Turn started — the same span the server records
+ * as `durationMs`, so the live label and the settled one cannot disagree. Time
+ * spent blocked on the user is part of that span; the divider says so by
+ * naming the wait instead of pretending the clock stopped.
+ */
+function useTurnElapsedMs(turn: Turn): number | null {
   const [now, setNow] = useState(() => Date.now());
   const active = turn.status === 'inProgress';
   const knownStart = active && turn.startedAt > 1_000_000_000_000 ? turn.startedAt : null;
   useEffect(() => {
-    if (knownStart === null || frozen) return undefined;
+    if (knownStart === null) return undefined;
     setNow(Date.now());
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, [frozen, knownStart]);
+  }, [knownStart]);
   return knownStart === null ? null : Math.max(0, now - knownStart);
 }
 

@@ -2299,6 +2299,90 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('Turn interrupted')).toHaveCount(1);
   });
 
+  test('keeps a live reasoning disclosure open when a newer Item lands', async ({ page }) => {
+    await createNewThread(page);
+    const ids = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c501';
+      const reasoningId = '01910000-0000-7000-8000-00000000c502';
+      const toolId = '01910000-0000-7000-8000-00000000c503';
+      const reasoning = {
+        id: reasoningId,
+        type: 'reasoning',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
+        summary: ['Deciding which file to open'],
+        content: [],
+      };
+      const liveTurn = (items: unknown[]) => ({
+        id: turnId,
+        items,
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: Date.now(),
+        completedAt: null,
+        durationMs: null,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started', threadId, turnId, turn: liveTurn([reasoning]),
+      });
+      return { threadId, turnId, toolId, reasoning };
+    });
+
+    // Open while it is the streaming tail.
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
+
+    // A tool call lands: the reasoning is no longer the tail. It must not snap
+    // shut and shift the layout under the reader.
+    await page.evaluate(({ threadId, turnId, toolId, reasoning }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [reasoning, {
+            id: toolId,
+            type: 'dynamicToolCall',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+            namespace: null,
+            tool: 'file_read',
+            arguments: { file_path: '/mock/workspace/notes.md' },
+            status: 'inProgress',
+            outputRef: null,
+            contentItems: null,
+            success: null,
+            durationMs: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    }, ids);
+
+    await expect(page.locator('.thread-tool')).toHaveCount(1);
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
+
+    // An explicit collapse still wins over the latch.
+    await page.locator('.thread-reasoning-toggle').click();
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+  });
+
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
     await createNewThread(page);
     await seedMixedStatusToolTurn(page);

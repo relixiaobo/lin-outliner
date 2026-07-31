@@ -240,43 +240,6 @@ describe('ThreadItemView tool row status presentation', () => {
   });
 });
 
-describe('ThreadItemView reasoning disclosure', () => {
-  test('stays open when a newer Item lands, and still honours an explicit collapse', async () => {
-    // The default is recomputed every render, so a default derived from live
-    // state retracts the moment the Turn moves on — the disclosure snapped shut
-    // mid-run and shifted the layout under the reader.
-    const reasoning: ThreadItem = {
-      ...base('reasoning-1'),
-      type: 'reasoning',
-      summary: ['Planning the next step'],
-      content: [],
-    };
-    const overrides: Record<string, boolean> = {};
-    const rendered = renderItem(reasoning, {
-      streaming: true,
-      expandState: {
-        holdAnchorUntilSettled: () => null,
-        isExpanded: (id, defaultExpanded = false) => overrides[id] ?? defaultExpanded,
-        toggle: (id, currentlyExpanded) => { overrides[id] = !currentlyExpanded; },
-      },
-    });
-    await flush();
-    expect(rendered.document.querySelector('.thread-reasoning-body')).not.toBeNull();
-
-    // A tool Item arrives: the reasoning is no longer the streaming tail.
-    rendered.rerenderWith(reasoning, { streaming: false });
-    await flush();
-    expect(rendered.document.querySelector('.thread-reasoning-body')).not.toBeNull();
-
-    // An explicit collapse still wins over the latched default.
-    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
-    act(() => toggle?.click());
-    rendered.rerenderWith(reasoning, { streaming: false });
-    await flush();
-    expect(rendered.document.querySelector('.thread-reasoning-body')).toBeNull();
-  });
-});
-
 describe('ThreadToolActivityGroup glyph', () => {
   test('wears the shared tool glyph when every member agrees, the wrench when mixed', async () => {
     const reads = renderGroup([

@@ -91,6 +91,9 @@ export class ThreadStore {
 
   async reloadThreads(): Promise<void> {
     this.patch({ loading: true, error: null });
+    // Captured before the round trips: a retry that arrives while they are in
+    // flight is a different entry and must survive the clear below.
+    const staleRetries = new Map(this.snapshot.providerRetryByThread);
     const threads: Thread[] = [];
     let cursor: string | null = null;
     do {
@@ -105,9 +108,9 @@ export class ThreadStore {
       threads: sortThreads(threads),
       selectedThreadId: selected,
       planByThread: new Map(),
-      // A reload rebuilds from the server's view; a retry banner recorded
-      // before it describes a connection attempt that no longer exists.
-      providerRetryByThread: new Map(),
+      // A reload rebuilds from the server's view, so a banner recorded before
+      // it describes an attempt that no longer exists — but only those.
+      providerRetryByThread: retriesOutliving(staleRetries, this.snapshot.providerRetryByThread),
       loading: false,
       error: null,
     });
@@ -629,6 +632,16 @@ function descendantThreadIds(threads: readonly Thread[], rootThreadId: ThreadId)
     }
   }
   return deletedIds;
+}
+
+/** Drops the retry entries that were present before a reload started, keeping
+ *  any that arrived while it was in flight. */
+function retriesOutliving<K, V>(stale: ReadonlyMap<K, V>, current: ReadonlyMap<K, V>): Map<K, V> {
+  const next = new Map(current);
+  for (const [key, value] of stale) {
+    if (next.get(key) === value) next.delete(key);
+  }
+  return next;
 }
 
 function sortThreads(threads: readonly Thread[]): Thread[] {
