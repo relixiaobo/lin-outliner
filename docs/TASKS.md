@@ -1007,7 +1007,9 @@ anything.
   deliberately does not), and a new e2e test misindented outside its block with duplicated
   assertions and a thread id containing non-hex `ch`. The e2e now drives Escape on the
   composer-less path and asserts the checklist gets the Thread's width, so both blocking
-  regressions are pinned rather than only fixed.
+  regressions are pinned rather than only fixed. The UI gate's light+dark visual pass was
+  run by the PM directly (2026-07-31), covering both #467 and #468 — the pill and the new
+  `ListTodo` tool row.
 
 - **agent-reasoning-replay-fidelity** (`codex-4/agent-reasoning-replay-fidelity`,
   PR #465, codex-4, merged 2026-07-31, plan-track; plan archived at
