@@ -31,8 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: #455 (draft,
-`subagent-budget-propagation` PR C), #457 (draft, plan-only). Recently merged:
+**In flight (2026-07-31).** Open PR queue: #457 (draft, plan-only). Recently merged:
+#455 (`subagent-budget-propagation` PR C) after three gate rounds — the budget
+line is now closed end-to-end (per-child breaker + tree-pool conservation +
+depth/count legibility gates); and
 #461 (`cc-2/tool-row-status-visuals`) after a high-effort multi-agent review
 (10 verified findings, 9 fixed + 1 deferred by design) plus two gate-found
 regressions (a bare-word here-string truncating its own label; `display: flex`
@@ -371,8 +373,8 @@ before any directional/security-sensitive build.
   the mechanical-judge gate design carried a 4,700-line move clean. Plan archived at
   `docs/plans/archive/threadservice-decomposition.md`. **Unlocked:** budget PR C,
   `subagent-transcript-artifact` plan, ToolRuntime handler-contribution plan.
-- **subagent-budget-propagation** (P2, `in-progress` — PR A `done` #446, PR B `done`
-  2026-07-30 as #450, codex; **PR C remains**, ordered behind `threadservice-decomposition`) — spawn-time token budgets as a
+- **subagent-budget-propagation** (P2, `done` 2026-07-31 — PR A #446, PR B #450, PR C
+  #455, codex) — spawn-time token budgets as a
   host-owned circuit breaker. PR A shipped after three gate passes (18 findings across two
   review rounds, all fixed; the plan's original Goal-reuse design was replaced by the
   `thread_budgets` ledger in `persistence/SubagentBudgetLedger.ts` after review proved Goal
@@ -386,13 +388,25 @@ before any directional/security-sensitive build.
   consults a live-composed `{budget, used}` port (ThreadService committed base + normalizer
   in-flight usage) before each model call, one 80% soft-landing notice with actual figures,
   terminal answers settle completed under racing steering, graceful mid-Turn interrupted settle
-  otherwise — closing the incident's actual failure mode (586k tokens in one child Turn). PR C (PM-ratified 2026-07-30, ordered behind
-  `threadservice-decomposition`): budget conservation — one tree pool per root-most spawner
-  (subtree spend <= root grant by construction, retiring the min() patch and the
-  grandchild-evasion residual), depth-2 and spawn-count-16 admission gates (legibility
-  constants, not settings), and renderer translation of budget failures (user surfaces never
-  show token numbers — the user-irrelevance boundary). See
-  `docs/plans/subagent-budget-propagation.md`.
+  otherwise — closing the incident's actual failure mode (586k tokens in one child Turn).
+  PR C shipped 2026-07-31 as #455 after **three** gate rounds (20 verified findings, 17
+  normative rulings): budget conservation — one tree pool per root-most spawner (subtree
+  spend <= root grant by construction, retiring the min() patch and the grandchild-evasion
+  residual), depth-2 and spawn-count-16 admission gates (legibility constants, not
+  settings), and renderer translation of budget failures by typed code (user surfaces never
+  show token numbers — the user-irrelevance boundary). Each round's defects lived in the
+  machinery the previous round's rulings mandated: round 1 killed per-thread budget
+  resolution in favour of one ancestor-walk authority and a live pool view; round 2 killed
+  the rollback cascade (a failed spawn erased sibling rows), the kernel's cross-snapshot
+  differential (the port now speaks authoritative `remaining`, so cap/pool denomination
+  flips are harmless by construction), and a third A12 violation (the live tally was riding
+  inspection-only diagnostics' provider-call matching); round 3 closed a cap-dimension
+  double-count in the failure-finalization window (settlement must clear both the pool
+  tally entry and the per-Turn counter, adjacent to accrual — reproduced showing a child
+  at 5/6 presented as 10/6) and replaced a start-of-Turn coverage snapshot with the live
+  predicate every other budget path uses. Plan archived at
+  `docs/plans/archive/subagent-budget-propagation.md`. **Unlocked:** the budget line is
+  closed end-to-end (breaker slope + tree total + legibility gates).
 - **subagent-transcript-artifact** (P2, `done` 2026-07-31; PR #460, cc) — the Delegation
   Contract's account layer, zero new tools: ONE faithful turn→text renderer
   (`thread/TranscriptRenderer.ts`, sole authority; compaction's lossy summary exempt by

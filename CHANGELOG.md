@@ -28,6 +28,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **A delegation tree can no longer outspend its grant (PR #455, codex)** — the
+  subagent token budget is now conserved across a whole tree instead of handed
+  out per child: the root-most spawning thread holds ONE pool, every descendant
+  draws from it, and total subtree spend is bounded by the original grant by
+  construction — closing the path where each generation re-inherited a fresh
+  budget. Two structural limits join it as fixed host constants rather than
+  settings: a collaboration child may not go deeper than `/root/a/b`, and one
+  thread may spawn at most sixteen collaboration children over its lifetime
+  (isolated skill children are exempt from both). Concurrent siblings read a
+  live pool view — persisted usage plus every active turn's in-flight tally —
+  so they can overrun only by one provider call each rather than each spending
+  the full pool independently, and the native kernel now consults an
+  authoritative `remaining` instead of subtracting snapshots, so a mid-turn
+  switch between the pool and a child's own cap can neither kill a healthy turn
+  nor silently disable the tighter limit. Budget failures cross the process seam
+  as typed error codes and reach the user as localized resource-limit copy
+  stating that results were preserved; token counts stay system-internal.
 - **Subagent transcript account layer (PR #460, cc)** — every subagent thread
   now keeps a faithful, human-readable transcript the delegating parent can
   verify claims against: one canonical turn→text renderer behind two ports —

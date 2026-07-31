@@ -218,8 +218,9 @@ and diagnostics remain token-denominated. Terminal Turns carry stable
 Turn Details, copied error text, and Automation run errors classify budget failure by
 code and translate it into localized resource-limit copy stating that results were
 preserved; they never render token counts. `Turn.error.code` accepts only
-`runtime_failure`, `subagent_budget_exhausted`, or `subagent_structural_limit`; unknown
-runtime or decoded strings normalize to `runtime_failure`.
+`runtime_failure`, `host_restart`, `subagent_budget_exhausted`, or
+`subagent_structural_limit`; unknown runtime or decoded strings normalize to
+`runtime_failure`.
 
 ## History And Activity
 

@@ -183,8 +183,8 @@ failure finalization debit member and pool before exposing an idle admission win
 Budget rows are created only after earlier fallible spawn work under the Thread-tree
 mutex; rollback deletes only rows created by that spawn before the mutex releases.
 
-Pool-covered Turns feed the complete active-tree in-flight tally from the runtime
-normalizer's own usage accumulation; diagnostics are inspection-only. Covered non-user
+Every descendant Turn feeds the complete active-tree in-flight tally from the runtime
+normalizer's own usage accumulation; diagnostics are inspection-only. Non-user descendant
 Turns re-read shared persisted usage through a native-kernel port carrying authoritative
 `remaining` and the binding constraint's `used`/`total`; a tighter child cap uses the same
 port. The kernel never computes snapshot differentials, so pool/cap denomination changes
