@@ -24,22 +24,34 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-reasoning-replay-fidelity` | reasoning replay fidelity — PR #465 ready for gate (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: **#465** (codex-4,
-`agent-reasoning-replay-fidelity`) is ready for the gate — one plan-track change
-awaiting review, so there is room for one more; **#467** (cc-2, plan-progress pill)
-is a Draft claim. PM staffing next: `agent-subagent-interaction` PR 2 (navigation +
+**In flight (2026-07-31).** Open PR queue: **#467** (cc-2, plan-progress pill) is a
+Draft claim — the plan-track review queue is empty, so there is room for two.
+PM staffing next: `agent-subagent-interaction` PR 2 (navigation +
 Thread-list hygiene) and PR 3 (delegation card + interrupt) are both unblocked now
 that PR 1 has landed; `agent-run-presentation-consistency` PR C is that plan's only
 unclaimed unit; `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
-Recently merged: #466 (`codex-2/agent-subagent-status-truth`,
+Recently merged: #465 (`codex-4/agent-reasoning-replay-fidelity`) after a low review
+gate that took two rounds. Both gate findings were checked against the code before
+they were sent: the `ContextProjector` batching one did not survive (retention is
+keyed on the `agentMessage` Item, which `PiEventNormalizer` creates at
+`message_start`, so it is always the first id of its own assistant batch), and the
+`ModelGateway` one was real but weaker than first written — pi-ai's
+`AssistantMessageEventStream` already treats an `error` event as terminal, so the
+missing `output.end` could not hang a consumer; the explicit `end` was kept anyway so
+termination does not rest on a third party's implicit behavior, and that correction
+was posted to the PR. The gate's actual catch was mechanical: the follow-up fix
+commit shipped `failure.error` off the un-narrowed `AssistantMessageEvent` union and
+`bun run typecheck` was red on the branch by itself, not from integration. Merged
+after codex-4 narrowed the return type and rebased.
+#466 (`codex-2/agent-subagent-status-truth`,
 `agent-subagent-interaction` PR 1) after a low review gate. The gate's two findings
 were both re-checked and neither survived: the codec's rejection of pre-existing
 `subAgentActivity` Items is the PR's declared pre-release clean cut (wipe
@@ -527,25 +539,6 @@ before any directional/security-sensitive build.
   seam is what produced the split page this plan fixes. Gate: `/code-review ultra` +
   light/dark visual verification. See
   `docs/plans/agent-skill-library-settings.md`.
-- **agent-reasoning-replay-fidelity** (P2, `draft` — codex-4 authored, plan merged #457
-  2026-07-31 with five gate rulings; **implementation unclaimed and claimable now**, no
-  dependency on anything in flight) — Tenon authors `` `[Reasoning]\n…` `` assistant text
-  into the provider's own assistant channel (`context/ContextProjector.ts:290-297`), and
-  `PiTurnExecutor.transformContext` rebuilds that context before **every** provider call
-  including the active Turn's own Items — so the model sees six examples of
-  thinking-written-as-prose and imitates them, emitting `[Reasoning]` as a visible
-  commentary `agentMessage` while burning **zero reasoning tokens** for that call. We
-  taught it to stop thinking. Fix is one complete feature: signed native reasoning
-  survives the tool loop within a Turn under strict `(turnId, provider, api, model)`
-  identity, unsigned canonical reasoning is omitted from rebuilt provider context rather
-  than prosified, and no renderer heuristic is added (a `[Reasoning]` filter would hide
-  the symptom while still teaching the model). Gate rulings: the failure class is
-  *Tenon-authored bracketed markers in the assistant channel*, of which `[Subagent …]`
-  survives and warrants a separate look (an imitated spawn marker is a **hallucinated
-  delegation**); the in-memory retention may only re-attach reasoning parts onto messages
-  canonical projection already produced, so "second history authority" is unreachable by
-  construction; identity mismatch degrades per A12. See
-  `docs/plans/agent-reasoning-replay-fidelity.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -932,6 +925,41 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-reasoning-replay-fidelity** (`codex-4/agent-reasoning-replay-fidelity`,
+  PR #465, codex-4, merged 2026-07-31, plan-track; plan archived at
+  `docs/plans/archive/agent-reasoning-replay-fidelity.md`) — we had taught the model to
+  stop thinking. Tenon rebuilt canonical context before every provider call and rendered
+  canonical reasoning Items as assistant `output_text` prefixed `[Reasoning]`; the
+  assistant channel is a few-shot demonstration, so after six Tenon-authored examples the
+  provider call imitated the prose format, made its tool call, and spent **zero reasoning
+  tokens**. Canonical reasoning now contributes no assistant prose to reconstructed
+  history (no provider-specific branching), and same-Turn signed native reasoning is
+  retained in memory under strict `(turnId, provider, api, model)` identity. The retention
+  may only re-attach reasoning parts onto messages canonical projection already produced —
+  it cannot contribute messages, tool calls, tool results, or ordering, so a "second
+  history authority" is unreachable by construction — and an identity mismatch drops the
+  part and continues rather than throwing into Turn execution (A12). When a matching
+  provider cannot prepare a payload from an unrecognised signature, the gateway strips
+  signed thinking and retries preparation once; payload-formed provider, network, and
+  service errors keep their existing behavior. No renderer heuristic was added: a
+  `[Reasoning]` filter would hide the symptom while still teaching the model.
+  `[Subagent …]` and `[Viewed image: …]` survive deliberately (durable behavioral context
+  / what the model actually observed); an imitated spawn marker is a **hallucinated
+  delegation** and stays a separate follow-up. Live-verified on a real custom OpenAI
+  Responses Turn: three provider calls, zero `[Reasoning]` markers, 134 native reasoning
+  tokens restored across the tool loop, signed thinking present in every outbound payload
+  from call 2 on. **Gate (main):** `/code-review low`, both findings verified before they
+  were sent — the `ContextProjector` batching one was dismissed (retention keys on the
+  `agentMessage` Item, created at `message_start`, hence always first in its own assistant
+  batch), the `ModelGateway` one landed but was corrected on the PR (pi-ai's
+  `AssistantMessageEventStream` already treats `error` as terminal, so the missing
+  `output.end` could not hang a consumer; the explicit `end` was kept so termination does
+  not depend on third-party implicit behavior). The gate then blocked the merge on a red
+  `bun run typecheck` — the fix commit read `failure.error` off the un-narrowed
+  `AssistantMessageEvent` union, reproduced on the branch alone. Merged after the return
+  type was narrowed and the branch rebased onto `main@8cd5feba`: typecheck, `test:core`
+  (1595), and `docs:check` all green on the rebased head.
 
 - **red-e2e-on-main** (`codex/red-e2e-on-main`, PR #464, codex, merged 2026-07-31,
   fast-track, no plan file) — `test:e2e` is a clean signal at the gate again. Of the

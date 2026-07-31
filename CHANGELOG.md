@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **The agent stops imitating its own thinking, and starts thinking again (PR
+  #465, codex-4)** — Tenon rebuilt canonical context before every provider call
+  and wrote reasoning Items back into the provider's own assistant channel as
+  `[Reasoning]`-prefixed text. That channel is a few-shot demonstration, so
+  after six Tenon-authored examples the model imitated the format: it emitted
+  `[Reasoning]` prose as a visible commentary message and spent zero reasoning
+  tokens on that call. Canonical reasoning now contributes no assistant prose to
+  reconstructed history, and signed native reasoning survives the tool loop
+  within a Turn, retained in memory under strict `(turnId, provider, api,
+  model)` identity. The retention can only re-attach reasoning parts to messages
+  canonical projection already produced — never a message, tool call, tool
+  result, or ordering — and an identity mismatch drops the part and continues
+  instead of failing the Turn. If a matching provider cannot prepare a payload
+  from an unrecognised signature, the gateway strips signed thinking and retries
+  preparation once; other provider, network, and service errors are unchanged.
+  No renderer filter was added, because hiding `[Reasoning]` would leave the
+  model still being taught to write it. A real OpenAI Responses run restored 134
+  native reasoning tokens across a three-call tool loop with no markers left in
+  the transcript.
 - **A subagent gets one row in the parent transcript, and that row tells the
   truth (PR #466, codex-2)** — a delegated child used to append a fresh row for
   every lifecycle event, so one subagent read as several and the parent's
