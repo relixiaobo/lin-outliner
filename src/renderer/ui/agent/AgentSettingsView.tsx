@@ -274,13 +274,17 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * for the footer Save. It deliberately does NOT reset the drafts: a directory
    * change is orthogonal to the toggles the user may have pending.
    */
-  async function changeSkillDirectories(next: string[]) {
+  async function changeSkillDirectories(next: string[]): Promise<readonly string[]> {
     const requestId = beginRequest('mutation');
     setSaving(true);
     try {
       const updated = await api.agentUpdateRuntimeSettings({ additionalSkillDirectories: next });
       if (isCurrentRequest('mutation', requestId)) setSettings(updated);
       await onApplied();
+      // Returned so the caller can see what main actually kept. The list is
+      // bounded, and a request that silently lost its entry would otherwise
+      // look like nothing happened at all.
+      return updated.agent.additionalSkillDirectories;
     } finally {
       if (isCurrentRequest('mutation', requestId)) setSaving(false);
     }

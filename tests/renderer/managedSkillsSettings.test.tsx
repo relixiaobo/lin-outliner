@@ -290,7 +290,7 @@ function renderComponent(
       <SettingsSkillLibrarySection
         additionalSkillDirectories={[]}
         disabledSkills={[]}
-        onDirectoriesChange={async () => undefined}
+        onDirectoriesChange={async (next) => next}
         onPersistSkillDisabled={async () => undefined}
         onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}

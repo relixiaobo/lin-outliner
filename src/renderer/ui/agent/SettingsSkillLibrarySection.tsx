@@ -23,7 +23,7 @@ interface SettingsSkillLibrarySectionProps {
   disabledSkills: readonly string[];
   /** Directories Tenon reads Skills from. Pointed at, never copied in. */
   additionalSkillDirectories: readonly string[];
-  onDirectoriesChange: (next: string[]) => Promise<void>;
+  onDirectoriesChange: (next: string[]) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
   /**
    * Persists one name's `disabledSkills` membership immediately. Used by the
@@ -122,7 +122,14 @@ export function SettingsSkillLibrarySection({
       const { path } = await api.agentPickSkillDirectory();
       if (!path) return;
       if (additionalSkillDirectories.includes(path)) return;
-      await onDirectoriesChange([...additionalSkillDirectories, path]);
+      const kept = await onDirectoriesChange([...additionalSkillDirectories, path]);
+      // The stored list is bounded. Past the limit the new path is dropped on
+      // write, and without this the dialog would just close and nothing would
+      // appear — no row, no error, no notice.
+      if (!kept.includes(path)) {
+        onError(t.settings.skills.localDirectoryLimit({ count: kept.length }));
+        return;
+      }
       await reloadSkills();
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause));

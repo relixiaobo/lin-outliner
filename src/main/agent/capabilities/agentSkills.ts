@@ -1975,6 +1975,16 @@ function sameStringList(left: readonly string[], right: readonly string[]): bool
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+/**
+ * Canonicalises one configured Skill directory. The setting may hold `~/skills`,
+ * `./skills`, or a trailing-slash path; the loader expands these before use, so
+ * anything comparing a stored value against a loaded Skill's rootDir must expand
+ * it the same way or it will match nothing.
+ */
+export function expandSkillDirectory(value: string, root: string): string {
+  return expandConfiguredPath(value, root);
+}
+
 function expandConfiguredPath(value: string, root: string): string {
   const trimmed = value.trim();
   if (!trimmed) return '';

@@ -27,7 +27,7 @@ import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { Mutex } from './agent/Mutex';
-import { AgentSkillRuntime, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
@@ -192,6 +192,7 @@ import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
   AgentRuntimeSettingsInput,
+  AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
@@ -3394,6 +3395,21 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.txt',
 ]);
 
+/**
+ * Hands the renderer the same expanded paths the loader uses. The stored setting
+ * may hold `~/skills` or `./skills`; the Skill library decides which rows belong
+ * to a bound directory by comparing against each Skill's rootDir, which is
+ * always expanded. Comparing the two forms matches nothing, so a bound
+ * directory's Skills would lose their local chip and their unbind action while
+ * the directory itself rendered, two rows down, as empty.
+ */
+function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
+  const expanded = settings.agent.additionalSkillDirectories
+    .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
+    .filter(Boolean);
+  return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
+}
+
 async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
   try {
     return { ok: true, value: await operation() };
@@ -3405,7 +3421,7 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
 async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
-      return getProviderSettings();
+      return withCanonicalSkillDirectories(await getProviderSettings());
     case 'agent_refresh_provider_models':
       return refreshProviderModels(String(args.providerId));
     case 'agent_pick_skill_directory': {
@@ -3450,7 +3466,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
         runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);
       }
-      return settings;
+      return withCanonicalSkillDirectories(settings);
     }
     case 'agent_update_image_generation_settings':
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);

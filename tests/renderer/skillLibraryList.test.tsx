@@ -84,6 +84,9 @@ function switchFor(document: Document, label: string): HTMLButtonElement {
 }
 
 describe('skill library list', () => {
+  let errors: Array<string | null> = [];
+  afterEach(() => { errors = []; });
+
   test('renders every source in one list', async () => {
     const rendered = await render({
       skills: [
@@ -442,13 +445,31 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills found in this directory.');
   });
 
+  test('says so when the directory list is full instead of doing nothing', async () => {
+    // Past the bound, the write drops the new path. Without a check the dialog
+    // just closes: no row, no empty-directory row, no error, no notice.
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      directories: ['/work/a'],
+      pickedDirectory: '/work/b',
+      // Main kept the old list — the new path did not survive normalization.
+      onDirectoriesChange: async () => ['/work/a'],
+      onError: (message) => { errors.push(message); },
+    });
+
+    await openAddMenu(rendered, 'Add Local Directory…');
+
+    expect(errors.at(-1)).toContain('at most');
+  });
+
   test('unbinding a directory only drops the pointer', async () => {
     const changes: string[][] = [];
     const rendered = await render({
       skills: [],
       managed: [],
       directories: ['/work/a', '/work/b'],
-      onDirectoriesChange: async (next) => { changes.push(next); },
+      onDirectoriesChange: async (next) => { changes.push(next); return next; },
     });
 
     const menu = rendered.document.querySelector<HTMLButtonElement>('[aria-label="/work/a actions"]');
@@ -498,6 +519,26 @@ describe('skill library list', () => {
   });
 });
 
+/** Opens the `+` menu and clicks one of its entries. */
+async function openAddMenu(rendered: Rendered, label: string): Promise<void> {
+  const add = rendered.document.querySelector<HTMLButtonElement>(
+    '.inset-group-header-action button[aria-haspopup="menu"]',
+  );
+  if (!add) throw new Error('Missing + control');
+  await act(async () => {
+    add.click();
+    await Promise.resolve();
+  });
+  const entry = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+    .find((button) => button.textContent?.trim() === label);
+  if (!entry) throw new Error(`Missing menu entry: ${label}`);
+  await act(async () => {
+    entry.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 /** Opens the `+` menu and the acquisition panel behind it. */
 async function openAcquire(rendered: Rendered): Promise<void> {
   const add = rendered.document.querySelector<HTMLButtonElement>(
@@ -522,11 +563,13 @@ async function render(input: {
   managed: ManagedSkillView[];
   disabledSkills?: string[];
   directories?: string[];
-  onDirectoriesChange?: (next: string[]) => Promise<void>;
+  onDirectoriesChange?: (next: string[]) => Promise<readonly string[]>;
   onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
   onToggleSkill?: (skillName: string) => void;
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
+  pickedDirectory?: string;
+  onError?: (message: string | null) => void;
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -541,6 +584,7 @@ async function render(input: {
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
+        if (command === 'agent_pick_skill_directory') return { path: input.pickedDirectory ?? null };
         if (command === 'agent_managed_skill_catalog') {
           return { ok: true, value: { status: 'fresh', entries: input.catalogEntries ?? [] } };
         }
@@ -558,9 +602,9 @@ async function render(input: {
         <SettingsSkillLibrarySection
           additionalSkillDirectories={input.directories ?? []}
           disabledSkills={input.disabledSkills ?? []}
-          onDirectoriesChange={input.onDirectoriesChange ?? (async () => undefined)}
+          onDirectoriesChange={input.onDirectoriesChange ?? (async (next) => next)}
           onApplied={async () => undefined}
-          onError={() => undefined}
+          onError={input.onError ?? (() => undefined)}
           onNotice={() => undefined}
           onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}

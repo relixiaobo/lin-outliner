@@ -222,6 +222,8 @@ export const en = {
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `Unbound ${directory}. Its files were not changed.`,
       localDirectoryEmpty: 'No skills found in this directory.',
+      localDirectoryLimit: ({ count }: { count: number }) =>
+        `Tenon reads at most ${count} skill directories. Unbind one before adding another.`,
       localDirectoryActions: ({ directory }: { directory: string }) => `${directory} actions`,
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
       pendingChip: 'Pending acceptance',

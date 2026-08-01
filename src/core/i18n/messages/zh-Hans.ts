@@ -189,6 +189,8 @@ export const zhHans: PartialMessages = {
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `已解绑 ${directory}，其中的文件未作改动。`,
       localDirectoryEmpty: '该目录中未找到技能。',
+      localDirectoryLimit: ({ count }: { count: number }) =>
+        `Tenon 最多读取 ${count} 个技能目录，请先解绑一个再添加。`,
       localDirectoryActions: ({ directory }: { directory: string }) => `${directory} 操作`,
       toggleSkill: ({ name }: { name: string }) => `切换 ${name}`,
       pendingChip: '待接受',
