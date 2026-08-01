@@ -886,23 +886,6 @@ anything.
   full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
   test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
   setup). See `[[core-test-subset-ordering-artifact]]` for the real baseline.
-- **flaky-deep-shared-state-export-test** (P3, *fast-track, no plan file*, filed 2026-08-01 at the
-  #470 gate) — `core.test.ts` › *"exports deep shared state through update mode to avoid snapshot
-  depth failure"* has no explicit `timeout` and runs against bun's 5000 ms default, but its cost
-  scales hard with machine load: **~1.5 s idle** (3/3 runs: 1.54 s / 1.50 s / 1489 ms) and
-  **10.3–12.9 s under CPU contention**, where it fails. Observed failing on **both** `main`
-  (12891 ms inside a full `test:core`; 10334 ms solo) and the #470 branch (10277 ms solo) while a
-  Playwright suite and a multi-agent review workflow ran concurrently; all six re-runs on an idle
-  machine pass. Not a product bug, and **not** the `-t` filter — the first read at the gate blamed
-  the filter, and re-measurement showed it is contention. It matters because `test:core` is a
-  required gate step and this produces a false red exactly when the machine is busy, which in an
-  eight-clone setup is the normal condition, not the exception. Fix = give this test an explicit
-  `timeout` with real headroom, and/or trim the fixture: the 1,100-node chain exists only to push
-  the export past the snapshot-depth threshold into `update` mode (the assertion is
-  `exportMode === 'update'`), so threshold-plus-margin beats a round number if the cost is worth
-  cutting. Siblings: `[[flaky-skills-integration-test]]`, `[[flaky-thread-model-menu-focus-e2e]]` —
-  same class (test-timing budget, not product), and a candidate for one sweep that gives the
-  known-slow core/e2e tests explicit budgets instead of inheriting a default nobody chose.
 - **flaky-thread-model-menu-focus-e2e** (P3, *fast-track, no plan file*, filed 2026-07-30 at the
   #458 gate) — `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
   the composer"*: the closing Escape `toBeFocused` assertion fails on full-file runs (~5/6 on the
@@ -957,6 +940,44 @@ anything.
 
 ## Recently completed
 
+- **tenon-import-skill-name** (`codex/tenon-import-skill-name`, PR #474, codex, merged
+  2026-08-01, fast-track; plan archived at
+  `docs/plans/archive/tenon-import-skill-name.md`) — the built-in import Skill was
+  named `data-cleanup` after a *category*, while everything it exposes — the wrapper,
+  the CLI, the packaged resource dir — is `tenon-import`. Renamed to match what it is.
+  **Gate (main):** `/code-review` (medium), 1 blocking finding → fix `9838930e`. The
+  rename had missed `build/afterPack.cjs`, which chmods the packaged wrapper
+  executable; because the call sat behind `if (existsSync(path))`, the stale
+  `data-cleanup` path made the chmod **silently** no-op — no build error, no failing
+  test — and that chmod exists precisely because the exec bit is not reliably preserved
+  through electron-builder's `extraResources` copy, so a packaged build could ship a
+  wrapper the model cannot execute. The fix is better than the report asked for: one
+  shared `src/main/tenonImportResourceNames.json` now feeds both the runtime and the
+  packaging hook, the `existsSync` guard is **gone** so a wrong path fails loudly, and
+  `tests/core/tenonImportRuntime.test.ts` exercises the real `ensureTenonImportExecutable`
+  against a temp bundle. Verified at the gate on the merge commit: typecheck clean,
+  `test:core` 1696 ran / 0 fail (6 skip), `test:renderer` 959 pass / 0 fail,
+  `docs:check` OK; constant matches the on-disk directory and the wrapper keeps mode
+  `755`. Specs synced: `docs/spec/agent-skills.md`.
+- **flaky-deep-shared-state-export-test** (`codex-2/flaky-deep-shared-state-export-test`,
+  PR #473, codex-2, merged 2026-08-01, fast-track, *no plan file*) — `core.test.ts` ›
+  *"exports deep shared state through update mode to avoid snapshot depth failure"*
+  inherited bun's 5000 ms default while costing **~1.5 s idle** but **10.3–12.9 s under
+  CPU contention**, so `test:core` — a required gate step — went red whenever the
+  machine was busy, which in an eight-clone setup is the normal condition. (Filed at the
+  #470 gate, where the first read wrongly blamed the `-t` filter; re-measurement showed
+  contention.) Fixed as asked: an explicit **test-local** timeout (bun's third-arg form,
+  so no global default was widened) justified by the measured numbers in a comment, and
+  the fixture cut from a round `1_100` to threshold + margin (`1_024 + 32`) with
+  `exportMode === 'update'` still asserted on both round-trips, so it still tests the
+  boundary it names. **Gate (main):** `/code-review` (medium), 1 low finding, not
+  blocking — the fixture hardcodes `1_024` because `MAX_SNAPSHOT_EXPORT_DEPTH`
+  (`src/core/loroDocument.ts:57`) is module-private; a *raised* threshold fails loudly,
+  a *lowered* one would pass while silently no longer testing the boundary. Verified at
+  the gate: typecheck clean, `test:core` 1693 ran / 0 fail, `test:renderer` 959 pass,
+  `docs:check` OK, and the test re-run **under deliberate CPU load** (10 spinners) at
+  2.69 s against its 20 s budget. Siblings still open:
+  `[[flaky-skills-integration-test]]`, `[[flaky-thread-model-menu-focus-e2e]]`.
 - **agent-subagent-interaction** (`cc-2/agent-delegation-card`, PR #472, cc-2, merged
   2026-08-01, plan-track — **plan complete**, all three PRs shipped: PR 1 #466
   (codex-2), PR 2 #471, PR 3 #472; plan archived at

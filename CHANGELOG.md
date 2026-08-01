@@ -259,6 +259,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **The built-in import Skill is named for what it is (PR #474, codex)** — the
+  Skill was called `data-cleanup`, after a category, while everything it
+  actually exposes — the wrapper on `PATH`, the CLI, the packaged resource
+  directory — was already `tenon-import`. It is `tenon-import` throughout now.
+  The packaged wrapper's executable bit is no longer set from a path written
+  out by hand in the packaging hook: one shared constant feeds both the runtime
+  and the hook, and a wrong path now fails the build loudly instead of skipping
+  the `chmod` in silence — the mode of failure that would otherwise ship an app
+  where the import CLI is present but cannot run.
+- **A core test no longer goes red because the machine is busy (PR #473,
+  codex-2)** — the deep shared-state export test builds a chain past the
+  snapshot-depth threshold, which costs about a second and a half on an idle
+  machine and eight times that when the CPU is contended. It inherited the
+  default five-second budget, so `test:core` failed for anyone running it
+  alongside other work. It now carries its own budget, chosen from measured
+  timings and written down next to it, and builds only as deep as the threshold
+  it is testing actually requires.
 - **The e2e suite is a clean gate signal again (PR #464, codex)** — the two
   deterministic B5 guard failures that had been red on `main` since
   `51d7cab8` were one real omission, not two: the "Jump to latest" pill paints
