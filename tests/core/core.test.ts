@@ -2402,8 +2402,14 @@ describe('Core', () => {
     expect(Object.keys(core.state().nodes).some((nodeId) => nodeId.startsWith('deep:'))).toBe(false);
   });
 
+  // ~1.5s idle, 12.9s under gate contention; 20s leaves 55% loaded headroom.
+  const deepSharedStateExportTimeoutMs = 20_000;
+
   test('exports deep shared state through update mode to avoid snapshot depth failure', () => {
-    const depth = 1_100;
+    const snapshotExportDepthThreshold = 1_024;
+    const snapshotExportDepthMargin = 32;
+    const depth = snapshotExportDepthThreshold + snapshotExportDepthMargin;
+    const deepestNodeIndex = depth - 1;
     const document = new LoroOutlinerDocument();
     let parentId: string | undefined;
     for (let index = 0; index < depth; index += 1) {
@@ -2423,13 +2429,15 @@ describe('Core', () => {
     expect(shared.document.exportMode).toBe('update');
 
     const restored = Core.fromSharedState(shared);
-    expect(restored.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
+    expect(restored.state().nodes[`deep-export:${deepestNodeIndex}`]?.content.text)
+      .toBe(`Deep export ${deepestNodeIndex}`);
 
     const envelope = Core.deserializeState(restored.serializeState());
     expect(envelope.shared.document.exportMode).toBe('update');
     const reloaded = Core.fromState(envelope);
-    expect(reloaded.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
-  });
+    expect(reloaded.state().nodes[`deep-export:${deepestNodeIndex}`]?.content.text)
+      .toBe(`Deep export ${deepestNodeIndex}`);
+  }, deepSharedStateExportTimeoutMs);
 
   test('failed transactions roll back uncommitted Loro changes', async () => {
     const core = Core.new();
