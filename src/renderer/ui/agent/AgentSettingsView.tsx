@@ -318,6 +318,16 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         }));
       }
       await onApplied();
+    } catch (caught) {
+      // Without this the rejection escapes unhandled: no error is shown, the
+      // row re-renders from the unchanged prop and snaps back off, and a green
+      // "enabled" notice sits above it while the Skill is activated on disk and
+      // still invisible to the model — the exact split state this call exists
+      // to prevent, just moved onto the failure path.
+      if (isCurrentRequest('mutation', requestId)) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        setNotice(null);
+      }
     } finally {
       if (isCurrentRequest('mutation', requestId)) setSaving(false);
     }

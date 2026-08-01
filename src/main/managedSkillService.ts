@@ -807,19 +807,31 @@ export class ManagedSkillService {
     await this.withMutation(async () => {
       await this.options.store.updateIndex((index) => ({
         ...index,
-        skills: index.skills.map((record) => sameManagedRecordSnapshot(record, expected)
-          && record.diagnostic?.code !== 'modified'
-          && record.diagnostic?.code !== 'name_conflict' ? {
-          ...record,
-          ...(options?.stampCheckedAt ? { lastCheckedAt: this.now() } : {}),
-          diagnostic: {
-            code: 'update_failed' as const,
-            message,
-            errorCode: view.code,
-            ...(view.detail ? { detail: view.detail } : {}),
-            at: this.now(),
-          },
-        } : record),
+        skills: index.skills.map((record) => {
+          if (!sameManagedRecordSnapshot(record, expected)) return record;
+          // Stamped independently of the diagnostic. The attempt happened
+          // whatever the record already said, and the throttle reads only this
+          // field — leaving it unset for an integrity-faulted record retried it
+          // on every launch and every pane mount, forever.
+          const attempted = options?.stampCheckedAt
+            ? { ...record, lastCheckedAt: this.now() }
+            : record;
+          // An integrity fault outranks a failed update check: the Skill's own
+          // bytes are wrong, which matters more than not having reached GitHub.
+          if (record.diagnostic?.code === 'modified' || record.diagnostic?.code === 'name_conflict') {
+            return attempted;
+          }
+          return {
+            ...attempted,
+            diagnostic: {
+              code: 'update_failed' as const,
+              message,
+              errorCode: view.code,
+              ...(view.detail ? { detail: view.detail } : {}),
+              at: this.now(),
+            },
+          };
+        }),
       }));
     });
   }

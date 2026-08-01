@@ -28,6 +28,13 @@
   -webkit-line-clamp: 2;
 }
 
+/* Why a Skill needs attention, on its own line under the description. This is a
+   status, so it is the one place in the row that carries a status colour (B4);
+   the description above it stays ordinary text. */
+.settings-skill-diagnostic {
+  color: var(--status-danger);
+}
+
 .managed-skill-source-control {
   display: flex;
   width: min(390px, 46vw);

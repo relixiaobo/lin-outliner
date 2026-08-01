@@ -808,6 +808,61 @@ describe('managed skill service', () => {
     expect(checks).toBe(3);
   });
 
+  test('an integrity-faulted record is throttled too', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    const github = new FakeGitHub();
+    let checks = 0;
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store,
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+
+    // A hand-edited managed skill. Its diagnostic outranks a failed check, so
+    // recordUpdateFailure must not overwrite it — but the attempt still
+    // happened, and the throttle reads only lastCheckedAt.
+    await store.updateIndex((index) => ({
+      ...index,
+      skills: index.skills.map((record) => record.id === installed.id
+        ? { ...record, diagnostic: { code: 'modified' as const, message: 'edited locally', at: clock } }
+        : record),
+    }));
+
+    const window = 6 * 60 * 60 * 1_000;
+    github.offline = true;
+    checks = 0;
+
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // Previously this record was skipped entirely by the stamp, so every launch
+    // and every pane mount re-fired a request at the failing endpoint forever.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // And the integrity diagnostic survived the failed check.
+    expect((await service.list())[0]?.diagnostic).toEqual({ code: 'skill_modified', detail: installed.name });
+
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(2);
+  });
+
   test('an unthrottled failed check does not stamp lastCheckedAt', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();

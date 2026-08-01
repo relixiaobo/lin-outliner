@@ -197,9 +197,10 @@ describe('skill library list', () => {
     expect(persisted).toEqual([]);
   });
 
-  test('a failed update check keeps the skill description', async () => {
+  test('a failed update check keeps the description and still says why', async () => {
     // An offline launch produces this for every installed Skill, from an action
-    // the user never requested; it must not repaint the library.
+    // the user never requested, so it must not repaint the library — but a
+    // generic "Needs attention" chip with no reason is not an explanation.
     const rendered = await render({
       skills: [],
       managed: [managedSkill({
@@ -209,9 +210,25 @@ describe('skill library list', () => {
     });
 
     expect(rendered.document.body.textContent).toContain('Managed fixture.');
+    expect(rendered.document.querySelector('.settings-skill-diagnostic')?.textContent)
+      .toContain('GitHub is unavailable');
   });
 
-  test('an integrity fault does replace the description', async () => {
+  test('an incompatible skill says so, because it is not loaded at all', async () => {
+    // activeRuntimeRoots drops these, so the model genuinely cannot invoke it.
+    // A row that looks ordinary would be actively misleading.
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill({
+        status: 'failed',
+        diagnostic: { code: 'incompatible_tenon' },
+      })],
+    });
+
+    expect(rendered.document.querySelector('.settings-skill-diagnostic')).not.toBeNull();
+  });
+
+  test('an integrity fault reports itself alongside the description', async () => {
     const rendered = await render({
       skills: [],
       managed: [managedSkill({
@@ -220,9 +237,13 @@ describe('skill library list', () => {
       })],
     });
 
-    // Here the Skill's own content is what is untrustworthy, so it must not be
-    // the thing the row shows.
-    expect(rendered.document.body.textContent).not.toContain('Managed fixture.');
+    expect(rendered.document.querySelector('.settings-skill-diagnostic')).not.toBeNull();
+  });
+
+  test('a healthy skill carries no diagnostic line', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill()] });
+
+    expect(rendered.document.querySelector('.settings-skill-diagnostic')).toBeNull();
   });
 
   test('reports the update count up, and revises it when one is applied', async () => {
