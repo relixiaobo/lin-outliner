@@ -189,6 +189,12 @@ export const zhHans: PartialMessages = {
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `已解绑 ${directory}，其中的文件未作改动。`,
       localDirectoryEmpty: '该目录中未找到技能。',
+      localDirectoryBoundParent: ({ directory }: { directory: string }) =>
+        `该文件夹本身就是一个技能，因此改为添加 ${directory}——Tenon 读取的是目录里面的技能。`,
+      localDirectoryUnnameable: ({ directory }: { directory: string }) =>
+        `${directory} 无法作为技能：技能名就是文件夹名，只能包含字母、数字、点、下划线和连字符。`,
+      localDirectoryAlreadyBound: ({ directory }: { directory: string }) =>
+        `${directory} 已经添加过了。`,
       localDirectoryLimit: ({ count }: { count: number }) =>
         `Tenon 最多读取 ${count} 个技能目录，请先解绑一个再添加。`,
       localDirectoryActions: ({ directory }: { directory: string }) => `${directory} 操作`,

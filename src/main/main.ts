@@ -28,6 +28,7 @@ import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { Mutex } from './agent/Mutex';
 import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
@@ -3496,12 +3497,29 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         ? await dialog.showOpenDialog(window, options)
         : await dialog.showOpenDialog(options);
       const picked = result.canceled ? undefined : result.filePaths[0];
+      if (!picked) return { path: null };
+      // A bound directory is a CONTAINER of Skills. Picking the folder that is
+      // itself a Skill is at least as natural, and binding it verbatim loaded
+      // nothing and said nothing — the dead end that made the old picker
+      // useless. Report the shape and let the caller bind the parent, rather
+      // than inferring ownership per write, which is a different seam.
+      const resolvedPick = resolve(picked);
+      const isSkillFolder = await stat(join(resolvedPick, 'SKILL.md')).then(
+        (entry) => entry.isFile(),
+        () => false,
+      );
       // Resolved here so the stored path is canonical. The renderer decides
       // which rows belong to a bound directory by comparing it against each
       // Skill's rootDir, and a trailing separator or a `.`/`..` segment would
       // match nothing — the directory's Skills would lose their local chip and
       // their actions, and the directory would list as if it were empty.
-      return { path: picked ? resolve(picked) : null };
+      return {
+        path: resolvedPick,
+        isSkillFolder,
+        // Identity is the directory name, so this decides whether binding the
+        // parent would actually surface it.
+        nameValid: isValidSkillName(basename(resolvedPick)),
+      };
     }
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');

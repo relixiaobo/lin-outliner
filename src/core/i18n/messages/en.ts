@@ -222,6 +222,12 @@ export const en = {
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `Unbound ${directory}. Its files were not changed.`,
       localDirectoryEmpty: 'No skills found in this directory.',
+      localDirectoryBoundParent: ({ directory }: { directory: string }) =>
+        `That folder is a skill, so ${directory} was added instead — Tenon reads the skills inside a directory.`,
+      localDirectoryUnnameable: ({ directory }: { directory: string }) =>
+        `${directory} cannot be used as a skill: a skill's name is its folder name, so it may only contain letters, numbers, dots, underscores, and hyphens.`,
+      localDirectoryAlreadyBound: ({ directory }: { directory: string }) =>
+        `${directory} is already added.`,
       localDirectoryLimit: ({ count }: { count: number }) =>
         `Tenon reads at most ${count} skill directories. Unbind one before adding another.`,
       localDirectoryActions: ({ directory }: { directory: string }) => `${directory} actions`,

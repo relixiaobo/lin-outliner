@@ -403,9 +403,13 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills'),
-  /** Opens the native directory picker. Returns null when the user cancels. */
+  /**
+   * Opens the native directory picker. Returns null when the user cancels.
+   * `isSkillFolder` means the chosen folder is itself a Skill rather than a
+   * folder of Skills, and `nameValid` whether its name can be a Skill identity.
+   */
   agentPickSkillDirectory: () =>
-    command<{ path: string | null }>('agent_pick_skill_directory'),
+    command<{ path: string | null; isSkillFolder?: boolean; nameValid?: boolean }>('agent_pick_skill_directory'),
   agentRevealSkillDirectory: (path: string) =>
     command<{ revealed: boolean }>('agent_reveal_skill_directory', { path }),
   agentListUserInvocableSkills: () =>

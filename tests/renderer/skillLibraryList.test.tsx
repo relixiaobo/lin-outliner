@@ -588,6 +588,61 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills found in this directory.');
   });
 
+  test('binds the parent when the chosen folder is itself a skill', async () => {
+    // Tenon reads the folders INSIDE a bound directory, so binding the Skill
+    // folder verbatim loaded nothing and said nothing — the dead end that made
+    // the picker useless in the first place.
+    const changes: string[][] = [];
+    const notices: Array<string | null> = [];
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      pickedDirectory: '/work/skills/my-pdf-skill',
+      pickedIsSkillFolder: true,
+      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+      onNotice: (message) => { notices.push(message); },
+    });
+
+    await openAddMenu(rendered, 'Add Local Directory…');
+
+    expect(changes).toEqual([['/work/skills']]);
+    expect(notices.at(-1)).toContain('/work/skills');
+  });
+
+  test('refuses a skill folder whose name cannot be a skill name, and says why', async () => {
+    // Silently binding it would list nothing and explain nothing — the dead end
+    // one level over.
+    const changes: string[][] = [];
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      pickedDirectory: '/work/skills/My Skill',
+      pickedIsSkillFolder: true,
+      pickedNameValid: false,
+      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+      onError: (message) => { errors.push(message); },
+    });
+
+    await openAddMenu(rendered, 'Add Local Directory…');
+
+    expect(changes).toEqual([]);
+    expect(errors.at(-1)).toContain('My Skill');
+  });
+
+  test('binds an ordinary folder as the container it is', async () => {
+    const changes: string[][] = [];
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      pickedDirectory: '/work/skills',
+      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+    });
+
+    await openAddMenu(rendered, 'Add Local Directory…');
+
+    expect(changes).toEqual([['/work/skills']]);
+  });
+
   test('says so when the directory list is full instead of doing nothing', async () => {
     // Past the bound, the write drops the new path. Without a check the dialog
     // just closes: no row, no empty-directory row, no error, no notice.
@@ -714,6 +769,9 @@ async function render(input: {
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
   pickedDirectory?: string;
+  pickedIsSkillFolder?: boolean;
+  pickedNameValid?: boolean;
+  onNotice?: (message: string | null) => void;
   onError?: (message: string | null) => void;
 }): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -732,7 +790,13 @@ async function render(input: {
         if (command === 'agent_managed_skill_set_enabled') {
           return { ok: true, value: { ...(input.managed[0] ?? {}), enabled: true } };
         }
-        if (command === 'agent_pick_skill_directory') return { path: input.pickedDirectory ?? null };
+        if (command === 'agent_pick_skill_directory') {
+          return {
+            path: input.pickedDirectory ?? null,
+            isSkillFolder: input.pickedIsSkillFolder ?? false,
+            nameValid: input.pickedNameValid ?? true,
+          };
+        }
         if (command === 'agent_managed_skill_catalog') {
           return { ok: true, value: { status: 'fresh', entries: input.catalogEntries ?? [] } };
         }
@@ -753,7 +817,7 @@ async function render(input: {
           onDirectoriesChange={input.onDirectoriesChange ?? (async (next) => next)}
           onApplied={async () => undefined}
           onError={input.onError ?? (() => undefined)}
-          onNotice={() => undefined}
+          onNotice={input.onNotice ?? (() => undefined)}
           onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => true)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
           onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}

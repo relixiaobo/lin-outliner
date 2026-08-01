@@ -227,16 +227,19 @@ chips, an enable toggle, and its source-specific actions in the row disclosure:
 
 | Source | Row actions |
 |---|---|
-| any, with a real folder | show in Finder |
-| `managed` | check update, preview update, apply, rollback, uninstall |
+| `user`, `project`, local | show in Finder, accept, revoke acceptance, undo agent edit |
 | local directory | unbind directory |
-| `user`, `project` | accept, revoke acceptance, undo agent edit |
+| `managed` | check update, preview update, apply, rollback, uninstall |
 | `built-in` | enable toggle only, plus Finder when resource-backed |
 
-Every row whose Skill has a real on-disk root can open it. Code-registered
-built-ins carry a display-safe pseudo path (`built-in/<name>`) rather than a
-location, so they get no such action — one that cannot open anything is worse
-than none.
+A row can open its Skill's folder when that folder is a real, mutable location.
+Code-registered built-ins carry a display-safe pseudo path (`built-in/<name>`)
+rather than a location, and **managed Skills are excluded deliberately**: their
+content root is pinned and immutable — `resolveSkillContentTarget` refuses it —
+and a hand edit there flips the record to `modified`, after which
+`activeRuntimeRoots` drops it and the Skill leaves the model's catalog until it
+is reinstalled. `agent_reveal_skill_directory` enforces the same fence, so it
+does not depend on the UI withholding the action.
 
 A Skill's description is written for the model to route on and routinely runs to
 a paragraph. The library is a scan-and-toggle surface, so a row clamps it to two
@@ -295,19 +298,28 @@ to the runtime; a row is identified as local by whether its `rootDir` sits under
 a bound directory, and the picked path is resolved in main so that comparison is
 against a canonical path.
 
-A bound directory may either **contain** Skills or **be** one — picking
-`my-pdf-skill/` is as natural as picking its parent, so both load. Canonical
-identity remains the directory name, as it is for every other source. This
-applies only to bound directories; the convention directories
-(`~/.agents/skills`, `.agents/skills`) are containers by definition, and binding
-one by hand does not change that.
+A bound directory is a **container** of Skills, exactly like the convention
+directories: Tenon reads the folders inside it, and a `SKILL.md` sitting
+directly in it does not make it a Skill. Picking the folder that *is* a Skill is
+just as natural, so the picker detects that and binds its **parent**, saying so
+— rather than the runtime inferring, per write, whether a path belongs to the
+bound root or to something nested under it.
 
-A directory that is itself a Skill puts its `SKILL.md` one path segment below
-the bound root rather than the usual two, so `resolveSkillContentTarget`
-resolves that shape explicitly. Without it the file that decides what the model
-executes would fall outside skill-write governance — no content validation, no
-write audit, no provenance, and therefore no "Undo agent edit" — purely because
-of which folder the user picked.
+That inference is deliberately absent. Resolving it meant deciding ownership at
+write time from an ordered set of guesses, and every guard added to one branch
+left the neighbouring branch, the create path, the conditional path, or the
+post-reload state resolving to the wrong Skill or to none — which is an
+ungoverned or misattributed write to the file that decides what the model
+executes. "A bound directory that is itself a Skill" is a separate seam and is
+tracked separately.
+
+**A Skill's directory name must be a valid Skill identity**
+(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), and that is enforced at **admission**, not
+at write resolution (A12). The loader refuses to admit such a directory, so no
+loaded Skill can have an identity the authoring validator would reject. Enforcing
+it at resolution instead produced the opposite: a Skill that loaded, listed and
+ran while its own `SKILL.md` resolved to no target, making every write to it an
+ordinary ungoverned one. The rule applies to the convention directories too.
 
 Paths reach the renderer expanded. The stored setting may hold `~/skills` or
 `./skills`, and the library decides which rows belong to a bound directory by

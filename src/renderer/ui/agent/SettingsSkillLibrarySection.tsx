@@ -54,6 +54,13 @@ interface SettingsSkillLibrarySectionProps {
  * marks them is the directory they came from, so the row is identified by path
  * rather than by source.
  */
+/** POSIX-style parent, since main hands back an absolute resolved path. */
+function parentDirectoryOf(directory: string): string {
+  const trimmed = directory.replace(/\/+$/, '');
+  const cut = trimmed.lastIndexOf('/');
+  return cut > 0 ? trimmed.slice(0, cut) : '/';
+}
+
 function directoryContaining(
   rootDir: string,
   directories: readonly string[],
@@ -133,9 +140,24 @@ export function SettingsSkillLibrarySection({
     onError(null);
     onNotice(null);
     try {
-      const { path } = await api.agentPickSkillDirectory();
-      if (!path) return;
-      if (additionalSkillDirectories.includes(path)) return;
+      const picked = await api.agentPickSkillDirectory();
+      if (!picked.path) return;
+      // Tenon reads Skills from the folders INSIDE a bound directory. When the
+      // chosen folder is itself a Skill, bind its parent so it actually shows
+      // up — binding it verbatim used to load nothing and say nothing.
+      let path = picked.path;
+      if (picked.isSkillFolder) {
+        if (!picked.nameValid) {
+          onError(t.settings.skills.localDirectoryUnnameable({ directory: picked.path }));
+          return;
+        }
+        path = parentDirectoryOf(picked.path);
+        onNotice(t.settings.skills.localDirectoryBoundParent({ directory: path }));
+      }
+      if (additionalSkillDirectories.includes(path)) {
+        onNotice(t.settings.skills.localDirectoryAlreadyBound({ directory: path }));
+        return;
+      }
       const kept = await onDirectoriesChange([...additionalSkillDirectories, path]);
       // The stored list is bounded. Past the limit the new path is dropped on
       // write, and without this the dialog would just close and nothing would
