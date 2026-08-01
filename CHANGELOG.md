@@ -10,6 +10,23 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Internal
+
+- **The repository has CI (main-agent)** — `main` had no automated test signal at
+  all, so a red baseline was only ever discovered when a PR gate happened to run
+  the full e2e suite; that had happened three rounds running, each time costing
+  the gating PR the work of proving the failures were not its own. Every push to
+  `main` now runs five independent whole-suite Playwright samples in parallel and
+  publishes a frequency table to one tracking issue. Five, because a single run
+  cannot tell a red baseline from a flake — a test was called deterministic here
+  on four consecutive failures and then passed twice. Whole-suite samples rather
+  than sharding or repeating individual tests, because the failures worth catching
+  only appear in a full run. It does not gate pull requests, and retries stay at
+  zero: making an unstable suite report green would hide the thing being measured.
+  Also fixed `trace: 'on-first-retry'` sitting alongside an unset `retries`, which
+  meant Playwright traces had never once been captured.
+
+
 ### Fixed
 
 - **Closing a menu in the agent panel no longer bounces your focus to the

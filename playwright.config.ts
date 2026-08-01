@@ -11,7 +11,12 @@ export default defineConfig({
   },
   use: {
     baseURL,
-    trace: 'on-first-retry',
+    // Not `on-first-retry`: `retries` is unset (Playwright defaults to 0), so that
+    // value produced a trace exactly never — which is why every e2e investigation
+    // here has been re-run-and-squint instead of opening a trace. Retries stay at 0
+    // deliberately; turning them on would convert a visible instability into an
+    // invisible one.
+    trace: 'retain-on-failure',
   },
   webServer: {
     command: `bun run renderer:dev -- --port ${port}`,

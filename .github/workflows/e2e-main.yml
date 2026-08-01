@@ -1,0 +1,113 @@
+# The e2e signal for `main`.
+#
+# Why this exists: for three rounds running, a red `main` was discovered only
+# because some PR gate happened to run the full suite. Each round cost the gating
+# PR the time to prove which failures were not its own, and each discovery was
+# accidental.
+#
+# Two properties it has to have, and why:
+#
+#   1. It runs on `main` without a PR. Triggering on push means the signal arrives
+#      right after the merge that caused it, so attribution is nearly free — better
+#      than a nightly, which can leave a day of merges to bisect.
+#   2. It takes FIVE samples, because one run cannot tell a red baseline from a
+#      flake. Four full runs at the #475 gate produced a different failing set each
+#      time; only one test failed in all four.
+#
+# The samples are five independent WHOLE-SUITE runs in parallel — not `--shard`,
+# and not `--repeat-each`. The failures worth catching are order/state-dependent
+# (they pass solo and fail in a full run), so anything that changes what runs
+# alongside what would launder away the signal. Parallel samples cost one suite of
+# wall-clock, and nobody is waiting on them anyway.
+#
+# This job does NOT gate anything, and it is green whenever it managed to classify.
+# `main` is red today and will be for a while; a permanently failing badge is one
+# people learn to ignore, which would put us back where we started. The verdict
+# lives in the tracking issue, which the main agent reads at gate time — the moment
+# it is actually useful.
+name: e2e signal (main)
+
+on:
+  push:
+    branches: [main]
+  # Backstop: environment drift is invisible in a quiet week with no merges.
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  # Only the newest commit's verdict is worth having; cancel superseded runs.
+  group: e2e-signal-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sample:
+    name: sample ${{ matrix.sample }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A red sample is data, not a broken job: the matrix must complete so the
+    # classifier sees all five.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Run the full suite
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report.json
+        # `|| true` because the exit code is the thing being measured, not an error.
+        run: bun run test:e2e -- --reporter=list,json || true
+      - name: Name the report after its sample
+        run: mv report.json "sample-${{ matrix.sample }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-sample-${{ matrix.sample }}
+          path: sample-${{ matrix.sample }}.json
+          if-no-files-found: error
+
+  verdict:
+    name: classify and publish
+    runs-on: ubuntu-latest
+    needs: sample
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          path: samples
+          pattern: e2e-sample-*
+          merge-multiple: true
+      - name: Classify
+        id: classify
+        run: |
+          {
+            echo "_Commit \`${GITHUB_SHA:0:8}\` · [run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_"
+            echo
+            bun scripts/e2e-classify.ts samples/*.json
+          } > verdict.md
+          cat verdict.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish to the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: 'e2e signal: the state of `main`'
+        run: |
+          set -euo pipefail
+          # One long-lived issue, updated in place. A new issue per run would be
+          # notification spam that trains everyone to mute the thing.
+          number="$(gh issue list --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")"
+          if [ -z "$number" ]; then
+            gh issue create --title "$TITLE" --body-file verdict.md
+          else
+            gh issue edit "$number" --body-file verdict.md
+          fi

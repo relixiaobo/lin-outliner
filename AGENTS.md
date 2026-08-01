@@ -362,6 +362,10 @@ open an isolated PR and let the other agent rebase before continuing:
 
 - `bun.lock`, `package.json` — dependencies
 - `tsconfig.json`, `electron.vite.config.ts`, `vite.config.ts` — build
+- `.github/workflows/`, `playwright.config.ts` — the `main` e2e signal;
+  main-agent-owned. It is deliberately not a PR gate and deliberately runs with
+  `retries: 0` — turning retries on would make an unstable suite report green,
+  which is the same trade B11 refuses for the design guards.
 - `AGENTS.md` (and its `CLAUDE.md` / `AGENT.md` symlinks) — these notes
 - `docs/spec/README.md` — spec index
 - `src/core/commands.ts`, `src/core/types.ts` — protocol surface

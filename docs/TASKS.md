@@ -46,12 +46,13 @@ pill's material needed only the guard registry entry. The final gate run on it w
 `file-attachment-inline-preview-red-e2e`. **What that item now carries is the more
 important finding:** four full runs produced a different failing set each time, so the
 shape is an unstable suite rather than a list of red tests, and boarding the intermittent
-ones individually would just keep producing entries. Until it is addressed, budget a gate
-round for re-proving which failures are not yours. **Newly boarded alongside it:**
-`e2e-signal-on-main` (P2, needs a one-pager) — three rounds running, a red `main` has been
-found only because a PR gate happened to run the full suite, and one run cannot separate a
-red baseline from a flake. The repository has no CI at all, so that item decides whether
-there is a pipeline, not what runs in it.
+ones individually would just keep producing entries.
+**You no longer have to find that out by hand.** `e2e-signal-on-main` landed the same day:
+the repository has CI for the first time, and every push to `main` runs five independent
+whole-suite samples and publishes a frequency table to one tracking issue. **Read that
+issue before a gate** — it tells you which failures are `main`'s and how often, so a gate
+round stops being the place that discovers it. It deliberately does not gate PRs and is
+green whenever it classified; the verdict is the issue, not the badge.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -902,42 +903,16 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **e2e-signal-on-main** (P2, *needs a one-pager before build*, filed 2026-08-01 at the #475
-  gate) — a red `main` is only ever discovered when someone happens to run the full suite
-  during a PR gate. That has now happened three rounds running: #464 fixed one, #475 fixed
-  the next pair, and the #475 gate turned up the one after that. Every round costs the
-  gating PR the time to prove which failures are not its own, and every round the discovery
-  was accidental.
-  **A single run cannot tell a red baseline from a flake**, which is the part that makes
-  this its own change rather than more diligence. Four full runs at the #475 gate (two by
-  the gate, two by the author) produced a **different failing set each time**; only
-  `file-attachments.spec.ts:178` appeared in all four. So the signal needs two properties:
-  it runs on `main` without a PR, and it repeats enough to classify deterministic versus
-  intermittent rather than reporting one sample.
-  Grounding facts for whoever drafts it: **the repository has no CI at all** — no
-  `.github/workflows`, no other runner config — so this is not "add a job to the pipeline",
-  it is deciding whether there is a pipeline. **The cost objection does not survive
-  checking** (an earlier version of this entry asserted it): the e2e suite never launches
-  Electron — `renderer:dev` is plain `vite`, `playwright.config.ts` drives headless
-  Chromium against it, and the main process is mocked (`tests/e2e/outlinerMock.ts`) — so it
-  is not macOS-bound, `build:native` runs only under `app:build`, there is no
-  `postinstall`, and the repository is public, where standard Linux runners are free. And
-  `playwright.config.ts` sets
-  `trace: 'on-first-retry'` while never setting `retries`, so **traces have never been
-  produced** — which is why every one of these investigations has been re-run-and-squint
-  instead of opening a trace. That is worth fixing whatever else is decided.
-  **Explicitly not**: turning on retries so the suite reports green. That would convert a
-  visible instability into an invisible one, which is the same trade B11 refuses for the
-  design guards.
-  The one-pager owes: where it runs, how many repetitions, and what it does with the result
-  — a notification, an issue, or a board entry — since a signal nobody is obliged to read
-  reproduces the current situation with more steps.
 - **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
-  at the #475 gate) — `main` is **deterministically red** on `file-attachments.spec.ts:178`
+  at the #475 gate) — `main` fails `file-attachments.spec.ts:178`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
-  and whose bullet drills to the node page"*. Reproduced on the #475 branch twice, on a
-  clean `origin/main` worktree, and again at the #475 re-gate — deterministic, and `main`'s
-  rather than any branch's.
+  and whose bullet drills to the node page"* **often, but not always**.
+  **Correction, 2026-08-01:** earlier versions of this entry called it deterministic on the
+  strength of four failures in a row (the #475 branch twice, a clean `origin/main` worktree,
+  and the #475 re-gate). It then passed twice consecutively — once addressed alone, once as
+  the whole file — so the sample was luck, not proof. That mistake is the reason
+  `e2e-signal-on-main` exists and was worth the build: four samples is not enough to call a
+  test "always", and the person who got it wrong here was the gate.
   **It is not a geometry failure.** The assertion is inside
   `expectConcentricPreviewCorners` (`file-attachments.spec.ts:139`, called from `:322`) and
   it reports `Received: null` — the helper's own `if (!content) return null` guard, meaning
@@ -948,16 +923,17 @@ anything.
   reaches `summary` display in this fixture — a readiness/mount path, not CSS. (An earlier
   version of this entry read the stack as failing *after* the corner check and sent the
   reader to the geometry below it; that was backwards.)
-  **This is the red baseline now.** #475 merged 2026-08-01 and closed the pair this replaced
-  (`plan-progress-pill-material-scope` and `flaky-thread-model-menu-focus-e2e`), so this is
-  the only deterministic failure left. Same standing lesson as `red-e2e-on-main` (#464): a
-  red baseline costs every later gate the time to re-prove which failures are not its own.
-  **The instability is wider than this one test**, which is the more useful finding. Across
+  **The instability is wider than this one test**, which is the finding that matters. Across
   four full runs (two at the #475 gate, two by that PR's author) the failing set differed
   every time: `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation),
   `date-field-picker.spec.ts:20`, and `design-system-runtime.spec.ts:807` (dark date-picker
   overlay) each failed in some runs and passed in others, including on plain `origin/main`.
-  Only this item's test failed in every run. None of them are reachable from #475's diff.
+  This one merely failed the most. None of them are reachable from #475's diff.
+  **Don't start from this entry's numbers — start from the signal.**
+  `e2e-signal-on-main` now publishes a five-sample frequency table per merge to the
+  tracking issue, which is the evidence this item was guessing at. Same standing lesson as
+  `red-e2e-on-main` (#464): a red baseline costs every later gate the time to re-prove which
+  failures are not its own.
   So the shape to fix is not one red test but a suite whose failing set is
   run-dependent — treat the unstable specs as one problem, and expect boarding them
   individually to keep producing entries.
@@ -977,6 +953,31 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **e2e-signal-on-main** (main-agent, landed 2026-08-01 directly on `main`,
+  *fast-track, no plan file*; PM ratified the one-pager) — **the repository now has CI**,
+  which it did not before: `.github/workflows/e2e-main.yml` runs the full e2e suite on
+  every push to `main` (plus a weekly backstop) and publishes a verdict to one long-lived
+  tracking issue.
+  Two design points carry the whole thing. **Five samples, because one run cannot tell a
+  red baseline from a flake** — and the proof is this very board: the gate called
+  `file-attachments.spec.ts:178` deterministic on four consecutive failures, and it then
+  passed twice in a row. **The samples are five independent whole-suite runs in parallel**,
+  not `--shard` and not `--repeat-each`: the failures worth catching are order- and
+  state-dependent (they pass solo, fail in a full run), so anything that changes what runs
+  alongside what launders the signal away. Parallel costs one suite of wall-clock and
+  nobody waits on it.
+  It **does not gate** and is green whenever it managed to classify, because `main` is red
+  today and a permanently failing badge is one people learn to ignore — which is where we
+  started. `scripts/e2e-classify.ts` is unit-tested (`tests/core/e2eClassify.test.ts`),
+  including the case that matters: N-1 failures out of N is never reported as "always".
+  Also fixed a config bug found while drafting: `playwright.config.ts` set
+  `trace: 'on-first-retry'` while never setting `retries` (default 0), so **traces had
+  never been produced** — which is why every e2e investigation here has been
+  re-run-and-squint. Now `retain-on-failure`. Retries stay at 0 deliberately.
+  The cost objection that made this look expensive did not survive checking: the suite
+  never launches Electron (`renderer:dev` is plain `vite`, the main process is mocked), so
+  it is not macOS-bound, and the repository is public where Linux runners are free.
 
 - **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
   *fast-track, no plan file*) — closed two boarded items,
