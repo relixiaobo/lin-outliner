@@ -326,6 +326,28 @@ describe('skill library list', () => {
     expect(call?.args?.path).toBe('/fixtures/user-notes');
   });
 
+  test('a managed row offers no folder to open', async () => {
+    // Its content root is pinned and immutable, and the lookup is by name — a
+    // managed Skill sharing a name with a user Skill would open the user's
+    // folder, which is exactly the row a name conflict makes interesting.
+    const rendered = await render({
+      skills: [{ ...localSkill('pdf', 'user'), rootDir: '/fixtures/user-pdf' }],
+      managed: [managedSkill()],
+    });
+
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
+      await Promise.resolve();
+    });
+    const labels = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .map((button) => button.textContent?.trim());
+
+    // The managed row's menu is the managed lifecycle, and nothing that opens a
+    // folder. (The same-named user Skill has its own row and its own reveal.)
+    expect(labels).toContain('Uninstall');
+    expect(labels.filter((label) => label === 'Show in Finder')).toHaveLength(0);
+  });
+
   test('a code-registered built-in offers no folder to open', async () => {
     // Its rootDir is a display-safe pseudo path, not a location — an action that
     // cannot open anything is worse than no action.

@@ -244,6 +244,21 @@ export function SettingsSkillLibrarySection({
     }];
   }
 
+  /**
+   * Managed Skills get no reveal, for two reasons that point the same way.
+   *
+   * Their content root is deliberately immutable — resolveSkillContentTarget
+   * returns null for anything under it — and opening it invites the hand edit
+   * that flips the record to `modified`, at which point activeRuntimeRoots
+   * drops it and the Skill leaves the model's catalog until it is reinstalled.
+   *
+   * And the lookup is by name: a managed Skill sharing a name with a user Skill
+   * would resolve to the USER Skill's folder, so the rows most in need of the
+   * action — suppressed by a name conflict — are exactly the ones it would send
+   * to the wrong place.
+   */
+  const managedRevealAction: RowMenuAction[] = [];
+
   const sourceChipLabel = (source: SkillSourceKind): string => {
     if (source === 'built-in') return t.settings.skills.sourceBuiltIn;
     if (source === 'project') return t.settings.skills.sourceProject;
@@ -292,7 +307,7 @@ export function SettingsSkillLibrarySection({
           void onPersistSkillDisabled(skill.name, false);
         }
       },
-      actions: [...revealAction(skill.name), ...managedSkillActions(skill, {
+      actions: [...managedRevealAction, ...managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),
         preview: () => void managed.previewUpdate(skill),
         rollback: () => managed.openConfirmAction({ kind: 'rollback', skill }),
@@ -306,8 +321,9 @@ export function SettingsSkillLibrarySection({
     // life of the pane whenever nothing later replaced managed.skills.
     // Data only. The controller object and its methods are rebuilt on every
     // render, so depending on them would recompute every row every time and
-    // defeat the memo outright.
-  }), [disabledSkills, managed.busy, managed.skills, onPersistSkillDisabled, skillRoots, t]);
+    // defeat the memo outright. skillRoots is absent because managed rows no
+    // longer resolve a folder to reveal.
+  }), [disabledSkills, managed.busy, managed.skills, onPersistSkillDisabled, t]);
 
   const localRows: LibraryRow[] = useMemo(() => allSkills
     .filter((skill) => skill.source !== 'managed')

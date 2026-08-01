@@ -3425,7 +3425,16 @@ async function isRevealableSkillLocation(target: string): Promise<boolean> {
     .filter(Boolean);
   if (bound.some((dir) => isPathInside(dir, resolved))) return true;
   const skills = await skillRuntime.listAllSkills().catch(() => []);
-  return skills.some((skill) => skill.rootDir.startsWith('/') && isPathInside(skill.rootDir, resolved));
+  return skills.some((skill) => (
+    // Managed content is pinned and immutable: resolveSkillContentTarget
+    // refuses it for the same reason. Opening it invites the hand edit that
+    // flips the record to `modified`, after which the Skill leaves the model's
+    // catalog until it is reinstalled — so the fence holds here too, not only
+    // in the UI that stopped offering the action.
+    skill.source !== 'managed'
+    && skill.rootDir.startsWith('/')
+    && isPathInside(skill.rootDir, resolved)
+  ));
 }
 
 async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
