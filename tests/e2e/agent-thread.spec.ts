@@ -2218,6 +2218,95 @@ test.describe('canonical agent Thread surface', () => {
     await expect(card).toHaveCount(0);
     await expect(parentTurn.locator('.thread-inline-activity')).toHaveCount(2);
   });
+
+  test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-00000000fb01';
+      const childId = '01910000-0000-7000-8000-00000000fb10';
+      const activityId = '01910000-0000-7000-8000-00000000fb12';
+      const startedAt = Date.now() - 3_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: null,
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'active', activeFlags: [] },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: childId,
+        turnId: '01910000-0000-7000-8000-00000000fb11',
+        turn: {
+          id: '01910000-0000-7000-8000-00000000fb11',
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: '01910000-0000-7000-8000-00000000fb11',
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: activityId },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: {
+          id: parentTurnId,
+          items: [{
+            id: activityId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, originItemId: activityId },
+            kind: 'started',
+            agentThreadId: childId,
+            agentPath: '/root/research',
+            error: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { parentThreadId, parentTurnId };
+    });
+
+    await expect(page.locator('.thread-delegation-card')).toBeVisible();
+    await page.getByRole('button', { name: 'Interrupt Turn' }).click();
+
+    // The host closes the request from this pair; the renderer's job is to
+    // address the delegating Turn that owns it, not to enumerate children.
+    const interrupts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt');
+    expect(interrupts.map((call) => call.args)).toEqual([
+      { threadId: fixture.parentThreadId, turnId: fixture.parentTurnId },
+    ]);
+  });
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
