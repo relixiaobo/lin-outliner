@@ -552,7 +552,7 @@ Cross-cutting rules: the user bright line (a human-triggered Turn is never
 gated) holds across all three layers — as an ADMISSION-LEVEL invariant and
 defense-in-depth, not a product journey: child Threads are composer-less and
 user control on them is interrupt-only (PM ruling 2026-07-30, recorded in
-`docs/plans/agent-subagent-interaction.md`), so the supported recovery paths
+`docs/plans/archive/agent-subagent-interaction.md`), so the supported recovery paths
 for an exhausted child are parent respawn/synthesis and the transcript
 artifact (which is why its write must not depend on the child's budget or
 liveness), not in-child continuation; exhaustion gates the admission of NEW

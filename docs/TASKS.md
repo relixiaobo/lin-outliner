@@ -37,14 +37,12 @@ rounds; its scope call (cut the self-load seam, move Skill-name validity to load
 admission) left two boarded follow-ups under **Agent capabilities** —
 `skill-path-ownership` and `skill-directory-is-itself-a-skill` — which are one
 question and should be designed together, not picked up piecemeal.
-PM staffing after that: `agent-subagent-interaction` **PR 3** (delegation card +
-interrupt) is the next unit and is now unblocked twice over — PR 1 and PR 2 have both
-landed, and PR 3's standing collision with #467 was released when the pill merged. It
-starts from a divider region that PR 2 deliberately left alone (`threadProcessSummary` /
-`threadProcessNeutralHeader` untouched — only their two inputs changed), so the plan's
-warning that extraction refactors there merge silently wrong is still the thing to
-respect. **`test:e2e` is not a clean gate signal right now**: two B5 material guards are
-deterministically red on `main` — see `plan-progress-pill-material-scope`.
+`agent-subagent-interaction` closed with **#472** (PR 3), so the whole plan is done and
+archived — no unit of it is staffable any more. **`test:e2e` is not a clean gate signal
+right now**: two B5 material guards are deterministically red on `main` (see
+`plan-progress-pill-material-scope`), and `flaky-model-menu-focus-restore-e2e` has now
+failed at two consecutive gates and passed solo both times — it has earned an actual
+investigation rather than another entry, and the boarded item names where to start.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -531,74 +529,10 @@ before any directional/security-sensitive build.
   costs accuracy, never the delegator's result. Design folded into
   `docs/spec/agent-subagent-threads.md`; plan archived at
   `docs/plans/archive/subagent-transcript-artifact.md`.
-- **agent-subagent-interaction** (P2, `in-progress` — cc-2, plan merged #454 after gate
-  review; **PR 1 `done` 2026-07-31 via #466** (codex-2), **PR 2 `done` 2026-08-01 via
-  #471** (cc-2) after a **high** review gate — ten verified findings, all real, all
-  answered in one hardening commit (`ec253672`); PR 3 unclaimed;
-  shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
-  presentation row per child over append-only Items, `agentsStates` widened to
-  `{status, taskPath, nickname, role}`, product language, failure tinting), PR 2 navigation +
-  Thread-list hygiene (**children leave the history list entirely** — root conversations only,
-  background-activity indicator, Thread Details children section, back-to-parent) **plus two
-  scope additions ruled in on 2026-07-31**: isolated-Skill children get a `subAgentActivity`
-  status row rather than only a link (both recording gates admit `source === 'collaboration'`
-  today, so a Skill child runs behind one in-progress `skill` row with no elapsed and no way
-  in), and the descendant budget pool is rescoped from the Thread to the initiating **user
-  Turn** (it is keyed on the parent Thread and accumulates for that Thread's whole life, so
-  crossing the 1.5M default permanently kills delegation in that conversation — only subtree
-  delete resets it, `/clear` does not). **PR 2 therefore gates at `/code-review ultra`**: it
-  now carries a persistence write boundary and a schema change, and needs the dev-userData
-  wipe note in its body. PR 3 live
-  delegation card + user interrupt with **parent Stop cascading to live descendants**; no
-  dock-level agents panel (the #160 panel lived and was dissolved — reconsider only on
-  demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
-  the standing "task contract meta doc" idea is folded here rather than written separately.
-  PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 2 and
-  PR 3 is the last unclaimed unit — **whoever claims it starts from the plan's
-  "PR 2 landed" section**, added at the #471 merge to the same standard PR 1 set: the
-  `thread/descendants` request and its `ThreadDescendantsView`, the projection's
-  `form` / `collaborationThreadIds` split, scoped budget pool ids, `interruptTurn` as
-  the unchanged single seam, and the list-row activity indicator that is the evidence
-  behind "no dock panel". It also names **the one genuinely open thing in PR 3**:
-  `queuedWorkThreadIds` describes descendants with queued work and *no Turn to
-  interrupt*, so the Q2 Stop cascade cannot be a pure walk of active Turns — PR 3 must
-  say what Stop does to work that has not started. **Answered 2026-08-01 by rescoping
-  Q2**: Stop closes the *request* — the Turn plus every live member of its budget pool
-  — instead of walking a descendant tree. The pool is already "the delegated work this
-  request owns", so queued members are covered with no special case and no new stop
-  barrier, and a fire-and-forget child from an earlier request survives, visible on its
-  own Turn's card with a per-child Stop. Its one prerequisite makes PR 3 a ledger
-  change and **raises its gate to ultra**: `poolId` is set only when a budget is
-  configured, so the request identity must become unconditional (a null `tokenBudget`
-  means unbounded, not identity-less). Taken under A7 — the tree walk is an interim
-  mechanism we already knew we would replace — and it makes PR 3 smaller, not bigger.
-  "PR 1 landed" still holds for the older seams and the warning that extraction
-  refactors in the divider region merge silently wrong.
-  One standing constraint for those PRs: the codec clean cut means **every clone wipes
-  `~/.lin-outliner-*` dev userData** before running any branch off this point. (The
-  former collision for PR 3 — #467's plan-progress pill in the same parent process
-  block — is released; #467 and #468 both merged 2026-07-31, so PR 3 starts from
-  a pill that renders on composer-less child Threads and from `update_plan` being an
-  ordinary recorded Item.) The plan's stale
-  `ThreadService.ts:NNNN` citations (they predated #451's decomposition and reached past
-  EOF) were repaired on the #466 branch — each relocated to `thread/TurnLifecycle.ts`,
-  `thread/SubagentCollaboration.ts`, or `thread/ThreadCatalogOps.ts` and revalidated
-  against current code. PR 1's and PR 2's design are folded into
-  `docs/spec/agent-thread-rendering.md` + `docs/spec/agent-subagent-threads.md`; the plan
-  stays out of `archive/` until PR 3 ships.
-  **What PR 2's gate is worth remembering:** all ten findings traced to ONE design shift —
-  the renderer's Thread catalog went roots-only while children became navigable and
-  deletable, and every consumer that still read the catalog expecting children degraded in
-  its own way (children resolving to "Not found", the post-delete fallback selecting a
-  child, a permanent ghost row, a background dot keyed to a non-root id). The three worst
-  were the new delete affordances: they judged "finished" from a snapshot frozen when the
-  dialog opened, took no confirmation, and treated an idle child holding queued work as
-  settled — a destructive, cascading action deciding from stale and incomplete evidence.
-  The lesson is narrower than "refresh your state": **when one read becomes the only
-  evidence for something, every consumer of the old evidence is a site that has to be
-  found**, and a destructive action re-takes its decision at the moment it is confirmed,
-  not when it was offered.
-  See `docs/plans/agent-subagent-interaction.md`.
+
+`agent-subagent-interaction` is **complete** — all three PRs shipped (#466, #471, #472);
+see *Recently completed*.
+
 - **toolruntime-handler-contribution** (P2, `done` 2026-07-30; PR #456, codex-2) —
   collaboration handlers moved verbatim into `thread/SubagentCollaboration.ts` via the
   extension contribution seam; `ToolRuntime` is dispatch/assembly only (572→488 lines) and the
@@ -1022,6 +956,47 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-subagent-interaction** (`cc-2/agent-delegation-card`, PR #472, cc-2, merged
+  2026-08-01, plan-track — **plan complete**, all three PRs shipped: PR 1 #466
+  (codex-2), PR 2 #471, PR 3 #472; plan archived at
+  `docs/plans/archive/agent-subagent-interaction.md`) — delegated work is now visible,
+  truthful, and controllable while it runs. PR 3 added the per-Turn delegation card
+  (one line per live child — readable name, status, elapsed — replacing PR 1's
+  individual rows while they run and handing back to them post-hoc) and user interrupt:
+  per-child Stop on the card, Stop in a child Thread's header, and a composer Stop that
+  closes the whole request.
+  **The unit worth remembering is what Stop turned out to mean.** Q2 was ratified on
+  2026-07-30 as "cascades to every live descendant", which is ambiguous between a Turn's
+  descendants and a Thread's — and both readings re-derive a set the budget ledger
+  already owned. It was rescoped on 2026-08-01: Stop closes the *request*. Two things
+  made that the right cut. First, the premise had expired — "children burning invisibly
+  after Stop" was argued before PR 2 shipped the list-row activity indicator and before
+  PR 3's card existed, and the same evidence cannot justify skipping a dock panel
+  (earlier work is visible and reachable) while also justifying killing that work on
+  sight (it is burning unseen). Second, this repository's recurring defect is deriving
+  one set twice under two names, so binding Stop to request membership removed work
+  rather than adding it: a queued-only child is already a member, so no
+  drop-the-mailbox mechanism; and "the request is closed" is state on a row whose
+  lifecycle already exists, so no bespoke stop barrier whose unfired release would
+  permanently disable delegation for a subtree. Its one prerequisite — request identity
+  must exist without a budget, since `poolId` was set only when someone configured a
+  number — is the same lesson PR 2 had already learned once.
+  **Gate (main):** `/code-review high` — 33 agents, ten findings, every one real. Four
+  were correctness regressions this branch introduced, and two of those contradicted
+  text the PR itself added: Stop settled only direct children while the new spec
+  sentence and the code's own comment both promised the closure; and a stopped child was
+  permanently bricked when the budget setting was disabled, the opposite of the shipped
+  line about re-delegation being how stopped work resumes. That one was the **third**
+  appearance in this plan of a single shape — a state meant to be temporary made
+  permanent because its only reset path is unreachable (A12) — after the Thread-scoped
+  budget pool and a proposed background-released stop barrier that was rejected at plan
+  time for exactly that reason. Also caught: a capped first spawn silently dropping the
+  runtime breaker for its whole request, `closePool`/`dropQueuedWork` running before an
+  await that can reject, a Stop offered where the host refuses it, and a CSS block
+  spliced into an existing selector list that regressed `.thread-file-changes` in every
+  transcript that touched files. All ten fixed in one commit (`4df37de3`) with four new
+  core tests pinning the correctness four.
 
 - **agent-skill-library-settings** (`cc/agent-skill-library-settings`, PR #470, cc,
   merged 2026-08-01, plan-track; plan archived at

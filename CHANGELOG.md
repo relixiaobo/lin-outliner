@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
+  delegating Turn now carries a live card in its process block: one line per
+  child agent with a readable name, its status, and elapsed time, so a
+  delegation is something you watch rather than something you wait out. Each
+  running line has its own Stop, a child Thread's header has one, and the
+  composer's Stop now closes the whole request — the Turn plus every piece of
+  delegated work it owns, including a child that was only holding queued work
+  and had not started yet. Stopping is scoped to the request you made, so
+  background work from an earlier request keeps running: it stays visible on
+  its own Turn's card, with its own Stop, rather than being swept up by a
+  decision you did not make. Work you stop stays stopped — queued content does
+  not resurface in a later request — and re-delegating to a stopped child is how
+  you resume it. Stop reaches only your own conversations, at any depth.
 - **One Skill library, and a way to add your own (PR #470, cc)** — Skill
   settings were organised by where a Skill came from: a managed panel, then a
   separate list of everything else, with catalog browse and a GitHub URL field
