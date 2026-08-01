@@ -91,6 +91,86 @@ describe('bound local skill directories', () => {
     expect(await runtime.listAllSkills()).toEqual([]);
   });
 
+  test('a self-loaded bound skill stays under skill-write governance', async () => {
+    // The whole point of loading a bound directory as a Skill is that the user
+    // picked it. Its SKILL.md decides what the model executes, so a write to it
+    // must resolve to a governed skill target — not fall through as an ordinary
+    // file write with no validation, no audit, and no provenance.
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'my-pdf-skill');
+    await writeSkill(bound, 'my-pdf-skill', 'Handle PDFs.');
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    const target = runtime.resolveSkillTarget(path.join(bound, 'SKILL.md'));
+    expect(target).toMatchObject({
+      skillName: 'my-pdf-skill',
+      skillRoot: bound,
+      isSkillFile: true,
+    });
+  });
+
+  test('a resource under a self-loaded bound skill belongs to that skill', async () => {
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'my-pdf-skill');
+    await writeSkill(bound, 'my-pdf-skill', 'Handle PDFs.');
+    await mkdir(path.join(bound, 'references'), { recursive: true });
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    // Not a sibling Skill called "references" — a resource of my-pdf-skill.
+    expect(runtime.resolveSkillTarget(path.join(bound, 'references', 'notes.md'))).toMatchObject({
+      skillName: 'my-pdf-skill',
+      relativePath: 'references/notes.md',
+      isSkillFile: false,
+    });
+  });
+
+  test('a SKILL.md written into a bound directory is governed before any load', async () => {
+    // The first write is the dangerous one: it is what turns the directory into
+    // a Skill, so it cannot wait for a load to have recorded it.
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'fresh-skill');
+    await mkdir(bound, { recursive: true });
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(bound, 'SKILL.md'))).toMatchObject({
+      skillName: 'fresh-skill',
+      isSkillFile: true,
+    });
+  });
+
+  test('a bound container still governs its skills the ordinary way', async () => {
+    const workspace = await temporaryRoot();
+    const bound = await temporaryRoot();
+    await writeSkill(path.join(bound, 'alpha'), 'alpha', 'The alpha workflow.');
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(bound, 'alpha', 'SKILL.md'))).toMatchObject({
+      skillName: 'alpha',
+      isSkillFile: true,
+    });
+  });
+
+  test('binding a convention directory does not make it load itself', async () => {
+    // Binding ~/.agents/skills dedupes onto the convention entry; if the
+    // self-load rule keyed off that merged list, a stray SKILL.md there would
+    // load as a Skill literally named "skills".
+    const workspace = await temporaryRoot();
+    const conventionDir = path.join(workspace, '.agents', 'skills');
+    await writeSkill(conventionDir, 'skills', 'Not a skill root.');
+
+    const runtime = runtimeFor(workspace, [conventionDir]);
+
+    expect(await runtime.listAllSkills()).toEqual([]);
+  });
+
   test('the convention directories are containers, never a skill themselves', async () => {
     const workspace = await temporaryRoot();
     // A SKILL.md directly in .agents/skills is not a Skill named "skills".

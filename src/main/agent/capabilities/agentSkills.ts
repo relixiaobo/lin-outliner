@@ -833,6 +833,10 @@ class SkillRegistry {
   // this flag; the runtime mirrors it so the enable predicate can evaluate
   // activation explicitly instead of inferring it from catalog membership.
   private activeManagedSkillNames: ReadonlySet<string> = new Set();
+  // Bound directories that turned out to BE a Skill. Skill-write governance
+  // needs this: files under such a root belong to that Skill, and its SKILL.md
+  // is one path segment deep rather than the usual two.
+  private selfBoundSkillRoots: ReadonlySet<string> = new Set();
   private provenanceLoaded = false;
 
   constructor(options: SkillLoadOptions) {
@@ -1055,6 +1059,7 @@ class SkillRegistry {
       root: this.root,
       includeUserSkills: this.includeUserSkills,
       additionalSkillDirectories: this.additionalSkillDirectories,
+      selfSkillRoots: [...this.selfBoundSkillRoots],
       builtInSkillDirectories: this.builtInSkillDirectories,
       builtInSkillRoots: this.builtInSkillRoots,
       managedSkillContentRoot: this.managedSkillContentRoot,
@@ -1166,7 +1171,16 @@ class SkillRegistry {
         await this.addLoadedSkill(skill);
       }
       const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
-      const boundByUser = new Set(this.additionalSkillDirectories);
+      // Computed from the setting rather than from `roots`, which has already
+      // deduped a bound convention directory onto the convention entry — that
+      // collision would otherwise let `~/.agents/skills` load itself as a Skill
+      // named "skills".
+      const boundByUser = new Set(selfEligibleBoundDirs(
+        this.root,
+        this.includeUserSkills,
+        this.additionalSkillDirectories,
+      ));
+      const selfRoots = new Set<string>();
       for (const { dir, source } of roots) {
         const loaded = await loadSkillsFromDir(dir, source);
         for (const skill of loaded) {
@@ -1180,9 +1194,17 @@ class SkillRegistry {
         // definition, so this applies only to bound ones.
         if (boundByUser.has(dir)) {
           const self = await loadSkillFromRoot(dir, source);
-          if (self) await this.addLoadedSkill(self);
+          if (self) {
+            await this.addLoadedSkill(self);
+            // Recorded so skill-write governance can resolve files under this
+            // directory to THIS Skill. Without it a write to its SKILL.md — the
+            // file that decides what the model executes — resolves to no skill
+            // target at all and is treated as an ordinary file write.
+            selfRoots.add(dir);
+          }
         }
       }
+      this.selfBoundSkillRoots = selfRoots;
       for (const dir of this.dynamicSkillDirectories) {
         const loaded = await loadSkillsFromDir(dir, 'project');
         for (const skill of loaded) {
@@ -1305,6 +1327,31 @@ function developmentAppPath(): string {
   }
 }
 
+/**
+ * The `.agents/skills` directories the loader always consults. These are
+ * containers by definition: a `SKILL.md` sitting directly in one does not make
+ * it a Skill. Binding one by hand must not change that, so they are excluded
+ * from the "a bound directory may itself be a Skill" rule.
+ */
+function conventionSkillDirs(root: string, includeUserSkills: boolean): string[] {
+  return [
+    ...(includeUserSkills ? [path.join(homedir(), '.agents', 'skills')] : []),
+    path.join(root, '.agents', 'skills'),
+  ].map((dir) => path.resolve(dir));
+}
+
+/** Bound directories that are eligible to be a Skill root themselves. */
+function selfEligibleBoundDirs(
+  root: string,
+  includeUserSkills: boolean,
+  additionalSkillDirectories: readonly string[] = [],
+): string[] {
+  const convention = new Set(conventionSkillDirs(root, includeUserSkills));
+  return additionalSkillDirectories
+    .map((dir) => path.resolve(dir))
+    .filter((dir) => !convention.has(dir));
+}
+
 function skillSearchDirs(
   root: string,
   includeUserSkills: boolean,
@@ -1344,9 +1391,39 @@ export interface SkillDirConfig {
   root: string;
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
+  /**
+   * Bound directories the loader resolved to a Skill root in their own right.
+   * Supplied by the live registry; absent for a caller that has not loaded.
+   */
+  selfSkillRoots?: readonly string[];
   builtInSkillDirectories?: readonly string[];
   builtInSkillRoots?: readonly string[];
   managedSkillContentRoot?: string;
+}
+
+/**
+ * Resolves a file under a directory that IS a Skill, rather than one that holds
+ * Skills. The SKILL.md of such a root is one segment deep, which
+ * `targetInsideSkillsDir` rejects — leaving the file that decides what the model
+ * executes outside skill-write governance entirely.
+ */
+function targetInsideSelfSkillRoot(
+  filePath: string,
+  skillRootInput: string,
+  source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>,
+): AgentSkillContentTarget | null {
+  const skillRoot = path.resolve(skillRootInput);
+  if (!isPathInside(filePath, skillRoot)) return null;
+  const parts = path.relative(skillRoot, filePath).split(path.sep).filter(Boolean);
+  if (parts.length === 0) return null;
+  return {
+    skillName: path.basename(skillRoot),
+    skillRoot,
+    skillsDir: path.dirname(skillRoot),
+    source,
+    relativePath: parts.join('/'),
+    isSkillFile: parts.length === 1 && parts[0] === SKILL_FILE_NAME,
+  };
 }
 
 function targetInsideSkillsDir(
@@ -1389,12 +1466,38 @@ export function resolveSkillContentTarget(
     const managedRoot = canonicalDirectoryIdentity(config.managedSkillContentRoot);
     if (filePathIdentity === managedRoot || isPathInside(filePathIdentity, managedRoot)) return null;
   }
-  // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
+  const selfEligible = selfEligibleBoundDirs(
+    config.root,
+    config.includeUserSkills,
+    config.additionalSkillDirectories,
+  );
+  const boundSource = (dir: string): 'user' | 'project' =>
+    (isPathInside(dir, path.resolve(config.root)) ? 'project' : 'user');
+
+  // 1. A bound directory the loader resolved to a Skill in its own right. This
+  //    precedes the container interpretation because for such a root a nested
+  //    file is that Skill's RESOURCE, not a sibling Skill of the same name as
+  //    its folder.
+  for (const dir of config.selfSkillRoots ?? []) {
+    const target = targetInsideSelfSkillRoot(filePath, dir, boundSource(dir));
+    if (target) return target;
+  }
+
+  // 2. The configured skill-dir set the loader enumerates (defaults + additional dirs).
   for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
     const target = targetInsideSkillsDir(filePath, dir, source);
     if (target) return target;
   }
-  // 2. Nested .agents/skills under the work root (project) — matched by path so a
+
+  // 3. A SKILL.md written directly into a bound directory makes that directory a
+  //    Skill — the loader's own rule. Governed from the first write, before any
+  //    load has recorded it in selfSkillRoots.
+  for (const dir of selfEligible) {
+    if (path.resolve(filePath) !== path.join(dir, SKILL_FILE_NAME)) continue;
+    const target = targetInsideSelfSkillRoot(filePath, dir, boundSource(dir));
+    if (target) return target;
+  }
+  // 4. Nested .agents/skills under the work root (project) — matched by path so a
   //    brand-new nested skill dir is still governed on its first write.
   const root = path.resolve(config.root);
   if (!isPathInside(filePath, root)) return null;
