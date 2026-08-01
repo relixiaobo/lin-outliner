@@ -306,14 +306,15 @@ export function SettingsSkillLibrarySection({
       description: skill.description,
       ...(skill.diagnostic ? {
         diagnostic: managedSkillErrorMessage(skill.diagnostic, t),
-        // A failed update check says nothing is wrong with the Skill — it is
-        // still installed, still pinned, still invocable. Only a fault in the
-        // Skill or its compatibility earns the status colour.
-        diagnosticTone: skill.status === 'failed'
-          && skill.compatibility.status !== 'incompatible'
-          && !isSkillFault(skill)
-          ? 'muted' as const
-          : 'danger' as const,
+        // Only a fault in the Skill or its compatibility earns the status
+        // colour. A failed update check says nothing is wrong with it — still
+        // installed, still pinned, still invocable — and a rollback the user
+        // just asked for and got is a success, not a fault; keying on
+        // status === 'failed' painted that one red, because a rollback sets
+        // updateCommit and so reports status 'update-available'.
+        diagnosticTone: isSkillFault(skill) || skill.compatibility.status === 'incompatible'
+          ? 'danger' as const
+          : 'muted' as const,
       } : {}),
       sourceChip: t.settings.skills.sourceManaged,
       chips: [
@@ -325,21 +326,21 @@ export function SettingsSkillLibrarySection({
       dimmed: !enabled || skill.status === 'modified',
       toggleLabel: t.settings.skills.managedEnableToggle({ name: skill.name }),
       onToggle: (next: boolean) => {
-        void managed.setEnabled(skill, next);
         // A managed Skill can also be named in disabledSkills, and activation
-        // alone would not turn the row back on. This half persists immediately
-        // too — the activation write already did, and splitting one action
-        // across two commit models is what let Cancel leave the Skill
-        // activated-but-suppressed.
-        if (next && disabledSkills.includes(skill.name)) {
-          void onPersistSkillDisabled(skill.name, false).then((ok) => {
-            // setEnabled already set ITS notice ("<name> enabled"). If the other
-            // half failed, that notice is now a lie sitting above a switch that
-            // snapped back off, so clear the one that was actually set — the
-            // shell's own notice was never set on this path.
-            if (!ok) managed.clearFeedback();
-          });
-        }
+        // alone would not turn the row back on. Both halves persist
+        // immediately: splitting one action across two commit models is what
+        // let Cancel leave the Skill activated-but-suppressed.
+        //
+        // Sequenced, not parallel. setEnabled sets its "<name> enabled" notice
+        // only after its own IPC resolves, so racing the two let a fast
+        // rejection clear an empty feedback state and the success notice then
+        // appear anyway — a green success above a red error above a switch that
+        // had snapped back off.
+        void (async () => {
+          await managed.setEnabled(skill, next);
+          if (!next || !disabledSkills.includes(skill.name)) return;
+          if (!(await onPersistSkillDisabled(skill.name, false))) managed.clearFeedback();
+        })();
       },
       actions: [...managedRevealAction, ...managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),

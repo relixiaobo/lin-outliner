@@ -192,6 +192,7 @@ import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
   AgentRuntimeSettingsInput,
+  AgentRuntimeSettings,
   AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
@@ -3404,6 +3405,32 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
  * directory's Skills would lose their local chip and their unbind action while
  * the directory itself rendered, two rows down, as empty.
  */
+/**
+ * Keeps the user's own spelling of a directory they did not touch.
+ *
+ * The renderer only ever sees expanded paths, so it necessarily sends expanded
+ * ones back — which would rewrite a stored `~/skills` or `./skills` into an
+ * absolute path the first time anything is bound or unbound. `./skills` is the
+ * costly one: frozen to whatever the agent workdir was at that moment, it stops
+ * following the workspace, and the Skills in the next workspace's ./skills
+ * quietly stop loading while the stale row lists as empty.
+ */
+function preserveStoredDirectoryForms(
+  input: AgentRuntimeSettingsInput,
+  stored: AgentRuntimeSettings,
+): AgentRuntimeSettingsInput {
+  if (!input.additionalSkillDirectories) return input;
+  const byExpanded = new Map(stored.additionalSkillDirectories.map((dir) => (
+    [expandSkillDirectory(dir, agentLocalFileRoot), dir]
+  )));
+  return {
+    ...input,
+    additionalSkillDirectories: input.additionalSkillDirectories.map((dir) => (
+      byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir
+    )),
+  };
+}
+
 function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
   // Applied to EVERY handler that returns this view, not just the two that look
   // skill-related. The renderer stores all of them into one settings state, so a
@@ -3498,7 +3525,9 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       return { revealed: true };
     }
     case 'agent_update_runtime_settings': {
-      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      const settings = await updateAgentRuntimeSettings(
+        preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
+      );
       for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
         runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
         runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);

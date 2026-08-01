@@ -1460,6 +1460,12 @@ function targetInsideSkillsDir(
   const parts = path.relative(skillsDir, filePath).split(path.sep).filter(Boolean);
   if (parts.length < 2) return null;
   const skillName = parts[0] ?? '';
+  // A directory whose name cannot be a Skill identity is not a Skill directory,
+  // so a file under it is an ordinary file. Claiming it anyway resolved a
+  // target the authoring validator always rejects, failing every write beneath
+  // e.g. `<bound>/Research Notes/` with invalid_skill_name — writes that
+  // succeeded before the folder was bound.
+  if (!isValidSkillName(skillName)) return null;
   return {
     skillName,
     skillRoot: path.join(skillsDir, skillName),

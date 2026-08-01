@@ -77,6 +77,11 @@ function managedSkill(overrides: Partial<ManagedSkillView> = {}): ManagedSkillVi
   };
 }
 
+/** Drains the microtask chain the sequenced toggle depends on. */
+async function settle(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
+}
+
 function switchFor(document: Document, label: string): HTMLButtonElement {
   const control = document.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`);
   if (!control) throw new Error(`Missing switch: ${label}`);
@@ -166,7 +171,7 @@ describe('skill library list', () => {
       skills: [],
       managed: [managedSkill()],
       disabledSkills: ['pdf'],
-      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); },
+      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); return true; },
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
@@ -187,7 +192,7 @@ describe('skill library list', () => {
     const rendered = await render({
       skills: [localSkill('user-notes', 'user')],
       managed: [],
-      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); },
+      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); return true; },
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
@@ -276,6 +281,50 @@ describe('skill library list', () => {
     expect(counts.at(-1)).toBe(1);
   });
 
+  test('enabling a managed skill keeps other pending toggles', async () => {
+    // The immediate-persist path must adjust the draft by its own single
+    // change. Overwriting it with the persisted list threw away the user's
+    // unsaved work: an unrelated row that had been switched off snapped back
+    // on and the footer Save vanished, with no error and no notice.
+    const drafted: string[] = [];
+    const rendered = await render({
+      skills: [localSkill('notes', 'user')],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf', 'notes'],
+      onPersistSkillDisabled: async () => true,
+      onToggleSkill: (name) => { drafted.push(name); },
+    });
+
+    // `notes` is off in the draft and must stay off.
+    expect(switchFor(rendered.document, 'Toggle notes').getAttribute('aria-checked')).toBe('false');
+
+    await act(async () => {
+      switchFor(rendered.document, 'Enable pdf').click();
+      await settle();
+    });
+
+    expect(switchFor(rendered.document, 'Toggle notes').getAttribute('aria-checked')).toBe('false');
+  });
+
+  test('a successful enable keeps its notice', async () => {
+    // The control case the failure test needs in order to mean anything: if
+    // setEnabled's notice never appeared, asserting its absence proves nothing.
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf'],
+      onPersistSkillDisabled: async () => true,
+    });
+
+    await act(async () => {
+      switchFor(rendered.document, 'Enable pdf').click();
+      await settle();
+    });
+
+    expect(rendered.document.querySelector('.agent-settings-notice')?.textContent)
+      .toContain('pdf');
+  });
+
   test('a failed disabledSkills write clears the notice the toggle just set', async () => {
     const rendered = await render({
       skills: [],
@@ -286,8 +335,7 @@ describe('skill library list', () => {
 
     await act(async () => {
       switchFor(rendered.document, 'Enable pdf').click();
-      await Promise.resolve();
-      await Promise.resolve();
+      await settle();
     });
 
     // setEnabled's own "pdf enabled" notice must not survive the other half
@@ -661,7 +709,7 @@ async function render(input: {
   disabledSkills?: string[];
   directories?: string[];
   onDirectoriesChange?: (next: string[]) => Promise<readonly string[]>;
-  onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<void>;
+  onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
   onToggleSkill?: (skillName: string) => void;
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
@@ -681,6 +729,9 @@ async function render(input: {
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
+        if (command === 'agent_managed_skill_set_enabled') {
+          return { ok: true, value: { ...(input.managed[0] ?? {}), enabled: true } };
+        }
         if (command === 'agent_pick_skill_directory') return { path: input.pickedDirectory ?? null };
         if (command === 'agent_managed_skill_catalog') {
           return { ok: true, value: { status: 'fresh', entries: input.catalogEntries ?? [] } };
@@ -703,7 +754,7 @@ async function render(input: {
           onApplied={async () => undefined}
           onError={input.onError ?? (() => undefined)}
           onNotice={() => undefined}
-          onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => undefined)}
+          onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => true)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
           onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}
         />

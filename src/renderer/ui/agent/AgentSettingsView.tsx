@@ -332,7 +332,16 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         latestDisabledSkillsRef.current = updated.agent.disabledSkills ?? [];
         if (isCurrentRequest('mutation', requestId)) {
           setSettings(updated);
-          setSkillDraft({ disabledSkills: [...latestDisabledSkillsRef.current] });
+          // Adjusted by the same SINGLE change, never overwritten wholesale.
+          // Replacing the draft with the persisted list discarded the user's
+          // other pending toggles: flipping a managed Skill on made an
+          // unrelated row that had been switched off snap back on and the
+          // footer Save vanish, with no error and no notice.
+          setSkillDraft((current) => ({
+            disabledSkills: disabled
+              ? [...new Set([...current.disabledSkills, skillName])]
+              : current.disabledSkills.filter((name) => name !== skillName),
+          }));
         }
         await onApplied();
         return true;
