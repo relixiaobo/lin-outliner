@@ -201,10 +201,12 @@ never as code loaded into the host.
 
 ## Built-In Floor
 
-The packaged platform floor contains `data-cleanup`. Development registration
-also provides the authoring and research workflows used by the runtime. Packaged
-resource staging is explicit; arbitrary optional Skills are not copied into the
-application bundle.
+The packaged platform floor contains `tenon-import`, Tenon's external-data
+cleanup and import workflow. Development registration also provides the
+authoring and research workflows used by the runtime. Packaged resource staging
+is explicit; arbitrary optional Skills are not copied into the application
+bundle. The packaged import wrapper is required: the macOS packaging hook
+restores its executable mode and fails the build when the resource is absent.
 
 ## Settings
 

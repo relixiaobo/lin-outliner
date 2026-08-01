@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { EXTRA_TOOL_PATH_ENV, pathSegments } from './agent/capabilities/agentToolPath';
+import resourceNames from './tenonImportResourceNames.json';
 
 export interface TenonImportRuntimeConfig {
   binDir: string;
@@ -34,20 +35,20 @@ export function configureTenonImportRuntime(options: TenonImportRuntimeOptions):
 
 export function resolveTenonImportRuntime(options: Omit<TenonImportRuntimeOptions, 'descriptorPath'>): TenonImportRuntimeConfig {
   if (options.isPackaged) {
-    const cliRoot = path.join(options.resourcesPath, 'tenon-import');
-    const skillRoot = path.join(options.resourcesPath, 'built-in-skills', 'data-cleanup');
+    const cliRoot = path.join(options.resourcesPath, resourceNames.cliResourceDirectoryName);
+    const skillRoot = path.join(options.resourcesPath, 'built-in-skills', resourceNames.skillDirectoryName);
     return {
       binDir: path.join(skillRoot, 'bin'),
-      cliEntry: path.join(cliRoot, 'tenon-import.mjs'),
+      cliEntry: path.join(cliRoot, resourceNames.cliEntryFileName),
       cliRuntime: options.processExecPath,
       runAsNode: true,
     };
   }
   const repoRoot = path.resolve(options.moduleDir, '../..');
-  const root = path.join(repoRoot, 'src', 'main', 'builtInSkills', 'data-cleanup');
+  const root = path.join(repoRoot, 'src', 'main', 'builtInSkills', resourceNames.skillDirectoryName);
   return {
     binDir: path.join(root, 'bin'),
-    cliEntry: path.join(root, 'scripts', 'tenon-import.ts'),
+    cliEntry: path.join(root, 'scripts', resourceNames.cliSourceFileName),
     cliRuntime: 'bun',
     runAsNode: false,
   };

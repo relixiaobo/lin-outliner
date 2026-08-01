@@ -4,12 +4,13 @@ allowed-tools: file_read, file_glob, file_grep, bash, request_user_input, node_s
 execution: isolated
 ---
 
-# Data Cleanup
+# Tenon Data Cleanup and Import
 
-Use this skill as a data-cleanup workflow, not as a source-specific importer.
-Importing is the final step: inspect the source, profile it, infer what to
-preserve, run a deterministic route when available, validate the cleaned shape,
-then stage the result through `tenon-import`.
+Use this skill as Tenon's data-cleanup and import workflow, not as a
+general-purpose data-cleaning skill or a source-specific importer. Importing is
+the final step: inspect the source, profile it, infer what to preserve, run a
+deterministic route when available, validate the cleaned shape, then stage the
+result through `tenon-import`.
 
 ## Workflow
 
