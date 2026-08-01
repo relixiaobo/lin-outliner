@@ -89,6 +89,32 @@
   white-space: nowrap;
 }
 
+/* A count of Skills with an update waiting. It reports a quantity, not a status,
+   so it stays on the neutral --fill ladder (B3/B4) rather than borrowing a status
+   or accent colour. Pushed to the end of the row and sized by its own text, so
+   its appearance never reflows the nav item (B7). */
+.settings-nav-badge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border-radius: var(--radius-pill);
+  background: var(--fill-2);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0 var(--space-2);
+}
+
+.settings-nav-item.is-active .settings-nav-badge {
+  background: var(--fill-3);
+  color: var(--text-strong);
+}
+
 /* The content pane is the single scroll container (the rail stays put). It is the
    flat window base — no card wrapper — so the grouped cards float on it the same
    way the rail does (shared --bg-elevated). */

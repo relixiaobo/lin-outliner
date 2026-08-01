@@ -85,12 +85,12 @@ export interface ManagedSkillServiceOptions {
   findNameConflict?: (name: string, excludingManagedSkillId?: string) => Promise<ManagedSkillNameConflict | null>;
 }
 
-interface CatalogDocument {
+export interface CatalogDocument {
   schemaVersion: 1;
   entries: CatalogEntry[];
 }
 
-interface CatalogEntry {
+export interface CatalogEntry {
   id: string;
   name: string;
   description: string;
@@ -336,10 +336,32 @@ export class ManagedSkillService {
     }
   }
 
-  async checkUpdates(skillId?: string): Promise<ManagedSkillView[]> {
+  /**
+   * Resolves each record's tracking ref and records whether an update exists.
+   *
+   * `throttleMs` skips records checked within that window, using the
+   * `lastCheckedAt` each record already stores. It is for the ambient
+   * background check at startup; an explicit user request passes no throttle,
+   * because "check for updates" must always actually check.
+   *
+   * A failure records an `update_failed` diagnostic on the record and changes
+   * nothing else (A12): it never blocks startup, raises an alert, or changes any
+   * Skill's enabled state or pinned version. A throttled (ambient) check also
+   * stamps `lastCheckedAt` on failure, so a persistently failing record is
+   * retried on the same schedule as a succeeding one instead of on every launch
+   * and every pane mount.
+   */
+  async checkUpdates(skillId?: string, options?: { throttleMs?: number }): Promise<ManagedSkillView[]> {
     await this.ready;
     const index = await this.options.store.readIndex();
-    const targets = skillId ? [requireRecord(index, skillId)] : index.skills;
+    const requested = skillId ? [requireRecord(index, skillId)] : index.skills;
+    const throttleMs = options?.throttleMs;
+    const now = this.now();
+    const targets = throttleMs === undefined
+      ? requested
+      : requested.filter((record) => (
+        record.lastCheckedAt === undefined || now - record.lastCheckedAt >= throttleMs
+      ));
     for (const target of targets) {
       try {
         const commit = await this.github.resolveTrackingCommit({
@@ -360,7 +382,9 @@ export class ManagedSkillService {
           }));
         });
       } catch (error) {
-        await this.recordUpdateFailure(target, error, 'Update check failed');
+        await this.recordUpdateFailure(target, error, 'Update check failed', {
+          stampCheckedAt: throttleMs !== undefined,
+        });
       }
     }
     return this.list();
@@ -765,24 +789,49 @@ export class ManagedSkillService {
     }
   }
 
-  private async recordUpdateFailure(expected: ManagedSkillRecord, error: unknown, prefix: string): Promise<void> {
+  /**
+   * `stampCheckedAt` marks the attempt as having happened even though it failed.
+   * Without it a record that keeps failing is never filtered by the throttle, so
+   * every launch and every pane mount re-fires one request per installed Skill —
+   * an offline or rate-limited client would retry unboundedly against the very
+   * endpoint that is failing. A failed attempt is still an attempt.
+   */
+  private async recordUpdateFailure(
+    expected: ManagedSkillRecord,
+    error: unknown,
+    prefix: string,
+    options?: { stampCheckedAt?: boolean },
+  ): Promise<void> {
     const view = managedSkillErrorView(error);
     const message = `${prefix}: ${errorMessage(error)}`;
     await this.withMutation(async () => {
       await this.options.store.updateIndex((index) => ({
         ...index,
-        skills: index.skills.map((record) => sameManagedRecordSnapshot(record, expected)
-          && record.diagnostic?.code !== 'modified'
-          && record.diagnostic?.code !== 'name_conflict' ? {
-          ...record,
-          diagnostic: {
-            code: 'update_failed' as const,
-            message,
-            errorCode: view.code,
-            ...(view.detail ? { detail: view.detail } : {}),
-            at: this.now(),
-          },
-        } : record),
+        skills: index.skills.map((record) => {
+          if (!sameManagedRecordSnapshot(record, expected)) return record;
+          // Stamped independently of the diagnostic. The attempt happened
+          // whatever the record already said, and the throttle reads only this
+          // field — leaving it unset for an integrity-faulted record retried it
+          // on every launch and every pane mount, forever.
+          const attempted = options?.stampCheckedAt
+            ? { ...record, lastCheckedAt: this.now() }
+            : record;
+          // An integrity fault outranks a failed update check: the Skill's own
+          // bytes are wrong, which matters more than not having reached GitHub.
+          if (record.diagnostic?.code === 'modified' || record.diagnostic?.code === 'name_conflict') {
+            return attempted;
+          }
+          return {
+            ...attempted,
+            diagnostic: {
+              code: 'update_failed' as const,
+              message,
+              errorCode: view.code,
+              ...(view.detail ? { detail: view.detail } : {}),
+              at: this.now(),
+            },
+          };
+        }),
       }));
     });
   }
@@ -1010,7 +1059,7 @@ function nameConflictDiagnostic(record: ManagedSkillRecord, conflict: ManagedSki
   return `Managed skill ${record.name} is suppressed by a ${conflict.source} skill at ${conflict.location}.`;
 }
 
-function parseCatalogDocument(value: unknown): CatalogDocument {
+export function parseCatalogDocument(value: unknown): CatalogDocument {
   if (!isRecord(value) || value.schemaVersion !== CATALOG_SCHEMA_VERSION || !Array.isArray(value.entries)) {
     throw new ManagedSkillServiceError('invalid_catalog', 'Linlab Catalog has an unsupported schema.');
   }

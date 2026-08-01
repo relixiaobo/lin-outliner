@@ -496,7 +496,7 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
-    additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
+    additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
     subagentTokenBudget: normalizeNullablePositiveInteger(
       input?.subagentTokenBudget,
       DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
@@ -510,17 +510,32 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     providerCacheRetention: isAgentCacheRetention(input?.providerCacheRetention)
       ? input.providerCacheRetention
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
-    disabledSkills: normalizeStringList(input?.disabledSkills),
+    disabledSkills: normalizeStringList(input?.disabledSkills, MAX_DISABLED_SKILLS),
   };
 }
 
-function normalizeStringList(value: unknown): string[] {
+/**
+ * Bound on how many directories a user may point the Skill loader at. Each one
+ * is scanned on every registry refresh, so this stays small.
+ */
+const MAX_ADDITIONAL_SKILL_DIRECTORIES = 20;
+
+/**
+ * Bound on `disabledSkills`. It is generous because this list is keyed by name
+ * over EVERY source — built-in, user, project, local, managed — so it scales
+ * with how many Skills a user has, not with anything they configure. At 20 it
+ * silently dropped the 21st disable: the row snapped back on and the Skill
+ * stayed model-invocable despite an explicit off.
+ */
+const MAX_DISABLED_SKILLS = 1_000;
+
+function normalizeStringList(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean))]
-    .slice(0, 20);
+    .slice(0, limit);
 }
 
 function normalizeNullablePositiveInteger(value: unknown, fallback: number | null): number | null {

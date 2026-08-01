@@ -403,6 +403,15 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills'),
+  /**
+   * Opens the native directory picker. Returns null when the user cancels.
+   * `isSkillFolder` means the chosen folder is itself a Skill rather than a
+   * folder of Skills, and `nameValid` whether its name can be a Skill identity.
+   */
+  agentPickSkillDirectory: () =>
+    command<{ path: string | null; isSkillFolder?: boolean; nameValid?: boolean }>('agent_pick_skill_directory'),
+  agentRevealSkillDirectory: (path: string) =>
+    command<{ revealed: boolean }>('agent_reveal_skill_directory', { path }),
   agentListUserInvocableSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentAcceptSkill: (skillName: string, expectedHash: string) =>
@@ -419,8 +428,16 @@ export const api = {
     managedCommand<ManagedSkillView>('agent_managed_skill_install', input),
   agentManagedSkillList: () =>
     managedCommand<ManagedSkillView[]>('agent_managed_skill_list'),
-  agentManagedSkillCheckUpdates: (skillId?: string) =>
-    managedCommand<ManagedSkillView[]>('agent_managed_skill_check_updates', skillId ? { skillId } : undefined),
+  /**
+   * `ambient: true` marks a check the user did not ask for (opening the pane),
+   * which main throttles on each record's lastCheckedAt. An explicit "check for
+   * updates" leaves it off, because that must always actually check.
+   */
+  agentManagedSkillCheckUpdates: (skillId?: string, options?: { ambient?: boolean }) =>
+    managedCommand<ManagedSkillView[]>('agent_managed_skill_check_updates', {
+      ...(skillId ? { skillId } : {}),
+      ...(options?.ambient ? { ambient: true } : {}),
+    }),
   agentManagedSkillPreviewUpdate: (skillId: string, expectedActiveHash: string) =>
     managedCommand<ManagedSkillUpdatePreviewView>('agent_managed_skill_preview_update', { skillId, expectedActiveHash }),
   agentManagedSkillApplyUpdate: (input: {

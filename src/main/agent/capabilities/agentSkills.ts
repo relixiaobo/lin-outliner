@@ -15,7 +15,7 @@ import type { SkillDefinition } from '../../../core/types';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
-import { AgentSkillAuthoringError, validateAgentSkillContentWrite } from './agentSkillAuthoring';
+import { AgentSkillAuthoringError, isValidSkillName, validateAgentSkillContentWrite } from './agentSkillAuthoring';
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
@@ -585,7 +585,10 @@ export class AgentSkillRuntime {
   }
 
   private isDisabledByRuntimeSettings(skill: SkillDefinition): boolean {
-    return skill.source !== 'managed' && this.disabledSkills.includes(skill.name);
+    return !isSkillEnabled(skill, {
+      disabledSkills: this.disabledSkills,
+      activeManagedSkillNames: this.registry.activatedManagedSkillNames(),
+    });
   }
 
   private isEnabledByConfiguration(skill: SkillDefinition): boolean {
@@ -625,6 +628,44 @@ function skillInvocationEvidence(
       : { allowedTools: [], model: null, effort: null },
     invokedAt: input.invokedAt ?? Date.now(),
   };
+}
+
+export interface SkillEnablementInput {
+  /** User setting, keyed by skill name, applying to every source. */
+  disabledSkills: readonly string[];
+  /**
+   * The managed index's activation flag, as the set of activated managed skill
+   * names. Only `managed` skills consult it.
+   */
+  activeManagedSkillNames: ReadonlySet<string>;
+}
+
+/**
+ * The single meaning of "on" — available to the model right now:
+ *
+ *     enabled(skill) = activation(skill) && !disabledSkills.includes(skill.name)
+ *
+ * `activation` is the managed index's per-record flag for `managed` skills and
+ * constant-true for every other source.
+ *
+ * The two writers stay separate on purpose. `disabledSkills` is a user setting
+ * keyed by name; the managed activation flag is per-installed-record and
+ * participates in install / rollback / uninstall (it is what makes "install, but
+ * do not enable yet" possible). Merging the stores would either put managed
+ * lifecycle state into settings or put settings into an index that does not own
+ * the skills they describe — so only the predicate is unified, not the storage.
+ *
+ * Both terms are evaluated explicitly rather than inferred from catalog
+ * membership, so a deactivated managed skill still resolves correctly when it is
+ * loaded for display rather than for use.
+ */
+export function isSkillEnabled(
+  skill: Pick<SkillDefinition, 'name' | 'source'>,
+  input: SkillEnablementInput,
+): boolean {
+  const activated = skill.source !== 'managed'
+    || input.activeManagedSkillNames.has(normalizeSkillName(skill.name));
+  return activated && !input.disabledSkills.includes(skill.name);
 }
 
 export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, ToolEnvelope<SkillToolData>> {
@@ -788,6 +829,10 @@ class SkillRegistry {
   private readonly provenanceStore?: AgentSkillProvenanceStore;
   private readonly managedSkillRoots?: SkillLoadOptions['managedSkillRoots'];
   private readonly managedSkillContentRoot?: string;
+  // Names of the managed skills the last load activated. The managed index owns
+  // this flag; the runtime mirrors it so the enable predicate can evaluate
+  // activation explicitly instead of inferring it from catalog membership.
+  private activeManagedSkillNames: ReadonlySet<string> = new Set();
   private provenanceLoaded = false;
 
   constructor(options: SkillLoadOptions) {
@@ -813,6 +858,11 @@ class SkillRegistry {
     this.managedSkillContentRoot = options.managedSkillContentRoot
       ? path.resolve(options.managedSkillContentRoot)
       : undefined;
+  }
+
+  /** The managed index's activation flag as of the last load. */
+  activatedManagedSkillNames(): ReadonlySet<string> {
+    return this.activeManagedSkillNames;
   }
 
   isBuiltInReadOnlyIsolatedSkill(skill: SkillDefinition): boolean {
@@ -1106,7 +1156,11 @@ class SkillRegistry {
       for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
         await this.addLoadedSkill(skill);
       }
-      for (const managed of await this.managedSkillRoots?.() ?? []) {
+      const managedRoots = await this.managedSkillRoots?.() ?? [];
+      // The service hands back only the activated records, so this set is the
+      // managed index's activation flag as of this load.
+      this.activeManagedSkillNames = new Set(managedRoots.map((managed) => normalizeSkillName(managed.name)));
+      for (const managed of managedRoots) {
         const skill = await loadSkillFromRoot(managed.rootDir, 'managed', managed.name, managed.contentHash);
         if (!skill) throw new Error(`Managed skill ${managed.name} is missing a valid ${SKILL_FILE_NAME}.`);
         await this.addLoadedSkill(skill);
@@ -1329,6 +1383,7 @@ export function resolveSkillContentTarget(
     const target = targetInsideSkillsDir(filePath, dir, source);
     if (target) return target;
   }
+
   // 2. Nested .agents/skills under the work root (project) — matched by path so a
   //    brand-new nested skill dir is still governed on its first write.
   const root = path.resolve(config.root);
@@ -1358,6 +1413,16 @@ async function loadSkillsFromDir(
   for (const entry of entries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const rootDir = path.join(skillsDir, entry.name);
+    // Admission, not resolution (A12). Canonical identity IS the directory
+    // name, so a directory that cannot supply a valid one cannot become a
+    // Skill. Refusing it here means no loaded Skill can have an identity the
+    // authoring validator rejects; refusing at write-resolution time instead
+    // produced a Skill that loaded, listed and ran while its own SKILL.md
+    // resolved to no target at all — an ungoverned write.
+    if (!isValidSkillName(entry.name)) {
+      console.warn(`Skipping skill directory ${rootDir}: "${entry.name}" is not a valid skill name.`);
+      continue;
+    }
     const skill = await loadSkillFromRoot(rootDir, source, entry.name);
     if (skill) skills.push(skill);
   }
@@ -1805,6 +1870,16 @@ function canonicalDirectoryIdentity(dir: string): string {
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/**
+ * Canonicalises one configured Skill directory. The setting may hold `~/skills`,
+ * `./skills`, or a trailing-slash path; the loader expands these before use, so
+ * anything comparing a stored value against a loaded Skill's rootDir must expand
+ * it the same way or it will match nothing.
+ */
+export function expandSkillDirectory(value: string, root: string): string {
+  return expandConfiguredPath(value, root);
 }
 
 function expandConfiguredPath(value: string, root: string): string {

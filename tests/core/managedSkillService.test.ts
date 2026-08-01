@@ -635,7 +635,7 @@ describe('managed skill service', () => {
     expect(catalog.error).toEqual({ code: 'invalid_catalog' });
   });
 
-  test('accepts the repository catalog as the six optional Linlab recommendations', async () => {
+  test('accepts the checked-in catalog as the shipped recommendations', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
     github.catalog = JSON.parse(await readFile(
@@ -650,7 +650,10 @@ describe('managed skill service', () => {
 
     const catalog = await service.loadCatalog();
     expect(catalog.status).toBe('fresh');
+    // The real file, parsed by the real loader. Every recommendation is
+    // optional and installed explicitly; this pins what we actually publish.
     expect(catalog.entries.map((entry) => entry.name)).toEqual([
+      'browser-pilot',
       'data-analysis',
       'document',
       'feed-processing',
@@ -658,6 +661,247 @@ describe('managed skill service', () => {
       'presentation',
       'spreadsheet',
     ]);
+    // browser-pilot is the one entry that is not a Linlab skill: it tracks a
+    // subdirectory of a separate project, which is the shape a third-party
+    // recommendation takes.
+    expect(catalog.entries.find((entry) => entry.name === 'browser-pilot')).toMatchObject({
+      repository: 'https://github.com/relixiaobo/browser-pilot',
+      subdirectory: 'plugin/skills/browser-pilot',
+      trackingRef: 'main',
+    });
+  });
+
+  test('throttles the ambient update check on lastCheckedAt but never an explicit one', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    github.onUpdateCheckStarted = () => { checks += 1; };
+    // A clock the test moves by hand, so the window is exercised rather than waited on.
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    const window = 6 * 60 * 60 * 1_000;
+    checks = 0;
+
+    // Never checked before, so the first ambient sweep runs.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // Inside the window: skipped entirely, no request made.
+    clock += window - 1;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // An explicit user request ignores the throttle — "check for updates" must check.
+    await service.checkUpdates();
+    expect(checks).toBe(2);
+
+    // Past the window, the ambient sweep runs again.
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(3);
+  });
+
+  test('a failed update check records the failure and changes no enabled state', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+    const activeBefore = await service.activeRuntimeRoots();
+
+    github.offline = true;
+    // This is the launch-path call. It must not throw, and it must leave the
+    // Skill exactly as enabled and as invocable as it was (A12).
+    const after = await service.checkUpdates(undefined, { throttleMs: 6 * 60 * 60 * 1_000 });
+
+    expect(after[0]?.enabled).toBe(true);
+    expect(after[0]?.diagnostic).toEqual({ code: 'unexpected_error' });
+    expect(after[0]?.active.contentHash).toBe(installed.active.contentHash);
+    expect(await service.activeRuntimeRoots()).toEqual(activeBefore);
+  });
+
+  test('a record that keeps failing is throttled like one that succeeds', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    // Count the attempt itself: the fake throws before its onUpdateCheckStarted
+    // hook when offline, and a failed attempt is exactly what this measures.
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    const window = 6 * 60 * 60 * 1_000;
+    github.offline = true;
+    checks = 0;
+
+    // A failed attempt is still an attempt. Without stamping lastCheckedAt on
+    // failure, an offline client re-fires one request per Skill on every launch
+    // and every pane mount — unbounded retry against the endpoint that is down.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    clock += window - 1;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(2);
+
+    // An explicit request still ignores the throttle even while failing.
+    await service.checkUpdates();
+    expect(checks).toBe(3);
+  });
+
+  test('an integrity-faulted record is throttled too', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    const github = new FakeGitHub();
+    let checks = 0;
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store,
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+
+    // A hand-edited managed skill. Its diagnostic outranks a failed check, so
+    // recordUpdateFailure must not overwrite it — but the attempt still
+    // happened, and the throttle reads only lastCheckedAt.
+    await store.updateIndex((index) => ({
+      ...index,
+      skills: index.skills.map((record) => record.id === installed.id
+        ? { ...record, diagnostic: { code: 'modified' as const, message: 'edited locally', at: clock } }
+        : record),
+    }));
+
+    const window = 6 * 60 * 60 * 1_000;
+    github.offline = true;
+    checks = 0;
+
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // Previously this record was skipped entirely by the stamp, so every launch
+    // and every pane mount re-fired a request at the failing endpoint forever.
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(1);
+
+    // And the integrity diagnostic survived the failed check.
+    expect((await service.list())[0]?.diagnostic).toEqual({ code: 'skill_modified', detail: installed.name });
+
+    clock += window;
+    await service.checkUpdates(undefined, { throttleMs: window });
+    expect(checks).toBe(2);
+  });
+
+  test('an unthrottled failed check does not stamp lastCheckedAt', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    let checks = 0;
+    // Count the attempt itself: the fake throws before its onUpdateCheckStarted
+    // hook when offline, and a failed attempt is exactly what this measures.
+    const resolveTrackingCommit = github.resolveTrackingCommit.bind(github);
+    github.resolveTrackingCommit = async () => {
+      checks += 1;
+      return resolveTrackingCommit();
+    };
+    let clock = 1_000_000;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+      now: () => clock,
+      onChanged: () => undefined,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    await service.setEnabled({
+      skillId: installed.id,
+      enabled: true,
+      expectedActiveHash: installed.active.contentHash,
+    });
+
+    github.offline = true;
+    checks = 0;
+    // An explicit failing check must not silently start a throttle window the
+    // user never asked for: the next ambient check still runs.
+    await service.checkUpdates();
+    expect(checks).toBe(1);
+    await service.checkUpdates(undefined, { throttleMs: 6 * 60 * 60 * 1_000 });
+    expect(checks).toBe(2);
   });
 });
 

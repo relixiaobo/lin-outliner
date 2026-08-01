@@ -11,7 +11,7 @@ import type {
 } from '../../src/core/types';
 import type { Locale } from '../../src/core/locale';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import { ManagedSkillsSettings } from '../../src/renderer/ui/agent/ManagedSkillsSettings';
+import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
 
 interface Rendered {
   cleanup: () => void;
@@ -41,8 +41,8 @@ afterEach(() => {
   savedGlobals = [];
 });
 
-describe('ManagedSkillsSettings', () => {
-  test('keeps catalog failure separate from the installed empty state', async () => {
+describe('Skill library — managed sources', () => {
+  test('keeps catalog failure separate from the library empty state', async () => {
     const rendered = renderComponent(async (command) => {
       if (command === 'agent_managed_skill_catalog') {
         return { status: 'unavailable', entries: [], error: { code: 'github_unavailable' } } satisfies ManagedSkillCatalogView;
@@ -51,10 +51,13 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     expect(rendered.document.body.textContent).toContain('Catalog unavailable');
     expect(rendered.document.body.textContent).toContain('GitHub is unavailable');
-    expect(rendered.document.body.textContent).toContain('No managed skills installed.');
+    // The per-group "no managed skills" state is gone: there is one list-level
+    // empty state now, because managed skills are rows in the one library list.
+    expect(rendered.document.body.textContent).toContain('No skills yet.');
     expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
   });
 
@@ -78,6 +81,7 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -129,12 +133,16 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     expect(rendered.document.body.textContent).toContain('Update available');
     expect(rendered.document.body.textContent).toContain('Modified');
     expect(rendered.document.body.textContent).toContain('Recommended');
     expect(rendered.document.body.textContent).toContain('Unverified');
-    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(5);
+    // Four rows: the empty-catalog row, the GitHub URL row, and one row per
+    // managed skill. The old fifth was the installed group's "check for
+    // updates" row, which no longer exists as a list row.
+    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(4);
   });
 
   test('shows install validation failures inside the active review dialog', async () => {
@@ -146,6 +154,7 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -175,6 +184,7 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     }, 'zh-Hans');
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === '安装');
     if (!catalogInstall) throw new Error('Missing localized catalog install button');
@@ -219,6 +229,7 @@ describe('ManagedSkillsSettings', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
+    await openAcquisition(rendered);
 
     const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
     if (!catalogInstall) throw new Error('Missing catalog install button');
@@ -260,6 +271,10 @@ function renderComponent(
     lin: {
       initialLanguage: locale,
       invoke: async (command: string, args?: Record<string, unknown>) => {
+        // The library list loads the non-managed sources too. These specs are
+        // about managed skills, so that call is answered with an empty list
+        // here and left unwrapped — it is not a managed command envelope.
+        if (command === 'agent_list_all_skills') return [];
         const value = await invoke(command, args);
         return isManagedCommandResult(value) ? value : { ok: true, value };
       },
@@ -268,9 +283,21 @@ function renderComponent(
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
+  // Managed skills are rows in the one library list and are acquired from a
+  // surface that shares its state, so the section is the renderable unit.
   act(() => root.render(
     <I18nProvider>
-      <ManagedSkillsSettings onApplied={async () => undefined} />
+      <SettingsSkillLibrarySection
+        additionalSkillDirectories={[]}
+        disabledSkills={[]}
+        onDirectoriesChange={async (next) => next}
+        onPersistSkillDisabled={async () => undefined}
+        onUpdateCountChange={() => undefined}
+        onApplied={async () => undefined}
+        onError={() => undefined}
+        onNotice={() => undefined}
+        onToggleSkill={() => undefined}
+      />
     </I18nProvider>,
   ));
   const rendered = { cleanup: () => act(() => root.unmount()), document };
@@ -300,6 +327,26 @@ function installDomGlobals(window: Window): void {
   });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: window.navigator });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+}
+
+/**
+ * Acquisition now lives behind the library's `+`, so these specs open it before
+ * asserting on the catalog / URL surface.
+ */
+async function openAcquisition(rendered: Rendered): Promise<void> {
+  const add = rendered.document.querySelector<HTMLButtonElement>('.inset-group-header-action button[aria-haspopup="menu"]');
+  if (!add) throw new Error('Missing + control');
+  await act(async () => {
+    add.click();
+    await Promise.resolve();
+  });
+  const entry = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Add Skill…'
+    || button.textContent?.trim() === '添加 Skill…');
+  if (!entry) throw new Error('Missing add-skill menu entry');
+  await act(async () => {
+    entry.click();
+    await Promise.resolve();
+  });
 }
 
 function buttons(document: Document): HTMLButtonElement[] {

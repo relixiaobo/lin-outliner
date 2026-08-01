@@ -215,3 +215,175 @@ active runtime from persisted provenance; undo also reloads the restored bytes a
 appends a catalog delta before the next provider request when the content hash changed.
 An unchanged trust-only catalog comparison emits no Item. Settings never rewrite
 Thread history.
+
+### The Skill library
+
+The Skills category is **one list over every source** — `built-in`, `user`,
+`project`, a bound local directory, and `managed` — sorted by the name the user
+reads. Provenance is an attribute of a row (a source chip), never a section: a
+user thinks "my Skills", so the page is not split by where a Skill came from.
+Each row carries the `/name`, the description, a source chip, its trust or status
+chips, an enable toggle, and its source-specific actions in the row disclosure:
+
+| Source | Row actions |
+|---|---|
+| `user`, `project`, local | show in Finder, accept, revoke acceptance, undo agent edit |
+| local directory | unbind directory |
+| `managed` | check update, preview update, apply, rollback, uninstall |
+| `built-in` | enable toggle only, plus Finder when resource-backed |
+
+A row can open its Skill's folder when that folder is a real, mutable location.
+Code-registered built-ins carry a display-safe pseudo path (`built-in/<name>`)
+rather than a location, and **managed Skills are excluded deliberately**: their
+content root is pinned and immutable — `resolveSkillContentTarget` refuses it —
+and a hand edit there flips the record to `modified`, after which
+`activeRuntimeRoots` drops it and the Skill leaves the model's catalog until it
+is reinstalled. `agent_reveal_skill_directory` enforces the same fence, so it
+does not depend on the UI withholding the action.
+
+A Skill's description is written for the model to route on and routinely runs to
+a paragraph. The library is a scan-and-toggle surface, so a row clamps it to two
+lines with the full text on hover; clamping rather than shrinking keeps rows a
+uniform height, so the list does not ripple as descriptions vary.
+
+Managed rows are read from the managed index rather than the loaded catalog, so a
+Skill that is installed but not activated still appears — installed-but-off is a
+state the user owns and must be able to see and reverse.
+
+### One enable predicate, two writers
+
+"On" has one meaning — *available to the model right now*:
+
+```
+enabled(skill) = activation(skill) && !disabledSkills.includes(skill.name)
+```
+
+`activation` is the managed index's per-record flag for `managed` Skills and
+constant-true for every other source. The predicate lives in main
+(`isSkillEnabled`, `agentSkills.ts`) so the model-facing catalog and the UI cannot
+disagree; the library row applies the same predicate rather than reporting the
+activation flag alone.
+
+The two **stores** stay separate on purpose. `disabledSkills` is a user setting
+keyed by name; the activation flag is per-installed-record and participates in
+install / rollback / uninstall, which is what makes "install, but do not enable
+yet" possible. Merging them would put managed lifecycle state into settings, or
+settings into an index that does not own the Skills they describe. The toggle
+routes by source; what it *means* never branches on source.
+
+### Acquisition behind `+`
+
+Acquiring a Skill is occasional, so it does not occupy the page. The list header
+carries an icon-only `+` (B6) whose menu has two entries:
+
+1. **Add Skill** — one panel holding the recommended catalog *and* a GitHub URL
+   field, because browsing and pasting are two inputs to the same act. The
+   existing compatibility/integrity review still gates the install.
+2. **Add Local Directory** — a native directory picker appending to
+   `additionalSkillDirectories`.
+
+The panel is a dialog-class surface: opaque `--bg-elevated` at
+`--overlay-shadow-level-2`, matching `.confirm-dialog`. Translucent material is
+level-1 chrome (rails, menus); the `+` menu is that and reuses the registered
+popover glass, so the library adds no new material surface.
+
+### Local directories are pointed at, never copied
+
+A bound directory stays the user's: edits are live, there is no snapshot to
+drift, and **unbinding only drops Tenon's pointer — it never deletes files.** The
+row label, the notice, and the handler all say *unbind* for that reason. A bound
+directory that currently yields no Skills is still listed, so pointing at the
+wrong folder stays reversible. Local Skills are ordinary `user`/`project` Skills
+to the runtime; a row is identified as local by whether its `rootDir` sits under
+a bound directory, and the picked path is resolved in main so that comparison is
+against a canonical path.
+
+A bound directory is a **container** of Skills, exactly like the convention
+directories: Tenon reads the folders inside it, and a `SKILL.md` sitting
+directly in it does not make it a Skill. Picking the folder that *is* a Skill is
+just as natural, so the picker detects that and **asks** whether to add its
+parent instead — rather than the runtime inferring, per write, whether a path
+belongs to the bound root or to something nested under it.
+
+It asks rather than doing it, because the parent is a wider scope than the user
+chose: every sibling folder under it becomes a candidate Skill directory. Saying
+so afterwards is notification, not consent. If the chosen folder's name cannot
+be a Skill identity, the picker refuses and says why instead of adding something
+that would list nothing.
+
+That inference is deliberately absent. Resolving it meant deciding ownership at
+write time from an ordered set of guesses, and every guard added to one branch
+left the neighbouring branch, the create path, the conditional path, or the
+post-reload state resolving to the wrong Skill or to none — which is an
+ungoverned or misattributed write to the file that decides what the model
+executes. "A bound directory that is itself a Skill" is a separate seam and is
+tracked separately.
+
+**A Skill's directory name must be a valid Skill identity**
+(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), and that is enforced at **admission**, not
+at write resolution (A12). The loader refuses to admit such a directory, so no
+loaded Skill can have an identity the authoring validator would reject. Enforcing
+it at resolution instead produced the opposite: a Skill that loaded, listed and
+ran while its own `SKILL.md` resolved to no target, making every write to it an
+ordinary ungoverned one. The rule applies to the convention directories too.
+
+Paths reach the renderer expanded. The stored setting may hold `~/skills` or
+`./skills`, and the library decides which rows belong to a bound directory by
+comparing against each Skill's `rootDir`, which is always expanded. The bound
+list is capped, and reaching the cap is reported rather than silently dropping
+the new entry.
+
+Revealing a bound directory checks that it still exists before reporting
+success, because the case a user clicks Reveal to investigate — a directory that
+was renamed, deleted, or unmounted — is exactly the one that would otherwise
+report success and open nothing.
+
+### Update visibility
+
+Managed update checks resolve each record's tracking ref and set `updateCommit`
+when it differs. Only `managed` Skills have an upstream to compare against, so
+only they participate; a user, project, local, or built-in Skill is the user's
+own file.
+
+Two triggers are ambient, and both are throttled per record on that record's
+`lastCheckedAt` (6 hours): once per launch, deferred until after first paint,
+and once when the Skills pane opens. The stamp is written whether the attempt
+succeeded or failed — a failed attempt is still an attempt, and leaving it unset
+retries a failing endpoint on every launch and every mount.
+
+Two checks are explicit and never throttled: a header control that checks every
+managed Skill, and a per-row action that checks one. The header control is
+absent, not disabled, when no managed Skill is installed.
+
+There is no periodic polling, no background download, and no auto-apply.
+
+Availability surfaces as a **count badge on the Skills row in the settings
+navigation** — a neutral count, not a status colour.
+
+A failed check records an `update_failed` diagnostic on that record and does
+nothing else (A12): it never blocks launch, raises an alert, or changes any
+Skill's enabled state or pinned version. A throttled check stamps
+`lastCheckedAt` on failure as well as on success, so a record that keeps failing
+is retried on the same schedule as one that succeeds instead of on every launch
+and every pane mount.
+
+A library row **always keeps the Skill's own description**, and carries any
+diagnostic on a separate line beneath it. Replacing the description hides what
+the Skill is; omitting the diagnostic hides why it needs attention, which a
+status chip alone never says — `incompatible_tenon` matters most, since
+`activeRuntimeRoots` drops those records and the model genuinely cannot invoke
+the Skill. The line takes the status colour only for a fault in the Skill
+itself; a failed update check stays quiet, because it says nothing is wrong with
+the Skill and an offline launch produces one for every managed Skill at once.
+
+### The recommended catalog is a production artifact
+
+`catalog/managed-skills-v1.json` is fetched live from `main` by every installed
+Tenon, so it reaches users without a release. It is validated by
+`scripts/validate-managed-skill-catalog.ts` (covered in `tests/core`), which runs
+the *runtime* parser — `parseCatalogDocument` — rather than a second
+implementation, so guard and loader cannot drift. On top of the runtime parse it
+requires `compatibilityRange` on every entry, requires each `name` to satisfy the
+install path's `SKILL_NAME_PATTERN`, and caps total bytes at
+`MANAGED_SKILL_LIMITS.catalogBytes`; the loader stays permissive about all three
+because it parses bytes it did not author.

@@ -62,6 +62,7 @@ export const zhHans: PartialMessages = {
     providerConfigTitle: '配置服务商',
     insertImageTitle: '插入图片',
     insertAttachmentTitle: '插入附件',
+    chooseSkillDirectoryTitle: '选择一个 Skill，或包含多个 Skill 的文件夹',
     imageFilesFilter: '图片',
   },
   launcher: {
@@ -164,10 +165,42 @@ export const zhHans: PartialMessages = {
     },
     skills: {
       sectionAriaLabel: '技能',
-      loadingInstalled: '正在加载已安装的技能…',
-      noneInstalled: '~/.agents/skills 或 .agents/skills 中未安装任何技能。',
-      installedGroup: '已安装的能力',
-      installedAriaLabel: '已安装的能力',
+      loadingInstalled: '正在加载技能…',
+      noneInstalled: '还没有技能。点击 + 添加。',
+      installedGroup: '技能',
+      installedAriaLabel: '已安装的技能',
+      sourceManaged: '托管',
+      addAriaLabel: '添加技能',
+      addMenuAriaLabel: '添加技能选项',
+      addSkill: '添加 Skill…',
+      updatesAvailable: ({ count }: { count: number }) => `${count} 个技能有可用更新`,
+      acquireTitle: '添加 Skill',
+      acquireClose: '完成',
+      addLocalDirectory: '添加本地目录…',
+      sourceLocal: '本地',
+      sourceBuiltIn: '内置',
+      sourceUser: '用户',
+      sourceProject: '项目',
+      revealFailed: ({ directory }: { directory: string }) =>
+        `无法打开 ${directory}，它可能已被移动、重命名或卸载。`,
+      revealInFinder: '在访达中显示',
+      // 「解绑」而非「移除/删除」：Tenon 只是指向该目录，解绑仅去掉指针，不动用户的文件。
+      localUnbind: '解绑目录',
+      localUnboundNotice: ({ directory }: { directory: string }) =>
+        `已解绑 ${directory}，其中的文件未作改动。`,
+      localDirectoryEmpty: '该目录中未找到技能。',
+      localDirectoryBindParentTitle: '要添加它的上级文件夹吗？',
+      localDirectoryBindParentMessage: ({ picked, parent }: { picked: string; parent: string }) =>
+        `${picked} 本身是一个技能，而 Tenon 读取的是目录里面的技能，不是目录本身。`
+        + `添加 ${parent} 会让这个技能可用——同时也会让 ${parent} 里的其他技能文件夹一并可用。`,
+      localDirectoryBindParentConfirm: '添加上级文件夹',
+      localDirectoryUnnameable: ({ directory }: { directory: string }) =>
+        `${directory} 无法作为技能：技能名就是文件夹名，只能包含字母、数字、点、下划线和连字符。`,
+      localDirectoryAlreadyBound: ({ directory }: { directory: string }) =>
+        `${directory} 已经添加过了。`,
+      localDirectoryLimit: ({ count }: { count: number }) =>
+        `Tenon 最多读取 ${count} 个技能目录，请先解绑一个再添加。`,
+      localDirectoryActions: ({ directory }: { directory: string }) => `${directory} 操作`,
       toggleSkill: ({ name }: { name: string }) => `切换 ${name}`,
       pendingChip: '待接受',
       pendingWorkspaceChip: '工作区 · 未接受',
@@ -188,6 +221,9 @@ export const zhHans: PartialMessages = {
       managedRecommended: '推荐',
       managedUnverified: '未验证',
       managedInstalledChip: '已安装',
+      managedNameTaken: '已在技能库中',
+      managedNameTakenHint: ({ name }: { name: string }) =>
+        `你已经有一个名为 ${name} 的技能，无法与它并存安装。`,
       managedInstall: '安装',
       managedInstalling: '正在安装…',
       managedResolving: '正在解析…',
@@ -202,7 +238,8 @@ export const zhHans: PartialMessages = {
       managedInstalledLoading: '正在加载托管技能…',
       managedInstalledEmpty: '尚未安装托管技能。',
       managedUpdateCheckLabel: '可用更新',
-      managedCheckUpdates: '检查',
+      managedCheckUpdates: '检查更新',
+      checkUpdatesAriaLabel: '检查托管技能的更新',
       managedCheckedNotice: '更新检查完成',
       managedPreviewUpdate: '预览更新',
       managedApplyUpdate: '应用更新',

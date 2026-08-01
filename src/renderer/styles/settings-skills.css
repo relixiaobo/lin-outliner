@@ -15,6 +15,34 @@
   color: var(--text-tertiary);
 }
 
+/* A Skill's description is written for the model to route on, so it routinely
+   runs to a paragraph. The library is a scan-and-toggle surface — one row should
+   be one glance — so clamp it to two lines and let the row stay a row. The full
+   text is still on hover, and lives in the Skill itself. Clamping (rather than
+   shrinking the type) keeps every row the same height, so the list does not
+   ripple as descriptions vary. */
+.settings-skill-description {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Why a Skill needs attention, on its own line under the description. A fault in
+   the Skill itself is the one place in the row that carries a status colour
+   (B4); the description above it stays ordinary text. */
+.settings-skill-diagnostic {
+  color: var(--status-danger);
+}
+
+/* A failed update check is not a fault in the Skill — it is still installed,
+   pinned, and invocable, and an offline launch produces one for every managed
+   Skill at once. Painting those red is the repaint the description rule exists
+   to avoid, so they stay quiet. */
+.settings-skill-diagnostic.is-muted {
+  color: var(--text-tertiary);
+}
+
 .managed-skill-source-control {
   display: flex;
   width: min(390px, 46vw);
@@ -25,6 +53,17 @@
 .managed-skill-source-control .input-control {
   min-width: 0;
   flex: 1 1 auto;
+}
+
+/* The acquisition panel. Browsing the catalog and pasting a URL are two inputs to
+   the same act, so they share one dialog rather than two page sections. It is a
+   dialog-class surface: opaque --bg-elevated at level-2, the same treatment as
+   .confirm-dialog and the managed review dialogs. Translucent material in this
+   app is level-1 chrome (menus, rails) — the `+` menu that opens this panel is
+   that, and it reuses the already-registered popover glass, so this change adds
+   no new material surface. */
+.skill-acquire-dialog .inset-group:first-of-type {
+  margin-top: var(--space-5);
 }
 
 .managed-skill-dialog {

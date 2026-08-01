@@ -1,20 +1,16 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useId, useRef } from 'react';
 import type {
-  ManagedSkillCatalogView,
-  ManagedSkillDiscoveryCandidateView,
   ManagedSkillDiscoveryView,
   ManagedSkillErrorView,
   ManagedSkillUpdatePreviewView,
   ManagedSkillView,
 } from '../../api/types';
-import { api, managedSkillErrorFromUnknown } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
   AddIcon,
   ICON_SIZE,
   LoaderIcon,
   RefreshIcon,
-  SkillIcon,
   TrashIcon,
   UndoIcon,
   WarningIcon,
@@ -23,263 +19,84 @@ import { Button } from '../primitives/Button';
 import { Dialog } from '../primitives/Dialog';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
-import { SwitchControl } from '../primitives/SwitchControl';
-import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
+import type { RowMenuAction } from './SettingsRowMenu';
+import type { ManagedConfirmAction, ManagedInstallReview, ManagedSkillsController } from './useManagedSkills';
 
-interface ManagedSkillsSettingsProps {
-  onApplied: () => Promise<void>;
+interface ManagedSkillsAcquisitionProps {
+  controller: ManagedSkillsController;
+  /** Whether the acquisition panel itself is open. Its dialogs show regardless. */
+  open: boolean;
+  onClose: () => void;
+  /**
+   * Every Skill name already in the library, whatever its source. Managed
+   * install refuses a name that is taken — including by a `user` or `project`
+   * Skill it does not own — so a recommendation whose name is spoken for must
+   * not offer an Install that is certain to fail.
+   */
+  existingSkillNames: ReadonlySet<string>;
 }
 
-type ConfirmAction =
-  | { kind: 'rollback'; skill: ManagedSkillView }
-  | { kind: 'uninstall'; skill: ManagedSkillView };
+type ConfirmAction = ManagedConfirmAction;
 
-interface InstallReview {
-  discovery: ManagedSkillDiscoveryView;
-  candidate: ManagedSkillDiscoveryCandidateView;
-}
-
-export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps) {
+/**
+ * Acquiring a managed skill: the recommended catalog, a GitHub URL, and the
+ * review/confirm dialogs the two share. Installed skills are NOT listed here —
+ * they are rows in the one Skill library list, alongside every other source.
+ *
+ * Browsing the catalog and pasting a URL are two inputs to the same act, so they
+ * are one panel rather than two page sections. The panel is a dialog-class
+ * surface: opaque `--bg-elevated` at level-2, matching .confirm-dialog and the
+ * managed review dialogs. Translucent material in this app is level-1 chrome
+ * (menus, rails); the `+` menu that opens this panel is that, and it reuses the
+ * already-registered popover glass rather than introducing a new surface.
+ */
+export function ManagedSkillsSettings({
+  controller,
+  open,
+  onClose,
+  existingSkillNames,
+}: ManagedSkillsAcquisitionProps) {
   const t = useT();
-  const [catalog, setCatalog] = useState<ManagedSkillCatalogView | null>(null);
-  const [skills, setSkills] = useState<ManagedSkillView[]>([]);
-  const [sourceUrl, setSourceUrl] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<ManagedSkillErrorView | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [selection, setSelection] = useState<ManagedSkillDiscoveryView | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
-  const [installReview, setInstallReview] = useState<InstallReview | null>(null);
-  const [updatePreview, setUpdatePreview] = useState<ManagedSkillUpdatePreviewView | null>(null);
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
-  const mounted = useRef(true);
-
-  const installedCatalogIds = useMemo(
-    () => new Set(catalog?.entries.filter((entry) => entry.installedSkillId).map((entry) => entry.id) ?? []),
-    [catalog],
-  );
-
-  useEffect(() => {
-    mounted.current = true;
-    void loadAll(true);
-    return () => { mounted.current = false; };
-  }, []);
-
-  async function loadAll(checkUpdates: boolean) {
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextCatalog, installed] = await Promise.all([
-        api.agentManagedSkillCatalog(),
-        api.agentManagedSkillList(),
-      ]);
-      if (!mounted.current) return;
-      setCatalog(nextCatalog);
-      setSkills(installed);
-      if (checkUpdates && installed.length > 0) {
-        void api.agentManagedSkillCheckUpdates()
-          .then((checked) => { if (mounted.current) setSkills(checked); })
-          .catch((cause) => { if (mounted.current) setError(managedSkillErrorFromUnknown(cause)); });
-      }
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }
-
-  async function beginDiscovery(input: { sourceUrl?: string; catalogId?: string }) {
-    const operation = input.catalogId ? `catalog:${input.catalogId}` : 'github';
-    setBusy(operation);
-    clearFeedback();
-    try {
-      const discovery = await api.agentManagedSkillDiscover(input);
-      if (!mounted.current) return;
-      if (discovery.selectionRequired) {
-        setSelection(discovery);
-        setSelectedCandidateId(null);
-      } else {
-        const candidate = discovery.candidates[0];
-        if (!candidate) {
-          setError({ code: 'candidate_not_found' });
-          return;
-        }
-        setInstallReview({ discovery, candidate });
-      }
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  function reviewSelectedCandidate() {
-    const candidate = selection?.candidates.find((entry) => entry.id === selectedCandidateId);
-    if (!selection || !candidate) return;
-    setInstallReview({ discovery: selection, candidate });
-    setSelection(null);
-    setSelectedCandidateId(null);
-  }
-
-  async function installSelected() {
-    if (!installReview) return;
-    const review = installReview;
-    setBusy(`install:${review.candidate.id}`);
-    clearFeedback();
-    try {
-      await api.agentManagedSkillInstall({
-        discoveryId: review.discovery.id,
-        candidateId: review.candidate.id,
-        expectedCommit: review.discovery.resolvedCommit,
-      });
-      if (!mounted.current) return;
-      setInstallReview(null);
-      setSourceUrl('');
-      setNotice(t.settings.skills.managedInstalledNotice({ name: review.candidate.name }));
-      await loadAll(false);
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function setEnabled(skill: ManagedSkillView, enabled: boolean) {
-    setBusy(`enabled:${skill.id}`);
-    clearFeedback();
-    try {
-      const next = await api.agentManagedSkillSetEnabled(skill.id, enabled, skill.active.contentHash);
-      if (!mounted.current) return;
-      replaceSkill(next);
-      setNotice(enabled
-        ? t.settings.skills.managedEnabledNotice({ name: skill.name })
-        : t.settings.skills.managedDisabledNotice({ name: skill.name }));
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function checkUpdates(skillId?: string) {
-    setBusy(skillId ? `check:${skillId}` : 'check:all');
-    clearFeedback();
-    try {
-      const next = await api.agentManagedSkillCheckUpdates(skillId);
-      if (!mounted.current) return;
-      setSkills(next);
-      setNotice(t.settings.skills.managedCheckedNotice);
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function previewUpdate(skill: ManagedSkillView) {
-    setBusy(`preview:${skill.id}`);
-    clearFeedback();
-    try {
-      const preview = await api.agentManagedSkillPreviewUpdate(skill.id, skill.active.contentHash);
-      if (mounted.current) setUpdatePreview(preview);
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function applyUpdate() {
-    if (!updatePreview) return;
-    const preview = updatePreview;
-    setBusy(`apply:${preview.skillId}`);
-    clearFeedback();
-    try {
-      const next = await api.agentManagedSkillApplyUpdate({
-        skillId: preview.skillId,
-        previewId: preview.id,
-        expectedActiveHash: preview.current.contentHash,
-        expectedCandidateHash: preview.candidate.contentHash,
-      });
-      if (!mounted.current) return;
-      replaceSkill(next);
-      setUpdatePreview(null);
-      setNotice(t.settings.skills.managedUpdatedNotice({ name: next.name }));
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function runConfirmedAction() {
-    if (!confirmAction) return;
-    const action = confirmAction;
-    setBusy(`${action.kind}:${action.skill.id}`);
-    clearFeedback();
-    try {
-      if (action.kind === 'rollback') {
-        if (!action.skill.previous) {
-          setError({ code: 'previous_version_missing' });
-          return;
-        }
-        const next = await api.agentManagedSkillRollback(
-          action.skill.id,
-          action.skill.active.contentHash,
-          action.skill.previous.contentHash,
-        );
-        if (mounted.current) {
-          replaceSkill(next);
-          setNotice(t.settings.skills.managedRolledBackNotice({ name: next.name }));
-        }
-      } else {
-        const next = await api.agentManagedSkillUninstall(action.skill.id, action.skill.active.contentHash);
-        if (mounted.current) {
-          setSkills(next);
-          setNotice(t.settings.skills.managedUninstalledNotice({ name: action.skill.name }));
-          setCatalog((current) => current ? {
-            ...current,
-            entries: current.entries.map((entry) => entry.installedSkillId === action.skill.id
-              ? { ...entry, installedSkillId: undefined }
-              : entry),
-          } : current);
-        }
-      }
-      if (!mounted.current) return;
-      setConfirmAction(null);
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  function replaceSkill(next: ManagedSkillView) {
-    setSkills((current) => current.map((skill) => skill.id === next.id ? next : skill));
-  }
-
-  function clearFeedback() {
-    setError(null);
-    setNotice(null);
-    setOpenMenu(null);
-  }
-
-  function openConfirmAction(action: ConfirmAction) {
-    clearFeedback();
-    setConfirmAction(action);
-  }
-
+  const acquireTitleId = useId();
+  const {
+    busy,
+    catalog,
+    confirmAction,
+    error,
+    installReview,
+    installedCatalogIds,
+    loading,
+    notice,
+    selectedCandidateId,
+    selection,
+    sourceUrl,
+    updatePreview,
+    applyUpdate,
+    beginDiscovery,
+    installSelected,
+    loadAll,
+    reviewSelectedCandidate,
+    runConfirmedAction,
+    setConfirmAction,
+    setInstallReview,
+    setSelectedCandidateId,
+    setSelection,
+    setSourceUrl,
+    setUpdatePreview,
+  } = controller;
   return (
     <>
-      <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
+      {open ? (
+        <Dialog
+          backdropClassName="confirm-dialog-backdrop"
+          labelledBy={acquireTitleId}
+          onBackdropMouseDown={onClose}
+          onEscapeKeyDown={onClose}
+          surfaceClassName="managed-skill-dialog skill-acquire-dialog"
+        >
+          <h2 className="confirm-dialog-title" id={acquireTitleId}>{t.settings.skills.acquireTitle}</h2>
+          <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
         {loading && !catalog ? (
           <InsetRow disabled label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
         ) : catalog?.status === 'unavailable' ? (
@@ -296,6 +113,10 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
           />
         ) : catalog?.entries.length ? catalog.entries.map((entry) => {
           const installed = Boolean(entry.installedSkillId) || installedCatalogIds.has(entry.id);
+          // Not installed as managed, but the name is already taken by a Skill
+          // from another source. Install would reach assertNameAvailable and
+          // fail, so say so instead of offering the button.
+          const nameTaken = !installed && existingSkillNames.has(entry.name);
           const installing = busy === `catalog:${entry.id}`;
           return (
             <InsetRow
@@ -304,6 +125,10 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
               sublabel={entry.description}
               trailing={installed ? (
                 <span className="settings-chip">{t.settings.skills.managedInstalledChip}</span>
+              ) : nameTaken ? (
+                <span className="settings-chip" title={t.settings.skills.managedNameTakenHint({ name: entry.name })}>
+                  {t.settings.skills.managedNameTaken}
+                </span>
               ) : (
                 <Button disabled={busy !== null} onClick={() => void beginDiscovery({ catalogId: entry.id })} size="sm" variant="secondary">
                   {installing ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
@@ -363,67 +188,20 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
               </Button>
             </div>
           )}
-          wrap
-        />
-      </InsetGroup>
-
-      <InsetGroup ariaLabel={t.settings.skills.managedInstalledAriaLabel} label={t.settings.skills.managedInstalledGroup}>
-        <InsetRow
-          label={t.settings.skills.managedUpdateCheckLabel}
-          trailing={(
-            <Button disabled={busy !== null || skills.length === 0} onClick={() => void checkUpdates()} size="sm" variant="ghost">
-              {busy === 'check:all' ? <LoaderIcon size={ICON_SIZE.menu} /> : <RefreshIcon size={ICON_SIZE.menu} />}
-              <span>{t.settings.skills.managedCheckUpdates}</span>
+            wrap
+          />
+        </InsetGroup>
+          {/* Installing is not "confirming" this panel — each entry commits
+              through its own review dialog — so the only action here is to
+              dismiss it. Without a visible one, the panel could be left only by
+              Escape or a backdrop click. */}
+          <div className="confirm-dialog-actions">
+            <Button onClick={onClose} variant="secondary">
+              {t.settings.skills.acquireClose}
             </Button>
-          )}
-        />
-        {loading && skills.length === 0 ? (
-          <InsetRow disabled label={t.settings.skills.managedInstalledLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
-        ) : skills.length === 0 ? (
-          <InsetRow disabled label={t.settings.skills.managedInstalledEmpty} />
-        ) : skills.map((skill) => {
-          const actions = managedSkillActions(skill, {
-            check: () => void checkUpdates(skill.id),
-            preview: () => void previewUpdate(skill),
-            rollback: () => openConfirmAction({ kind: 'rollback', skill }),
-            uninstall: () => openConfirmAction({ kind: 'uninstall', skill }),
-          }, t, busy !== null);
-          return (
-            <InsetRow
-              dimmed={!skill.enabled || skill.status === 'modified'}
-              key={skill.id}
-              label={(
-                <>
-                  /{skill.name}
-                  <span className="settings-chip">{skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}</span>
-                  <span className="settings-chip">{managedStatusLabel(skill, t)}</span>
-                </>
-              )}
-              leading={<SkillIcon size={ICON_SIZE.menu} />}
-              sublabel={skill.diagnostic ? managedSkillErrorMessage(skill.diagnostic, t) : skill.description}
-              trailing={(
-                <>
-                  <SettingsRowMenu
-                    actions={actions}
-                    ariaLabel={t.settings.skills.rowActionsAriaLabel({ name: skill.name })}
-                    onOpenChange={(open) => setOpenMenu(open ? skill.id : null)}
-                    open={openMenu === skill.id}
-                  />
-                  <SwitchControl
-                    checked={skill.enabled}
-                    disabled={busy !== null}
-                    label={t.settings.skills.managedEnableToggle({ name: skill.name })}
-                    onCheckedChange={(enabled) => void setEnabled(skill, enabled)}
-                  >
-                    <SwitchMark checked={skill.enabled} />
-                  </SwitchControl>
-                </>
-              )}
-              wrap
-            />
-          );
-        })}
-      </InsetGroup>
+          </div>
+        </Dialog>
+      ) : null}
 
       {error && !installReview && !updatePreview && !confirmAction ? (
         <div className="agent-settings-alert" role="alert">
@@ -530,7 +308,7 @@ function InstallReviewDialog({
   error: ManagedSkillErrorView | null;
   onCancel: () => void;
   onInstall: () => void;
-  review: InstallReview;
+  review: ManagedInstallReview;
 }) {
   const t = useT();
   const titleId = useId();
@@ -735,7 +513,7 @@ function ManagedSkillDialogError({ error }: { error: ManagedSkillErrorView | nul
   ) : null;
 }
 
-function managedSkillActions(
+export function managedSkillActions(
   skill: ManagedSkillView,
   handlers: { check: () => void; preview: () => void; rollback: () => void; uninstall: () => void },
   t: ReturnType<typeof useT>,
@@ -750,7 +528,7 @@ function managedSkillActions(
   ];
 }
 
-function managedStatusLabel(skill: ManagedSkillView, t: ReturnType<typeof useT>): string {
+export function managedStatusLabel(skill: ManagedSkillView, t: ReturnType<typeof useT>): string {
   if (skill.status === 'installed-disabled') return t.settings.skills.managedStatusDisabled;
   if (skill.status === 'enabled') return t.settings.skills.managedStatusEnabled;
   if (skill.status === 'update-available') return t.settings.skills.managedStatusUpdate;
@@ -763,7 +541,7 @@ function shortHash(hash: string): string {
   return hash.slice(0, 12);
 }
 
-function managedSkillErrorMessage(error: ManagedSkillErrorView, t: ReturnType<typeof useT>): string {
+export function managedSkillErrorMessage(error: ManagedSkillErrorView, t: ReturnType<typeof useT>): string {
   let message: string;
   switch (error.code) {
     case 'invalid_github_url':

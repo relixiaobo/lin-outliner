@@ -27,7 +27,8 @@ import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { Mutex } from './agent/Mutex';
-import { AgentSkillRuntime, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
@@ -192,6 +193,8 @@ import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
   AgentRuntimeSettingsInput,
+  AgentRuntimeSettings,
+  AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
@@ -221,6 +224,7 @@ import {
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
   AGENT_GENERATED_IMAGE_DIR,
+  isPathInside,
   pruneAgentScratch,
 } from './agent/capabilities/agentAttachmentMaterialization';
 import {
@@ -457,6 +461,28 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
 });
+// An available Skill update should be visible without going looking for it, but
+// nothing about that is urgent enough to spend the launch path on. So: one
+// throttled sweep per launch, deferred until after first paint, fire-and-forget.
+// No periodic polling while the app sits open, no auto-download, no auto-apply.
+const MANAGED_SKILL_UPDATE_THROTTLE_MS = 6 * 60 * 60 * 1_000;
+const MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS = 30_000;
+
+function scheduleManagedSkillUpdateCheck(): void {
+  const timer = setTimeout(() => {
+    // Failure records an update_failed diagnostic on the record and does nothing
+    // else (A12): no alert, nothing blocked, no Skill's enabled state or pinned
+    // version touched. The throttle stamps lastCheckedAt on failure too, so a
+    // record that keeps failing is retried on the same schedule as one that
+    // succeeds rather than on every launch.
+    void managedSkillService
+      .checkUpdates(undefined, { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS })
+      .catch(() => { /* recorded on the record; retried next launch */ });
+  }, MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS);
+  // Never hold the event loop open on this.
+  timer.unref?.();
+}
+
 // Scratch holds only ephemeral, app-owned data (attachment observations, web-fetch binaries, bash
 // overflow logs, and PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -3372,6 +3398,78 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.txt',
 ]);
 
+/**
+ * Hands the renderer the same expanded paths the loader uses. The stored setting
+ * may hold `~/skills` or `./skills`; the Skill library decides which rows belong
+ * to a bound directory by comparing against each Skill's rootDir, which is
+ * always expanded. Comparing the two forms matches nothing, so a bound
+ * directory's Skills would lose their local chip and their unbind action while
+ * the directory itself rendered, two rows down, as empty.
+ */
+/**
+ * Keeps the user's own spelling of a directory they did not touch.
+ *
+ * The renderer only ever sees expanded paths, so it necessarily sends expanded
+ * ones back — which would rewrite a stored `~/skills` or `./skills` into an
+ * absolute path the first time anything is bound or unbound. `./skills` is the
+ * costly one: frozen to whatever the agent workdir was at that moment, it stops
+ * following the workspace, and the Skills in the next workspace's ./skills
+ * quietly stop loading while the stale row lists as empty.
+ */
+function preserveStoredDirectoryForms(
+  input: AgentRuntimeSettingsInput,
+  stored: AgentRuntimeSettings,
+): AgentRuntimeSettingsInput {
+  if (!input.additionalSkillDirectories) return input;
+  const byExpanded = new Map(stored.additionalSkillDirectories.map((dir) => (
+    [expandSkillDirectory(dir, agentLocalFileRoot), dir]
+  )));
+  return {
+    ...input,
+    additionalSkillDirectories: input.additionalSkillDirectories.map((dir) => (
+      byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir
+    )),
+  };
+}
+
+function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
+  // Applied to EVERY handler that returns this view, not just the two that look
+  // skill-related. The renderer stores all of them into one settings state, so a
+  // single un-expanded reply — switching provider, signing out — silently
+  // restores the raw list and the library loses its local chips and unbind
+  // actions until the pane is reopened.
+  const expanded = settings.agent.additionalSkillDirectories
+    .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
+    .filter(Boolean);
+  return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
+}
+
+/**
+ * A reveal target must be a Skill location: a loaded Skill's own root, or a
+ * directory the user bound. The renderer supplies the path, so this is the
+ * authority — matching how lin:reveal-local-file and reveal_asset each gate to
+ * their own trusted root rather than trusting the caller.
+ */
+async function isRevealableSkillLocation(target: string): Promise<boolean> {
+  const resolved = resolve(target);
+  const settings = await getAgentRuntimeSettings().catch(() => null);
+  const bound = (settings?.additionalSkillDirectories ?? [])
+    .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
+    .filter(Boolean);
+  if (bound.some((dir) => isPathInside(dir, resolved))) return true;
+  const skills = await skillRuntime.listAllSkills().catch(() => []);
+  return skills.some((skill) => (
+    // Managed content is pinned and immutable: resolveSkillContentTarget
+    // refuses it for the same reason. Opening it invites the hand edit that
+    // flips the record to `modified`, after which the Skill leaves the model's
+    // catalog until it is reinstalled — so the fence holds here too, not only
+    // in the UI that stopped offering the action.
+    skill.source !== 'managed'
+    && skill.rootDir.startsWith('/')
+    && isPathInside(skill.rootDir, resolved)
+  ));
+}
+
 async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
   try {
     return { ok: true, value: await operation() };
@@ -3383,19 +3481,79 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
 async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
-      return getProviderSettings();
+      return withCanonicalSkillDirectories(await getProviderSettings());
     case 'agent_refresh_provider_models':
-      return refreshProviderModels(String(args.providerId));
+      return withCanonicalSkillDirectories(await refreshProviderModels(String(args.providerId)));
+    case 'agent_pick_skill_directory': {
+      // Tenon points at the directory; it never copies it in. The picker returns
+      // a path the caller stores in additionalSkillDirectories, so the user's
+      // files stay where they are and stay live.
+      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const options = {
+        title: getMessages(effectiveLocale()).window.chooseSkillDirectoryTitle,
+        properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+      };
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options);
+      const picked = result.canceled ? undefined : result.filePaths[0];
+      if (!picked) return { path: null };
+      // A bound directory is a CONTAINER of Skills. Picking the folder that is
+      // itself a Skill is at least as natural, and binding it verbatim loaded
+      // nothing and said nothing — the dead end that made the old picker
+      // useless. Report the shape and let the caller bind the parent, rather
+      // than inferring ownership per write, which is a different seam.
+      const resolvedPick = resolve(picked);
+      const isSkillFolder = await stat(join(resolvedPick, 'SKILL.md')).then(
+        (entry) => entry.isFile(),
+        () => false,
+      );
+      // Resolved here so the stored path is canonical. The renderer decides
+      // which rows belong to a bound directory by comparing it against each
+      // Skill's rootDir, and a trailing separator or a `.`/`..` segment would
+      // match nothing — the directory's Skills would lose their local chip and
+      // their actions, and the directory would list as if it were empty.
+      return {
+        path: resolvedPick,
+        isSkillFolder,
+        // Identity is the directory name, so this decides whether binding the
+        // parent would actually surface it.
+        nameValid: isValidSkillName(basename(resolvedPick)),
+      };
+    }
+    case 'agent_reveal_skill_directory': {
+      const target = String(args.path ?? '');
+      if (!target) return { revealed: false };
+      // Only Skill locations, like every neighbouring reveal gates to its own
+      // trusted root. Without this the renderer could name any absolute path:
+      // it would open Finder there, and the existence check below would answer
+      // whether an arbitrary path exists.
+      if (!(await isRevealableSkillLocation(target))) return { revealed: false };
+      // showItemInFolder returns void and reports nothing, so check first. The
+      // common case is the failing one: a bound directory that was renamed,
+      // deleted, or unmounted is exactly what the user clicks Reveal to
+      // investigate, and reporting success there is indistinguishable from a
+      // genuinely empty folder.
+      try {
+        await stat(target);
+      } catch {
+        return { revealed: false };
+      }
+      shell.showItemInFolder(target);
+      return { revealed: true };
+    }
     case 'agent_update_runtime_settings': {
-      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      const settings = await updateAgentRuntimeSettings(
+        preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
+      );
       for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
         runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
         runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);
       }
-      return settings;
+      return withCanonicalSkillDirectories(settings);
     }
     case 'agent_update_image_generation_settings':
-      return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
+      return withCanonicalSkillDirectories(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
@@ -3405,11 +3563,11 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_upsert_provider_config':
-      return upsertProviderConfig(args.provider as AgentProviderConfigInput);
+      return withCanonicalSkillDirectories(await upsertProviderConfig(args.provider as AgentProviderConfigInput));
     case 'agent_delete_provider_config':
-      return deleteProviderConfig(String(args.providerId));
+      return withCanonicalSkillDirectories(await deleteProviderConfig(String(args.providerId)));
     case 'agent_set_active_provider':
-      return setActiveProvider(String(args.providerId));
+      return withCanonicalSkillDirectories(await setActiveProvider(String(args.providerId)));
     case 'agent_set_provider_api_key':
       return setProviderApiKey(String(args.providerId), String(args.apiKey ?? ''));
     case 'agent_delete_provider_api_key':
@@ -3421,14 +3579,14 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // another provider can't deliver them to the wrong window (where they'd be
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = providerConfigWindow;
-      return oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
+      return withCanonicalSkillDirectories(await oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
-      });
+      }));
     }
     case 'agent_oauth_logout':
-      return oauthLoginManager.logout(String(args.providerId));
+      return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
     case 'agent_oauth_respond':
       oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
       return undefined;
@@ -3476,7 +3634,12 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_managed_skill_list':
       return managedSkillCommand(() => managedSkillService.list());
     case 'agent_managed_skill_check_updates':
-      return managedSkillCommand(() => managedSkillService.checkUpdates(typeof args.skillId === 'string' ? args.skillId : undefined));
+      // The throttle window is main's policy, so the renderer only says whether
+      // the check was ambient — it never carries the number.
+      return managedSkillCommand(() => managedSkillService.checkUpdates(
+        typeof args.skillId === 'string' ? args.skillId : undefined,
+        args.ambient === true ? { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS } : undefined,
+      ));
     case 'agent_managed_skill_preview_update':
       return managedSkillCommand(() => managedSkillService.previewUpdate({
         skillId: String(args.skillId ?? ''),
@@ -3613,6 +3776,7 @@ if (!app.requestSingleInstanceLock()) {
     configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
+    scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),

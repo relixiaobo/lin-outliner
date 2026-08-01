@@ -75,6 +75,7 @@ export const en = {
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
     insertAttachmentTitle: 'Insert attachment',
+    chooseSkillDirectoryTitle: 'Choose a Skill, or a folder of Skills',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -193,10 +194,46 @@ export const en = {
     },
     skills: {
       sectionAriaLabel: 'Skills',
-      loadingInstalled: 'Loading installed skills…',
-      noneInstalled: 'No skills installed in ~/.agents/skills or .agents/skills.',
-      installedGroup: 'Installed Capabilities',
-      installedAriaLabel: 'Installed capabilities',
+      loadingInstalled: 'Loading skills…',
+      // One list-level empty state: the list now covers every source, so it can
+      // no longer name a single directory.
+      noneInstalled: 'No skills yet. Add one with the + button.',
+      installedGroup: 'Skills',
+      installedAriaLabel: 'Installed skills',
+      sourceManaged: 'managed',
+      addAriaLabel: 'Add a skill',
+      addMenuAriaLabel: 'Add skill options',
+      addSkill: 'Add Skill…',
+      updatesAvailable: ({ count }: { count: number }) =>
+        `${count} skill${count === 1 ? ' has' : 's have'} an update available`,
+      acquireTitle: 'Add Skill',
+      acquireClose: 'Done',
+      addLocalDirectory: 'Add Local Directory…',
+      sourceLocal: 'local',
+      sourceBuiltIn: 'built-in',
+      sourceUser: 'user',
+      sourceProject: 'project',
+      revealFailed: ({ directory }: { directory: string }) =>
+        `Could not open ${directory}. It may have been moved, renamed, or unmounted.`,
+      revealInFinder: 'Show in Finder',
+      // "Unbind", never "remove"/"delete": Tenon points at the directory, so
+      // this drops the pointer and leaves the user's files untouched.
+      localUnbind: 'Unbind directory',
+      localUnboundNotice: ({ directory }: { directory: string }) =>
+        `Unbound ${directory}. Its files were not changed.`,
+      localDirectoryEmpty: 'No skills found in this directory.',
+      localDirectoryBindParentTitle: 'Add the containing folder?',
+      localDirectoryBindParentMessage: ({ picked, parent }: { picked: string; parent: string }) =>
+        `${picked} is a skill, and Tenon reads the skills inside a directory rather than the directory itself. `
+        + `Adding ${parent} makes that skill available — and also every other skill folder in ${parent}.`,
+      localDirectoryBindParentConfirm: 'Add Containing Folder',
+      localDirectoryUnnameable: ({ directory }: { directory: string }) =>
+        `${directory} cannot be used as a skill: a skill's name is its folder name, so it may only contain letters, numbers, dots, underscores, and hyphens.`,
+      localDirectoryAlreadyBound: ({ directory }: { directory: string }) =>
+        `${directory} is already added.`,
+      localDirectoryLimit: ({ count }: { count: number }) =>
+        `Tenon reads at most ${count} skill directories. Unbind one before adding another.`,
+      localDirectoryActions: ({ directory }: { directory: string }) => `${directory} actions`,
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
       pendingChip: 'Pending acceptance',
       pendingWorkspaceChip: 'Workspace · not accepted',
@@ -217,6 +254,9 @@ export const en = {
       managedRecommended: 'Recommended',
       managedUnverified: 'Unverified',
       managedInstalledChip: 'Installed',
+      managedNameTaken: 'Already in your library',
+      managedNameTakenHint: ({ name }: { name: string }) =>
+        `You already have a skill named ${name}, so this one cannot be installed alongside it.`,
       managedInstall: 'Install',
       managedInstalling: 'Installing…',
       managedResolving: 'Resolving…',
@@ -231,7 +271,8 @@ export const en = {
       managedInstalledLoading: 'Loading managed skills…',
       managedInstalledEmpty: 'No managed skills installed.',
       managedUpdateCheckLabel: 'Available updates',
-      managedCheckUpdates: 'Check',
+      managedCheckUpdates: 'Check for updates',
+      checkUpdatesAriaLabel: 'Check managed skills for updates',
       managedCheckedNotice: 'Update check completed',
       managedPreviewUpdate: 'Preview update',
       managedApplyUpdate: 'Apply update',
