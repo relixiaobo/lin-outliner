@@ -13,6 +13,8 @@ const { document } = parseHTML(`<html><body>
       <button id="copy" type="button"><span id="copy-glyph">copy</span></button>
       <a id="node-ref" href="#lin-node:abc"><span id="node-ref-label">node</span></a>
       <details><summary id="disclosure">Thought</summary></details>
+      <button id="menu-trigger" type="button" aria-haspopup="menu"><span id="menu-trigger-label">GPT</span></button>
+      <button id="not-a-menu-trigger" type="button" aria-haspopup="false">plain</button>
       <div id="popover" tabindex="0"><ol><li id="popover-step">step one</li></ol></div>
       <div id="editor" contenteditable="true"><p id="editor-text">draft</p></div>
       <input id="field" />
@@ -62,6 +64,20 @@ describe('composerRefocusDecision', () => {
   test('summary disclosure toggle counts as a one-shot control', () => {
     const decision = composerRefocusDecision(click(element('disclosure')), collapsed);
     expect(decision).toEqual({ refocus: true, control: element('disclosure') });
+  });
+
+  test('a control that opens a popup owns its focus, decided at click time', () => {
+    // The menu takes focus, then hands it back to the trigger on close. One
+    // frame later that is indistinguishable from a button the browser simply
+    // left focused, so a deferred decision refocused the composer and stole the
+    // restore — reliably when the frame ran late enough.
+    expect(composerRefocusDecision(click(element('menu-trigger')), collapsed)).toEqual({ refocus: false });
+    // Including a click that lands on the label inside it.
+    expect(composerRefocusDecision(click(element('menu-trigger-label')), collapsed)).toEqual({ refocus: false });
+    // `false` is the attribute's legal default, so presence alone must not
+    // opt a plain control out of the hand-back.
+    expect(composerRefocusDecision(click(element('not-a-menu-trigger')), collapsed))
+      .toEqual({ refocus: true, control: element('not-a-menu-trigger') });
   });
 
   test('links and node references keep focus where the browser put it', () => {
