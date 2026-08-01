@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
 import { threadProcessSummary } from '../../src/renderer/agent/components/ThreadView';
-import type { SubagentTurnProjection } from '../../src/renderer/agent/subagentPresentation';
+import {
+  collaborationThreadIds,
+  type SubagentPresentation,
+  type SubagentTurnProjection,
+} from '../../src/renderer/agent/subagentPresentation';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 
 describe('active Turn process summary', () => {
@@ -21,6 +25,14 @@ describe('active Turn process summary', () => {
 
     expect(threadProcessSummary(turn(items), items, false, 5_000, en, emptyIndex(), subagents(['child-a'])))
       .toBe('Working for 5s');
+  });
+
+  test('does not count a live isolated Skill child as something the wait is waiting for', () => {
+    const wait = collaboration('wait', 'wait_agent');
+    const projection = subagents(['child-a'], ['skill-child']);
+
+    expect(threadProcessSummary(turn([wait]), [wait], false, 5_000, en, emptyIndex(), projection))
+      .toBe('Waiting on 1 subagent · 5s');
   });
 
   test('does not claim to wait on a child after every projected child becomes terminal', () => {
@@ -65,8 +77,30 @@ function collaboration(
   };
 }
 
-function subagents(activeThreadIds: readonly string[]): SubagentTurnProjection {
-  return { activeThreadIds, byThreadId: new Map(), items: [] };
+function subagents(
+  activeThreadIds: readonly string[],
+  skillThreadIds: readonly string[] = [],
+): SubagentTurnProjection {
+  const byThreadId = new Map<string, SubagentPresentation>();
+  for (const threadId of [...activeThreadIds, ...skillThreadIds]) {
+    byThreadId.set(threadId, {
+      agentThreadId: threadId,
+      displayName: threadId,
+      error: null,
+      form: skillThreadIds.includes(threadId) ? 'isolatedSkill' : 'collaboration',
+      nickname: null,
+      role: null,
+      startedAt: null,
+      status: 'running',
+      taskPath: null,
+    });
+  }
+  return {
+    activeThreadIds: [...activeThreadIds, ...skillThreadIds],
+    byThreadId,
+    collaborationThreadIds: collaborationThreadIds(byThreadId),
+    items: [],
+  };
 }
 
 function emptyIndex(): DocumentIndex {

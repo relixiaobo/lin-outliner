@@ -548,9 +548,21 @@ export class TurnLifecycle {
       this.assertResolvedSubagentBudgetAvailable(threadId, budget);
       return budget;
     }
-  subagentBudgetView(threadId: ThreadId): { readonly tokenBudget: number; readonly tokensUsed: number } | null {
+  /**
+   * What the collaboration views report. A child whose request pool has been
+   * reclaimed is no longer bounded by anything, but it did spend: report its
+   * recorded contribution with a null budget rather than a zero that reads as
+   * "this child has done nothing".
+   */
+  subagentBudgetView(threadId: ThreadId): {
+    readonly tokenBudget: number | null;
+    readonly tokensUsed: number;
+  } | null {
       const budget = this.resolveSubagentBudget(threadId);
-      return this.subagentBudgetSnapshot(threadId, budget);
+      const snapshot = this.subagentBudgetSnapshot(threadId, budget);
+      if (snapshot) return snapshot;
+      const recorded = budget?.member?.tokensUsed ?? 0;
+      return recorded > 0 ? { tokenBudget: null, tokensUsed: recorded } : null;
     }
   refreshActiveSubagentBudgetCoverage(): void {
       for (const active of this.activeTurns.values()) {

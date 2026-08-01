@@ -1295,7 +1295,7 @@ describe('Codex Agent Core protocol codec', () => {
     };
     const responses: Record<string, unknown> = {
       'thread/list': { data: [thread], nextCursor: null },
-      'thread/descendants': { data: [thread] },
+      'thread/descendants': { data: [thread], queuedWorkThreadIds: [] },
       'thread/read': { thread },
       'thread/start': { thread },
       'thread/resume': { thread },

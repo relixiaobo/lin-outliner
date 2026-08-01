@@ -72,7 +72,10 @@ type E2EWindow = Window & {
       parentThreadId: string;
       name: string;
       active?: boolean;
+      queuedWork?: boolean;
     }) => { id: string };
+    /** Flips a mock Thread between idle and active, as a Turn boundary would. */
+    setMockThreadActive: (threadId: string, active: boolean) => void;
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
@@ -668,6 +671,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const emitAutomationNotification = (notification: unknown) => {
       for (const listener of automationListeners) listener(clone(notification));
     };
+    const mockQueuedWorkThreadIds = new Set<string>();
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
       const timestamp = ++now;
       const thread: MockThread = {
@@ -1626,7 +1630,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       projection,
       clipboardText: () => clipboardText,
       emitAgentCoreNotification,
-      createMockSubagentThread: ({ parentThreadId, name, active }) => {
+      createMockSubagentThread: ({ parentThreadId, name, active, queuedWork }) => {
         const parent = threadById(parentThreadId);
         const thread = createMockThread({ name });
         thread.parentThreadId = parent.id;
@@ -1636,8 +1640,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         thread.agentNickname = name;
         thread.agentRole = 'worker';
         if (active) thread.status = { type: 'active', activeFlags: [] };
+        if (queuedWork) mockQueuedWorkThreadIds.add(thread.id);
         emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
         return { id: thread.id };
+      },
+      setMockThreadActive: (threadId, active) => {
+        const thread = threadById(threadId);
+        thread.status = active ? { type: 'active', activeFlags: [] } : { type: 'idle' };
+        thread.updatedAt = ++now;
+        emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
       },
       emitDocumentEvent,
       emitOAuthEvent,
@@ -1880,7 +1891,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             }
           }
           data.sort((left, right) => right.updatedAt - left.updatedAt);
-          return clone({ data }) as T;
+          return clone({
+            data,
+            queuedWorkThreadIds: data
+              .filter((thread) => mockQueuedWorkThreadIds.has(thread.id))
+              .map((thread) => thread.id),
+          }) as T;
         }
         if (method === 'thread/read') {
           const thread = threadById(String(input.threadId));

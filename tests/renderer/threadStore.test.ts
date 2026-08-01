@@ -807,15 +807,18 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [child, grandchild] };
+        if (method === 'thread/descendants') return { data: [child, grandchild], queuedWorkThreadIds: [child.id] };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
     const store = new ThreadStore(client);
     await store.initialize();
 
-    expect((await store.listDescendants(owner.id)).map((entry) => entry.id))
-      .toEqual([child.id, grandchild.id]);
+    const view = await store.listDescendants(owner.id);
+    expect(view.threads.map((entry) => entry.id)).toEqual([child.id, grandchild.id]);
+    // Queued work is what keeps an idle child out of "finished": the renderer
+    // cannot see the host mailbox, so the subtree read carries it.
+    expect([...view.queuedWorkThreadIds]).toEqual([child.id]);
     expect(store.getSnapshot().threads.map((entry) => entry.id).toSorted())
       .toEqual([owner.id, child.id, grandchild.id].toSorted());
   });

@@ -1085,6 +1085,12 @@ export interface ThreadDescendantsRequest {
 
 export interface ThreadDescendantsResponse {
   readonly data: readonly Thread[];
+  /**
+   * Descendants holding queued work that has not started a Turn yet. An idle
+   * status is not evidence a child is finished: a queued message leaves it idle
+   * until admission, and deleting it would discard work already accepted.
+   */
+  readonly queuedWorkThreadIds: readonly ThreadId[];
 }
 
 export interface ThreadReadRequest {

@@ -102,14 +102,18 @@ export function ThreadDock({
     for (const candidate of snapshot.threads) {
       if (candidate.parentThreadId === null || candidate.status.type !== 'active') continue;
       const seen = new Set<string>([candidate.id]);
-      let current = candidate.parentThreadId;
-      while (!seen.has(current)) {
+      let current: string | null = candidate.parentThreadId;
+      while (current !== null && !seen.has(current)) {
         seen.add(current);
-        const next = parentById.get(current);
-        if (next === undefined || next === null) break;
+        const next: string | null | undefined = parentById.get(current);
+        // An unknown ancestor means the chain cannot be attributed to a root.
+        // Marking the mid-chain id instead would light no row at all, which is
+        // worse than an honest absence — the indicator keys on root ids.
+        if (next === undefined) { current = null; break; }
+        if (next === null) break;
         current = next;
       }
-      roots.add(current);
+      if (current !== null) roots.add(current);
     }
     return roots;
   }, [snapshot.threads]);
@@ -277,41 +281,47 @@ export function ThreadDock({
     >
       <div className="thread-dock">
         <header className="thread-dock-header">
-          {surface === 'thread' && thread?.parentThreadId ? (
-            // A child Thread is entered from a parent transcript, so the header
-            // is the way back out; deeper lineage collapses to one step, and the
-            // child keeps its own name beside the crumb.
+          {surface === 'thread' ? (
+            // A child Thread is entered from a parent transcript, so it gains a
+            // crumb back out — but never at the cost of the list: that button is
+            // the only route to create, details, rename, and delete, and it is
+            // the child's own name that carries it, so no Thread is unnamed and
+            // no view is a dead end.
             <div className="thread-dock-breadcrumb">
+              {thread?.parentThreadId ? (
+                <>
+                  <button
+                    aria-label={parentThreadTitle
+                      ? t.agent.thread.backToParent({ name: parentThreadTitle })
+                      : t.agent.thread.backToParentFallback}
+                    className="thread-dock-title-button thread-dock-back"
+                    onClick={() => void openThread(thread.parentThreadId!)}
+                    type="button"
+                  >
+                    <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+                    <span className="thread-dock-back-label">{parentThreadTitle ?? t.agent.thread.title}</span>
+                  </button>
+                  <span aria-hidden className="thread-dock-breadcrumb-separator">/</span>
+                </>
+              ) : null}
               <button
-                aria-label={parentThreadTitle
-                  ? t.agent.thread.backToParent({ name: parentThreadTitle })
-                  : t.agent.thread.backToParentFallback}
-                className="thread-dock-title-button thread-dock-back"
-                onClick={() => void openThread(thread.parentThreadId!)}
+                aria-expanded={listOpen}
+                aria-label={t.agent.thread.list}
+                className="thread-dock-title-button"
+                onClick={() => setListOpen((current) => !current)}
+                ref={threadListAnchorRef}
                 type="button"
               >
-                <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-                <span className="thread-dock-back-label">{parentThreadTitle ?? t.agent.thread.title}</span>
+                {thread?.parentThreadId
+                  ? null
+                  : <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />}
+                <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
+                <ChevronDownIcon
+                  className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
+                  size={ICON_SIZE.menu}
+                />
               </button>
-              <span aria-hidden className="thread-dock-breadcrumb-separator">/</span>
-              <span className="thread-dock-title">{title}</span>
             </div>
-          ) : surface === 'thread' ? (
-            <button
-              aria-expanded={listOpen}
-              aria-label={t.agent.thread.list}
-              className="thread-dock-title-button"
-              onClick={() => setListOpen((current) => !current)}
-              ref={threadListAnchorRef}
-              type="button"
-            >
-              <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-              <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
-              <ChevronDownIcon
-                className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
-                size={ICON_SIZE.menu}
-              />
-            </button>
           ) : (
             <button
               aria-label={t.agent.automations.backToThreads}

@@ -109,6 +109,14 @@ export class SubagentCollaboration {
       // The chain removes its own entry when it settles.
     }
   }
+  /**
+   * Work already accepted for a child that has not started a Turn yet. An idle
+   * child holding a queued message is not finished, and deleting it would throw
+   * that message away along with the parent's next `followup_task` target.
+   */
+  hasQueuedWork(threadId: ThreadId): boolean {
+    return (this.mailbox.get(threadId)?.length ?? 0) > 0;
+  }
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[] {
     return [...(this.pendingSubagentActivities.get(threadId) ?? [])];
   }

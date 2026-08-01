@@ -22,6 +22,7 @@ interface PendingThreadNameGeneration {
 }
 
 export interface ThreadCatalogCollaboration {
+  hasQueuedWork(threadId: ThreadId): boolean;
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
     readonly sessionId: string;
     readonly parentThreadId: ThreadId;
@@ -189,7 +190,12 @@ export class ThreadCatalogOps {
         .filter((threadId) => !this.core.hiddenEphemeralThreads.has(threadId))
         .map((threadId) => this.core.requireThread(threadId).thread)
         .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
-      return { data };
+      return {
+        data,
+        queuedWorkThreadIds: data
+          .filter((thread) => this.collaboration.hasQueuedWork(thread.id))
+          .map((thread) => thread.id),
+      };
     }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
       const record = this.core.requireThread(request.threadId);

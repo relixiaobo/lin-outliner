@@ -1382,9 +1382,11 @@ function decodeThreadListResponse(value: unknown): AgentCoreResponseByMethod['th
 
 function decodeThreadDescendantsResponse(value: unknown): AgentCoreResponseByMethod['thread/descendants'] {
   const record = recordValue(value, 'thread/descendants response');
-  exactKeys(record, ['data'], 'thread/descendants response');
+  exactKeys(record, ['data', 'queuedWorkThreadIds'], 'thread/descendants response');
   return deepFreeze({
     data: arrayValue(record.data, 'thread/descendants response.data').map(decodeThread),
+    queuedWorkThreadIds: arrayValue(record.queuedWorkThreadIds, 'thread/descendants response.queuedWorkThreadIds')
+      .map((value, index) => uuidV7(value, `thread/descendants response.queuedWorkThreadIds[${index}]`)),
   });
 }
 

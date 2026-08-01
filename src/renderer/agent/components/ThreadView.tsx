@@ -2105,7 +2105,7 @@ function threadProcessNeutralHeader(
     ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
       ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index, {
-          collaborationThreadIds: collaborationThreadIds(subagents),
+          collaborationThreadIds: subagents.collaborationThreadIds,
         })
       : '';
   if (reasoning) {
@@ -2136,16 +2136,8 @@ function waitingSubagentCount(
   ))) return 0;
   // A wait blocks on collaboration children only; a live isolated Skill child is
   // delegated work in the same Turn, but not work this wait is waiting for.
-  return subagents.activeThreadIds
-    .filter((threadId) => subagents.byThreadId.get(threadId)?.form !== 'isolatedSkill')
-    .length;
-}
-
-/** Children a collaboration tool row is accountable for. */
-function collaborationThreadIds(subagents: SubagentTurnProjection): readonly string[] {
-  return [...subagents.byThreadId.values()]
-    .filter((entry) => entry.form === 'collaboration')
-    .map((entry) => entry.agentThreadId);
+  const collaboration = new Set(subagents.collaborationThreadIds);
+  return subagents.activeThreadIds.filter((threadId) => collaboration.has(threadId)).length;
 }
 
 function firstProcessLine(value: string): string {

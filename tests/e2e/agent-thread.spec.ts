@@ -1790,10 +1790,13 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-dock-title')).toHaveText('Research child');
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
 
-    // The header is the way back out of a child, in place of the list.
+    // The header gains a way back out of a child — without costing the list,
+    // which is the only route to create, rename, details, and delete.
     const back = page.getByRole('button', { name: `Back to ${parentTitle}` });
     await expect(back).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Show Threads' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await expect(page.getByRole('dialog', { name: 'Threads' })).toBeVisible();
+    await page.keyboard.press('Escape');
     await back.click();
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
 
@@ -1816,14 +1819,17 @@ test.describe('canonical agent Thread surface', () => {
             parentThreadId: string;
             name: string;
             active?: boolean;
+            queuedWork?: boolean;
           }) => { id: string };
         };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
       const parentThreadId = response?.data[0]?.id;
       if (!parentThreadId) throw new Error('Mock Thread not found');
-      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'finished worker' });
+      const finished = target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'finished worker' });
+      (window as Window & { __LIN_E2E_FINISHED_ID__?: string }).__LIN_E2E_FINISHED_ID__ = finished?.id;
       target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'live worker', active: true });
+      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'queued worker', queuedWork: true });
     });
 
     // A live descendant is the only thing the list says about children now.
@@ -1836,14 +1842,48 @@ test.describe('canonical agent Thread surface', () => {
     await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
     const details = page.getByRole('dialog', { name: 'Thread Details' });
-    await expect(details.locator('.thread-details-subagent')).toHaveCount(2);
+    await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
     await expect(details.getByRole('button', { name: 'Open live worker' })).toContainText('Running');
     await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Idle');
+    // Idle is not finished: this child is holding work the parent handed over.
+    await expect(details.getByRole('button', { name: 'Open queued worker' })).toContainText('Work queued');
 
-    // Bulk cleanup takes the finished child and leaves the running one.
+    // The dialog does not subscribe to the store, so the decision is re-taken
+    // against a fresh read on confirm: this child starts running in between.
     await details.getByRole('button', { name: 'Delete finished Subagents' }).click();
-    await expect(details.locator('.thread-details-subagent')).toHaveCount(1);
+    const confirm = page.getByRole('dialog', { name: 'Delete finished Subagents' });
+    await expect(confirm).toContainText('Delete 1 finished Subagent and its child Threads?');
+    await page.evaluate(() => {
+      const target = window as Window & {
+        __LIN_E2E__?: { setMockThreadActive: (threadId: string, active: boolean) => void };
+        __LIN_E2E_FINISHED_ID__?: string;
+      };
+      if (target.__LIN_E2E_FINISHED_ID__) {
+        target.__LIN_E2E__?.setMockThreadActive(target.__LIN_E2E_FINISHED_ID__, true);
+      }
+    });
+    await confirm.getByRole('button', { name: 'Delete Thread' }).click();
+    // Nothing was deleted: every child was busy by the time it was confirmed.
+    await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
+    await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Running');
+
+    // Now let it settle and sweep for real.
+    await page.evaluate(() => {
+      const target = window as Window & {
+        __LIN_E2E__?: { setMockThreadActive: (threadId: string, active: boolean) => void };
+        __LIN_E2E_FINISHED_ID__?: string;
+      };
+      if (target.__LIN_E2E_FINISHED_ID__) {
+        target.__LIN_E2E__?.setMockThreadActive(target.__LIN_E2E_FINISHED_ID__, false);
+      }
+    });
+    await details.getByRole('button', { name: 'Delete finished Subagents' }).click();
+    await page.getByRole('dialog', { name: 'Delete finished Subagents' })
+      .getByRole('button', { name: 'Delete Thread' }).click();
+    await expect(details.locator('.thread-details-subagent')).toHaveCount(2);
+    await expect(details.getByRole('button', { name: 'Open finished worker' })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Open live worker' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Open queued worker' })).toBeVisible();
 
     await details.getByRole('button', { name: 'Open live worker' }).click();
     await expect(page.locator('.thread-dock-title')).toHaveText('live worker');

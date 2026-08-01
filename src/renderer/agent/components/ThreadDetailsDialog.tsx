@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ThreadMemoryMode } from '../../../core/agent/memory';
 import type { Thread, Turn } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { threadStore } from '../store/threadStore';
+import { threadStore, useThreadStore, type ThreadDescendantsView } from '../store/threadStore';
 import { CloseIcon, TrashIcon } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
+import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { Dialog } from '../../ui/primitives/Dialog';
 import { SwitchControl } from '../../ui/primitives/SwitchControl';
@@ -21,8 +22,10 @@ interface ThreadDetailsDialogProps {
 export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: ThreadDetailsDialogProps) {
   const t = useT();
   const titleId = useId();
-  const [descendants, setDescendants] = useState<readonly Thread[]>([]);
+  const snapshot = useThreadStore();
+  const [descendants, setDescendants] = useState<ThreadDescendantsView>(EMPTY_DESCENDANTS);
   const [descendantsError, setDescendantsError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DescendantDeleteRequest | null>(null);
   const descendantsRequestRef = useRef(0);
   const [memoryMode, setMemoryMode] = useState<ThreadMemoryMode | null>(null);
   const [memoryBusy, setMemoryBusy] = useState(false);
@@ -69,16 +72,18 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
       }
     }
   }
-  const refreshDescendants = useCallback(async () => {
+  const refreshDescendants = useCallback(async (): Promise<ThreadDescendantsView | null> => {
     const generation = ++descendantsRequestRef.current;
     try {
-      const data = await threadStore.listDescendants(thread.id);
+      const view = await threadStore.listDescendants(thread.id);
       if (generation === descendantsRequestRef.current) {
-        setDescendants(data);
+        setDescendants(view);
         setDescendantsError(null);
       }
+      return view;
     } catch (error) {
       if (generation === descendantsRequestRef.current) setDescendantsError(errorMessage(error));
+      return null;
     }
   }, [thread.id]);
 
@@ -87,10 +92,24 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
     return () => { descendantsRequestRef.current += 1; };
   }, [refreshDescendants]);
 
-  async function removeDescendants(targets: readonly Thread[]) {
+  /**
+   * Deletion force-stops a live subtree, so the decision is re-taken against a
+   * fresh read at the moment it is confirmed: this dialog does not subscribe to
+   * the store, and a child that was idle when it rendered can be running again
+   * by now — the parent Turn re-delegates to idle children.
+   */
+  async function confirmRemoval() {
+    const request = deleteTarget;
+    setDeleteTarget(null);
+    if (!request) return;
     setDescendantsError(null);
+    const fresh = await refreshDescendants();
+    if (!fresh) return;
+    const eligible = request.kind === 'finished'
+      ? deletableFinishedRoots(fresh).map((candidate) => candidate.id)
+      : fresh.threads.filter((candidate) => candidate.id === request.threadId).map((candidate) => candidate.id);
     try {
-      for (const target of targets) await threadStore.deleteThread(target.id);
+      for (const threadId of eligible) await threadStore.deleteThread(threadId);
     } catch (error) {
       setDescendantsError(errorMessage(error));
     } finally {
@@ -98,7 +117,21 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
     }
   }
 
-  const finishedRoots = deletableFinishedRoots(descendants);
+  // The fetch names the subtree; the store keeps its status current. Without
+  // the overlay a child that started or stopped while this dialog is open would
+  // keep the status it had when the read landed, and the bulk action would
+  // offer to sweep work that is running again.
+  const live = useMemo((): ThreadDescendantsView => {
+    const byId = new Map(snapshot.threads.map((candidate) => [candidate.id, candidate]));
+    return {
+      threads: descendants.threads.map((candidate) => byId.get(candidate.id) ?? candidate),
+      queuedWorkThreadIds: descendants.queuedWorkThreadIds,
+    };
+  }, [descendants, snapshot.threads]);
+  const finishedRoots = deletableFinishedRoots(live);
+  const deleteTargetName = deleteTarget?.kind === 'one'
+    ? live.threads.find((candidate) => candidate.id === deleteTarget.threadId)
+    : null;
   return (
     <Dialog
       backdropClassName="confirm-dialog-backdrop"
@@ -142,7 +175,7 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
             <div className="thread-details-subagents-heading">
               <h3>{t.agent.thread.subagents}</h3>
               {finishedRoots.length > 0 ? (
-                <Button onClick={() => void removeDescendants(finishedRoots)} variant="ghost">
+                <Button onClick={() => setDeleteTarget({ kind: 'finished' })} variant="ghost">
                   {t.agent.thread.deleteFinishedSubagents}
                 </Button>
               ) : null}
@@ -150,11 +183,11 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
             {descendantsError ? (
               <p className="thread-details-memory-error" role="alert">{descendantsError}</p>
             ) : null}
-            {descendants.length === 0 ? (
+            {live.threads.length === 0 ? (
               <p className="thread-details-empty">{t.agent.thread.noSubagents}</p>
             ) : (
               <ul className="thread-details-subagent-list">
-                {descendants.map((descendant) => {
+                {live.threads.map((descendant) => {
                   const name = descendantName(descendant, t.agent.thread.untitled);
                   return (
                     <li className="thread-details-subagent" key={descendant.id}>
@@ -166,7 +199,11 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
                       >
                         <span className="thread-details-subagent-name">{name}</span>
                         <small>
-                          {descendantStatusLabel(descendant, t.agent.thread)}
+                          {descendantStatusLabel(
+                            descendant,
+                            live.queuedWorkThreadIds.has(descendant.id),
+                            t.agent.thread,
+                          )}
                           {' · '}
                           {formatRelativeTime(descendant.updatedAt)}
                         </small>
@@ -174,7 +211,7 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
                       <IconButton
                         icon={TrashIcon}
                         label={t.agent.thread.deleteSubagent({ name })}
-                        onClick={() => void removeDescendants([descendant])}
+                        onClick={() => setDeleteTarget({ kind: 'one', threadId: descendant.id })}
                         variant="message"
                       />
                     </li>
@@ -206,9 +243,35 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
           {turns.length === 0 ? <p className="thread-details-empty">{t.agent.thread.noTurns}</p> : null}
         </div>
       </div>
+      {deleteTarget ? (
+        <ConfirmDialog
+          cancelLabel={t.agent.message.cancel}
+          confirmLabel={t.agent.thread.delete}
+          danger
+          message={deleteTarget.kind === 'finished'
+            ? t.agent.thread.deleteFinishedSubagentsConfirm({ count: finishedRoots.length })
+            : t.agent.thread.deleteConfirm({
+                name: deleteTargetName
+                  ? descendantName(deleteTargetName, t.agent.thread.untitled)
+                  : t.agent.thread.untitled,
+              })}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void confirmRemoval()}
+          title={deleteTarget.kind === 'finished'
+            ? t.agent.thread.deleteFinishedSubagents
+            : t.agent.thread.delete}
+        />
+      ) : null}
     </Dialog>
   );
 }
+
+/** Which deletion the user asked for, pending confirmation. */
+type DescendantDeleteRequest =
+  | { readonly kind: 'one'; readonly threadId: string }
+  | { readonly kind: 'finished' };
+
+const EMPTY_DESCENDANTS: ThreadDescendantsView = { threads: [], queuedWorkThreadIds: new Set() };
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -218,15 +281,22 @@ function errorMessage(error: unknown): string {
  * The highest Threads whose whole subtree has stopped. Deleting cascades, so
  * bulk cleanup must never take a still-running grandchild down with a finished
  * parent — "delete finished" means finished, including everything under it.
+ *
+ * Idle is not finished either: a child holding queued work is waiting for
+ * admission, and sweeping it would discard work the parent already handed over.
  */
-function deletableFinishedRoots(descendants: readonly Thread[]): readonly Thread[] {
+function deletableFinishedRoots(view: ThreadDescendantsView): readonly Thread[] {
+  const descendants = view.threads;
+  const busy = (candidate: Thread) => (
+    candidate.status.type === 'active' || view.queuedWorkThreadIds.has(candidate.id)
+  );
   const settled = new Set<string>();
   for (const candidate of descendants) {
-    if (candidate.status.type === 'active') continue;
-    const hasActiveDescendant = descendants.some((other) => (
-      other.status.type === 'active' && isDescendantOf(other, candidate.id, descendants)
+    if (busy(candidate)) continue;
+    const hasBusyDescendant = descendants.some((other) => (
+      busy(other) && isDescendantOf(other, candidate.id, descendants)
     ));
-    if (!hasActiveDescendant) settled.add(candidate.id);
+    if (!hasBusyDescendant) settled.add(candidate.id);
   }
   return descendants.filter((candidate) => (
     settled.has(candidate.id)
@@ -251,11 +321,17 @@ function descendantName(thread: Thread, untitled: string): string {
 
 function descendantStatusLabel(
   thread: Thread,
-  labels: { readonly subagentRunning: string; readonly subagentIdle: string; readonly subagentFailed: string },
+  queuedWork: boolean,
+  labels: {
+    readonly subagentRunning: string;
+    readonly subagentIdle: string;
+    readonly subagentFailed: string;
+    readonly subagentQueued: string;
+  },
 ): string {
   if (thread.status.type === 'active') return labels.subagentRunning;
   if (thread.status.type === 'systemError') return labels.subagentFailed;
-  return labels.subagentIdle;
+  return queuedWork ? labels.subagentQueued : labels.subagentIdle;
 }
 
 function formatRelativeTime(timestamp: number): string {

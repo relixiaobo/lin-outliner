@@ -36,6 +36,12 @@ export interface SubagentPresentation {
 export interface SubagentTurnProjection {
   readonly activeThreadIds: readonly ThreadId[];
   readonly byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>;
+  /**
+   * The children a wait blocks on and a collaboration tool row is accountable
+   * for. Derived once here: every consumer that re-derived it would have to be
+   * found again when a third delegation form appears.
+   */
+  readonly collaborationThreadIds: readonly ThreadId[];
   readonly items: readonly ThreadItem[];
 }
 
@@ -131,8 +137,22 @@ export function projectSubagentsForTurn(
       .filter((entry) => entry.status === 'pendingInit' || entry.status === 'running')
       .map((entry) => entry.agentThreadId),
     byThreadId,
+    collaborationThreadIds: collaborationThreadIds(byThreadId),
     items,
   };
+}
+
+/**
+ * The children a wait blocks on and a collaboration tool row is accountable
+ * for. One definition, because a consumer that re-derives it is a consumer that
+ * has to be found again when a third delegation form appears.
+ */
+export function collaborationThreadIds(
+  byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>,
+): readonly ThreadId[] {
+  return [...byThreadId.values()]
+    .filter((entry) => entry.form === 'collaboration')
+    .map((entry) => entry.agentThreadId);
 }
 
 export function presentationFromActivity(item: SubAgentActivityThreadItem): SubagentPresentation {

@@ -4628,7 +4628,9 @@ describe('ThreadService', () => {
         threadId: child.thread.id,
         taskPath: '/root/worker',
         status: 'completed',
-        tokensUsed: 0,
+        // No pool bounds this child, but it did spend: the view reports the
+        // recorded contribution rather than a zero that reads as "did nothing".
+        tokensUsed: 7,
         tokenBudget: null,
       },
     ]);
@@ -4640,7 +4642,7 @@ describe('ThreadService', () => {
         threadId: child.thread.id,
         taskPath: '/root/worker',
         status: 'completed',
-        tokensUsed: 0,
+        tokensUsed: 7,
         tokenBudget: null,
       }],
     });
@@ -6545,9 +6547,17 @@ describe('ThreadService', () => {
     fixture.executor.finish(2, completedExecutionResult(3));
     await fixture.service.waitForIdle(second.thread.id);
     // Only now is every member terminal, so only now is the pool reclaimed.
+    // The membership rows outlive it, unbound: the cap and the recorded
+    // contribution are per-Thread facts that the request's end does not erase.
     expect(fixture.stores.subagentBudgets.readPool(turnBudgetPoolId(rootTurn.turn.id))).toBeNull();
-    expect(fixture.stores.subagentBudgets.readMember(first.thread.id)).toBeNull();
-    expect(fixture.stores.subagentBudgets.readMember(second.thread.id)).toBeNull();
+    expect(fixture.stores.subagentBudgets.readMember(first.thread.id))
+      .toMatchObject({ poolId: null, tokensUsed: 5 });
+    expect(fixture.stores.subagentBudgets.readMember(second.thread.id))
+      .toMatchObject({ poolId: null, tokensUsed: 3 });
+    // Reported as spend without a live boundary, never as "did nothing".
+    expect(fixture.service.listCollaborationAgents(root.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: first.thread.id, tokensUsed: 5, tokenBudget: null }),
+    ]));
     await fixture.service.close();
   });
 

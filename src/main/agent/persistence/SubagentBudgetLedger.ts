@@ -220,14 +220,15 @@ export class SubagentBudgetLedger {
   }
 
   /**
-   * Reclaim a settled Turn pool. A capped member keeps its row: the cap is a
-   * per-Thread lifetime constraint, so dropping it here would quietly hand a
-   * re-driven child an unlimited allowance.
+   * Reclaim a settled Turn pool: the pool row goes, the membership rows stay
+   * unbound. Members are kept for two reasons — a cap is a per-Thread lifetime
+   * constraint that must survive its pool, and the recorded contribution is the
+   * only remaining account of what a child actually spent, which the
+   * collaboration views still report after its request is over.
    */
   reapPool(poolId: SubagentBudgetPoolId): void {
     for (const member of this.membersForPool(poolId)) {
-      if (member.tokenCap === null) this.deleteMember(member.threadId);
-      else this.rebindMemberPool(member.threadId, null);
+      this.rebindMemberPool(member.threadId, null);
     }
     this.deletePoolRecord(poolId);
   }

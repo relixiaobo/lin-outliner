@@ -25,18 +25,25 @@ descendant Turn shows a neutral background-activity indicator on its list row,
 which is also the only place a fire-and-forget child is visible after its
 parent Turn ended.
 
-A selected child Thread replaces the list affordance in the dock header with a
-back affordance naming its parent; lineage deeper than one level collapses to
-the immediate parent. Every child link — transcript row, Thread Details row,
-back affordance — resolves through the catalog-recovering open path, and a
-Thread that is genuinely gone surfaces the dock's transient failure copy instead
-of throwing behind a bare call.
+A selected child Thread gains a back affordance naming its parent, ahead of the
+list affordance rather than in place of it: the Thread list is the only route to
+create, rename, details, and delete, so no view may be without it. Lineage
+deeper than one level collapses to the immediate parent. Every child link —
+transcript row, Thread Details row, back affordance — resolves through the
+catalog-recovering open path, and a Thread that is genuinely gone surfaces the
+dock's transient failure copy instead of throwing behind a bare call.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
-readable name, status, and last activity; each row opens that child, and each
-can be deleted. A bulk action removes finished Subagents, which means Threads
-whose whole subtree has stopped — a finished parent with a running child is
-never swept, because deletion cascades.
+readable name, status, and last activity; the read names the subtree while the
+Thread catalog keeps each status current, so a child that starts or stops while
+the dialog is open does not go stale. Each row opens that child, and each can be
+deleted. A bulk action removes finished Subagents, which means Threads whose
+whole subtree has stopped: a finished parent with a running child is never
+swept, because deletion cascades, and neither is a child holding queued work,
+because idle is not finished — work already handed to it has not run yet. Both
+deletions are confirmed first and re-decided against a fresh read at the moment
+they are confirmed, since deletion force-stops a live subtree and cannot be
+undone.
 
 Forks remain top-level user
 Threads and expose their source lineage in details rather than masquerading as

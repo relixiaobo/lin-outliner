@@ -91,9 +91,10 @@ child member is covered by its own membership.
 **Pool lifetime.** The pool outlives the Turn that opened it: a fire-and-forget child
 keeps charging the request that asked for it after that Turn has already returned. It is
 reclaimed once its originating Turn has ended and no member Thread is still running,
-whichever settles last. Reclamation deletes the pool and its uncapped member rows; a
-member carrying a local cap keeps its row, because the cap is a per-Thread lifetime
-constraint. Re-delegating to an idle child whose pool was reclaimed — a `followup_task` or
+whichever settles last. Reclamation removes the pool row and unbinds its members, which
+keep their rows: a local cap is a per-Thread lifetime constraint that must outlive any one
+request, and the recorded contribution is the only remaining account of what that child
+spent. Re-delegating to an idle child whose pool was reclaimed — a `followup_task` or
 message that starts new work — binds it to the pool of the Turn delegating now, by the
 same rule that binds a fresh spawn, so no descendant Turn runs uncovered.
 
@@ -239,7 +240,10 @@ errors whose messages name the relevant limit.
 refuse the child's next non-user Turn. They normally report shared-pool state, where
 `tokenBudget` is the pool total and `tokensUsed` is total live pool spend. When a local
 cap has less remaining, they report that cap and the child's live contribution instead;
-a legacy cap-only member does the same. An uncovered child reports `0` and `null`.
+a legacy cap-only member does the same. A child no pool bounds reports a `null` budget
+with its own recorded contribution, so a request that has ended is still accounted for
+rather than reading as a child that did nothing; one that never spent anything reports
+`0` and `null`.
 
 Token quantities are system-internal. Parent-model tools, warning steering, typed errors,
 and diagnostics remain token-denominated. Terminal Turns carry stable
