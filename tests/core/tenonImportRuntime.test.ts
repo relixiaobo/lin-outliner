@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveTenonImportRuntime } from '../../src/main/tenonImportRuntime';
+
+const require = createRequire(import.meta.url);
+const { ensureTenonImportExecutable } = require('../../build/afterPack.cjs') as {
+  ensureTenonImportExecutable(appPath: string): string;
+};
 
 describe('Tenon import runtime', () => {
   test('resolves the renamed built-in Skill wrapper in development', () => {
@@ -43,5 +51,30 @@ describe('Tenon import runtime', () => {
       cliRuntime: processExecPath,
       runAsNode: true,
     });
+  });
+
+  test('afterPack restores the required wrapper mode and fails when it is missing', async () => {
+    const appPath = await mkdtemp(path.join(tmpdir(), 'tenon-after-pack-'));
+    const wrapperPath = path.join(
+      appPath,
+      'Contents',
+      'Resources',
+      'built-in-skills',
+      'tenon-import',
+      'bin',
+      'tenon-import',
+    );
+
+    try {
+      await mkdir(path.dirname(wrapperPath), { recursive: true });
+      await writeFile(wrapperPath, '#!/bin/sh\n', 'utf8');
+      await chmod(wrapperPath, 0o644);
+
+      expect(ensureTenonImportExecutable(appPath)).toBe(wrapperPath);
+      expect((await stat(wrapperPath)).mode & 0o777).toBe(0o755);
+      expect(() => ensureTenonImportExecutable(path.join(appPath, 'missing'))).toThrow();
+    } finally {
+      await rm(appPath, { recursive: true, force: true });
+    }
   });
 });

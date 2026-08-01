@@ -1,0 +1,7 @@
+{
+  "skillDirectoryName": "tenon-import",
+  "cliResourceDirectoryName": "tenon-import",
+  "cliEntryFileName": "tenon-import.mjs",
+  "cliSourceFileName": "tenon-import.ts",
+  "wrapperFileName": "tenon-import"
+}

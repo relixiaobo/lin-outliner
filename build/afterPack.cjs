@@ -10,6 +10,27 @@
 const { execFileSync } = require('node:child_process');
 const { chmodSync, existsSync, readdirSync } = require('node:fs');
 const path = require('node:path');
+const tenonImportResourceNames = require('../src/main/tenonImportResourceNames.json');
+
+function tenonImportWrapperPath(appPath) {
+  return path.join(
+    appPath,
+    'Contents',
+    'Resources',
+    'built-in-skills',
+    tenonImportResourceNames.skillDirectoryName,
+    'bin',
+    tenonImportResourceNames.wrapperFileName,
+  );
+}
+
+function ensureTenonImportExecutable(appPath) {
+  const wrapperPath = tenonImportWrapperPath(appPath);
+  chmodSync(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
+exports.ensureTenonImportExecutable = ensureTenonImportExecutable;
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
@@ -23,8 +44,8 @@ exports.default = async function afterPack(context) {
       if (existsSync(rgPath)) chmodSync(rgPath, 0o755);
     }
   }
-  const tenonImportPath = path.join(appPath, 'Contents', 'Resources', 'built-in-skills', 'data-cleanup', 'bin', 'tenon-import');
-  if (existsSync(tenonImportPath)) chmodSync(tenonImportPath, 0o755);
+  // The wrapper is a required resource; a staging-path drift must fail the build.
+  ensureTenonImportExecutable(appPath);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
     stdio: 'inherit',
   });

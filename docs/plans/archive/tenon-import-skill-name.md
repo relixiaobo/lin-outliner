@@ -36,7 +36,9 @@ Update the development and packaged resource lookup in
 `package.json`. The generated Skill sync already replaces its output root on
 every run, so the packaged floor contains only `tenon-import` after the source
 directory rename. The separately bundled CLI resource remains named
-`tenon-import`.
+`tenon-import`. Runtime resolution and the macOS `afterPack` hook read the same
+structured resource-name configuration. The hook restores the required wrapper
+to executable mode and fails the build if that resource is missing.
 
 ### Identity transition
 
@@ -62,6 +64,8 @@ application build.
 
 - `src/main/builtInSkills/tenon-import/**` (renamed from `data-cleanup/**`)
 - `src/main/tenonImportRuntime.ts`
+- `src/main/tenonImportResourceNames.json`
+- `build/afterPack.cjs`
 - `package.json`
 - `tests/core/agentSkills.test.ts`
 - `tests/core/builtInSkillScripts.test.ts`
