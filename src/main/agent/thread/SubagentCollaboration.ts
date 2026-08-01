@@ -7,13 +7,13 @@ import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
 import {
-  childBudgetPoolId,
+  cappedChildPoolId,
   MAX_SUBAGENT_DEPTH,
   MAX_SUBAGENT_SPAWNS_PER_THREAD,
-  turnBudgetPoolId,
-  type SubagentBudgetLedger,
-  type SubagentBudgetPoolId,
-} from '../persistence/SubagentBudgetLedger';
+  requestPoolIdForTurn,
+  type SubagentRequestLedger,
+  type SubagentRequestPoolId,
+} from '../persistence/SubagentRequestLedger';
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import { SubagentDepthLimitError,SubagentSpawnLimitError } from '../SubagentStructuralLimitError';
 import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationWaitResult,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
@@ -83,7 +83,7 @@ export class SubagentCollaboration {
     private readonly core: ThreadCore,
     private readonly catalog: SubagentCatalog,
     private readonly turnLifecycle: TurnLifecycle,
-    private readonly subagentBudgets: SubagentBudgetLedger,
+    private readonly subagentBudgets: SubagentRequestLedger,
     private readonly resolveRole: (name: string, cwd: string) => AgentRole,
     private readonly resolveSubagentTokenBudget: () => Promise<number | null>,
     private readonly now: () => number,
@@ -203,7 +203,7 @@ export class SubagentCollaboration {
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
-          let createdPoolId: SubagentBudgetPoolId | null = null;
+          let createdPoolId: SubagentRequestPoolId | null = null;
           let createdMemberThreadId: ThreadId | null = null;
           try {
             if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
@@ -256,14 +256,14 @@ export class SubagentCollaboration {
                 // created the Thread it is named for.
                 pool = this.subagentBudgets.createPool(tokenCap === null
                   ? {
-                      poolId: turnBudgetPoolId(input.parentTurnId),
+                      poolId: requestPoolIdForTurn(input.parentTurnId),
                       scope: 'turn',
                       originThreadId: parent.thread.id,
                       originTurnId: input.parentTurnId,
                       tokenBudget: poolBudget,
                     }
                   : {
-                      poolId: childBudgetPoolId(thread.id),
+                      poolId: cappedChildPoolId(thread.id),
                       scope: 'thread',
                       originThreadId: thread.id,
                       originTurnId: input.parentTurnId,
@@ -631,7 +631,7 @@ export class SubagentCollaboration {
         if (!pool) {
           if (configuredPoolBudget === null) return;
           pool = this.subagentBudgets.createPool({
-            poolId: turnBudgetPoolId(senderTurnId),
+            poolId: requestPoolIdForTurn(senderTurnId),
             scope: 'turn',
             originThreadId: senderThreadId,
             originTurnId: senderTurnId,

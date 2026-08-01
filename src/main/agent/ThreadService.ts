@@ -88,8 +88,8 @@ type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
 import {
-SubagentBudgetLedger
-} from './persistence/SubagentBudgetLedger';
+SubagentRequestLedger
+} from './persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -123,7 +123,7 @@ export interface ThreadServiceStores {
   readonly history: ThreadHistoryProjectionStore;
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
-  readonly subagentBudgets: SubagentBudgetLedger;
+  readonly subagentBudgets: SubagentRequestLedger;
   readonly payloads: ToolPayloadStore;
 }
 
@@ -295,7 +295,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly now: () => number;
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
-  private readonly subagentBudgets: SubagentBudgetLedger;
+  private readonly subagentBudgets: SubagentRequestLedger;
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
@@ -419,7 +419,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         history: new ThreadHistoryProjectionStore(paths.history),
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals, goalsDatabase),
-        subagentBudgets: new SubagentBudgetLedger(goalsDatabase),
+        subagentBudgets: new SubagentRequestLedger(goalsDatabase),
         payloads: new ToolPayloadStore(paths.payloads),
       },
     });
