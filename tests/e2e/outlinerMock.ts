@@ -2345,6 +2345,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             turn.completedAt = ++now;
             turn.durationMs = Math.max(0, turn.completedAt - turn.startedAt);
             emitAgentCoreNotification({ type: 'turn/completed', threadId, turnId, turn });
+          } else {
+            // A child Thread whose Turns reached the renderer as notifications
+            // rather than through this mock's history: the host still settles
+            // the addressed Turn, which is what the delegation card reads.
+            const completedAt = ++now;
+            emitAgentCoreNotification({
+              type: 'turn/completed',
+              threadId,
+              turnId,
+              turn: {
+                id: turnId,
+                items: [],
+                itemsView: 'full',
+                provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+                status: 'interrupted',
+                error: null,
+                startedAt: completedAt - 1,
+                completedAt,
+                durationMs: 1,
+              },
+            });
           }
           return clone({ turnId }) as T;
         }

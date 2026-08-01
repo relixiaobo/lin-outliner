@@ -296,6 +296,22 @@ export class ThreadStore {
     await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
   }
 
+  /**
+   * Stop one delegated child, from the card or from its own Thread header.
+   *
+   * The Turn id comes from the retained latest-Turn cache when that child's
+   * history is not loaded — which is the normal case for a card line. It is
+   * still sent explicitly: the host refuses a Turn that is no longer the active
+   * one, so a stale click can never stop newer work than the user was looking at.
+   */
+  async interruptThread(threadId: ThreadId): Promise<void> {
+    const loaded = findLastInProgressTurn(this.turns(threadId));
+    const latest = this.snapshot.latestTurnByThread.get(threadId);
+    const active = loaded ?? (latest?.status === 'inProgress' ? latest : undefined);
+    if (!active) return;
+    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
+  }
+
   async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
     let response: ThreadForkResponse;
     try {

@@ -13,6 +13,7 @@ import {
   ICON_SIZE,
   ScheduledIcon,
   SettingsIcon,
+  StopIcon,
   WarningIcon,
 } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
@@ -194,6 +195,20 @@ export function ThreadDock({
    * recovers a Thread the catalog does not have, and a genuinely deleted one
    * surfaces the existing dock feedback instead of throwing behind a bare void.
    */
+  /**
+   * Stop one delegated child. Failure is reported, not swallowed: the host
+   * refuses a Turn that already settled, and a Stop that silently did nothing
+   * is worse than one that says so.
+   */
+  const interruptThread = useCallback(async (threadId: string) => {
+    setActionError(null);
+    try {
+      await threadStore.interruptThread(threadId);
+    } catch {
+      setActionError(t.agent.thread.stopUnavailable);
+    }
+  }, [t]);
+
   const openThread = useCallback(async (threadId: string) => {
     setActionError(null);
     try {
@@ -333,6 +348,16 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
+          {surface === 'thread' && thread?.parentThreadId && thread.status.type === 'active' ? (
+            <IconButton
+              className="thread-dock-surface-action"
+              icon={StopIcon}
+              label={t.agent.thread.stopThisSubagent}
+              onClick={() => void interruptThread(thread.id)}
+              strokeWidth={1.7}
+              variant="chrome"
+            />
+          ) : null}
           {surface === 'thread' ? (
             <IconButton
               className="thread-dock-surface-action"
@@ -386,6 +411,7 @@ export function ThreadDock({
               )}
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
+              onInterruptThread={interruptThread}
               onOpenNodeReference={onOpenNodeReference}
               onOpenThread={openThread}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}

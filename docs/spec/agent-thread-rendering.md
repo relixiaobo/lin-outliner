@@ -212,6 +212,20 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
+While at least one child spawned by a Turn is still alive, that Turn's process
+block carries a live delegation card: one line per delegated child, in canonical
+order, with a readable name, live status, elapsed time, and a terminal glyph as
+each settles. The card is the per-child presentation for as long as it is up, so
+the projected activity rows for those children stand down and return as the
+post-hoc rendering once the last child settles. Every delegated form is listed —
+an isolated Skill child is delegated work too — and membership is the Turn's
+projection rather than a second split by source. Each running line exposes Stop,
+and so does the header of a child Thread view while its Turn is active. Like
+every delegation surface the card speaks time and status only: no token quantity
+reaches its text, its title, or its accessible labels, and a failed line carries
+the same bounded, code-classified copy the rows use. There is no dock-level
+agents panel; cross-thread awareness is the Thread list's activity indicator.
+
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
 outside the fold. Live and resultless process timelines remain visible; a live

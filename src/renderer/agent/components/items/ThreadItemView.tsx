@@ -74,6 +74,7 @@ import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIng
 import { ToolCodeBlock } from '../ToolCodeBlock';
 import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
 import { userFacingAgentError } from '../../threadErrorMessage';
+import { formatSubagentDuration, useSubagentElapsedMs } from '../subagentElapsed';
 import {
   collaborationResultSnapshot,
   collaborationThreadIds,
@@ -1014,22 +1015,6 @@ function SubagentStateItem({
   );
 }
 
-function useSubagentElapsedMs(presentation: SubagentPresentation): number | null {
-  const [now, setNow] = useState(() => Date.now());
-  const knownStart = presentation.status === 'running'
-    && presentation.startedAt !== null
-    && presentation.startedAt > 1_000_000_000_000
-    ? presentation.startedAt
-    : null;
-  useEffect(() => {
-    if (knownStart === null) return undefined;
-    setNow(Date.now());
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [knownStart]);
-  return knownStart === null ? null : Math.max(0, now - knownStart);
-}
-
 function subagentActivityLabel(
   presentation: SubagentPresentation,
   elapsedMs: number | null,
@@ -1045,19 +1030,6 @@ function subagentActivityLabel(
   return t.agent.thread.subagentActivity[presentation.status]({ name });
 }
 
-function formatSubagentDuration(durationMs: number): string {
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
-  const days = Math.floor(totalSeconds / 86_400);
-  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
-  const seconds = totalSeconds % 60;
-  return [
-    days > 0 ? `${days}d` : '',
-    hours > 0 ? `${hours}h` : '',
-    minutes > 0 ? `${minutes}m` : '',
-    seconds > 0 ? `${seconds}s` : '',
-  ].filter(Boolean).join(' ');
-}
 
 /**
  * One shape for every row: **what it did**, then — only when something went
