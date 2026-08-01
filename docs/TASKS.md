@@ -885,16 +885,25 @@ anything.
   › *"clears pending permission notices when the run stops"* times out on its 1000 ms `waitFor` under
   full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
   test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
-  setup). See `[[core-test-subset-ordering-artifact]]` for the real baseline.
+  setup).
 - **flaky-thread-model-menu-focus-e2e** (P3, *fast-track, no plan file*, filed 2026-07-30 at the
-  #458 gate) — `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
-  the composer"*: the closing Escape `toBeFocused` assertion fails on full-file runs (~5/6 on the
-  #458 merge base `3d44f0f1`, same on the branch) but passes in isolation (1 fail in ~105 solo
-  runs) — order/state-dependent and pre-dates #458 (verified on both sides of the merge base).
-  Signature: after Escape closes the model menu, focus is not on the trigger button; suspects are
-  the `refocusComposerFromClick` rAF racing the menu focus-in/restore effects in
-  `useMenuKeyboard`. Reproduce the focus loss outside the harness before touching product code —
-  it may be test-only state leakage.
+  #458 gate; **`flaky-model-menu-focus-restore-e2e` folded in here 2026-08-01** — it was filed
+  independently at the #467/#468 gate against the same single test, `agent-thread.spec.ts:1714`,
+  and the same Escape→focus assertion, so the board carried one defect twice) —
+  `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
+  the composer"*: an Escape-closes-the-menu `toBeFocused` assertion fails on full-file runs but
+  passes solo. That test has **two** such assertions — `control` (`:1756`) and `listButton`
+  (`:1777`) — and the two filings do not agree on which one fails, so **establish which first**.
+  Evidence from both: ~5/6 fail on the #458 merge base `3d44f0f1` and the same on that branch,
+  1 fail in ~105 solo runs; separately 1 fail / 60 pass on a full-file run at the #467/#468 gate,
+  then 61 pass on a re-run of the same tree. Order/state-dependent, pre-dates #458 (verified on
+  both sides of the merge base) and is not attributable to #467/#468 (neither touches that
+  control). Suspects, from the two filings: `refocusComposerFromClick`'s rAF racing the menu
+  focus-in/restore effects in `useMenuKeyboard`; and the menu's focus restore running before the
+  element it returns to is re-enabled — the same *class* #467 fixed for the Plan pill (close path
+  → focus destination), which makes a real timing bug at least as likely as a test-side race.
+  Reproduce the focus loss outside the harness before touching product code — it may still be
+  test-only state leakage.
 - **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
   #464 gate) — `agent-thread.spec.ts:1247` *"streams a pathless image in bounded chunks and records
   only a managed reference"* fails under full-suite parallel load but passes in isolation (1 fail
@@ -902,15 +911,6 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **flaky-model-menu-focus-restore-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
-  #467/#468 gate) — `agent-thread.spec.ts` *"changes the canonical Thread model and reasoning from
-  the composer"* fails on its final `await expect(control).toBeFocused()` — the focus returned to
-  the model/reasoning control after Escape closes the menu — under a full-file run, then passes
-  solo and on a full-file re-run (1 fail / 60 pass, then 61 pass, same tree). Neither #467 nor
-  #468 touches that control, so it is not attributable to them, but it is the same *class* of
-  defect #467 fixed for the Plan pill (close path → focus destination), which makes a real
-  timing bug at least as likely as a test-side race. Check whether the menu's focus restore runs
-  before the element it returns to is re-enabled.
 - **plan-progress-pill-material-scope** (P3, *fast-track, no plan file*, filed 2026-08-01 at the
   #471 gate) — `main` is **deterministically red** on two B5 guards:
   `typography-tokens.spec.ts` › *"keeps material backgrounds scoped to registered chrome and
