@@ -952,6 +952,23 @@ anything.
   full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
   test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
   setup). See `[[core-test-subset-ordering-artifact]]` for the real baseline.
+- **flaky-deep-shared-state-export-test** (P3, *fast-track, no plan file*, filed 2026-08-01 at the
+  #470 gate) — `core.test.ts` › *"exports deep shared state through update mode to avoid snapshot
+  depth failure"* has no explicit `timeout` and runs against bun's 5000 ms default, but its cost
+  scales hard with machine load: **~1.5 s idle** (3/3 runs: 1.54 s / 1.50 s / 1489 ms) and
+  **10.3–12.9 s under CPU contention**, where it fails. Observed failing on **both** `main`
+  (12891 ms inside a full `test:core`; 10334 ms solo) and the #470 branch (10277 ms solo) while a
+  Playwright suite and a multi-agent review workflow ran concurrently; all six re-runs on an idle
+  machine pass. Not a product bug, and **not** the `-t` filter — the first read at the gate blamed
+  the filter, and re-measurement showed it is contention. It matters because `test:core` is a
+  required gate step and this produces a false red exactly when the machine is busy, which in an
+  eight-clone setup is the normal condition, not the exception. Fix = give this test an explicit
+  `timeout` with real headroom, and/or trim the fixture: the 1,100-node chain exists only to push
+  the export past the snapshot-depth threshold into `update` mode (the assertion is
+  `exportMode === 'update'`), so threshold-plus-margin beats a round number if the cost is worth
+  cutting. Siblings: `[[flaky-skills-integration-test]]`, `[[flaky-thread-model-menu-focus-e2e]]` —
+  same class (test-timing budget, not product), and a candidate for one sweep that gives the
+  known-slow core/e2e tests explicit budgets instead of inheriting a default nobody chose.
 - **flaky-thread-model-menu-focus-e2e** (P3, *fast-track, no plan file*, filed 2026-07-30 at the
   #458 gate) — `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
   the composer"*: the closing Escape `toBeFocused` assertion fails on full-file runs (~5/6 on the
