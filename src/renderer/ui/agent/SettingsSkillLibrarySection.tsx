@@ -6,6 +6,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 import { Button } from '../primitives/Button';
 import { EmptyState } from '../primitives/FeedbackState';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -129,6 +130,9 @@ export function SettingsSkillLibrarySection({
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [acquireOpen, setAcquireOpen] = useState(false);
+  // A pick that turned out to be a Skill folder, awaiting the user's decision
+  // about binding its parent instead.
+  const [pendingParentBind, setPendingParentBind] = useState<{ picked: string; parent: string } | null>(null);
   const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
@@ -143,21 +147,32 @@ export function SettingsSkillLibrarySection({
       const picked = await api.agentPickSkillDirectory();
       if (!picked.path) return;
       // Tenon reads Skills from the folders INSIDE a bound directory. When the
-      // chosen folder is itself a Skill, bind its parent so it actually shows
-      // up — binding it verbatim used to load nothing and say nothing.
-      let path = picked.path;
+      // chosen folder is itself a Skill, the useful thing to bind is its
+      // parent — but that is a wider scope than the user picked, and every
+      // sibling folder under it becomes a putative Skill root. Ask; do not
+      // decide for them and report it afterwards.
       if (picked.isSkillFolder) {
         if (!picked.nameValid) {
           onError(t.settings.skills.localDirectoryUnnameable({ directory: picked.path }));
           return;
         }
-        path = parentDirectoryOf(picked.path);
-        onNotice(t.settings.skills.localDirectoryBoundParent({ directory: path }));
+        setPendingParentBind({ picked: picked.path, parent: parentDirectoryOf(picked.path) });
+        return;
       }
+      await bindDirectory(picked.path);
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function bindDirectory(path: string) {
+    try {
       if (additionalSkillDirectories.includes(path)) {
         onNotice(t.settings.skills.localDirectoryAlreadyBound({ directory: path }));
         return;
       }
+      onError(null);
+      onNotice(null);
       const kept = await onDirectoriesChange([...additionalSkillDirectories, path]);
       // The stored list is bounded. Past the limit the new path is dropped on
       // write, and without this the dialog would just close and nothing would
@@ -525,6 +540,23 @@ export function SettingsSkillLibrarySection({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      {pendingParentBind ? (
+        <ConfirmDialog
+          cancelLabel={t.dialog.cancel}
+          confirmLabel={t.settings.skills.localDirectoryBindParentConfirm}
+          message={t.settings.skills.localDirectoryBindParentMessage({
+            picked: pendingParentBind.picked,
+            parent: pendingParentBind.parent,
+          })}
+          onCancel={() => setPendingParentBind(null)}
+          onConfirm={() => {
+            const parent = pendingParentBind.parent;
+            setPendingParentBind(null);
+            void bindDirectory(parent);
+          }}
+          title={t.settings.skills.localDirectoryBindParentTitle}
+        />
+      ) : null}
       <ManagedSkillsSettings
         controller={managed}
         existingSkillNames={existingSkillNames}

@@ -301,9 +301,15 @@ against a canonical path.
 A bound directory is a **container** of Skills, exactly like the convention
 directories: Tenon reads the folders inside it, and a `SKILL.md` sitting
 directly in it does not make it a Skill. Picking the folder that *is* a Skill is
-just as natural, so the picker detects that and binds its **parent**, saying so
-— rather than the runtime inferring, per write, whether a path belongs to the
-bound root or to something nested under it.
+just as natural, so the picker detects that and **asks** whether to add its
+parent instead — rather than the runtime inferring, per write, whether a path
+belongs to the bound root or to something nested under it.
+
+It asks rather than doing it, because the parent is a wider scope than the user
+chose: every sibling folder under it becomes a candidate Skill directory. Saying
+so afterwards is notification, not consent. If the chosen folder's name cannot
+be a Skill identity, the picker refuses and says why instead of adding something
+that would list nothing.
 
 That inference is deliberately absent. Resolving it meant deciding ownership at
 write time from an ordered set of guesses, and every guard added to one branch

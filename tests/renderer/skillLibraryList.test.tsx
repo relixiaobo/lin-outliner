@@ -588,25 +588,59 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills found in this directory.');
   });
 
-  test('binds the parent when the chosen folder is itself a skill', async () => {
-    // Tenon reads the folders INSIDE a bound directory, so binding the Skill
-    // folder verbatim loaded nothing and said nothing — the dead end that made
-    // the picker useless in the first place.
+  test('asks before binding the parent of a chosen skill folder', async () => {
+    // Binding the parent is the useful thing to do, but it is a WIDER scope
+    // than the user picked — every sibling folder under it becomes a putative
+    // Skill root. Telling them afterwards is notification, not consent.
     const changes: string[][] = [];
-    const notices: Array<string | null> = [];
     const rendered = await render({
       skills: [],
       managed: [],
       pickedDirectory: '/work/skills/my-pdf-skill',
       pickedIsSkillFolder: true,
       onDirectoriesChange: async (next) => { changes.push(next); return next; },
-      onNotice: (message) => { notices.push(message); },
     });
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
+    expect(changes).toEqual([]);
+    const dialog = rendered.document.querySelector('.confirm-dialog');
+    expect(dialog?.textContent).toContain('/work/skills/my-pdf-skill');
+    expect(dialog?.textContent).toContain('/work/skills');
+
+    const confirm = [...(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+      .find((button) => button.textContent?.trim() === 'Add Containing Folder');
+    if (!confirm) throw new Error('Missing confirm button');
+    await act(async () => {
+      confirm.click();
+      await settle();
+    });
+
     expect(changes).toEqual([['/work/skills']]);
-    expect(notices.at(-1)).toContain('/work/skills');
+  });
+
+  test('cancelling the parent prompt binds nothing', async () => {
+    const changes: string[][] = [];
+    const rendered = await render({
+      skills: [],
+      managed: [],
+      pickedDirectory: '/work/skills/my-pdf-skill',
+      pickedIsSkillFolder: true,
+      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+    });
+
+    await openAddMenu(rendered, 'Add Local Directory…');
+
+    const cancel = [...(rendered.document.querySelectorAll<HTMLButtonElement>('.confirm-dialog button') ?? [])]
+      .find((button) => button.textContent?.trim() === 'Cancel');
+    if (!cancel) throw new Error('Missing cancel button');
+    await act(async () => {
+      cancel.click();
+      await settle();
+    });
+
+    expect(changes).toEqual([]);
+    expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
   });
 
   test('refuses a skill folder whose name cannot be a skill name, and says why', async () => {
