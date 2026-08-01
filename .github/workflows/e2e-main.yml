@@ -30,6 +30,10 @@ name: e2e signal (main)
 on:
   push:
     branches: [main]
+  # A branch gets the SAME five samples on the SAME runner image, so subtracting
+  # `main`'s numbers from its own is meaningful. It still gates nothing — it turns
+  # "is this failure mine?" from a judgement call into a set difference.
+  pull_request:
   # Backstop: environment drift is invisible in a quiet week with no merges.
   schedule:
     - cron: '17 3 * * 1'
@@ -37,12 +41,15 @@ on:
 
 concurrency:
   # Only the newest commit's verdict is worth having; cancel superseded runs.
-  group: e2e-signal-main
+  group: e2e-signal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   issues: write
+  pull-requests: write
+  # `gh run download` needs this to fetch `main`'s baseline samples.
+  actions: read
 
 jobs:
   sample:
@@ -90,7 +97,7 @@ jobs:
     # it off macOS leaves the whole macOS concurrency allowance for the samples.
     runs-on: ubuntu-latest
     needs: sample
-    if: always()
+    if: always() && github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -122,4 +129,68 @@ jobs:
             gh issue create --title "$TITLE" --body-file verdict.md
           else
             gh issue edit "$number" --body-file verdict.md
+          fi
+
+  compare:
+    name: subtract main's baseline
+    runs-on: ubuntu-latest
+    needs: sample
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          path: branch
+          pattern: e2e-sample-*
+          merge-multiple: true
+      - name: Fetch main's baseline samples
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The most recent successful run ON main. Its artifacts are the same
+          # five-sample measurement, taken on the same runner image — which is the
+          # whole point: comparing across environments proves nothing.
+          run_id="$(gh run list --workflow=e2e-main.yml --branch main --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -z "$run_id" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p baseline
+          # A baseline we cannot fetch must not silently become "no baseline", or
+          # every failure gets blamed on the branch.
+          gh run download "$run_id" --pattern 'e2e-sample-*' --dir baseline
+          echo "available=true" >> "$GITHUB_OUTPUT"
+      - name: Compare
+        run: |
+          set -euo pipefail
+          bun scripts/e2e-classify.ts --json branch/*.json > branch.json
+          {
+            echo "_Commit \`${GITHUB_SHA:0:8}\` · [run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_"
+            echo
+            if [ "${{ steps.baseline.outputs.available }}" = "true" ]; then
+              find baseline -name '*.json' -print0 | xargs -0 bun scripts/e2e-classify.ts --json > baseline.json
+              bun scripts/e2e-compare.ts branch.json baseline.json
+            else
+              bun scripts/e2e-compare.ts branch.json
+            fi
+          } > comparison.md
+          cat comparison.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Updated in place: one comment per PR, not one per push.
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq 'map(select(.body | contains("<!-- e2e-compare -->"))) | .[0].id // empty')"
+          if [ -z "$id" ]; then
+            gh pr comment "$PR" --body-file comparison.md
+          else
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
+              -F body=@comparison.md >/dev/null
           fi

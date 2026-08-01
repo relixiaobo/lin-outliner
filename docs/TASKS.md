@@ -985,6 +985,18 @@ anything.
   precisely what people learn to ignore. Fixed the same day; the classifier job stays on
   Linux since it only reads JSON, which leaves the whole macOS concurrency allowance for
   the samples.
+  **Then the macOS baseline showed why `main` alone was not enough.** CI macOS reported
+  four deterministic failures that pass on a developer's machine, and
+  `file-attachments.spec.ts:178` — the test this board had called `main`'s red baseline —
+  passed 5/5 there. Headless CI is a third environment, so a gate running locally cannot
+  subtract a baseline measured remotely. The fix is not to make the environments match,
+  which headless compositing may not allow, but to take **both** measurements in the same
+  one: a pull request now gets the same five samples on the same runner image, and
+  `scripts/e2e-compare.ts` subtracts `main`'s numbers from the branch's, so "is this
+  failure mine?" is a set difference. It still gates nothing. A missing baseline reports
+  every failure as *unattributed* rather than as the branch's — blaming the wrong party is
+  the one way this could do real damage, so that case is unit-tested
+  (`tests/core/e2eCompare.test.ts`).
 
 - **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
   *fast-track, no plan file*) — closed two boarded items,
