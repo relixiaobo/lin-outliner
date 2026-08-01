@@ -347,11 +347,16 @@ nothing else (A12): it never blocks launch, raises an alert, or changes any
 Skill's enabled state or pinned version. A throttled check stamps
 `lastCheckedAt` on failure as well as on success, so a record that keeps failing
 is retried on the same schedule as one that succeeds instead of on every launch
-and every pane mount. Because that diagnostic is produced by an action the user
-did not request, the library keeps showing the Skill's own description and
-reports the failure in a status chip; only an integrity fault (`skill_modified`,
-`duplicate_skill_name`) replaces the description, because only then is the
-Skill's own content untrustworthy.
+and every pane mount.
+
+A library row **always keeps the Skill's own description**, and carries any
+diagnostic on a separate line beneath it. Replacing the description hides what
+the Skill is; omitting the diagnostic hides why it needs attention, which a
+status chip alone never says — `incompatible_tenon` matters most, since
+`activeRuntimeRoots` drops those records and the model genuinely cannot invoke
+the Skill. The line takes the status colour only for a fault in the Skill
+itself; a failed update check stays quiet, because it says nothing is wrong with
+the Skill and an offline launch produces one for every managed Skill at once.
 
 ### The recommended catalog is a production artifact
 

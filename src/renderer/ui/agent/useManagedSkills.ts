@@ -31,6 +31,10 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
   const t = useT();
   const [catalog, setCatalog] = useState<ManagedSkillCatalogView | null>(null);
   const [skills, setSkills] = useState<ManagedSkillView[]>([]);
+  // Whether the installed list has actually been read. An empty list before the
+  // first successful read means "unknown", not "none" — reporting it as none
+  // wipes a badge the shell had already computed correctly.
+  const [listLoaded, setListLoaded] = useState(false);
   const [sourceUrl, setSourceUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -66,6 +70,7 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
       if (!mounted.current) return;
       setCatalog(nextCatalog);
       setSkills(installed);
+      setListLoaded(true);
       if (checkUpdatesOnLoad && installed.length > 0) {
         // Opening the pane is not a request to check — it is ambient, so main
         // throttles it on each record's lastCheckedAt.
@@ -268,10 +273,12 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
   return {
     busy,
     catalog,
+    clearFeedback,
     confirmAction,
     error,
     installReview,
     installedCatalogIds,
+    listLoaded,
     loading,
     notice,
     openMenu,

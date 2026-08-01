@@ -3405,6 +3405,11 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
  * the directory itself rendered, two rows down, as empty.
  */
 function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
+  // Applied to EVERY handler that returns this view, not just the two that look
+  // skill-related. The renderer stores all of them into one settings state, so a
+  // single un-expanded reply — switching provider, signing out — silently
+  // restores the raw list and the library loses its local chips and unbind
+  // actions until the pane is reopened.
   const expanded = settings.agent.additionalSkillDirectories
     .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
     .filter(Boolean);
@@ -3450,7 +3455,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_get_provider_settings':
       return withCanonicalSkillDirectories(await getProviderSettings());
     case 'agent_refresh_provider_models':
-      return refreshProviderModels(String(args.providerId));
+      return withCanonicalSkillDirectories(await refreshProviderModels(String(args.providerId)));
     case 'agent_pick_skill_directory': {
       // Tenon points at the directory; it never copies it in. The picker returns
       // a path the caller stores in additionalSkillDirectories, so the user's
@@ -3501,7 +3506,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       return withCanonicalSkillDirectories(settings);
     }
     case 'agent_update_image_generation_settings':
-      return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
+      return withCanonicalSkillDirectories(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
@@ -3511,11 +3516,11 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_upsert_provider_config':
-      return upsertProviderConfig(args.provider as AgentProviderConfigInput);
+      return withCanonicalSkillDirectories(await upsertProviderConfig(args.provider as AgentProviderConfigInput));
     case 'agent_delete_provider_config':
-      return deleteProviderConfig(String(args.providerId));
+      return withCanonicalSkillDirectories(await deleteProviderConfig(String(args.providerId)));
     case 'agent_set_active_provider':
-      return setActiveProvider(String(args.providerId));
+      return withCanonicalSkillDirectories(await setActiveProvider(String(args.providerId)));
     case 'agent_set_provider_api_key':
       return setProviderApiKey(String(args.providerId), String(args.apiKey ?? ''));
     case 'agent_delete_provider_api_key':
@@ -3527,14 +3532,14 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // another provider can't deliver them to the wrong window (where they'd be
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = providerConfigWindow;
-      return oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
+      return withCanonicalSkillDirectories(await oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
-      });
+      }));
     }
     case 'agent_oauth_logout':
-      return oauthLoginManager.logout(String(args.providerId));
+      return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
     case 'agent_oauth_respond':
       oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
       return undefined;

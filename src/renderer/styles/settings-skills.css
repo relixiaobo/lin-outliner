@@ -28,11 +28,19 @@
   -webkit-line-clamp: 2;
 }
 
-/* Why a Skill needs attention, on its own line under the description. This is a
-   status, so it is the one place in the row that carries a status colour (B4);
-   the description above it stays ordinary text. */
+/* Why a Skill needs attention, on its own line under the description. A fault in
+   the Skill itself is the one place in the row that carries a status colour
+   (B4); the description above it stays ordinary text. */
 .settings-skill-diagnostic {
   color: var(--status-danger);
+}
+
+/* A failed update check is not a fault in the Skill — it is still installed,
+   pinned, and invocable, and an offline launch produces one for every managed
+   Skill at once. Painting those red is the repaint the description rule exists
+   to avoid, so they stay quiet. */
+.settings-skill-diagnostic.is-muted {
+  color: var(--text-tertiary);
 }
 
 .managed-skill-source-control {

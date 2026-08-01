@@ -18,6 +18,13 @@ import {
   managedStatusLabel,
 } from './ManagedSkillsSettings';
 import { useManagedSkills } from './useManagedSkills';
+import { cx } from '../primitives/cx';
+
+/** A fault in the Skill's own bytes or identity, as opposed to a failed check. */
+function isSkillFault(skill: ManagedSkillView): boolean {
+  return skill.diagnostic?.code === 'skill_modified'
+    || skill.diagnostic?.code === 'duplicate_skill_name';
+}
 
 interface SettingsSkillLibrarySectionProps {
   disabledSkills: readonly string[];
@@ -29,7 +36,7 @@ interface SettingsSkillLibrarySectionProps {
    * Persists one name's `disabledSkills` membership immediately. Used by the
    * managed toggle, whose activation half is already immediate.
    */
-  onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<void>;
+  onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<boolean>;
   /**
    * Reports how many managed Skills currently have an update waiting. The shell
    * owns the nav badge and cannot see this list, so while the library is mounted
@@ -75,6 +82,13 @@ interface LibraryRow {
    * the runtime is not loading it at all.
    */
   diagnostic?: string;
+  /**
+   * Whether the diagnostic is about the Skill itself or about Tenon's last
+   * attempt to reach GitHub. An offline launch produces the latter for every
+   * installed Skill, and painting those red is the repaint the description rule
+   * exists to avoid.
+   */
+  diagnosticTone?: 'danger' | 'muted';
   enabled: boolean;
   /** Controls are quiet while a mutation for this row is in flight. */
   busy: boolean;
@@ -205,9 +219,13 @@ export function SettingsSkillLibrarySection({
   // shell's own read happens once, before the ambient check has run and before
   // the user applies anything.
   useEffect(() => {
+    // Not before the list is read. Firing on the initial empty array reported
+    // "no updates" and wiped a badge the shell had already computed — and if
+    // the read then failed, nothing ever restored it.
+    if (!managed.listLoaded) return;
     onUpdateCountChange(managed.skills.filter((skill) => skill.updateCommit).length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [managed.skills]);
+  }, [managed.listLoaded, managed.skills]);
 
   const runSkillTrustAction = (action: () => Promise<SkillDefinition[]>) => {
     setSkillTrustBusy(true);
@@ -286,7 +304,17 @@ export function SettingsSkillLibrarySection({
       // never requested, so it must not repaint the library; but it still has
       // to be readable, which a generic "Needs attention" chip is not.
       description: skill.description,
-      ...(skill.diagnostic ? { diagnostic: managedSkillErrorMessage(skill.diagnostic, t) } : {}),
+      ...(skill.diagnostic ? {
+        diagnostic: managedSkillErrorMessage(skill.diagnostic, t),
+        // A failed update check says nothing is wrong with the Skill — it is
+        // still installed, still pinned, still invocable. Only a fault in the
+        // Skill or its compatibility earns the status colour.
+        diagnosticTone: skill.status === 'failed'
+          && skill.compatibility.status !== 'incompatible'
+          && !isSkillFault(skill)
+          ? 'muted' as const
+          : 'danger' as const,
+      } : {}),
       sourceChip: t.settings.skills.sourceManaged,
       chips: [
         skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified,
@@ -304,7 +332,13 @@ export function SettingsSkillLibrarySection({
         // across two commit models is what let Cancel leave the Skill
         // activated-but-suppressed.
         if (next && disabledSkills.includes(skill.name)) {
-          void onPersistSkillDisabled(skill.name, false);
+          void onPersistSkillDisabled(skill.name, false).then((ok) => {
+            // setEnabled already set ITS notice ("<name> enabled"). If the other
+            // half failed, that notice is now a lie sitting above a switch that
+            // snapped back off, so clear the one that was actually set — the
+            // shell's own notice was never set on this path.
+            if (!ok) managed.clearFeedback();
+          });
         }
       },
       actions: [...managedRevealAction, ...managedSkillActions(skill, {
@@ -505,7 +539,9 @@ export function SettingsSkillLibrarySection({
                     {row.description}
                   </span>
                   {row.diagnostic ? (
-                    <span className="settings-skill-diagnostic">{row.diagnostic}</span>
+                    <span className={cx('settings-skill-diagnostic', row.diagnosticTone === 'muted' && 'is-muted')}>
+                      {row.diagnostic}
+                    </span>
                   ) : null}
                 </>
               )}

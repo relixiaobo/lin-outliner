@@ -127,6 +127,10 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // afterwards and still claiming one the user had just applied.
   const [skillUpdateCount, setSkillUpdateCount] = useState(0);
   const mountedRef = useRef(false);
+  // The persisted disabledSkills as of the last completed write, and a queue so
+  // concurrent toggles cannot each write a whole array from the same stale read.
+  const latestDisabledSkillsRef = useRef<readonly string[]>([]);
+  const skillDisableQueueRef = useRef<Promise<void>>(Promise.resolve());
   const settingsRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
   const t = useT();
@@ -200,6 +204,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   }
 
   function applyLoadedSettings(next: AgentProviderSettingsView) {
+    latestDisabledSkillsRef.current = next.agent.disabledSkills ?? [];
     setSettings(next);
     setProviderDraft(resolveInitialProviderDraft(next));
     setSkillDraft(resolveSkillDraft(next));
@@ -304,37 +309,47 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * smuggle a user's other pending toggles onto disk; the draft is then adjusted
    * by the same single change so it will not re-add the name on the next Save.
    */
-  async function persistSkillDisabled(skillName: string, disabled: boolean) {
-    const persisted = settings?.agent.disabledSkills ?? [];
-    const next = disabled
-      ? [...new Set([...persisted, skillName])]
-      : persisted.filter((name) => name !== skillName);
-    const requestId = beginRequest('mutation');
-    setSaving(true);
-    try {
-      const updated = await api.agentUpdateRuntimeSettings({ disabledSkills: next });
-      if (isCurrentRequest('mutation', requestId)) {
-        setSettings(updated);
-        setSkillDraft((current) => ({
-          disabledSkills: disabled
-            ? [...new Set([...current.disabledSkills, skillName])]
-            : current.disabledSkills.filter((name) => name !== skillName),
-        }));
-      }
-      await onApplied();
-    } catch (caught) {
-      // Without this the rejection escapes unhandled: no error is shown, the
-      // row re-renders from the unchanged prop and snaps back off, and a green
-      // "enabled" notice sits above it while the Skill is activated on disk and
-      // still invisible to the model — the exact split state this call exists
-      // to prevent, just moved onto the failure path.
-      if (isCurrentRequest('mutation', requestId)) {
+  /**
+   * Serializes the writes. Two toggles inside one IPC round trip both read the
+   * same settings state and each wrote a whole array, so the second silently
+   * undid the first: the Skill's activation had succeeded and its notice said
+   * so, but the row came back off and the model could not invoke it, with no
+   * error anywhere. Chaining makes the second read the result of the first.
+   */
+  async function persistSkillDisabled(skillName: string, disabled: boolean): Promise<boolean> {
+    const run = skillDisableQueueRef.current.then(async () => {
+      const persisted = latestDisabledSkillsRef.current;
+      const next = disabled
+        ? [...new Set([...persisted, skillName])]
+        : persisted.filter((name) => name !== skillName);
+      const requestId = beginRequest('mutation');
+      setSaving(true);
+      try {
+        const updated = await api.agentUpdateRuntimeSettings({ disabledSkills: next });
+        // Recorded outside the isCurrentRequest guard: the next queued write
+        // must build on what main actually stored, even if this reply is too
+        // late to be applied to the view.
+        latestDisabledSkillsRef.current = updated.agent.disabledSkills ?? [];
+        if (isCurrentRequest('mutation', requestId)) {
+          setSettings(updated);
+          setSkillDraft({ disabledSkills: [...latestDisabledSkillsRef.current] });
+        }
+        await onApplied();
+        return true;
+      } catch (caught) {
+        // Without this the rejection escapes unhandled: no error is shown, the
+        // row re-renders from the unchanged prop and snaps back off, and the
+        // caller's success notice stays up — the split state this call exists
+        // to prevent, moved onto the failure path.
         setError(caught instanceof Error ? caught.message : String(caught));
         setNotice(null);
+        return false;
+      } finally {
+        if (isCurrentRequest('mutation', requestId)) setSaving(false);
       }
-    } finally {
-      if (isCurrentRequest('mutation', requestId)) setSaving(false);
-    }
+    });
+    skillDisableQueueRef.current = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   function toggleSkill(skillName: string) {

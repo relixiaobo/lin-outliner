@@ -243,6 +243,58 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.settings-skill-diagnostic')).not.toBeNull();
   });
 
+  test('a failed update check is muted; a Skill fault is not', async () => {
+    const offline = await render({
+      skills: [],
+      managed: [managedSkill({ status: 'failed', diagnostic: { code: 'github_unavailable' } })],
+    });
+    // Still installed, pinned and invocable — and an offline launch produces one
+    // of these for every managed Skill at once.
+    expect(offline.document.querySelector('.settings-skill-diagnostic')?.className)
+      .toContain('is-muted');
+    offline.cleanup();
+
+    const modified = await render({
+      skills: [],
+      managed: [managedSkill({ status: 'modified', diagnostic: { code: 'skill_modified', detail: 'pdf' } })],
+    });
+    expect(modified.document.querySelector('.settings-skill-diagnostic')?.className)
+      .not.toContain('is-muted');
+  });
+
+  test('the badge is not zeroed before the installed list is read', async () => {
+    // The shell computed a real count already. Reporting the initial empty
+    // array as "none" wiped it, and a failed read never restored it.
+    const counts: number[] = [];
+    await render({
+      skills: [],
+      managed: [managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) })],
+      onUpdateCountChange: (count) => { counts.push(count); },
+    });
+
+    expect(counts[0]).not.toBe(0);
+    expect(counts.at(-1)).toBe(1);
+  });
+
+  test('a failed disabledSkills write clears the notice the toggle just set', async () => {
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf'],
+      onPersistSkillDisabled: async () => false,
+    });
+
+    await act(async () => {
+      switchFor(rendered.document, 'Enable pdf').click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // setEnabled's own "pdf enabled" notice must not survive the other half
+    // failing — a green success above a switch that snapped back off.
+    expect(rendered.document.querySelector('.agent-settings-notice')).toBeNull();
+  });
+
   test('a healthy skill carries no diagnostic line', async () => {
     const rendered = await render({ skills: [], managed: [managedSkill()] });
 
