@@ -38,15 +38,16 @@ admission) left two boarded follow-ups under **Agent capabilities** —
 `skill-path-ownership` and `skill-directory-is-itself-a-skill` — which are one
 question and should be designed together, not picked up piecemeal.
 `agent-subagent-interaction` closed with **#472** (PR 3), so the whole plan is done and
-archived — no unit of it is staffable any more. **`test:e2e` is still not a clean gate
-signal.** #475 (`cc-2/e2e-gate-hygiene`, in review) clears the two known debts — the
-model-menu flake turned out to be a real timing bug in the composer hand-back, not a test
-race, and the pill's material only needed the guard registry entry. But its
-548/548 claim does not reproduce against current `main`: that gate measured **546/2**,
-and the new deterministic failure is `file-attachments.spec.ts:178`, which reproduces on
-a clean `origin/main` worktree and is now boarded as
-`file-attachment-inline-preview-red-e2e`. So the baseline moved rather than cleared —
-budget a gate round for re-proving which failures are not yours until that one lands.
+archived — no unit of it is staffable any more. **`test:e2e` is still not a clean gate signal**, though for
+a smaller reason than before. #475 merged and closed both known debts — the model-menu
+flake was a real timing bug in the composer hand-back rather than a test race, and the
+pill's material needed only the guard registry entry. The final gate run on it was
+**547/1**, the one failure being `file-attachments.spec.ts:178`, boarded as
+`file-attachment-inline-preview-red-e2e`. **What that item now carries is the more
+important finding:** four full runs produced a different failing set each time, so the
+shape is an unstable suite rather than a list of red tests, and boarding the intermittent
+ones individually would just keep producing entries. Until it is addressed, budget a gate
+round for re-proving which failures are not yours.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -890,24 +891,6 @@ anything.
   full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
   test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
   setup).
-- **flaky-thread-model-menu-focus-e2e** (P3, *fast-track, no plan file*, filed 2026-07-30 at the
-  #458 gate; **`flaky-model-menu-focus-restore-e2e` folded in here 2026-08-01** — it was filed
-  independently at the #467/#468 gate against the same single test, `agent-thread.spec.ts:1714`,
-  and the same Escape→focus assertion, so the board carried one defect twice) —
-  `agent-thread.spec.ts` › *"changes the canonical Thread model and reasoning from
-  the composer"*: an Escape-closes-the-menu `toBeFocused` assertion fails on full-file runs but
-  passes solo. That test has **two** such assertions — `control` (`:1756`) and `listButton`
-  (`:1777`) — and the two filings do not agree on which one fails, so **establish which first**.
-  Evidence from both: ~5/6 fail on the #458 merge base `3d44f0f1` and the same on that branch,
-  1 fail in ~105 solo runs; separately 1 fail / 60 pass on a full-file run at the #467/#468 gate,
-  then 61 pass on a re-run of the same tree. Order/state-dependent, pre-dates #458 (verified on
-  both sides of the merge base) and is not attributable to #467/#468 (neither touches that
-  control). Suspects, from the two filings: `refocusComposerFromClick`'s rAF racing the menu
-  focus-in/restore effects in `useMenuKeyboard`; and the menu's focus restore running before the
-  element it returns to is re-enabled — the same *class* #467 fixed for the Plan pill (close path
-  → focus destination), which makes a real timing bug at least as likely as a test-side race.
-  Reproduce the focus loss outside the harness before touching product code — it may still be
-  test-only state leakage.
 - **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
   #464 gate) — `agent-thread.spec.ts:1247` *"streams a pathless image in bounded chunks and records
   only a managed reference"* fails under full-suite parallel load but passes in isolation (1 fail
@@ -915,18 +898,6 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **plan-progress-pill-material-scope** (P3, *fast-track, no plan file*, filed 2026-08-01 at the
-  #471 gate) — `main` is **deterministically red** on two B5 guards:
-  `typography-tokens.spec.ts` › *"keeps material backgrounds scoped to registered chrome and
-  overlay surfaces"* and *"keeps backdrop filters scoped to material surfaces and preview HUD
-  controls"* both report `.thread-plan-progress-summary` (`thread.css`, `--material-popover` +
-  `--material-backdrop` on an unregistered surface). It arrived with **#467**; #470 and #471
-  both re-reported it, and #471's gate confirmed it reproduces identically on `main` in a
-  clean worktree. Not a guard to relax (B11): the question is whether the Plan pill is chrome
-  or content. If chrome, register the surface; if content, de-materialize it. Either answer is
-  a design call with light+dark visual verification attached, which is why it is its own change
-  and not a fold-in. Until it lands, `test:e2e` is not a clean gate signal — the same problem
-  `red-e2e-on-main` (#464) fixed for the previous round.
 - **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
   at the #475 gate) — `main` is **deterministically red** on `file-attachments.spec.ts:178`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
@@ -943,11 +914,10 @@ anything.
   reaches `summary` display in this fixture — a readiness/mount path, not CSS. (An earlier
   version of this entry read the stack as failing *after* the corner check and sent the
   reader to the geometry below it; that was backwards.)
-  **This is the new red baseline**, and it replaces the pair #475 clears: once that PR lands,
-  `plan-progress-pill-material-scope` and the model-menu flake are gone and this is the only
-  thing between us and a trustworthy `test:e2e`. Same standing lesson as `red-e2e-on-main`
-  (#464): a red baseline costs every later gate the time to re-prove which failures are not
-  its own.
+  **This is the red baseline now.** #475 merged 2026-08-01 and closed the pair this replaced
+  (`plan-progress-pill-material-scope` and `flaky-thread-model-menu-focus-e2e`), so this is
+  the only deterministic failure left. Same standing lesson as `red-e2e-on-main` (#464): a
+  red baseline costs every later gate the time to re-prove which failures are not its own.
   **The instability is wider than this one test**, which is the more useful finding. Across
   four full runs (two at the #475 gate, two by that PR's author) the failing set differed
   every time: `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation),
@@ -973,6 +943,35 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
+  *fast-track, no plan file*) — closed two boarded items,
+  `flaky-thread-model-menu-focus-e2e` and `plan-progress-pill-material-scope`.
+  **The flake was a real product bug, not a test race**, which is why it survived three
+  filings: a probe running the open→Escape cycle 25 times in one page reproduced it 5-13
+  times per run, and instrumenting `HTMLElement.focus` showed the menu's restore working
+  and then being undone one frame later. The composer's click hand-back (#449) defers its
+  decision by a frame and then asks "is focus still on the clicked control?" — a question
+  with no good answer for a menu trigger, because the popup deliberately puts focus back
+  there on close, so a frame late that is indistinguishable from the browser having left it.
+  The decision moved to click time, where the information still exists: a control declaring
+  `aria-haspopup` owns its focus story. `aria-expanded` deliberately stays out — a
+  disclosure toggle really is the one-shot control #449 was built for. The pill's material
+  needed only the guard registry entry, not a CSS change: `.thread-jump-latest` set the
+  precedent for a floating control over the transcript being level-1 chrome, and the
+  `prefers-reduced-transparency` fallback comes from the central `--material-*` swap in
+  `a11y.css`, so B5 holds without a per-surface block. The guard was never a candidate for
+  relaxing (B11).
+  **Gate (main):** `/code-review` (medium), two rounds. One code finding —
+  `[aria-haspopup]` also matches `aria-haspopup="false"`, that attribute's legal default,
+  so the first `aria-haspopup={isMenu}` anyone writes would silently opt a plain control
+  out of the hand-back with a symptom pointing nowhere near the file. The other gate output
+  was not a code finding at all: the PR claimed `test:e2e` 548/548, the gate measured
+  546/2, and the author re-measured and rewrote the body — *"one green run generalised into
+  a standing claim"*. That correction is the durable part. Four full runs across gate and
+  author produced a **different failing set each time**, so what the board carries forward
+  is not one red test but an unstable suite; see `file-attachment-inline-preview-red-e2e`,
+  the one failure that reproduced in every run.
 
 - **tenon-import-skill-name** (`codex/tenon-import-skill-name`, PR #474, codex, merged
   2026-08-01, fast-track; plan archived at

@@ -10,6 +10,21 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Fixed
+
+- **Closing a menu in the agent panel no longer bounces your focus to the
+  composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
+  Escape put focus back on the trigger, as it should, and then a frame later the
+  composer took it away, so the next Tab started from the top of the document
+  instead of the control you had just used. The panel's click hand-back decides a
+  frame after the click whether anything claimed it, and for a control that opens
+  a popup that question has no good answer that late: the menu deliberately puts
+  focus back on its trigger, which is indistinguishable from the browser simply
+  leaving it there. A control that opens a popup now keeps focus for the whole
+  open-and-close cycle, decided at click time. One consequence: clicking a trigger
+  to close its own open menu leaves focus on the trigger, which is what native
+  menus do and what keyboard users need.
+
 ### Changed
 
 - **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
