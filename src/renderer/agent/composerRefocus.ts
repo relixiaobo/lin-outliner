@@ -5,7 +5,8 @@
  * and blank-space clicks never strand focus outside the input.
  *
  * A click is claimed when it targets a surface that owns focus or attention
- * (typing surfaces, links, node references), when it produced a text selection
+ * (typing surfaces, links, node references, controls that open a popup), when
+ * it produced a text selection
  * the user still needs for copying, or when — one frame later — something other
  * than the clicked control holds focus (a popover, dialog, or inline editor
  * installed its own focus target). Keyboard-activated clicks are never
@@ -28,8 +29,16 @@ export type ComposerRefocusDecision =
 
 const SKIP: ComposerRefocusDecision = { refocus: false };
 
-/** Clicks inside these keep focus where the browser put it. */
-const FOCUS_OWNING_TARGETS = 'a, input, textarea, select, [contenteditable="true"]';
+/**
+ * Clicks inside these keep focus where the browser put it.
+ *
+ * `[aria-haspopup]` is here because a control that opens a popup owns a focus
+ * story of its own: the popup takes focus and hands it back on close. The
+ * one-frame check below cannot see that — a frame late, "focus is on the
+ * clicked control" is indistinguishable from a menu having deliberately
+ * restored it — so the decision has to be made at click time, not deferred.
+ */
+const FOCUS_OWNING_TARGETS = 'a, input, textarea, select, [contenteditable="true"], [aria-haspopup]';
 
 /** One-shot controls whose retained focus is meaningless after activation. */
 const ACTIVATABLE_CONTROLS = 'button, summary, [role="button"], [role="option"], [role="menuitem"]';
