@@ -1079,6 +1079,20 @@ export interface ThreadListResponse {
   readonly nextCursor: string | null;
 }
 
+export interface ThreadDescendantsRequest {
+  readonly threadId: ThreadId;
+}
+
+export interface ThreadDescendantsResponse {
+  readonly data: readonly Thread[];
+  /**
+   * Descendants holding queued work that has not started a Turn yet. An idle
+   * status is not evidence a child is finished: a queued message leaves it idle
+   * until admission, and deleting it would discard work already accepted.
+   */
+  readonly queuedWorkThreadIds: readonly ThreadId[];
+}
+
 export interface ThreadReadRequest {
   readonly threadId: ThreadId;
   readonly includeTurns?: boolean;
@@ -1329,6 +1343,7 @@ export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 
 export const AGENT_CORE_METHODS = [
   'thread/list',
+  'thread/descendants',
   'thread/read',
   'thread/start',
   'thread/resume',
@@ -1358,6 +1373,7 @@ export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
   readonly 'thread/list': ThreadListRequest;
+  readonly 'thread/descendants': ThreadDescendantsRequest;
   readonly 'thread/read': ThreadReadRequest;
   readonly 'thread/start': RendererThreadStartRequest;
   readonly 'thread/resume': ThreadResumeRequest;
@@ -1385,6 +1401,7 @@ export interface AgentCoreRequestByMethod {
 
 export interface AgentCoreResponseByMethod {
   readonly 'thread/list': ThreadListResponse;
+  readonly 'thread/descendants': ThreadDescendantsResponse;
   readonly 'thread/read': ThreadReadResponse;
   readonly 'thread/start': ThreadStartResponse;
   readonly 'thread/resume': ThreadResumeResponse;

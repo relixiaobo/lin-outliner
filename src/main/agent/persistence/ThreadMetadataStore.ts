@@ -214,7 +214,12 @@ export class ThreadMetadataStore {
     return record;
   }
 
-  list(request: ThreadListRequest = {}): ThreadListResponse {
+  /**
+   * `rootsOnly` is a store-level option, not a renderer-facing request field:
+   * `thread/list` is root-only by contract, and the filter must run in SQL so
+   * children never consume keyset cursor slots.
+   */
+  list(request: ThreadListRequest & { readonly rootsOnly?: boolean } = {}): ThreadListResponse {
     const limit = pageLimit(request.limit);
     const direction = request.sortDirection ?? 'desc';
     const archived = request.archived ?? false;
@@ -224,6 +229,7 @@ export class ThreadMetadataStore {
     const ordering = direction === 'desc' ? 'DESC' : 'ASC';
     const where = ['archived = ?'];
     const params: SqliteValue[] = [archived ? 1 : 0];
+    if (request.rootsOnly) where.push('parent_thread_id IS NULL');
     if (sources.length > 0) {
       where.push(`thread_source IN (${sources.map(() => '?').join(', ')})`);
       params.push(...sources);

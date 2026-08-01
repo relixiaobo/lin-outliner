@@ -26,6 +26,12 @@ export interface ActiveTurnPlan extends TurnPlanSnapshot {
   readonly turnId: TurnId;
 }
 
+export interface ThreadDescendantsView {
+  readonly threads: readonly Thread[];
+  /** Children holding queued work that has not started a Turn yet. */
+  readonly queuedWorkThreadIds: ReadonlySet<ThreadId>;
+}
+
 export interface ThreadStoreSnapshot {
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
@@ -103,13 +109,20 @@ export class ThreadStore {
       threads.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);
-    const selected = this.snapshot.selectedThreadId && threads.some((thread) => thread.id === this.snapshot.selectedThreadId)
+    // `thread/list` is root conversations only, but the store's Thread map is
+    // the renderer's catalog, not the list: child Threads already known stay,
+    // or every Subagent row in the open transcript would lose its identity and
+    // live status on a reload.
+    const known = [...threads, ...this.snapshot.threads.filter((thread) => (
+      thread.parentThreadId !== null && !threads.some((root) => root.id === thread.id)
+    ))];
+    const selected = this.snapshot.selectedThreadId && known.some((thread) => thread.id === this.snapshot.selectedThreadId)
       ? this.snapshot.selectedThreadId
       : threads[0]?.id ?? null;
     this.patch({
-      threads: sortThreads(threads),
+      threads: sortThreads(known),
       selectedThreadId: selected,
-      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(threads.map((thread) => thread.id))),
+      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(known.map((thread) => thread.id))),
       planByThread: new Map(),
       // A reload rebuilds from the server's view, so a banner recorded before
       // it describes an attempt that no longer exists — but only those.
@@ -123,6 +136,11 @@ export class ThreadStore {
   async selectThread(threadId: ThreadId): Promise<void> {
     if (!this.snapshot.threads.some((thread) => thread.id === threadId)) throw new Error(`Thread not found: ${threadId}`);
     this.patch({ selectedThreadId: threadId, error: null });
+    // Children are no longer listed, so a fresh renderer knows none of them and
+    // every Subagent row in this transcript would read "Not found" for a child
+    // that merely finished. One subtree read per selection restores the catalog
+    // this conversation needs, and prunes children the server no longer has.
+    void this.listDescendants(threadId).catch(() => undefined);
     await this.loadTurns(threadId);
   }
 
@@ -132,6 +150,32 @@ export class ThreadStore {
       this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
     }
     await this.selectThread(threadId);
+  }
+
+  /**
+   * The parent-side browse surface for children, which are no longer list rows.
+   * Results are folded into the catalog so their names and live status are
+   * available to the transcript without a second read.
+   *
+   * It is also the only thing that can retire a child record: `thread/list`
+   * never mentions children, so absence from a subtree read is the sole
+   * evidence one is gone — a spawn that failed after broadcasting
+   * `thread/started` would otherwise leave a row that never dies. Only records
+   * that existed BEFORE the request are eligible, so a child created while it
+   * was in flight is never pruned by a snapshot that predates it.
+   */
+  async listDescendants(threadId: ThreadId): Promise<ThreadDescendantsView> {
+    const knownBefore = descendantThreadIds(this.snapshot.threads, threadId);
+    const response = await this.client.agentCoreRequest('thread/descendants', { threadId });
+    const returned = new Set(response.data.map((thread) => thread.id));
+    let threads = this.snapshot.threads.filter((thread) => (
+      thread.id === threadId || !knownBefore.has(thread.id) || returned.has(thread.id)
+    ));
+    for (const thread of response.data) threads = upsertById(threads, thread);
+    if (threads.length !== this.snapshot.threads.length || response.data.length > 0) {
+      this.patch({ threads: sortThreads(threads) });
+    }
+    return { threads: response.data, queuedWorkThreadIds: new Set(response.queuedWorkThreadIds) };
   }
 
   async createThread(input: { name?: string } = {}): Promise<Thread> {
@@ -174,8 +218,11 @@ export class ThreadStore {
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
     );
+    // The catalog retains children, so the first entry can be a Subagent that
+    // just ran. Falling back to one would open a Thread the user never chose,
+    // with no matching row in the roots-only history list.
     const replacementThreadId = selectedThreadWasDeleted
-      ? threads[0]?.id ?? null
+      ? threads.find((thread) => thread.parentThreadId === null)?.id ?? null
       : this.snapshot.selectedThreadId;
     this.patch({
       threads,

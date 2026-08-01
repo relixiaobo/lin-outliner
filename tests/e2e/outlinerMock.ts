@@ -67,6 +67,15 @@ type E2EWindow = Window & {
     projection: () => unknown;
     clipboardText: () => string;
     emitAgentCoreNotification: (notification: unknown) => void;
+    /** Registers a child Thread in the mock catalog, as a spawn would. */
+    createMockSubagentThread: (input: {
+      parentThreadId: string;
+      name: string;
+      active?: boolean;
+      queuedWork?: boolean;
+    }) => { id: string };
+    /** Flips a mock Thread between idle and active, as a Turn boundary would. */
+    setMockThreadActive: (threadId: string, active: boolean) => void;
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
@@ -662,6 +671,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const emitAutomationNotification = (notification: unknown) => {
       for (const listener of automationListeners) listener(clone(notification));
     };
+    const mockQueuedWorkThreadIds = new Set<string>();
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
       const timestamp = ++now;
       const thread: MockThread = {
@@ -1620,6 +1630,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       projection,
       clipboardText: () => clipboardText,
       emitAgentCoreNotification,
+      createMockSubagentThread: ({ parentThreadId, name, active, queuedWork }) => {
+        const parent = threadById(parentThreadId);
+        const thread = createMockThread({ name });
+        thread.parentThreadId = parent.id;
+        thread.sessionId = parent.sessionId;
+        thread.threadSource = 'subagent';
+        thread.source = 'collaboration';
+        thread.agentNickname = name;
+        thread.agentRole = 'worker';
+        if (active) thread.status = { type: 'active', activeFlags: [] };
+        if (queuedWork) mockQueuedWorkThreadIds.add(thread.id);
+        emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+        return { id: thread.id };
+      },
+      setMockThreadActive: (threadId, active) => {
+        const thread = threadById(threadId);
+        thread.status = active ? { type: 'active', activeFlags: [] } : { type: 'idle' };
+        thread.updatedAt = ++now;
+        emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
+      },
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
@@ -1841,7 +1871,32 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       agentCoreRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: method, args: clone(input) });
         if (method === 'thread/list') {
-          return clone({ data: [...mockThreads].sort((left, right) => right.updatedAt - left.updatedAt), nextCursor: null }) as T;
+          // Root conversations only, like the real catalog: a child Thread is
+          // reached from its parent, never from the history list.
+          const data = mockThreads
+            .filter((thread) => thread.parentThreadId === null)
+            .sort((left, right) => right.updatedAt - left.updatedAt);
+          return clone({ data, nextCursor: null }) as T;
+        }
+        if (method === 'thread/descendants') {
+          const rootId = String(input.threadId);
+          const data: MockThread[] = [];
+          const pending = [rootId];
+          while (pending.length > 0) {
+            const parentId = pending.shift()!;
+            for (const thread of mockThreads) {
+              if (thread.parentThreadId !== parentId || data.some((seen) => seen.id === thread.id)) continue;
+              data.push(thread);
+              pending.push(thread.id);
+            }
+          }
+          data.sort((left, right) => right.updatedAt - left.updatedAt);
+          return clone({
+            data,
+            queuedWorkThreadIds: data
+              .filter((thread) => mockQueuedWorkThreadIds.has(thread.id))
+              .map((thread) => thread.id),
+          }) as T;
         }
         if (method === 'thread/read') {
           const thread = threadById(String(input.threadId));

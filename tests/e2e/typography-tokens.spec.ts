@@ -148,7 +148,6 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
   ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
-  ['src/renderer/styles/thread.css|--thread-depth', 'Thread rows receive their live lineage depth from the Thread list.'],
 ]);
 const layoutTransitionProperties = new Set([
   'all',

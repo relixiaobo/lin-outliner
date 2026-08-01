@@ -76,6 +76,7 @@ import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclo
 import { userFacingAgentError } from '../../threadErrorMessage';
 import {
   collaborationResultSnapshot,
+  collaborationThreadIds,
   presentationFromActivity,
   presentationFromSnapshot,
   type SubagentPresentation,
@@ -243,13 +244,15 @@ export function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const collaborationThreadIds = subagents ? [...subagents.keys()] : undefined;
-  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index, { collaborationThreadIds });
+  const collaborationIds = subagents ? collaborationThreadIds(subagents) : undefined;
+  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index, {
+    collaborationThreadIds: collaborationIds,
+  });
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.
   const title = summarizeThreadToolActivity(
     items, t.agent.thread.activity, index, {
-      collaborationThreadIds,
+      collaborationThreadIds: collaborationIds,
       subjectLimit: Number.POSITIVE_INFINITY,
     },
   );

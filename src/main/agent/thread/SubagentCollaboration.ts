@@ -7,9 +7,12 @@ import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
 import {
+  childBudgetPoolId,
   MAX_SUBAGENT_DEPTH,
   MAX_SUBAGENT_SPAWNS_PER_THREAD,
+  turnBudgetPoolId,
   type SubagentBudgetLedger,
+  type SubagentBudgetPoolId,
 } from '../persistence/SubagentBudgetLedger';
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import { SubagentDepthLimitError,SubagentSpawnLimitError } from '../SubagentStructuralLimitError';
@@ -35,6 +38,13 @@ export interface PendingSubagentActivity {
   readonly agentPath: string;
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
   readonly error: Turn['error'];
+  /**
+   * Which delegated form produced this. Every form is recorded as parent-visible
+   * activity, but only `collaboration` is deliverable through the collaboration
+   * result channel — an isolated Skill's outcome belongs to its `skill` tool row
+   * alone, and must never surface again as `wait_agent` work.
+   */
+  readonly form: 'collaboration' | 'isolatedSkill';
 }
 /**
  * Ceiling on any filesystem wait the account layer puts in front of a delegator.
@@ -98,6 +108,14 @@ export class SubagentCollaboration {
       // after this teardown runs, and a chain removed early cannot be drained.
       // The chain removes its own entry when it settles.
     }
+  }
+  /**
+   * Work already accepted for a child that has not started a Turn yet. An idle
+   * child holding a queued message is not finished, and deleting it would throw
+   * that message away along with the parent's next `followup_task` target.
+   */
+  hasQueuedWork(threadId: ThreadId): boolean {
+    return (this.mailbox.get(threadId)?.length ?? 0) > 0;
   }
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[] {
     return [...(this.pendingSubagentActivities.get(threadId) ?? [])];
@@ -185,14 +203,17 @@ export class SubagentCollaboration {
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
-          let createdPoolThreadId: ThreadId | null = null;
+          let createdPoolId: SubagentBudgetPoolId | null = null;
           let createdMemberThreadId: ThreadId | null = null;
           try {
             if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
             const parent = this.core.requireThread(input.parentThreadId);
             const collaborationChild = input.childKind !== 'isolatedSkill';
             const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
-            const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(input.parentThreadId);
+            const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(
+              input.parentThreadId,
+              input.parentTurnId,
+            );
             const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
             const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
               role,
@@ -228,16 +249,40 @@ export class SubagentCollaboration {
             if (!pool && !inheritedBudget?.resolutionFailed) {
               const poolBudget = tokenCap ?? configuredPoolBudget;
               if (poolBudget !== null) {
-                const poolThreadId = tokenCap === null ? parent.thread.id : thread.id;
-                pool = this.subagentBudgets.createPool(poolThreadId, poolBudget, parent.thread.ephemeral);
-                createdPoolThreadId = poolThreadId;
+                // Spend is request-scoped: with no inherited pool, this
+                // delegating Turn opens one, and the next user Turn opens its
+                // own. An explicit cap still anchors at the child it caps —
+                // that pool is request-scoped already, because the spawn
+                // created the Thread it is named for.
+                pool = this.subagentBudgets.createPool(tokenCap === null
+                  ? {
+                      poolId: turnBudgetPoolId(input.parentTurnId),
+                      scope: 'turn',
+                      originThreadId: parent.thread.id,
+                      originTurnId: input.parentTurnId,
+                      tokenBudget: poolBudget,
+                    }
+                  : {
+                      poolId: childBudgetPoolId(thread.id),
+                      scope: 'thread',
+                      originThreadId: thread.id,
+                      originTurnId: input.parentTurnId,
+                      tokenBudget: poolBudget,
+                    }, parent.thread.ephemeral);
+                createdPoolId = pool.poolId;
                 this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
               }
             }
-            if (pool || tokenCap !== null) {
-              this.subagentBudgets.createMember(thread.id, pool?.poolThreadId ?? null, tokenCap, thread.ephemeral);
-              createdMemberThreadId = thread.id;
-            }
+            // Recorded even with no pool and no cap: the member carries the
+            // delegating Turn, so a child spawned before its request had a pool
+            // can still join THAT request's pool later, and never a later one's.
+            this.subagentBudgets.createMember({
+              threadId: thread.id,
+              poolId: pool?.poolId ?? null,
+              originTurnId: input.parentTurnId,
+              tokenCap,
+            }, thread.ephemeral);
+            createdMemberThreadId = thread.id;
             const accepted = await this.turnLifecycle.acceptAndLaunch({
               threadId: thread.id,
               input: [{ type: 'text', text: input.prompt }],
@@ -256,12 +301,12 @@ export class SubagentCollaboration {
           } catch (error) {
             try {
               if (createdMemberThreadId) this.subagentBudgets.deleteMember(createdMemberThreadId);
-              if (createdPoolThreadId) this.subagentBudgets.deletePoolRecord(createdPoolThreadId);
-              if (createdPoolThreadId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+              if (createdPoolId) this.subagentBudgets.deletePoolRecord(createdPoolId);
+              if (createdPoolId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
             } catch (rollbackError) {
               console.warn('[agent][subagent-budget-audit] failed to roll back staged budget rows', {
                 memberThreadId: createdMemberThreadId,
-                poolThreadId: createdPoolThreadId,
+                poolId: createdPoolId,
                 error: rollbackError,
               });
             }
@@ -272,16 +317,17 @@ export class SubagentCollaboration {
         if (stagedThreadId) await this.catalog.deleteThread(stagedThreadId).catch(() => undefined);
         throw error;
       }
-      if (result.thread.source === 'collaboration') {
-        await this.recordSubagentActivity(
-          input.parentThreadId,
-          input.parentTurnId,
-          result.thread.id,
-          result.taskPath,
-          'started',
-          null,
-        );
-      }
+      // Every delegated form gets a per-child row, not only collaboration: an
+      // isolated Skill otherwise runs behind one in-progress `skill` row with no
+      // sign that a delegated agent is working and no way in.
+      await this.recordSubagentActivity(
+        input.parentThreadId,
+        input.parentTurnId,
+        result.thread.id,
+        result.taskPath,
+        'started',
+        null,
+      );
       return result;
     }
 
@@ -433,6 +479,7 @@ export class SubagentCollaboration {
       if (activeTurnId) {
         await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
       } else {
+        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
         this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
         const queued = this.mailbox.get(targetThread.id) ?? [];
         queued.push({ content });
@@ -454,6 +501,7 @@ export class SubagentCollaboration {
       if (activeTurnId) {
         await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
       } else {
+        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
         this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
         const queued = this.mailbox.get(targetThread.id) ?? [];
         this.mailbox.delete(targetThread.id);
@@ -508,7 +556,9 @@ export class SubagentCollaboration {
       this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
       if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
 
-      if ((this.pendingSubagentActivities.get(senderThreadId)?.length ?? 0) > 0) {
+      // Only collaboration activity can end a wait. Skill activity still flushes
+      // into the transcript as rows, but it is not a deliverable outcome here.
+      if (this.pendingCollaborationActivityCount(senderThreadId) > 0) {
         this.takePendingCollaborationActivity(senderThreadId);
         const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
         return this.collaborationWaitResult(senderThreadId, 'terminal', activities);
@@ -545,11 +595,62 @@ export class SubagentCollaboration {
       });
       this.takePendingCollaborationActivity(senderThreadId);
       const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+      const collaboration = activities.filter((activity) => activity.form === 'collaboration');
       return this.collaborationWaitResult(
         senderThreadId,
-        activities.length > 0 ? 'terminal' : 'steering',
+        collaboration.length > 0 ? 'terminal' : 'steering',
         activities,
       );
+    }
+  private pendingCollaborationActivityCount(threadId: ThreadId): number {
+      return (this.pendingSubagentActivities.get(threadId) ?? [])
+        .filter((activity) => activity.form === 'collaboration')
+        .length;
+    }
+  /**
+   * Re-delegating to an idle child is a NEW request, so it joins the pool of the
+   * Turn delegating now — the same rule that binds a fresh spawn. This is not
+   * orphan migration: a live member is never moved, and this path is reached
+   * only once every member of the old pool settled and the pool was reclaimed.
+   * Without it a re-driven child would run uncovered, which is the one hole the
+   * request-scoped pool could otherwise open.
+   */
+  private async adoptIdleChildIntoDelegatingPool(
+      childThreadId: ThreadId,
+      senderThreadId: ThreadId,
+      senderTurnId: TurnId,
+    ): Promise<void> {
+      if (this.turnLifecycle.resolveSubagentBudget(childThreadId)?.pool) return;
+      const configuredPoolBudget = await this.configuredPoolBudget();
+      await this.core.threadTreeMutex.run(async () => {
+        if (this.turnLifecycle.resolveSubagentBudget(childThreadId)?.pool) return;
+        const sender = this.core.requireThread(senderThreadId).thread;
+        const inherited = this.turnLifecycle.resolveSubagentSpawnBudget(senderThreadId, senderTurnId);
+        if (inherited?.resolutionFailed) return;
+        let pool = inherited?.pool ?? null;
+        if (!pool) {
+          if (configuredPoolBudget === null) return;
+          pool = this.subagentBudgets.createPool({
+            poolId: turnBudgetPoolId(senderTurnId),
+            scope: 'turn',
+            originThreadId: senderThreadId,
+            originTurnId: senderTurnId,
+            tokenBudget: configuredPoolBudget,
+          }, sender.ephemeral);
+          this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+        }
+        const child = this.core.requireThread(childThreadId).thread;
+        if (this.subagentBudgets.readMember(childThreadId)) {
+          this.subagentBudgets.rebindMemberPool(childThreadId, pool.poolId, senderTurnId);
+        } else {
+          this.subagentBudgets.createMember({
+            threadId: childThreadId,
+            poolId: pool.poolId,
+            originTurnId: senderTurnId,
+            tokenCap: null,
+          }, child.ephemeral);
+        }
+      });
     }
   private taskPathForThread(threadId: ThreadId): string | null { return this.ephemeralSpawnEdges.get(threadId)?.taskPath
         ?? this.core.metadata.spawnEdgeForChild(threadId)?.taskPath
@@ -623,6 +724,10 @@ export class SubagentCollaboration {
     ): Promise<CollaborationWaitResult> {
       const updates: CollaborationTerminalOutcome[] = [];
       for (const activity of activities) {
+        // An isolated Skill child is absent from this channel by contract: its
+        // `skill` tool call is the single parent-facing owner of its outcome,
+        // and replaying it here would offer the same work twice.
+        if (activity.form !== 'collaboration') continue;
         if (activity.kind === 'started') continue;
         updates.push(await this.collaborationTerminalOutcome(
           activity.agentThreadId,
@@ -844,11 +949,10 @@ export class SubagentCollaboration {
       );
     }
   queueChildTurnActivity(thread: Thread, turn: Turn): void {
-      // Every delegated form gets an account, so the append runs before the
-      // collaboration-only activity queueing below: an isolated-Skill child is
-      // not a `collaboration` source but is owed the same transcript.
+      // Every delegated form gets an account and a parent-visible row; only
+      // collaboration gets the result channel.
       this.enqueueTranscriptTurn(thread, turn);
-      if (!thread.parentThreadId || thread.source !== 'collaboration') return;
+      if (!thread.parentThreadId) return;
       const agentPath = this.taskPathForThread(thread.id);
       if (!agentPath) return;
       const kind: PendingSubagentActivity['kind'] = turn.status === 'completed'
@@ -856,10 +960,16 @@ export class SubagentCollaboration {
         : turn.status === 'interrupted'
           ? 'interrupted'
           : 'errored';
+      const form: PendingSubagentActivity['form'] = thread.source === 'collaboration'
+        ? 'collaboration'
+        : 'isolatedSkill';
       const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
-      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error });
+      queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error, form });
       this.pendingSubagentActivities.set(thread.parentThreadId, queued);
-      this.signalCollaborationActivity(thread.parentThreadId);
+      // An isolated Skill is absent from `wait_agent` by contract, so its
+      // terminal transition must not wake a parent blocked on collaboration
+      // children — the `skill` call that is already awaiting it owns its outcome.
+      if (form === 'collaboration') this.signalCollaborationActivity(thread.parentThreadId);
     }
   async flushPendingSubagentActivities(
       threadId: ThreadId,

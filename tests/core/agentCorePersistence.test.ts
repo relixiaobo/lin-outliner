@@ -8,7 +8,7 @@ import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensi
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { SubagentBudgetLedger } from '../../src/main/agent/persistence/SubagentBudgetLedger';
+import { SubagentBudgetLedger, turnBudgetPoolId } from '../../src/main/agent/persistence/SubagentBudgetLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -470,46 +470,79 @@ describe('Agent Core persistence', () => {
     const goalsDatabase = testDatabase(goalsPath);
     const goals = new GoalStore(goalsPath, goalsDatabase);
     const budgets = new SubagentBudgetLedger(goalsDatabase);
-    const persistentPoolId = uuidV7(3100);
+    const persistentHolderId = uuidV7(3100);
+    const persistentOriginTurnId = uuidV7(3150);
+    const persistentPoolId = turnBudgetPoolId(persistentOriginTurnId);
     const persistentChildId = uuidV7(3200);
     const persistentSiblingId = uuidV7(3300);
-    const ephemeralPoolId = uuidV7(3400);
+    const ephemeralHolderId = uuidV7(3400);
+    const ephemeralOriginTurnId = uuidV7(3450);
+    const ephemeralPoolId = turnBudgetPoolId(ephemeralOriginTurnId);
     const ephemeralChildId = uuidV7(3500);
 
     goals.create(persistentChildId, 'Child-owned Goal', null, 10);
-    budgets.createPool(persistentPoolId, 100, false);
-    budgets.createMember(persistentChildId, persistentPoolId, 60, false);
-    budgets.createMember(persistentSiblingId, persistentPoolId, null, false);
+    budgets.createPool({
+      poolId: persistentPoolId,
+      scope: 'turn',
+      originThreadId: persistentHolderId,
+      originTurnId: persistentOriginTurnId,
+      tokenBudget: 100,
+    }, false);
+    budgets.createMember({
+      threadId: persistentChildId,
+      poolId: persistentPoolId,
+      originTurnId: persistentOriginTurnId,
+      tokenCap: 60,
+    }, false);
+    budgets.createMember({
+      threadId: persistentSiblingId,
+      poolId: persistentPoolId,
+      originTurnId: persistentOriginTurnId,
+      tokenCap: null,
+    }, false);
     budgets.addUsage(persistentChildId, persistentPoolId, 40);
     budgets.addUsage(persistentSiblingId, persistentPoolId, 10);
-    budgets.recordSpawnCount(persistentPoolId, 2, false);
-    budgets.createPool(ephemeralPoolId, 50, true);
-    budgets.createMember(ephemeralChildId, ephemeralPoolId, null, true);
+    budgets.recordSpawnCount(persistentHolderId, 2, false);
+    budgets.createPool({
+      poolId: ephemeralPoolId,
+      scope: 'turn',
+      originThreadId: ephemeralHolderId,
+      originTurnId: ephemeralOriginTurnId,
+      tokenBudget: 50,
+    }, true);
+    budgets.createMember({
+      threadId: ephemeralChildId,
+      poolId: ephemeralPoolId,
+      originTurnId: ephemeralOriginTurnId,
+      tokenCap: null,
+    }, true);
     budgets.addUsage(ephemeralChildId, ephemeralPoolId, 10);
-    budgets.recordSpawnCount(ephemeralPoolId, 1, true);
+    budgets.recordSpawnCount(ephemeralHolderId, 1, true);
     expect(goals.read(persistentChildId)?.goal.objective).toBe('Child-owned Goal');
     expect(budgets.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(budgets.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
     expect(budgets.readMember(persistentSiblingId)).toMatchObject({ tokenCap: null, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(persistentPoolId)).toBe(2);
+    expect(budgets.readSpawnCount(persistentHolderId)).toBe(2);
     expect(budgets.readPool(ephemeralPoolId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(ephemeralPoolId)).toBe(1);
+    expect(budgets.readSpawnCount(ephemeralHolderId)).toBe(1);
     goals.close();
 
     const reopenedDatabase = testDatabase(goalsPath);
     const reopened = new SubagentBudgetLedger(reopenedDatabase);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(reopened.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
-    expect(reopened.readSpawnCount(persistentPoolId)).toBe(2);
+    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
     expect(reopened.readPool(ephemeralPoolId)).toBeNull();
-    expect(reopened.readSpawnCount(ephemeralPoolId)).toBe(0);
+    expect(reopened.readSpawnCount(ephemeralHolderId)).toBe(0);
     expect(reopened.clearThread(persistentChildId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
-    expect(reopened.readSpawnCount(persistentPoolId)).toBe(2);
-    expect(reopened.clearThread(persistentPoolId)).toBe(true);
+    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
+    // Deleting the Thread that originated the pool takes the pool and every
+    // remaining member with it.
+    expect(reopened.clearThread(persistentHolderId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toBeNull();
     expect(reopened.readMember(persistentSiblingId)).toBeNull();
-    expect(reopened.readSpawnCount(persistentPoolId)).toBe(0);
+    expect(reopened.readSpawnCount(persistentHolderId)).toBe(0);
     reopenedDatabase.close();
   });
 });

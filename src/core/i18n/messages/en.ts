@@ -1098,6 +1098,24 @@ commandPalette: {
       details: 'Thread Details',
       detailsTitle: 'Thread Details',
       closeDetails: 'Close Thread Details',
+      backToParent: ({ name }: { name: string }) => `Back to ${name}`,
+      backToParentFallback: 'Back to the parent Thread',
+      backgroundWork: 'Background work running',
+      subagents: 'Subagents',
+      noSubagents: 'No Subagents for this Thread.',
+      subagentRunning: 'Running',
+      subagentIdle: 'Idle',
+      subagentQueued: 'Work queued',
+      subagentFailed: 'Failed',
+      openSubagent: ({ name }: { name: string }) => `Open ${name}`,
+      deleteSubagent: ({ name }: { name: string }) => `Delete ${name}`,
+      deleteFinishedSubagents: 'Delete finished Subagents',
+      deleteFinishedSubagentsConfirm: ({ count }: { count: number }) => (
+        count === 1
+          ? 'Delete 1 finished Subagent and its child Threads?'
+          : `Delete ${count} finished Subagents and their child Threads?`
+      ),
+      threadUnavailable: 'That Thread is no longer available.',
       threadId: 'Thread ID',
       parentThreadId: 'Parent Thread ID',
       forkedFromId: 'Forked From ID',

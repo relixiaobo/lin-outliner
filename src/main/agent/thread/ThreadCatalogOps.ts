@@ -1,7 +1,7 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
-import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
+import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import { assertContextPayloadDependencies,itemContextPayloadReferences,itemResourceReferences } from '../context/contextDependencies';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { decodeCursor,encodeCursor,pageLimit } from '../persistence/cursor';
@@ -22,6 +22,7 @@ interface PendingThreadNameGeneration {
 }
 
 export interface ThreadCatalogCollaboration {
+  hasQueuedWork(threadId: ThreadId): boolean;
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
     readonly sessionId: string;
     readonly parentThreadId: ThreadId;
@@ -65,8 +66,8 @@ export class ThreadCatalogOps {
       for (const archived of [false, true]) {
         let cursor: string | null = null;
         do {
-          const page = this.core.metadata.list({ archived, cursor, limit: 100 });
-          threads.push(...page.data.filter((thread) => thread.parentThreadId === null && !thread.ephemeral));
+          const page = this.core.metadata.list({ archived, cursor, limit: 100, rootsOnly: true });
+          threads.push(...page.data.filter((thread) => !thread.ephemeral));
           cursor = page.nextCursor;
         } while (cursor);
       }
@@ -145,15 +146,23 @@ export class ThreadCatalogOps {
       ));
       return pageEphemeralItems(entries, request);
     }
+  /**
+   * Root conversations only. A child Thread is an execution artifact of a Turn,
+   * not a conversation the user had; it is reachable from the parent transcript
+   * and from parent Thread Details. Filtering in SQL rather than after the page
+   * is load-bearing — a post-filter would shrink pages and let children keep
+   * consuming keyset cursor slots.
+   */
   listThreads(request: ThreadListRequest = {}): ThreadListResponse {
       const direction = request.sortDirection ?? 'desc';
       const limit = pageLimit(request.limit);
       const cursor = decodeThreadCursor(request.cursor, direction);
-      const persisted = this.core.metadata.list({ ...request, limit });
+      const persisted = this.core.metadata.list({ ...request, limit, rootsOnly: true });
       const ephemeral = request.archived === true ? [] : [...this.core.ephemeral.values()]
         .filter((state) => !this.core.hiddenEphemeralThreads.has(state.record.thread.id))
         .filter((state) => state.record.archived === (request.archived ?? false))
         .map((state) => state.record.thread)
+        .filter((thread) => thread.parentThreadId === null)
         .filter((thread) => !request.threadSources || request.threadSources.includes(thread.threadSource))
         .filter((thread) => threadFollowsCursor(thread, cursor, direction));
       const candidates = [...persisted.data, ...ephemeral]
@@ -168,6 +177,24 @@ export class ThreadCatalogOps {
         nextCursor: hasNext && last
           ? encodeThreadListCursor({ updatedAt: last.updatedAt, id: last.id }, direction)
           : null,
+      };
+    }
+  /**
+   * The parent-side browse surface for children, now that they are not list
+   * rows. Ordered newest activity first, the whole subtree rather than direct
+   * children only, so a grandchild is reachable in one place.
+   */
+  listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
+      const data = this.threadSubtreeIds(request.threadId)
+        .filter((threadId) => threadId !== request.threadId)
+        .filter((threadId) => !this.core.hiddenEphemeralThreads.has(threadId))
+        .map((threadId) => this.core.requireThread(threadId).thread)
+        .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
+      return {
+        data,
+        queuedWorkThreadIds: data
+          .filter((thread) => this.collaboration.hasQueuedWork(thread.id))
+          .map((thread) => thread.id),
       };
     }
   readThread(request: ThreadReadRequest): ThreadReadResponse {

@@ -13,10 +13,19 @@ import { userFacingAgentErrorRecord } from './threadErrorMessage';
 
 export type SubagentPresentationStatus = SubagentExecutionStatus | 'idle';
 
+/**
+ * Which delegated form a row describes. Every form is shown as process, but only
+ * collaboration children are what `wait_agent` waits on and what a collaboration
+ * tool row is accountable for — counting an isolated Skill child there would
+ * describe work the parent is not actually waiting on.
+ */
+export type SubagentDelegationForm = 'collaboration' | 'isolatedSkill';
+
 export interface SubagentPresentation {
   readonly agentThreadId: ThreadId;
   readonly displayName: string;
   readonly error: TurnError | null;
+  readonly form: SubagentDelegationForm;
   readonly nickname: string | null;
   readonly role: string | null;
   readonly startedAt: number | null;
@@ -27,6 +36,12 @@ export interface SubagentPresentation {
 export interface SubagentTurnProjection {
   readonly activeThreadIds: readonly ThreadId[];
   readonly byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>;
+  /**
+   * The children a wait blocks on and a collaboration tool row is accountable
+   * for. Derived once here: every consumer that re-derived it would have to be
+   * found again when a third delegation form appears.
+   */
+  readonly collaborationThreadIds: readonly ThreadId[];
   readonly items: readonly ThreadItem[];
 }
 
@@ -78,7 +93,12 @@ export function projectSubagentsForTurn(
   ));
   if (waitingForSubagents) {
     for (const thread of threadsById.values()) {
-      if (thread.parentThreadId === turn.provenance.originThreadId) relatedThreadIds.add(thread.id);
+      // Only collaboration children: a wait is never blocked on an isolated
+      // Skill child, so pulling one in here would inflate what the parent
+      // claims to be waiting for.
+      if (thread.parentThreadId === turn.provenance.originThreadId && thread.source === 'collaboration') {
+        relatedThreadIds.add(thread.id);
+      }
     }
   }
 
@@ -96,6 +116,7 @@ export function projectSubagentsForTurn(
       agentThreadId: threadId,
       displayName: subagentDisplayName(taskPath, nickname, role, threadId),
       error: live.error,
+      form: delegationForm(thread ?? null),
       nickname,
       role,
       startedAt: live.startedAt,
@@ -116,8 +137,22 @@ export function projectSubagentsForTurn(
       .filter((entry) => entry.status === 'pendingInit' || entry.status === 'running')
       .map((entry) => entry.agentThreadId),
     byThreadId,
+    collaborationThreadIds: collaborationThreadIds(byThreadId),
     items,
   };
+}
+
+/**
+ * The children a wait blocks on and a collaboration tool row is accountable
+ * for. One definition, because a consumer that re-derives it is a consumer that
+ * has to be found again when a third delegation form appears.
+ */
+export function collaborationThreadIds(
+  byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>,
+): readonly ThreadId[] {
+  return [...byThreadId.values()]
+    .filter((entry) => entry.form === 'collaboration')
+    .map((entry) => entry.agentThreadId);
 }
 
 export function presentationFromActivity(item: SubAgentActivityThreadItem): SubagentPresentation {
@@ -126,6 +161,7 @@ export function presentationFromActivity(item: SubAgentActivityThreadItem): Suba
     agentThreadId: item.agentThreadId,
     displayName: subagentDisplayName(item.agentPath, null, null, item.agentThreadId),
     error: item.error,
+    form: 'collaboration',
     nickname: null,
     role: null,
     startedAt: null,
@@ -145,6 +181,8 @@ export function presentationFromSnapshot(
     agentThreadId: threadId,
     displayName: subagentDisplayName(taskPath, nickname, role, threadId),
     error: null,
+    // A persisted collaboration snapshot only ever records collaboration children.
+    form: 'collaboration',
     nickname,
     role,
     startedAt: null,
@@ -223,6 +261,15 @@ function livePresentationState(
         status: 'errored',
       };
   }
+}
+
+/**
+ * An unknown Thread reads as collaboration: that is the pre-existing meaning of
+ * a row whose child is no longer in the catalog, and the form only ever narrows
+ * counts, never widens them.
+ */
+function delegationForm(thread: Thread | null): SubagentDelegationForm {
+  return thread?.source === 'agent.skill' ? 'isolatedSkill' : 'collaboration';
 }
 
 function turnOwnsItem(turn: Turn, itemId: string): boolean {

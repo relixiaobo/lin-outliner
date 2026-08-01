@@ -2242,7 +2242,7 @@ function threadProcessNeutralHeader(
     ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
       ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index, {
-          collaborationThreadIds: [...subagents.byThreadId.keys()],
+          collaborationThreadIds: subagents.collaborationThreadIds,
         })
       : '';
   if (reasoning) {
@@ -2271,7 +2271,10 @@ function waitingSubagentCount(
   if (inProgressTools.length === 0 || inProgressTools.some((item) => (
     item.type !== 'collabAgentToolCall' || item.tool !== 'wait_agent'
   ))) return 0;
-  return subagents.activeThreadIds.length;
+  // A wait blocks on collaboration children only; a live isolated Skill child is
+  // delegated work in the same Turn, but not work this wait is waiting for.
+  const collaboration = new Set(subagents.collaborationThreadIds);
+  return subagents.activeThreadIds.filter((threadId) => collaboration.has(threadId)).length;
 }
 
 function firstProcessLine(value: string): string {

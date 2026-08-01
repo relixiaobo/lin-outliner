@@ -13,7 +13,39 @@ The dock has three stable regions:
 2. A scrollable Thread view containing ordered Turns and Items.
 3. A composer for starting, steering, or interrupting the active Turn.
 
-Child Threads are visibly nested under their parent. Forks remain top-level user
+The Thread list is root conversations only. A child Thread is an execution
+artifact of a Turn rather than a conversation the user had, so `thread/list`
+filters children out in SQL — they never occupy a keyset cursor slot and cannot
+displace a root between pages — and the list renders no lineage indent. A child
+is reached from the parent transcript, from the parent's Thread Details, or by
+direct id; the renderer's Thread map is a catalog rather than the list, so a
+child recovered that way keeps its identity and live status, and a reload's
+omission of children proves nothing about them. A root whose subtree has a live
+descendant Turn shows a neutral background-activity indicator on its list row,
+which is also the only place a fire-and-forget child is visible after its
+parent Turn ended.
+
+A selected child Thread gains a back affordance naming its parent, ahead of the
+list affordance rather than in place of it: the Thread list is the only route to
+create, rename, details, and delete, so no view may be without it. Lineage
+deeper than one level collapses to the immediate parent. Every child link —
+transcript row, Thread Details row, back affordance — resolves through the
+catalog-recovering open path, and a Thread that is genuinely gone surfaces the
+dock's transient failure copy instead of throwing behind a bare call.
+
+Parent Thread Details lists the descendant subtree newest-activity first with a
+readable name, status, and last activity; the read names the subtree while the
+Thread catalog keeps each status current, so a child that starts or stops while
+the dialog is open does not go stale. Each row opens that child, and each can be
+deleted. A bulk action removes finished Subagents, which means Threads whose
+whole subtree has stopped: a finished parent with a running child is never
+swept, because deletion cascades, and neither is a child holding queued work,
+because idle is not finished — work already handed to it has not run yet. Both
+deletions are confirmed first and re-decided against a fresh read at the moment
+they are confirmed, since deletion force-stops a live subtree and cannot be
+undone.
+
+Forks remain top-level user
 Threads and expose their source lineage in details rather than masquerading as
 children.
 
@@ -140,15 +172,23 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   expressions and URL text are not treated as concrete local paths, and
   main-process preview checks remain authoritative
 - collaboration Items and Subagent activity link directly to their canonical
-  child Thread. Within one parent Turn, all `subAgentActivity` Items for the same
+  child Thread. Every delegated form is projected the same way, including an
+  isolated Skill child, whose row is the parent's only live signal that a
+  delegated agent is working while its `skill` call is still in flight. A row
+  records which form it describes: a wait counts only collaboration children,
+  and a collaboration tool row is accountable only for those, so a Skill child
+  is never counted as work the parent is waiting for. Within one parent Turn,
+  all `subAgentActivity` Items for the same
   child collapse into one presentation row at the first Item's position. A
   terminal activity Item is authoritative; otherwise the row combines the
   Thread catalog with the latest canonical child `turn/started` or
   `turn/completed` DTO retained by `threadStore`, even when that child's paged
   history is not loaded. This lets a running row show elapsed time and flip to
   completed, interrupted, or failed as soon as the child Turn notification
-  arrives, without waiting for the parent activity queue to flush. Catalog
-  reload and subtree deletion remove the corresponding latest-Turn cache entries
+  arrives, without waiting for the parent activity queue to flush. A catalog
+  reload drops the latest-Turn cache entry for a ROOT it no longer returns, and
+  subtree deletion drops the whole subtree's entries; a child's absence from a
+  root-only list is not evidence about the child
 - Subagent rows use task-path identity first, then nickname, Role, and finally a
   shortened Thread id. Running copy is `Started subagent <name>` plus elapsed
   time when known; idle remains distinct from completed. A failed row exposes a
