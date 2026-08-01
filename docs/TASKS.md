@@ -38,11 +38,15 @@ admission) left two boarded follow-ups under **Agent capabilities** —
 `skill-path-ownership` and `skill-directory-is-itself-a-skill` — which are one
 question and should be designed together, not picked up piecemeal.
 `agent-subagent-interaction` closed with **#472** (PR 3), so the whole plan is done and
-archived — no unit of it is staffable any more. **`test:e2e` is not a clean gate signal
-right now**: two B5 material guards are deterministically red on `main` (see
-`plan-progress-pill-material-scope`), and `flaky-model-menu-focus-restore-e2e` has now
-failed at two consecutive gates and passed solo both times — it has earned an actual
-investigation rather than another entry, and the boarded item names where to start.
+archived — no unit of it is staffable any more. **`test:e2e` is still not a clean gate
+signal.** #475 (`cc-2/e2e-gate-hygiene`, in review) clears the two known debts — the
+model-menu flake turned out to be a real timing bug in the composer hand-back, not a test
+race, and the pill's material only needed the guard registry entry. But its
+548/548 claim does not reproduce against current `main`: that gate measured **546/2**,
+and the new deterministic failure is `file-attachments.spec.ts:178`, which reproduces on
+a clean `origin/main` worktree and is now boarded as
+`file-attachment-inline-preview-red-e2e`. So the baseline moved rather than cleared —
+budget a gate round for re-proving which failures are not yours until that one lands.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -923,6 +927,26 @@ anything.
   a design call with light+dark visual verification attached, which is why it is its own change
   and not a fold-in. Until it lands, `test:e2e` is not a clean gate signal — the same problem
   `red-e2e-on-main` (#464) fixed for the previous round.
+- **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
+  at the #475 gate) — `main` is **deterministically red** on `file-attachments.spec.ts:178`
+  › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
+  and whose bullet drills to the node page"*. It fails at `:322`, the `expect.poll` on the
+  inline preview frame's computed geometry immediately after `expectConcentricPreviewCorners`
+  — so the frame is visible and its corners are concentric, and what does not settle is the
+  measurement below it (summary strip, `.file-preview-pdf-canvas` rects, frame padding/radius).
+  Reproduced twice on the #475 branch and then **on a clean `origin/main` worktree**, so it is
+  `main`'s, not that branch's. Not yet bisected; nothing in the recent preview/CSS history is
+  an obvious cause, so start by capturing the polled object rather than assuming a CSS
+  regression — a poll that never settles can equally be a rendering step the assertion no
+  longer waits for.
+  **This is the new red baseline**, and it replaces the pair #475 clears: once that PR lands,
+  `plan-progress-pill-material-scope` and the model-menu flake are gone and this is the only
+  thing between us and a trustworthy `test:e2e`. Same standing lesson as `red-e2e-on-main`
+  (#464): a red baseline costs every later gate the time to re-prove which failures are not
+  its own.
+  Also seen once at the same gate and **not** boarded separately:
+  `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation) failed in a full run and passed
+  on re-run — one observation, recorded here rather than given its own item until it recurs.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
