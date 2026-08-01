@@ -47,7 +47,11 @@ pill's material needed only the guard registry entry. The final gate run on it w
 important finding:** four full runs produced a different failing set each time, so the
 shape is an unstable suite rather than a list of red tests, and boarding the intermittent
 ones individually would just keep producing entries. Until it is addressed, budget a gate
-round for re-proving which failures are not yours.
+round for re-proving which failures are not yours. **Newly boarded alongside it:**
+`e2e-signal-on-main` (P2, needs a one-pager) — three rounds running, a red `main` has been
+found only because a PR gate happened to run the full suite, and one run cannot separate a
+red baseline from a flake. The repository has no CI at all, so that item decides whether
+there is a pipeline, not what runs in it.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -898,6 +902,32 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
+- **e2e-signal-on-main** (P2, *needs a one-pager before build*, filed 2026-08-01 at the #475
+  gate) — a red `main` is only ever discovered when someone happens to run the full suite
+  during a PR gate. That has now happened three rounds running: #464 fixed one, #475 fixed
+  the next pair, and the #475 gate turned up the one after that. Every round costs the
+  gating PR the time to prove which failures are not its own, and every round the discovery
+  was accidental.
+  **A single run cannot tell a red baseline from a flake**, which is the part that makes
+  this its own change rather than more diligence. Four full runs at the #475 gate (two by
+  the gate, two by the author) produced a **different failing set each time**; only
+  `file-attachments.spec.ts:178` appeared in all four. So the signal needs two properties:
+  it runs on `main` without a PR, and it repeats enough to classify deterministic versus
+  intermittent rather than reporting one sample.
+  Grounding facts for whoever drafts it: **the repository has no CI at all** — no
+  `.github/workflows`, no other runner config — so this is not "add a job to the pipeline",
+  it is deciding whether there is a pipeline. macOS is the supported platform
+  (Electron + Playwright), so a hosted runner means a macOS runner and its cost, and a
+  local scheduled run means one machine's availability. And `playwright.config.ts` sets
+  `trace: 'on-first-retry'` while never setting `retries`, so **traces have never been
+  produced** — which is why every one of these investigations has been re-run-and-squint
+  instead of opening a trace. That is worth fixing whatever else is decided.
+  **Explicitly not**: turning on retries so the suite reports green. That would convert a
+  visible instability into an invisible one, which is the same trade B11 refuses for the
+  design guards.
+  The one-pager owes: where it runs, how many repetitions, and what it does with the result
+  — a notification, an issue, or a board entry — since a signal nobody is obliged to read
+  reproduces the current situation with more steps.
 - **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
   at the #475 gate) — `main` is **deterministically red** on `file-attachments.spec.ts:178`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
