@@ -930,23 +930,33 @@ anything.
 - **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
   at the #475 gate) — `main` is **deterministically red** on `file-attachments.spec.ts:178`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
-  and whose bullet drills to the node page"*. It fails at `:322`, the `expect.poll` on the
-  inline preview frame's computed geometry immediately after `expectConcentricPreviewCorners`
-  — so the frame is visible and its corners are concentric, and what does not settle is the
-  measurement below it (summary strip, `.file-preview-pdf-canvas` rects, frame padding/radius).
-  Reproduced twice on the #475 branch and then **on a clean `origin/main` worktree**, so it is
-  `main`'s, not that branch's. Not yet bisected; nothing in the recent preview/CSS history is
-  an obvious cause, so start by capturing the polled object rather than assuming a CSS
-  regression — a poll that never settles can equally be a rendering step the assertion no
-  longer waits for.
+  and whose bullet drills to the node page"*. Reproduced on the #475 branch twice, on a
+  clean `origin/main` worktree, and again at the #475 re-gate — deterministic, and `main`'s
+  rather than any branch's.
+  **It is not a geometry failure.** The assertion is inside
+  `expectConcentricPreviewCorners` (`file-attachments.spec.ts:139`, called from `:322`) and
+  it reports `Received: null` — the helper's own `if (!content) return null` guard, meaning
+  `.file-preview-pdf--summary` is never found inside the visible preview frame within the
+  5s poll. So the frame mounts and passes `toBeVisible()`, and the PDF summary subtree
+  never appears at all. That class is emitted by `previewRenderers.tsx:1334`
+  (`file-preview-pdf--${displayMode}`), so the question is why the PDF renderer never
+  reaches `summary` display in this fixture — a readiness/mount path, not CSS. (An earlier
+  version of this entry read the stack as failing *after* the corner check and sent the
+  reader to the geometry below it; that was backwards.)
   **This is the new red baseline**, and it replaces the pair #475 clears: once that PR lands,
   `plan-progress-pill-material-scope` and the model-menu flake are gone and this is the only
   thing between us and a trustworthy `test:e2e`. Same standing lesson as `red-e2e-on-main`
   (#464): a red baseline costs every later gate the time to re-prove which failures are not
   its own.
-  Also seen once at the same gate and **not** boarded separately:
-  `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation) failed in a full run and passed
-  on re-run — one observation, recorded here rather than given its own item until it recurs.
+  **The instability is wider than this one test**, which is the more useful finding. Across
+  four full runs (two at the #475 gate, two by that PR's author) the failing set differed
+  every time: `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation),
+  `date-field-picker.spec.ts:20`, and `design-system-runtime.spec.ts:807` (dark date-picker
+  overlay) each failed in some runs and passed in others, including on plain `origin/main`.
+  Only this item's test failed in every run. None of them are reachable from #475's diff.
+  So the shape to fix is not one red test but a suite whose failing set is
+  run-dependent — treat the unstable specs as one problem, and expect boarding them
+  individually to keep producing entries.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
