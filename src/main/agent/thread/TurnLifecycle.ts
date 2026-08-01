@@ -17,6 +17,7 @@ import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
 import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
 import { SubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
+import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
 import type { SkillAdmissionResolution,SkillAdmissionResolutionInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import type { PendingSubagentActivity,StagedContextEvidence } from './SubagentCollaboration';
@@ -625,13 +626,46 @@ export class TurnLifecycle {
       }
       return null;
     }
+  /**
+   * The single gate for delegated work: non-user Turn admission, spawn, and the
+   * collaboration follow-up/message tools all pass through here. That is why
+   * the closed-request check belongs here and nowhere else — and why the user
+   * bright line holds for free, since a user-triggered Turn never reaches it.
+   */
   private assertResolvedSubagentBudgetAvailable(
       threadId: ThreadId,
       budget: ResolvedSubagentBudget | null,
     ): void {
+      const closedRequest = this.closedRequestFor(threadId, budget);
+      if (closedRequest) throw new SubagentRequestClosedError(closedRequest.originTurnId);
       const snapshot = this.subagentBudgetSnapshot(threadId, budget);
       if (snapshot && snapshot.tokensUsed >= snapshot.tokenBudget) {
         throw new SubagentBudgetExhaustedError(snapshot.tokensUsed, snapshot.tokenBudget);
+      }
+    }
+  /**
+   * The request that owns this Thread, when the user has closed it. Read by
+   * provenance rather than by spend binding: a capped child's spend binds to its
+   * own pool, but the request it belongs to is still the one that spawned it.
+   */
+  private closedRequestFor(
+      threadId: ThreadId,
+      budget: ResolvedSubagentBudget | null,
+    ): SubagentRequestPool | null {
+      try {
+        if (budget?.pool?.closedAt !== null && budget?.pool?.closedAt !== undefined) return budget.pool;
+        // Only the already-resolved member: `budget` came through the guarded
+        // walk, and a second unguarded read here would let a ledger fault fail
+        // the Turn instead of degrading (A12).
+        const originTurnId = budget?.member?.originTurnId ?? null;
+        if (originTurnId === null) return null;
+        const request = this.subagentBudgets.readPool(requestPoolIdForTurn(originTurnId));
+        return request?.closedAt === null || request === null ? null : request;
+      } catch (error) {
+        // Degrade OPEN: refusing work on unreadable state would invent a stop
+        // the user never pressed. Fail-closed is for write boundaries.
+        this.auditSubagentBudgetFailure('closed-request resolution', threadId, error);
+        return null;
       }
     }
   private subagentBudgetSnapshot(
@@ -643,8 +677,13 @@ export class TurnLifecycle {
       const poolInFlight = budget?.pool
         ? this.inFlightTokensForPool(budget.pool.poolId)
         : 0;
-      const poolUsed = budget?.pool ? budget.pool.tokensUsed + poolInFlight : Number.POSITIVE_INFINITY;
-      const poolRemaining = budget?.pool ? budget.pool.tokenBudget - poolUsed : Number.POSITIVE_INFINITY;
+      // A request with no budget is unbounded, not exhausted: it must contribute
+      // no constraint at all rather than let `null` into the arithmetic.
+      const boundedPool = budget?.pool && budget.pool.tokenBudget !== null
+        ? { ...budget.pool, tokenBudget: budget.pool.tokenBudget }
+        : null;
+      const poolUsed = boundedPool ? boundedPool.tokensUsed + poolInFlight : Number.POSITIVE_INFINITY;
+      const poolRemaining = boundedPool ? boundedPool.tokenBudget - poolUsed : Number.POSITIVE_INFINITY;
       const capInFlight = currentInFlight;
       const capUsed = budget?.member?.tokenCap === null || budget?.member?.tokenCap === undefined
         ? Number.POSITIVE_INFINITY
@@ -660,7 +699,7 @@ export class TurnLifecycle {
       ) {
         return { tokenBudget: budget.member.tokenCap, tokensUsed: capUsed };
       }
-      return budget?.pool ? { tokenBudget: budget.pool.tokenBudget, tokensUsed: poolUsed } : null;
+      return boundedPool ? { tokenBudget: boundedPool.tokenBudget, tokensUsed: poolUsed } : null;
     }
   private subagentBudgetUsage(
       threadId: ThreadId,
@@ -1145,6 +1184,10 @@ export class TurnLifecycle {
       if (poolId === null) return;
       const pool = this.subagentBudgets.readPool(poolId);
       if (!pool || pool.scope !== 'turn') return;
+      // A closed request is kept as a tombstone: reclaiming it would erase the
+      // fact that the user stopped this work, and its members would silently
+      // become admissible again. It goes with the Thread subtree instead.
+      if (pool.closedAt !== null) return;
       if (this.activeTurns.get(pool.originThreadId)?.turnId === pool.originTurnId) return;
       const members = this.subagentBudgets.membersForPool(poolId);
       if (members.some((member) => this.activeTurns.has(member.threadId))) return;

@@ -28,6 +28,8 @@ import {
   type ThreadServiceStores,
 } from '../../src/main/agent/ThreadService';
 import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudgetExhaustedError';
+import { SubagentRequestClosedError } from '../../src/main/agent/SubagentRequestClosedError';
+import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
 import { SubagentDepthLimitError, SubagentSpawnLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
@@ -2408,9 +2410,9 @@ describe('ThreadService', () => {
       threadId: thread.id,
       input: [{ type: 'text', text: 'Long work' }],
     });
-    await expect(fixture.service.interruptTurn(thread.id, '018f0f24-7b2e-7a3f-8a4b-123456789abc'))
+    await expect(fixture.service.interruptUserWork(thread.id, '018f0f24-7b2e-7a3f-8a4b-123456789abc'))
       .rejects.toThrow('Expected Turn');
-    await fixture.service.interruptTurn(thread.id, accepted.turn.id);
+    await fixture.service.interruptUserWork(thread.id, accepted.turn.id);
     await fixture.service.waitForIdle(thread.id);
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.status)
       .toBe('interrupted');
@@ -5502,7 +5504,7 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('leaves children without a budget ledger when the runtime default is disabled', async () => {
+  test('gives an unbudgeted delegation a request of its own, with no bound at all', async () => {
     const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
     const root = (await fixture.service.startThread({
       source: 'app',
@@ -5526,14 +5528,19 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting(1);
     expect((await fixture.service.request('goal/get', { threadId: child.thread.id })).goal).toBeNull();
-    // The membership record exists even with no pool: it names the delegating
-    // Turn, so this child joins THAT request's pool if one is created later.
+    // Ownership is a property of delegation; the budget is one optional
+    // attribute of the owner. With the default disabled the request still
+    // exists — otherwise Stop would have nothing to close.
     expect(fixture.stores.subagentBudgets.readMember(child.thread.id)).toMatchObject({
-      poolId: null,
+      poolId: requestPoolIdForTurn(rootTurn.turn.id),
       originTurnId: rootTurn.turn.id,
       tokenCap: null,
     });
-    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(rootTurn.turn.id))).toBeNull();
+    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(rootTurn.turn.id))).toMatchObject({
+      scope: 'turn',
+      tokenBudget: null,
+      closedAt: null,
+    });
     expect(fixture.service.listCollaborationAgents(root.id)).toMatchObject([
       { threadId: child.thread.id, tokensUsed: 0, tokenBudget: null },
     ]);
@@ -5845,7 +5852,7 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('covers and debits an older child after a later spawn creates the ancestor pool', async () => {
+  test('fixes the grant when the request opens, and covers children spawned before the setting changed', async () => {
     let configuredBudget: number | null = null;
     let settingReads = 0;
     const fixture = await createFixture(undefined, {
@@ -5875,8 +5882,12 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting(1);
     await fixture.executor.reportModelCallUsage(1, 10);
+    // The request opened on this spawn, unbounded, because that is what the
+    // setting said at the time.
     expect(fixture.stores.subagentBudgets.readMember(older.thread.id))
-      .toMatchObject({ poolId: null, originTurnId: rootTurn.turn.id });
+      .toMatchObject({ poolId: requestPoolIdForTurn(rootTurn.turn.id), originTurnId: rootTurn.turn.id });
+    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(rootTurn.turn.id)))
+      .toMatchObject({ tokenBudget: null });
 
     configuredBudget = 20;
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'pool-creating-spawn');
@@ -5889,48 +5900,45 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting(2);
     expect(fixture.executor.contexts[1]?.onModelCallUsage).toBeDefined();
-    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toEqual({
-      remaining: 10,
-      total: 20,
-      used: 10,
-    });
+    // The grant is fixed when the request opens, not per spawn: enabling the
+    // setting mid-request does not retro-bound work already delegated under it.
+    // The next request gets the new value.
+    expect(fixture.executor.contexts[2]?.remainingTokenBudget?.()).toBeNull();
+    expect(fixture.stores.subagentBudgets.readMember(newer.thread.id))
+      .toMatchObject({ poolId: requestPoolIdForTurn(rootTurn.turn.id) });
     fixture.executor.finish(1, completedExecutionResult(10));
     fixture.executor.finish(2, completedExecutionResult(5));
     await Promise.all([
       fixture.service.waitForIdle(older.thread.id),
       fixture.service.waitForIdle(newer.thread.id),
     ]);
-    configuredBudget = 1_000;
 
-    await fixture.service.followupCollaborationTask(
-      root.id,
-      rootTurn.turn.id,
-      'pre-pool-followup',
-      older.taskPath,
-      'This older child is now pool-covered',
-    );
-    await fixture.executor.waitUntilWaiting(3);
-    expect(fixture.executor.contexts[3]?.remainingTokenBudget?.()).toEqual({
-      remaining: 5,
-      total: 20,
-      used: 15,
-    });
-    fixture.executor.finish(3, completedExecutionResult(5));
-    await fixture.service.waitForIdle(older.thread.id);
-    expect(fixture.stores.subagentBudgets.readMember(older.thread.id))
-      .toMatchObject({ poolId: requestPoolIdForTurn(rootTurn.turn.id) });
+    // Both children still accrue to the request that owns them, bounded or not.
     expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(rootTurn.turn.id)))
-      .toMatchObject({ tokenBudget: 20, tokensUsed: 20 });
+      .toMatchObject({ tokenBudget: null, tokensUsed: 15 });
     expect(settingReads).toBe(2);
-    await expect(fixture.service.followupCollaborationTask(
-      root.id,
-      rootTurn.turn.id,
-      'pre-pool-refusal',
-      older.taskPath,
-      'The old child must now be gated too',
-    )).rejects.toThrow('Subagent token budget exhausted (20 of 20 tokens)');
 
     fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    const boundedTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'The next request opens under the new setting' }],
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[3]!, 'bounded-request-spawn');
+    const bounded = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: boundedTurn.turn.id,
+      parentItemId: 'bounded-request-spawn',
+      taskName: 'bounded',
+      message: 'Open a request under the enabled default',
+    });
+    await fixture.executor.waitUntilWaiting(4);
+    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(boundedTurn.turn.id)))
+      .toMatchObject({ tokenBudget: 20 });
+    fixture.executor.finish(4, completedExecutionResult(0));
+    await fixture.service.waitForIdle(bounded.thread.id);
+    fixture.executor.finish(3, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
@@ -6433,6 +6441,167 @@ describe('ThreadService', () => {
     expect(fixture.stores.subagentBudgets.readSpawnCount(root.id)).toBe(16);
     fixture.executor.finish(17, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('Stop closes the request: live members, queued-only members, and nothing older', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    // An earlier request, left running on purpose: Stop must not reach it.
+    const earlierTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate work that outlives this request' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'earlier-spawn');
+    const earlier = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: earlierTurn.turn.id,
+      parentItemId: 'earlier-spawn',
+      taskName: 'earlier',
+      message: 'Keep running across requests',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    const stoppedTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate the work the user will stop' }],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'running-spawn');
+    const running = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: stoppedTurn.turn.id,
+      parentItemId: 'running-spawn',
+      taskName: 'running',
+      message: 'Run until the user stops the request',
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[2]!, 'queued-spawn');
+    const queued = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: stoppedTurn.turn.id,
+      parentItemId: 'queued-spawn',
+      taskName: 'queued',
+      message: 'Finish, then hold queued work',
+    });
+    await fixture.executor.waitUntilWaiting(4);
+    fixture.executor.finish(4, completedExecutionResult(0));
+    await fixture.service.waitForIdle(queued.thread.id);
+    // Idle with accepted work: no Turn to interrupt, which is exactly the case
+    // a walk of active Turns misses.
+    await fixture.service.sendCollaborationMessage(
+      root.id,
+      stoppedTurn.turn.id,
+      queued.taskPath,
+      'Work the user is about to stop',
+    );
+    expect(fixture.service.hasQueuedWorkForInspection(queued.thread.id)).toBe(true);
+
+    await fixture.service.interruptUserWork(root.id, stoppedTurn.turn.id);
+    await fixture.service.waitForIdle(running.thread.id);
+
+    // The live member was interrupted; the queued member kept no queued work.
+    expect(fixture.service.readThread({ threadId: running.thread.id, includeTurns: true })
+      .thread.turns?.at(-1)?.status).toBe('interrupted');
+    expect(fixture.service.hasQueuedWorkForInspection(queued.thread.id)).toBe(false);
+    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(stoppedTurn.turn.id))?.closedAt)
+      .toBeGreaterThan(0);
+
+    // The earlier request is untouched — still running, still open.
+    expect(fixture.service.readTurnForHost(earlier.thread.id, earlier.turn.id)?.status).toBe('inProgress');
+    expect(fixture.stores.subagentBudgets.readPool(requestPoolIdForTurn(earlierTurn.turn.id))?.closedAt)
+      .toBeNull();
+
+    // ...and it is still individually stoppable from its own Turn.
+    await fixture.service.interruptUserWork(earlier.thread.id, earlier.turn.id);
+    await fixture.service.waitForIdle(earlier.thread.id);
+    expect(fixture.service.readThread({ threadId: earlier.thread.id, includeTurns: true })
+      .thread.turns?.at(-1)?.status).toBe('interrupted');
+
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('a closed request refuses new delegated work while a user Turn still passes', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate, then stop' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'closed-request-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'closed-request-spawn',
+      taskName: 'stopped_child',
+      message: 'Be stopped',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+
+    // Non-user work in a closed request is refused...
+    await expect(fixture.service.tryStartTurnIfIdle({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'Automation work after the user stopped' }],
+      trigger: { kind: 'feature', feature: 'automation', ref: 'closed-request-run' },
+    })).rejects.toBeInstanceOf(SubagentRequestClosedError);
+    // ...while the user bright line is untouched.
+    const userTurn = await fixture.service.startRendererTurn({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'The user may still drive this Thread' }],
+    });
+    expect(userTurn.turn.provenance.trigger).toEqual({ kind: 'user' });
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    await fixture.service.close();
+  });
+
+  test('rejects an interrupt addressed outside a user conversation', async () => {
+    const fixture = await createFixture();
+    const feature = await fixture.service.ensureFeatureRootThread({
+      id: uuidV7(9_100),
+      name: 'Memory consolidation',
+      source: 'app',
+      threadSource: 'memory_consolidation',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      configuration: defaultEffectiveThreadConfiguration(),
+    });
+    const featureTurn = await fixture.service.tryStartTurnIfIdle({
+      threadId: feature.id,
+      input: [{ type: 'text', text: 'Internal work' }],
+      trigger: { kind: 'feature', feature: 'memory', ref: 'consolidation' },
+    });
+    expect(featureTurn).not.toBeNull();
+    await fixture.executor.waitUntilWaiting(0);
+
+    await expect(fixture.service.interruptUserWork(feature.id, featureTurn!.id))
+      .rejects.toThrow('not part of a user conversation');
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(feature.id);
     await fixture.service.close();
   });
 

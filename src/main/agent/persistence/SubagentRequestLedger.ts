@@ -19,7 +19,8 @@ interface SubagentRequestPoolRow {
   scope: string;
   origin_thread_id: string;
   origin_turn_id: string;
-  token_budget: number;
+  token_budget: number | null;
+  closed_at: number | null;
   tokens_used: number;
 }
 
@@ -41,7 +42,10 @@ export interface SubagentRequestPool {
   /** The Thread that ran the originating Turn, or the capped child it anchors. */
   readonly originThreadId: ThreadId;
   readonly originTurnId: TurnId;
-  readonly tokenBudget: number;
+  /** `null` means this request is unbounded, not that it has no identity. */
+  readonly tokenBudget: number | null;
+  /** When the user stopped this request; `null` while it is open. */
+  readonly closedAt: number | null;
   readonly tokensUsed: number;
 }
 
@@ -59,7 +63,7 @@ export interface CreateSubagentRequestPoolInput {
   readonly scope: SubagentRequestPoolScope;
   readonly originThreadId: ThreadId;
   readonly originTurnId: TurnId;
-  readonly tokenBudget: number;
+  readonly tokenBudget: number | null;
 }
 
 export interface CreateSubagentRequestMemberInput {
@@ -104,7 +108,8 @@ export class SubagentRequestLedger {
         scope TEXT NOT NULL CHECK (scope IN ('turn', 'thread')),
         origin_thread_id TEXT NOT NULL,
         origin_turn_id TEXT NOT NULL,
-        token_budget INTEGER NOT NULL CHECK (token_budget > 0),
+        token_budget INTEGER CHECK (token_budget IS NULL OR token_budget > 0),
+        closed_at INTEGER,
         tokens_used INTEGER NOT NULL DEFAULT 0 CHECK (tokens_used >= 0)
       ) STRICT;
       CREATE INDEX IF NOT EXISTS subagent_request_pools_origin_idx
@@ -118,6 +123,8 @@ export class SubagentRequestLedger {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS subagent_request_members_pool_idx
         ON subagent_request_members(pool_id);
+      CREATE INDEX IF NOT EXISTS subagent_request_members_origin_turn_idx
+        ON subagent_request_members(origin_turn_id);
       CREATE TABLE IF NOT EXISTS subagent_spawn_counts (
         spawner_thread_id TEXT PRIMARY KEY,
         spawn_count INTEGER NOT NULL CHECK (spawn_count >= 0)
@@ -137,6 +144,39 @@ export class SubagentRequestLedger {
     return this.ephemeralSpawnCounts.get(spawnerThreadId) ?? this.readPersistedSpawnCount(spawnerThreadId);
   }
 
+  /**
+   * Everything one delegating Turn owns, read by provenance rather than by
+   * spend binding. A capped child binds its spend to its own pool, so pool
+   * membership would miss it — `originTurnId` is the ownership record, and it
+   * is what Stop closes a request over.
+   */
+  membersForOriginTurn(turnId: TurnId): readonly SubagentRequestMember[] {
+    const ephemeral = [...this.ephemeralMembers.values()].filter((member) => member.originTurnId === turnId);
+    const rows = this.db.prepare(`
+      SELECT thread_id, pool_id, origin_turn_id, token_cap, tokens_used
+      FROM subagent_request_members WHERE origin_turn_id = ?
+    `).all(turnId) as unknown as SubagentRequestMemberRow[];
+    return [...ephemeral, ...rows.map(memberFromRow)];
+  }
+
+  /**
+   * Close a request. Admission reads this; nothing else changes, so a closed
+   * request still accrues the spend of work already in flight and is reclaimed
+   * by the ordinary path once its members settle.
+   */
+  closePool(poolId: SubagentRequestPoolId, closedAt: number): SubagentRequestPool | null {
+    const ephemeral = this.ephemeralPools.get(poolId);
+    if (ephemeral) {
+      const closed = { ...ephemeral, closedAt };
+      this.ephemeralPools.set(poolId, closed);
+      return closed;
+    }
+    const pool = this.readPersistedPool(poolId);
+    if (!pool) return null;
+    this.db.prepare('UPDATE subagent_request_pools SET closed_at = ? WHERE pool_id = ?').run(closedAt, poolId);
+    return { ...pool, closedAt };
+  }
+
   membersForPool(poolId: SubagentRequestPoolId): readonly SubagentRequestMember[] {
     const ephemeral = [...this.ephemeralMembers.values()].filter((member) => member.poolId === poolId);
     const rows = this.db.prepare(`
@@ -147,16 +187,17 @@ export class SubagentRequestLedger {
   }
 
   createPool(input: CreateSubagentRequestPoolInput, ephemeral: boolean): SubagentRequestPool {
-    positiveSafeInteger(input.tokenBudget, 'Subagent token pool');
-    const record = { ...input, tokensUsed: 0 } satisfies SubagentRequestPool;
+    if (input.tokenBudget !== null) positiveSafeInteger(input.tokenBudget, 'Subagent token pool');
+    const record = { ...input, closedAt: null, tokensUsed: 0 } satisfies SubagentRequestPool;
     if (ephemeral) {
       if (this.ephemeralPools.has(input.poolId)) throw new Error(`Subagent token pool already exists: ${input.poolId}`);
       this.ephemeralPools.set(input.poolId, record);
       return record;
     }
     this.db.prepare(`
-      INSERT INTO subagent_request_pools(pool_id, scope, origin_thread_id, origin_turn_id, token_budget, tokens_used)
-      VALUES (?, ?, ?, ?, ?, 0)
+      INSERT INTO subagent_request_pools(
+        pool_id, scope, origin_thread_id, origin_turn_id, token_budget, closed_at, tokens_used
+      ) VALUES (?, ?, ?, ?, ?, NULL, 0)
     `).run(input.poolId, input.scope, input.originThreadId, input.originTurnId, input.tokenBudget);
     return record;
   }
@@ -381,17 +422,10 @@ export class SubagentRequestLedger {
 
   private readPersistedPool(poolId: SubagentRequestPoolId): SubagentRequestPool | null {
     const row = this.db.prepare(`
-      SELECT pool_id, scope, origin_thread_id, origin_turn_id, token_budget, tokens_used
+      SELECT pool_id, scope, origin_thread_id, origin_turn_id, token_budget, closed_at, tokens_used
       FROM subagent_request_pools WHERE pool_id = ?
     `).get(poolId) as SubagentRequestPoolRow | undefined;
-    return row ? {
-      poolId: row.pool_id,
-      scope: row.scope === 'thread' ? 'thread' : 'turn',
-      originThreadId: row.origin_thread_id,
-      originTurnId: row.origin_turn_id,
-      tokenBudget: row.token_budget,
-      tokensUsed: row.tokens_used,
-    } : null;
+    return row ? poolFromRow(row) : null;
   }
 
   private readPersistedMember(threadId: ThreadId): SubagentRequestMember | null {
@@ -408,6 +442,18 @@ export class SubagentRequestLedger {
     `).get(spawnerThreadId) as SubagentSpawnCountRow | undefined;
     return row?.spawn_count ?? 0;
   }
+}
+
+function poolFromRow(row: SubagentRequestPoolRow): SubagentRequestPool {
+  return {
+    poolId: row.pool_id,
+    scope: row.scope === 'thread' ? 'thread' : 'turn',
+    originThreadId: row.origin_thread_id,
+    originTurnId: row.origin_turn_id,
+    tokenBudget: row.token_budget,
+    closedAt: row.closed_at,
+    tokensUsed: row.tokens_used,
+  };
 }
 
 function memberFromRow(row: SubagentRequestMemberRow): SubagentRequestMember {

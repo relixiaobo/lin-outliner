@@ -88,6 +88,7 @@ type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
 import {
+requestPoolIdForTurn,
 SubagentRequestLedger
 } from './persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
@@ -598,7 +599,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.steerTurn(decoded as AgentCoreRequestByMethod['turn/steer']) as AgentCoreResponseByMethod[Method];
       case 'turn/interrupt': {
         const request = decoded as AgentCoreRequestByMethod['turn/interrupt'];
-        await this.interruptTurn(request.threadId, request.turnId);
+        await this.interruptUserWork(request.threadId, request.turnId);
         return { turnId: request.turnId } as AgentCoreResponseByMethod[Method];
       }
       case 'goal/get':
@@ -702,7 +703,74 @@ export class ThreadService implements ThreadServiceExtensionHost {
     request: TurnSteerRequest,
     deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
   ): Promise<TurnSteerResponse> { return this.turnLifecycle.steerTurn(request, deliveryFailureMode); }
-  async interruptTurn(threadId: ThreadId, turnId: string): Promise<void> { return this.turnLifecycle.interruptTurn(threadId, turnId); }
+  /**
+   * The user pressed Stop. One entry point for both affordances — the composer
+   * and a per-child Stop on the delegation card — because they differ only in
+   * which (Thread, Turn) is addressed.
+   *
+   * Stop closes the REQUEST: it settles the addressed Turn and every member of
+   * that request which is a descendant of the addressed Thread. Addressed at
+   * the delegating Turn that owns the request, "descendants of the addressed
+   * Thread" is every member, so the composer needs no special case; addressed
+   * at a child, it is that child's own subtree — its grandchildren would
+   * otherwise keep running with an interrupted consumer.
+   *
+   * Only a Stop addressed at the request's originating Turn closes the request
+   * itself. A per-child Stop leaves it open, because the delegator is still
+   * running and may legitimately delegate again.
+   */
+  async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
+    this.assertUserOwnedLineage(threadId);
+    // Verified before anything is written: an addressed Turn that already ended
+    // must not leave a closed request behind.
+    if (this.turnLifecycle.activeTurnId(threadId) !== turnId) {
+      throw new ThreadBusyError('Expected Turn is not active');
+    }
+    const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
+    const owned = this.subagentBudgets.membersForOriginTurn(turnId);
+    const settling = owned
+      .map((member) => member.threadId)
+      .filter((memberThreadId) => this.isSelfOrDescendant(memberThreadId, threadId));
+    // Closed before any abort: a member settling mid-cascade would otherwise let
+    // reclamation delete the row this is about to write to. Reclamation refuses
+    // while the originating Turn is active, and it still is.
+    if (request && request.originTurnId === turnId) {
+      this.subagentBudgets.closePool(request.poolId, this.now());
+    }
+    // Stopped work stays stopped: a member holding only queued work has no Turn
+    // to abort, and the queue would otherwise outlive the request.
+    this.collaboration.dropQueuedWork(settling);
+    await this.turnLifecycle.interruptTurn(threadId, turnId);
+    for (const memberThreadId of settling) {
+      const activeTurnId = this.turnLifecycle.activeTurnId(memberThreadId);
+      if (activeTurnId === null) continue;
+      await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId).catch(() => undefined);
+    }
+  }
+  /** Test seam: work accepted for a child that has not started a Turn yet. */
+  hasQueuedWorkForInspection(threadId: ThreadId): boolean { return this.collaboration.hasQueuedWork(threadId); }
+  /** Stop reaches only a user's own conversations, at any depth. */
+  private assertUserOwnedLineage(threadId: ThreadId): void {
+    const visited = new Set<ThreadId>();
+    let thread = this.core.requireThread(threadId).thread;
+    while (thread.parentThreadId !== null && !visited.has(thread.id)) {
+      visited.add(thread.id);
+      thread = this.core.requireThread(thread.parentThreadId).thread;
+    }
+    if (thread.parentThreadId !== null || thread.threadSource !== 'user') {
+      throw new Error(`Thread is not part of a user conversation: ${threadId}`);
+    }
+  }
+  private isSelfOrDescendant(threadId: ThreadId, ancestorThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current: ThreadId | null = threadId;
+    while (current !== null && !visited.has(current)) {
+      if (current === ancestorThreadId) return true;
+      visited.add(current);
+      current = this.core.requireThread(current).thread.parentThreadId;
+    }
+    return false;
+  }
   async requestUserInput(
     threadId: ThreadId,
     turnId: string,
