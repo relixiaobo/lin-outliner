@@ -537,9 +537,18 @@ before any directional/security-sensitive build.
   behind "no dock panel". It also names **the one genuinely open thing in PR 3**:
   `queuedWorkThreadIds` describes descendants with queued work and *no Turn to
   interrupt*, so the Q2 Stop cascade cannot be a pure walk of active Turns — PR 3 must
-  say what Stop does to work that has not started. "PR 1 landed" still holds for the
-  older seams and the warning that extraction refactors in the divider region merge
-  silently wrong.
+  say what Stop does to work that has not started. **Answered 2026-08-01 by rescoping
+  Q2**: Stop closes the *request* — the Turn plus every live member of its budget pool
+  — instead of walking a descendant tree. The pool is already "the delegated work this
+  request owns", so queued members are covered with no special case and no new stop
+  barrier, and a fire-and-forget child from an earlier request survives, visible on its
+  own Turn's card with a per-child Stop. Its one prerequisite makes PR 3 a ledger
+  change and **raises its gate to ultra**: `poolId` is set only when a budget is
+  configured, so the request identity must become unconditional (a null `tokenBudget`
+  means unbounded, not identity-less). Taken under A7 — the tree walk is an interim
+  mechanism we already knew we would replace — and it makes PR 3 smaller, not bigger.
+  "PR 1 landed" still holds for the older seams and the warning that extraction
+  refactors in the divider region merge silently wrong.
   One standing constraint for those PRs: the codec clean cut means **every clone wipes
   `~/.lin-outliner-*` dev userData** before running any branch off this point. (The
   former collision for PR 3 — #467's plan-progress pill in the same parent process

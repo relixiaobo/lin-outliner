@@ -484,13 +484,67 @@ Ratified shape (Q1/Q2, PM 2026-07-30):
   the user bright line, a human-triggered interrupt is never budget- or
   state-gated: it aborts the active child Turn and leaves the Thread for
   follow-up (`TurnLifecycle.ts:448-453` semantics unchanged).
-- **Parent Stop cascades (Q2).** The composer Stop on a delegating Turn
-  interrupts the parent Turn and every live descendant Turn (service-side
-  walk of the descendant tree, same authorization). A user pressing Stop
-  means "stop the work I asked for"; leaving children burning invisibly
-  after Stop is a trust violation, and over-stopping is cheap because
-  interrupted children keep their Threads for follow-up. There is no second
-  global button — selective control is the per-child Stop on the card.
+- **Parent Stop closes the request (Q2, rescoped by PM ruling 2026-08-01).**
+  The composer Stop on a delegating Turn interrupts that Turn and every live
+  member of **its budget pool** — the set already defined by
+  `SubagentBudgetLedger`, not a bespoke walk of the Thread tree. A user
+  pressing Stop means "stop the request I made"; the pool is precisely "the
+  delegated work this request owns", so the semantics fall out of an existing
+  invariant instead of being chosen.
+
+  **Why not a descendant-tree walk.** The original Q2 wording said "every live
+  descendant Turn", which is ambiguous between the Turn's descendants and the
+  Thread's, and both readings are guesses at a set the ledger already knows.
+  Worse, the argument for the widest reading — "leaving children burning
+  invisibly after Stop is a trust violation" — no longer holds: PR 2 shipped
+  the list-row activity indicator and PR 3 ships the card, and those are what
+  take earlier fire-and-forget work *out* of the invisible. The same evidence
+  cannot both justify skipping a dock panel (old work is visible and
+  reachable) and justify killing old work on sight (it is burning unseen). A
+  fire-and-forget child from an earlier request keeps running, stays visible on
+  its own Turn's card, and has a precise per-child Stop there.
+
+  **One definition, four consumers.** Binding Stop to pool membership is the
+  point of this rescope. The budget already answers "which request owns this
+  work"; PR 3 was about to answer it a second time under another name, and this
+  repository's recurring defect is exactly that — see the
+  `collaborationThreadIds` comment, which exists because a re-derived set has
+  to be re-found every time a delegation form is added. After this, the pool
+  set serves budget, Stop, queued-work handling, and the card.
+
+  Two consequences that remove work rather than adding it:
+  - **Queued work needs no special case.** A child holding queued work is a
+    pool member even with no active Turn, so closing the pool covers the
+    `queuedWorkThreadIds` gap without a separate drop-the-mailbox mechanism.
+    Reclamation cannot race this: `reapSubagentPoolIfSettled`
+    (`TurnLifecycle.ts:1144-1152`) refuses to reap while the originating Turn is
+    active, and Stop is pressed exactly then, so membership is intact.
+  - **No new stop barrier and no new background release.** "This pool is
+    closed" is state on a row whose lifecycle already exists; admission reads
+    it. A bespoke `stoppingThreads`-style barrier would need its own release
+    path, and a release that never fires would permanently disable delegation
+    for that subtree — the same failure shape as the Thread-scoped pool this
+    plan already had to fix (A12).
+
+  There is no second global button — selective control is the per-child Stop on
+  the card.
+- **The request identity must exist without a budget** (the one prerequisite).
+  `createMember` is already unconditional and carries `originTurnId`
+  (`SubagentCollaboration.ts:276-284`), but `poolId` is only set when a budget
+  is configured (`:250-251`), and `subagentTokenBudget` is nullable. So today
+  the request set materializes only when someone put a number on it. Make the
+  pool unconditional — a null `tokenBudget` means *this request is unbounded*,
+  not *this request has no identity* — so ownership is a property of delegation
+  and the budget is an optional attribute of the owner. Grandchildren already
+  inherit the ancestor pool, so transitivity is unchanged. `originTurnId` stays
+  the durable per-hop provenance and survives `reapPool`, which unbinds
+  `poolId` only.
+
+  **This is a ledger change, so PR 3 gates at `/code-review ultra`** and carries
+  the dev-userData wipe note. Taken deliberately under A7: the descendant-tree
+  walk is an interim mechanism we already know we would replace, and writing
+  against one is the specific mistake A7 exists to prevent. It also makes PR 3
+  smaller — no traversal, no queued-work special case, no barrier lifecycle.
 - **Composer-less children are the product line (R1 ruling, PM 2026-07-30):**
   user control on a child Thread is interrupt-only; recovery from an
   exhausted or terminal child is parent respawn/synthesis plus the
@@ -504,8 +558,14 @@ Ratified shape (Q1/Q2, PM 2026-07-30):
 None. Ratified by the PM on 2026-07-30, from the UX discussion:
 
 - **Q1** — per-Turn delegation card; no dock-level agents panel.
-- **Q2** — parent Stop cascades to all live descendants; per-child Stop on
-  the card covers selective control.
+- **Q2** — parent Stop closes the request: it interrupts the Turn and every
+  live member of that Turn's budget pool; per-child Stop on the card covers
+  selective control. **Rescoped by PM ruling 2026-08-01** from "cascades to all
+  live descendants" — that wording was ambiguous between a Turn's and a
+  Thread's descendants, and both readings re-derive a set the ledger already
+  owns. Its premise also expired: the "children burning invisibly" argument
+  predates PR 2's activity indicator and PR 3's card, which are what make
+  earlier delegated work visible and individually stoppable.
 - **Q3** — the parent divider names the `wait_agent` bottleneck ("Waiting on
   N subagents"); the original "waiting on subagent input" framing was
   corrected — a child can never request user input.
@@ -537,12 +597,17 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   terminal; and that depth-2 plus the durable 16-child count are **unchanged**
   by the rescope — the structural limits must not follow spend into request
   scope.
-- PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
-  a running child, and parent-Stop cascade interrupting live descendants;
-  a core test that Stop also settles descendants named by
-  `queuedWorkThreadIds` — queued work that has not started a Turn is the case
-  a walk of active Turns silently misses; light + dark visual verification for
-  card and indicators.
+- PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of a
+  running child, and parent Stop interrupting every live member of the Turn's
+  pool. Core tests for what the rescope turns on: a child holding only queued
+  work is settled by Stop (the case a walk of active Turns silently misses); a
+  fire-and-forget child belonging to an **earlier** request is *not* touched,
+  and remains individually stoppable from its own Turn's card; delegation with
+  `subagentTokenBudget: null` still produces a pool, so the request set exists
+  without a budget; `reapPool` still unbinds `poolId` while `originTurnId`
+  survives; and interrupt authorization rejects a `threadId` that is not a
+  user-owned root or its descendant. Light + dark visual verification for card
+  and indicators.
 - All PRs: `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   focused `bun run test:e2e` scope, `bun run docs:check`; spec updated in the
   same change (A6); dev userData wipe noted in the PR body for the PR 1
