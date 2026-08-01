@@ -62,7 +62,9 @@ function DelegationLine({
     ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
     : null;
   const name = presentation.displayName;
-  const running = presentation.status === 'running' || presentation.status === 'pendingInit';
+  // Only where there is a Turn to stop: a child that has not started one yet
+  // has nothing `turn/interrupt` can address.
+  const running = presentation.status === 'running';
   return (
     <li className={`thread-delegation-line thread-subagent-${presentation.status}`}>
       <button

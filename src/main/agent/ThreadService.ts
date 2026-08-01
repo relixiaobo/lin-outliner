@@ -721,31 +721,50 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
     this.assertUserOwnedLineage(threadId);
-    // Verified before anything is written: an addressed Turn that already ended
-    // must not leave a closed request behind.
-    if (this.turnLifecycle.activeTurnId(threadId) !== turnId) {
-      throw new ThreadBusyError('Expected Turn is not active');
-    }
+    // The addressed Turn goes first, and its own mutex-held check is the only
+    // verification: anything written before it would survive a Stop that then
+    // rejected because the Turn had just settled — a half-executed Stop that
+    // leaves a permanently closed request behind. Reclamation cannot race the
+    // close that follows, because it refuses while this Turn is still active
+    // and this Turn only settles asynchronously after the abort.
+    await this.turnLifecycle.interruptTurn(threadId, turnId);
+    const settling = this.requestMembersUnder(threadId, turnId);
     const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
-    const owned = this.subagentBudgets.membersForOriginTurn(turnId);
-    const settling = owned
-      .map((member) => member.threadId)
-      .filter((memberThreadId) => this.isSelfOrDescendant(memberThreadId, threadId));
-    // Closed before any abort: a member settling mid-cascade would otherwise let
-    // reclamation delete the row this is about to write to. Reclamation refuses
-    // while the originating Turn is active, and it still is.
     if (request && request.originTurnId === turnId) {
       this.subagentBudgets.closePool(request.poolId, this.now());
     }
     // Stopped work stays stopped: a member holding only queued work has no Turn
     // to abort, and the queue would otherwise outlive the request.
     this.collaboration.dropQueuedWork(settling);
-    await this.turnLifecycle.interruptTurn(threadId, turnId);
     for (const memberThreadId of settling) {
       const activeTurnId = this.turnLifecycle.activeTurnId(memberThreadId);
       if (activeTurnId === null) continue;
       await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId).catch(() => undefined);
     }
+  }
+  /**
+   * The work the addressed Turn delegated, transitively.
+   *
+   * `originTurnId` records one hop, so the Turn's own members are its direct
+   * children; a grandchild records ITS parent's Turn. Membership is therefore
+   * the lineage closure of those direct members — not the raw per-hop set,
+   * which would leave a grandchild running with an interrupted consumer, and
+   * not raw pool membership, which a capped child escapes by binding its spend
+   * to its own pool while the request still owns it.
+   */
+  private requestMembersUnder(threadId: ThreadId, turnId: string): readonly ThreadId[] {
+    const direct = new Set(this.subagentBudgets.membersForOriginTurn(turnId)
+      .map((member) => member.threadId)
+      .filter((memberThreadId) => this.isSelfOrDescendant(memberThreadId, threadId)));
+    if (direct.size === 0) return [];
+    const subtree = this.catalogOps.listThreadDescendants({ threadId }).data;
+    return [
+      ...direct,
+      ...subtree
+        .map((thread) => thread.id)
+        .filter((candidate) => !direct.has(candidate)
+          && [...direct].some((member) => this.isSelfOrDescendant(candidate, member))),
+    ];
   }
   /** Test seam: work accepted for a child that has not started a Turn yet. */
   hasQueuedWorkForInspection(threadId: ThreadId): boolean { return this.collaboration.hasQueuedWork(threadId); }

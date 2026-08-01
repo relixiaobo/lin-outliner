@@ -308,7 +308,10 @@ export class ThreadStore {
     const loaded = findLastInProgressTurn(this.turns(threadId));
     const latest = this.snapshot.latestTurnByThread.get(threadId);
     const active = loaded ?? (latest?.status === 'inProgress' ? latest : undefined);
-    if (!active) return;
+    // Reported rather than swallowed: a Stop that resolves without issuing a
+    // request looks identical to one that worked, which is the worst of the
+    // three outcomes. The caller surfaces this.
+    if (!active) throw new Error(`No active Turn to interrupt: ${threadId}`);
     await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
   }
 

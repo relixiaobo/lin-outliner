@@ -93,6 +93,17 @@ export function ThreadDock({
   );
   const parentThread = thread?.parentThreadId ? threadsById.get(thread.parentThreadId) ?? null : null;
   /**
+   * Stop reaches a user's own conversations only, so the affordance appears
+   * only where the host would honour it. An automation's Subagent is running
+   * work under a feature root: offering a Stop there would refuse and then
+   * report live work as finished.
+   */
+  const stoppableChild = surface === 'thread'
+    && thread !== null
+    && thread.parentThreadId !== null
+    && thread.status.type === 'active'
+    && lineageRoot(thread, threadsById)?.threadSource === 'user';
+  /**
    * "This conversation has background work running" — derived from catalog
    * status, so it also covers a fire-and-forget child whose parent Turn already
    * ended, which is the case the list can no longer show any other way.
@@ -348,12 +359,12 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
-          {surface === 'thread' && thread?.parentThreadId && thread.status.type === 'active' ? (
+          {stoppableChild ? (
             <IconButton
               className="thread-dock-surface-action"
               icon={StopIcon}
               label={t.agent.thread.stopThisSubagent}
-              onClick={() => void interruptThread(thread.id)}
+              onClick={() => void interruptThread(thread!.id)}
               strokeWidth={1.7}
               variant="chrome"
             />
@@ -529,6 +540,20 @@ export function ThreadDock({
       />
     </aside>
   );
+}
+
+/** The Thread a lineage roots at, or null when an ancestor is not in the catalog. */
+function lineageRoot(thread: Thread, threadsById: ReadonlyMap<string, Thread>): Thread | null {
+  const visited = new Set<string>();
+  let current: Thread = thread;
+  while (current.parentThreadId !== null) {
+    if (visited.has(current.id)) return null;
+    visited.add(current.id);
+    const parent = threadsById.get(current.parentThreadId);
+    if (!parent) return null;
+    current = parent;
+  }
+  return current;
 }
 
 function errorMessage(error: unknown): string {

@@ -68,8 +68,10 @@ The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000`; `null` d
 the shared default.
 
 **Spend is request-scoped.** A pool belongs to the delegating Turn that opened it, not to
-a Thread. Every delegating Turn opens one, whether or not a budget is configured: a null
-`tokenBudget` means *this request is unbounded*, not *this request has no owner*.
+a Thread. A Turn that delegates with no inherited pool opens one, whether or not a budget
+is configured: a null `tokenBudget` means *this request is unbounded*, not *this request
+has no owner*. A nested delegation inherits the ancestor request instead of opening a
+second one, so one request spans the whole tree it owns.
 Ownership is a property of delegation and the budget is one optional attribute of the
 owner — which is what lets Stop close a request that nobody put a number on. The grant is
 fixed when the request opens, so enabling the setting mid-request does not retro-bound
@@ -103,9 +105,11 @@ one child it is that child's subtree, because its own descendants would
 otherwise keep running with an interrupted consumer. Only a Stop addressed at
 the request's originating Turn closes the request; a per-child Stop leaves it
 open, since the delegator is still running and may legitimately delegate again.
-Membership is read by originating Turn rather than by pool binding: a capped
-child binds its spend to its own pool while the request that spawned it still
-owns it.
+Membership is the lineage closure of the Turn's own members: `originTurnId`
+records one hop, so a grandchild names its parent's Turn, and stopping only the
+per-hop set would leave it running with an interrupted consumer. Closure rather
+than pool membership, because a capped child binds its spend to its own pool
+while the request that spawned it still owns it.
 
 A closed request refuses new delegated work at the same single admission gate
 the budget uses, so the user bright line holds unchanged — a user-triggered Turn

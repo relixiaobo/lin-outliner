@@ -1573,6 +1573,44 @@
 }
 
 .thread-file-changes,
+.thread-agent-states {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-file-changes li,
+.thread-agent-states li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-4);
+}
+
+.thread-agent-states li > button {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.thread-agent-states code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* What this Turn delegated, while it is still happening. Content inside the
    process block, so it stays on the opaque base — a material here would claim
    chrome status for something that is part of the transcript (B5). */
@@ -1637,6 +1675,24 @@
   font-size: var(--font-ui-2xs);
 }
 
+/* B6: an icon-only chrome control signals state by colour, not by a box. The
+   variant classes are ancestor-scoped by convention, so the card scopes its
+   own — without this the glyph sat at full-strength primary with no hover. */
+.thread-delegation-line .icon-button {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-soft);
+}
+
+.thread-delegation-line .icon-button:hover:not(:disabled),
+.thread-delegation-line .icon-button:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
 .thread-delegation-line.thread-subagent-errored .thread-delegation-line-open,
 .thread-delegation-line.thread-subagent-errored .thread-delegation-line-status {
   color: var(--status-danger);
@@ -1645,44 +1701,6 @@
 .thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-open,
 .thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-status {
   color: var(--text-tertiary);
-}
-
-.thread-agent-states {
-  display: grid;
-  gap: var(--space-4);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.thread-file-changes li,
-.thread-agent-states li {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-4);
-}
-
-.thread-agent-states li > button {
-  display: grid;
-  min-width: 0;
-  width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-4);
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-.thread-agent-states code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .thread-agent-state.thread-subagent-errored > button,

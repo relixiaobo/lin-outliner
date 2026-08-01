@@ -209,7 +209,11 @@ export class SubagentCollaboration {
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
       this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const tokenCap = this.childTokenCap(input.maxTotalTokens);
-      const configuredPoolBudget = tokenCap === null ? await this.configuredPoolBudget() : null;
+      // Read unconditionally: the request's grant is the runtime default even
+      // when THIS spawn carries a cap. Skipping the read for a capped spawn
+      // opened the request unbounded, and every later uncapped child in the same
+      // Turn inherited that — the breaker silently never fired.
+      const configuredPoolBudget = await this.configuredPoolBudget();
       let stagedThreadId: ThreadId | null = null;
       let result: SpawnChildThreadResult;
       try {
@@ -655,7 +659,10 @@ export class SubagentCollaboration {
         if (inherited?.resolutionFailed) return;
         let pool = inherited?.pool ?? null;
         if (!pool) {
-          if (configuredPoolBudget === null) return;
+          // Opened whether or not a budget is configured, exactly as a spawn
+          // does. Bailing out when the default is disabled left the child bound
+          // to the CLOSED request it was stopped in, and every later attempt
+          // refused — a temporary state made permanent by an unreachable reset.
           pool = this.subagentBudgets.createPool({
             poolId: requestPoolIdForTurn(senderTurnId),
             scope: 'turn',

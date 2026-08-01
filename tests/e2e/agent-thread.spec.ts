@@ -2442,19 +2442,31 @@ test.describe('canonical agent Thread surface', () => {
       // Every colour comes from the ink tokens, so the card follows the scheme
       // instead of carrying a hardcoded surface that only works in light.
       const cardPaint = await card.evaluate((element) => {
+        const root = getComputedStyle(document.documentElement);
+        const probe = document.createElement('span');
+        document.body.append(probe);
+        const resolve = (token: string) => {
+          probe.style.color = `var(${token})`;
+          return getComputedStyle(probe).color;
+        };
         const style = getComputedStyle(element);
         const status = element.querySelector('.thread-delegation-line-status');
-        return {
+        const paint = {
           background: style.backgroundColor,
+          fill1: resolve('--fill-1'),
+          ink: root.getPropertyValue('--ink').trim(),
           status: status ? getComputedStyle(status).color : '',
+          textTertiary: resolve('--text-tertiary'),
         };
+        probe.remove();
+        return paint;
       });
-      expect(cardPaint.background).toBe(colorScheme === 'dark'
-        ? 'rgba(255, 255, 255, 0.04)'
-        : 'rgba(0, 0, 0, 0.04)');
-      expect(cardPaint.status).toBe(colorScheme === 'dark'
-        ? 'rgba(255, 255, 255, 0.4)'
-        : 'rgba(0, 0, 0, 0.3)');
+      // The assertion is that the card follows the ink tokens, not what those
+      // tokens currently are: pinning the literals here would fail an E2E in
+      // this file for a change made in `tokens.css`.
+      expect(cardPaint.background).toBe(cardPaint.fill1);
+      expect(cardPaint.status).toBe(cardPaint.textTertiary);
+      expect(cardPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
       const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/research/u });
       const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/audit/u });
 
