@@ -1611,6 +1611,98 @@
   white-space: nowrap;
 }
 
+/* What this Turn delegated, while it is still happening. Content inside the
+   process block, so it stays on the opaque base — a material here would claim
+   chrome status for something that is part of the transcript (B5). */
+.thread-delegation-card {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+}
+
+.thread-delegation-card-heading {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.thread-delegation-lines {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thread-delegation-line {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.thread-delegation-line-open {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  text-align: left;
+}
+
+.thread-delegation-line-name,
+.thread-delegation-line-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-delegation-line-status {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+}
+
+/* B6: an icon-only chrome control signals state by colour, not by a box. The
+   variant classes are ancestor-scoped by convention, so the card scopes its
+   own — without this the glyph sat at full-strength primary with no hover. */
+.thread-delegation-line .icon-button {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-soft);
+}
+
+.thread-delegation-line .icon-button:hover:not(:disabled),
+.thread-delegation-line .icon-button:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.thread-delegation-line.thread-subagent-errored .thread-delegation-line-open,
+.thread-delegation-line.thread-subagent-errored .thread-delegation-line-status {
+  color: var(--status-danger);
+}
+
+.thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-open,
+.thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-status {
+  color: var(--text-tertiary);
+}
+
 .thread-agent-state.thread-subagent-errored > button,
 .thread-agent-state.thread-subagent-errored > button > span {
   color: var(--status-danger);

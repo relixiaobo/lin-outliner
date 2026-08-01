@@ -88,8 +88,9 @@ type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
 import {
-SubagentBudgetLedger
-} from './persistence/SubagentBudgetLedger';
+requestPoolIdForTurn,
+SubagentRequestLedger
+} from './persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -123,7 +124,7 @@ export interface ThreadServiceStores {
   readonly history: ThreadHistoryProjectionStore;
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
-  readonly subagentBudgets: SubagentBudgetLedger;
+  readonly subagentBudgets: SubagentRequestLedger;
   readonly payloads: ToolPayloadStore;
 }
 
@@ -295,7 +296,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly now: () => number;
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
-  private readonly subagentBudgets: SubagentBudgetLedger;
+  private readonly subagentBudgets: SubagentRequestLedger;
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
@@ -419,7 +420,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         history: new ThreadHistoryProjectionStore(paths.history),
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals, goalsDatabase),
-        subagentBudgets: new SubagentBudgetLedger(goalsDatabase),
+        subagentBudgets: new SubagentRequestLedger(goalsDatabase),
         payloads: new ToolPayloadStore(paths.payloads),
       },
     });
@@ -598,7 +599,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.steerTurn(decoded as AgentCoreRequestByMethod['turn/steer']) as AgentCoreResponseByMethod[Method];
       case 'turn/interrupt': {
         const request = decoded as AgentCoreRequestByMethod['turn/interrupt'];
-        await this.interruptTurn(request.threadId, request.turnId);
+        await this.interruptUserWork(request.threadId, request.turnId);
         return { turnId: request.turnId } as AgentCoreResponseByMethod[Method];
       }
       case 'goal/get':
@@ -702,7 +703,93 @@ export class ThreadService implements ThreadServiceExtensionHost {
     request: TurnSteerRequest,
     deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
   ): Promise<TurnSteerResponse> { return this.turnLifecycle.steerTurn(request, deliveryFailureMode); }
-  async interruptTurn(threadId: ThreadId, turnId: string): Promise<void> { return this.turnLifecycle.interruptTurn(threadId, turnId); }
+  /**
+   * The user pressed Stop. One entry point for both affordances — the composer
+   * and a per-child Stop on the delegation card — because they differ only in
+   * which (Thread, Turn) is addressed.
+   *
+   * Stop closes the REQUEST: it settles the addressed Turn and every member of
+   * that request which is a descendant of the addressed Thread. Addressed at
+   * the delegating Turn that owns the request, "descendants of the addressed
+   * Thread" is every member, so the composer needs no special case; addressed
+   * at a child, it is that child's own subtree — its grandchildren would
+   * otherwise keep running with an interrupted consumer.
+   *
+   * Only a Stop addressed at the request's originating Turn closes the request
+   * itself. A per-child Stop leaves it open, because the delegator is still
+   * running and may legitimately delegate again.
+   */
+  async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
+    this.assertUserOwnedLineage(threadId);
+    // The addressed Turn goes first, and its own mutex-held check is the only
+    // verification: anything written before it would survive a Stop that then
+    // rejected because the Turn had just settled — a half-executed Stop that
+    // leaves a permanently closed request behind. Reclamation cannot race the
+    // close that follows, because it refuses while this Turn is still active
+    // and this Turn only settles asynchronously after the abort.
+    await this.turnLifecycle.interruptTurn(threadId, turnId);
+    const settling = this.requestMembersUnder(threadId, turnId);
+    const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
+    if (request && request.originTurnId === turnId) {
+      this.subagentBudgets.closePool(request.poolId, this.now());
+    }
+    // Stopped work stays stopped: a member holding only queued work has no Turn
+    // to abort, and the queue would otherwise outlive the request.
+    this.collaboration.dropQueuedWork(settling);
+    for (const memberThreadId of settling) {
+      const activeTurnId = this.turnLifecycle.activeTurnId(memberThreadId);
+      if (activeTurnId === null) continue;
+      await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId).catch(() => undefined);
+    }
+  }
+  /**
+   * The work the addressed Turn delegated, transitively.
+   *
+   * `originTurnId` records one hop, so the Turn's own members are its direct
+   * children; a grandchild records ITS parent's Turn. Membership is therefore
+   * the lineage closure of those direct members — not the raw per-hop set,
+   * which would leave a grandchild running with an interrupted consumer, and
+   * not raw pool membership, which a capped child escapes by binding its spend
+   * to its own pool while the request still owns it.
+   */
+  private requestMembersUnder(threadId: ThreadId, turnId: string): readonly ThreadId[] {
+    const direct = new Set(this.subagentBudgets.membersForOriginTurn(turnId)
+      .map((member) => member.threadId)
+      .filter((memberThreadId) => this.isSelfOrDescendant(memberThreadId, threadId)));
+    if (direct.size === 0) return [];
+    const subtree = this.catalogOps.listThreadDescendants({ threadId }).data;
+    return [
+      ...direct,
+      ...subtree
+        .map((thread) => thread.id)
+        .filter((candidate) => !direct.has(candidate)
+          && [...direct].some((member) => this.isSelfOrDescendant(candidate, member))),
+    ];
+  }
+  /** Test seam: work accepted for a child that has not started a Turn yet. */
+  hasQueuedWorkForInspection(threadId: ThreadId): boolean { return this.collaboration.hasQueuedWork(threadId); }
+  /** Stop reaches only a user's own conversations, at any depth. */
+  private assertUserOwnedLineage(threadId: ThreadId): void {
+    const visited = new Set<ThreadId>();
+    let thread = this.core.requireThread(threadId).thread;
+    while (thread.parentThreadId !== null && !visited.has(thread.id)) {
+      visited.add(thread.id);
+      thread = this.core.requireThread(thread.parentThreadId).thread;
+    }
+    if (thread.parentThreadId !== null || thread.threadSource !== 'user') {
+      throw new Error(`Thread is not part of a user conversation: ${threadId}`);
+    }
+  }
+  private isSelfOrDescendant(threadId: ThreadId, ancestorThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current: ThreadId | null = threadId;
+    while (current !== null && !visited.has(current)) {
+      if (current === ancestorThreadId) return true;
+      visited.add(current);
+      current = this.core.requireThread(current).thread.parentThreadId;
+    }
+    return false;
+  }
   async requestUserInput(
     threadId: ThreadId,
     turnId: string,

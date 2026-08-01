@@ -1863,6 +1863,8 @@ test.describe('canonical agent Thread surface', () => {
     // which is the only route to create, rename, details, and delete.
     const back = page.getByRole('button', { name: `Back to ${parentTitle}` });
     await expect(back).toBeVisible();
+    // A settled child offers no Stop; there is no Turn to stop.
+    await expect(page.getByRole('button', { name: 'Stop this Subagent' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Show Threads' }).click();
     await expect(page.getByRole('dialog', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Escape');
@@ -2061,8 +2063,12 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    const skillRow = parentTurn.getByRole('button', { name: new RegExp(`Open Subagent Thread ${fixture.taskPath}`, 'u') });
-    await expect(skillRow).toContainText(/Started subagent skill_research_ab12cd34ef56 · \d+[smhd]/u);
+    // The card owns the per-child presentation while the child is alive.
+    const skillLine = parentTurn.locator('.thread-delegation-line');
+    await expect(skillLine).toHaveCount(1);
+    await expect(skillLine.locator('.thread-delegation-line-name')).toHaveText('skill_research_ab12cd34ef56');
+    await expect(skillLine.locator('.thread-delegation-line-status')).toContainText(/Running · \d+[smhd]/u);
+    const skillRow = skillLine.getByRole('button', { name: new RegExp(`Open Subagent Thread ${fixture.taskPath}`, 'u') });
     // No wait is in flight, so the divider must not claim to be waiting on it.
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
 
@@ -2072,6 +2078,235 @@ test.describe('canonical agent Thread surface', () => {
   });
 
 
+  test('shows a live delegation card, stops one child from it, and hands back to the rows', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-00000000fa01';
+      const startedAt = Date.now() - 4_000;
+      const children = [
+        {
+          id: '01910000-0000-7000-8000-00000000fa10',
+          turnId: '01910000-0000-7000-8000-00000000fa11',
+          activityId: '01910000-0000-7000-8000-00000000fa12',
+          taskPath: '/root/research',
+        },
+        {
+          id: '01910000-0000-7000-8000-00000000fa20',
+          turnId: '01910000-0000-7000-8000-00000000fa21',
+          activityId: '01910000-0000-7000-8000-00000000fa22',
+          taskPath: '/root/audit',
+        },
+      ];
+      for (const child of children) {
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'thread/started',
+          threadId: child.id,
+          thread: {
+            ...root,
+            id: child.id,
+            parentThreadId,
+            agentNickname: null,
+            agentRole: 'worker',
+            name: null,
+            source: 'collaboration',
+            threadSource: 'subagent',
+            status: { type: 'active', activeFlags: [] },
+            updatedAt: startedAt,
+          },
+        });
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/started',
+          threadId: child.id,
+          turnId: child.turnId,
+          turn: {
+            id: child.turnId,
+            items: [],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: child.id,
+              originTurnId: child.turnId,
+              trigger: { kind: 'subagent', parentThreadId, parentItemId: child.activityId },
+            },
+            status: 'inProgress',
+            error: null,
+            startedAt,
+            completedAt: null,
+            durationMs: null,
+          },
+        });
+      }
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: {
+          id: parentTurnId,
+          items: children.map((child) => ({
+            id: child.activityId,
+            type: 'subAgentActivity',
+            provenance: {
+              originThreadId: parentThreadId,
+              originTurnId: parentTurnId,
+              originItemId: child.activityId,
+            },
+            kind: 'started',
+            agentThreadId: child.id,
+            agentPath: child.taskPath,
+            error: null,
+          })),
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { children, parentThreadId, parentTurnId };
+    });
+
+    // Live: one card, one line per child, and the per-child rows stand down.
+    const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
+    const card = parentTurn.locator('.thread-delegation-card');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.thread-delegation-line')).toHaveCount(2);
+    await expect(card.locator('.thread-delegation-line-status').first()).toContainText(/Running · \d+[smhd]/u);
+    await expect(parentTurn.locator('.thread-inline-activity')).toHaveCount(0);
+
+    // Stop one child from its line; the other keeps running.
+    await card.getByRole('button', { name: 'Stop research' }).click();
+    await expect(card.locator('.thread-delegation-line.thread-subagent-interrupted')).toHaveCount(1);
+    await expect(card.getByRole('button', { name: 'Stop audit' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Stop research' })).toHaveCount(0);
+
+    // With the last child settled the card stands down and the rows return.
+    await page.evaluate((child) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: child.id,
+        turnId: child.turnId,
+        turn: {
+          id: child.turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: child.id,
+            originTurnId: child.turnId,
+            trigger: { kind: 'subagent', parentThreadId: child.parentThreadId, parentItemId: child.activityId },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: Date.now() - 2_000,
+          completedAt: Date.now(),
+          durationMs: 2_000,
+        },
+      });
+    }, { ...fixture.children[1]!, parentThreadId: fixture.parentThreadId });
+
+    await expect(card).toHaveCount(0);
+    await expect(parentTurn.locator('.thread-inline-activity')).toHaveCount(2);
+  });
+
+  test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-00000000fb01';
+      const childId = '01910000-0000-7000-8000-00000000fb10';
+      const activityId = '01910000-0000-7000-8000-00000000fb12';
+      const startedAt = Date.now() - 3_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: null,
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'active', activeFlags: [] },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: childId,
+        turnId: '01910000-0000-7000-8000-00000000fb11',
+        turn: {
+          id: '01910000-0000-7000-8000-00000000fb11',
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: '01910000-0000-7000-8000-00000000fb11',
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: activityId },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: {
+          id: parentTurnId,
+          items: [{
+            id: activityId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, originItemId: activityId },
+            kind: 'started',
+            agentThreadId: childId,
+            agentPath: '/root/research',
+            error: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { parentThreadId, parentTurnId };
+    });
+
+    await expect(page.locator('.thread-delegation-card')).toBeVisible();
+    await page.getByRole('button', { name: 'Interrupt Turn' }).click();
+
+    // The host closes the request from this pair; the renderer's job is to
+    // address the delegating Turn that owns it, not to enumerate children.
+    const interrupts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt');
+    expect(interrupts.map((call) => call.args)).toEqual([
+      { threadId: fixture.parentThreadId, turnId: fixture.parentTurnId },
+    ]);
+  });
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
@@ -2198,10 +2433,42 @@ test.describe('canonical agent Thread surface', () => {
       const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Waiting on 2 subagents · \d+[smhd]/u);
+      // While children are alive the card carries the per-child lines; the
+      // activity rows are its post-hoc form and return when the last settles.
+      const card = parentTurn.locator('.thread-delegation-card');
+      await expect(card.locator('.thread-delegation-line')).toHaveCount(2);
+      await expect(card.locator('.thread-delegation-line-status').first())
+        .toContainText(/Running · \d+[smhd]/u);
+      // Every colour comes from the ink tokens, so the card follows the scheme
+      // instead of carrying a hardcoded surface that only works in light.
+      const cardPaint = await card.evaluate((element) => {
+        const root = getComputedStyle(document.documentElement);
+        const probe = document.createElement('span');
+        document.body.append(probe);
+        const resolve = (token: string) => {
+          probe.style.color = `var(${token})`;
+          return getComputedStyle(probe).color;
+        };
+        const style = getComputedStyle(element);
+        const status = element.querySelector('.thread-delegation-line-status');
+        const paint = {
+          background: style.backgroundColor,
+          fill1: resolve('--fill-1'),
+          ink: root.getPropertyValue('--ink').trim(),
+          status: status ? getComputedStyle(status).color : '',
+          textTertiary: resolve('--text-tertiary'),
+        };
+        probe.remove();
+        return paint;
+      });
+      // The assertion is that the card follows the ink tokens, not what those
+      // tokens currently are: pinning the literals here would fail an E2E in
+      // this file for a change made in `tokens.css`.
+      expect(cardPaint.background).toBe(cardPaint.fill1);
+      expect(cardPaint.status).toBe(cardPaint.textTertiary);
+      expect(cardPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
       const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/research/u });
       const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/audit/u });
-      await expect(researchRow).toContainText(/Started subagent research · \d+[smhd]/u);
-      await expect(auditRow).toContainText(/Started subagent audit · \d+[smhd]/u);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -2229,9 +2496,9 @@ test.describe('canonical agent Thread surface', () => {
         });
       }, { child: fixture.children[0]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
-      await expect(researchRow).toContainText('Subagent research completed');
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Waiting on 1 subagent ·/u);
+      await expect(card.locator('.thread-delegation-line.thread-subagent-completed')).toHaveCount(1);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {

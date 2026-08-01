@@ -68,7 +68,15 @@ The runtime-wide `subagentTokenBudget` setting defaults to `1,500,000`; `null` d
 the shared default.
 
 **Spend is request-scoped.** A pool belongs to the delegating Turn that opened it, not to
-a Thread. When a spawn finds no inherited pool, the delegating Turn becomes the pool
+a Thread. A Turn that delegates with no inherited pool opens one, whether or not a budget
+is configured: a null `tokenBudget` means *this request is unbounded*, not *this request
+has no owner*. A nested delegation inherits the ancestor request instead of opening a
+second one, so one request spans the whole tree it owns.
+Ownership is a property of delegation and the budget is one optional attribute of the
+owner — which is what lets Stop close a request that nobody put a number on. The grant is
+fixed when the request opens, so enabling the setting mid-request does not retro-bound
+work already delegated under it; the next request gets the new value. When a spawn finds
+no inherited pool, the delegating Turn becomes the pool
 holder, and every descendant spawned inside that Turn's subtree shares it; a later Turn
 that delegates again opens its own pool. What the breaker defends against is runaway
 recursion inside one request, so "how much this conversation has spent over two weeks" is
@@ -83,10 +91,37 @@ owns its spend. A child spawned before its request had a pool joins that request
 when one is created, and never a later request's — migrating a live child onto a budget
 the user never spent on it is exactly what request scope exists to prevent. Resolution is
 the membership binding first, then a guarded ancestor walk for a Thread whose own row is
-missing. The grant is fixed from the setting value at pool creation; later setting changes
-affect only new delegated trees, while interrupt remains the control for a live tree. The
+missing. Later setting changes affect only new requests, while interrupt remains the
+control for a live one. The
 top-level spawner's own Turns never debit or gate against the pool it opened; a capped
 child member is covered by its own membership.
+
+**Stop closes the request.** A user Stop — from the composer, from a card line,
+or from a child Thread's header — settles the addressed Turn and every member of
+that request which is a descendant of the addressed Thread, then marks the
+request closed. Addressed at the delegating Turn that owns the request that
+predicate is every member, so the composer needs no separate rule; addressed at
+one child it is that child's subtree, because its own descendants would
+otherwise keep running with an interrupted consumer. Only a Stop addressed at
+the request's originating Turn closes the request; a per-child Stop leaves it
+open, since the delegator is still running and may legitimately delegate again.
+Membership is the lineage closure of the Turn's own members: `originTurnId`
+records one hop, so a grandchild names its parent's Turn, and stopping only the
+per-hop set would leave it running with an interrupted consumer. Closure rather
+than pool membership, because a capped child binds its spend to its own pool
+while the request that spawned it still owns it.
+
+A closed request refuses new delegated work at the same single admission gate
+the budget uses, so the user bright line holds unchanged — a user-triggered Turn
+never reaches that gate. Refusal never terminalizes a Turn and therefore adds no
+`Turn.error.code`; members that were running are interrupted by the same Stop
+and settle as `interrupted`. Queued work held by a member being settled is
+dropped, because work the user stopped must not reappear inside a later request;
+the `send_message` call that queued it remains in the sender's transcript, so it
+can be sent again. A closed request is retained rather than reclaimed — dropping
+it would erase the fact that the user stopped this work — and is removed with
+its Thread subtree. Re-delegating to one of its children binds that child to the
+new request, which is how stopped work is legitimately resumed.
 
 **Pool lifetime.** The pool outlives the Turn that opened it: a fire-and-forget child
 keeps charging the request that asked for it after that Turn has already returned. It is

@@ -60,6 +60,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
+import { ThreadDelegationCard } from './ThreadDelegationCard';
 import { UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
@@ -132,6 +133,8 @@ interface ThreadViewProps {
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterrupt: () => Promise<void>;
+  /** Stop one delegated child from the card, or the child Thread view header. */
+  readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
@@ -333,6 +336,7 @@ export function ThreadView({
   onEditUserMessage,
   onContinueInNewChat,
   onInterrupt,
+  onInterruptThread,
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
@@ -1343,6 +1347,7 @@ export function ThreadView({
                       virtualized={virtualized}
                     >
                       <ThreadTurnView
+                        onInterruptThread={onInterruptThread}
                         canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
                         expandState={expandState}
                         index={index}
@@ -1557,6 +1562,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   latchedReasoning,
   onEditUserMessage,
   onContinueInNewChat,
+  onInterruptThread,
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
@@ -1575,6 +1581,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly latchedReasoning: Set<string>;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
+  readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
@@ -1607,7 +1614,18 @@ const ThreadTurnView = memo(function ThreadTurnView({
     () => projectSubagentsForTurn(turn, threadsById, latestTurnByThread),
     [latestTurnByThread, threadsById, turn],
   );
-  const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
+  // While the card is up it IS the per-child presentation, so the projected
+  // activity rows would say the same thing twice. They come back as the
+  // post-hoc rendering the moment the last child of this Turn settles.
+  const cardIsLive = subagents.activeThreadIds.length > 0;
+  const contentBlocks = groupTurnContent({
+    ...turn,
+    items: cardIsLive
+      ? subagents.items.filter((item) => (
+          item.type !== 'subAgentActivity' || !subagents.byThreadId.has(item.agentThreadId)
+        ))
+      : subagents.items,
+  });
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -1683,6 +1701,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
               hasFinalResponse={responseItem !== null}
               index={index}
               items={block.items}
+              onInterruptThread={onInterruptThread}
+              onOpenThread={onOpenThread}
               waitingOnUserInput={waitingOnUserInput}
               key={`process:${block.items[0]?.id ?? turn.id}`}
               subagents={subagents}
@@ -2077,6 +2097,8 @@ function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
 }
 
 function ThreadProcessBlock({
+  onInterruptThread,
+  onOpenThread,
   children,
   expandState,
   hasFinalResponse,
@@ -2091,6 +2113,8 @@ function ThreadProcessBlock({
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
+  readonly onInterruptThread: (threadId: string) => Promise<void>;
+  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents: SubagentTurnProjection;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
@@ -2135,6 +2159,11 @@ function ThreadProcessBlock({
         </div>
       )}
       {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
+      <ThreadDelegationCard
+        onInterruptThread={onInterruptThread}
+        onOpenThread={onOpenThread}
+        subagents={subagents}
+      />
       {terminalResponseOwnsStatus && timelineVisible ? (
         // The response tail owns the terminal status, but the timeline still
         // needs a name — otherwise it is an unlabelled list of rows.

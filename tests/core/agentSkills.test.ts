@@ -1272,6 +1272,44 @@ describe('agent skills', () => {
     });
   });
 
+  test('reports an interrupted isolated child as partial evidence, not as a failed call', async () => {
+    // The user can Stop an isolated Skill child from the delegation card. Its
+    // Turn settles as `interrupted`, which is terminal — so the parent's call
+    // does not fail; it returns what the child produced, framed as partial.
+    const root = await createSkillFixture('stoppable', {
+      frontmatter: [
+        'description: Isolated skill the user may stop',
+        'execution: isolated',
+      ],
+      body: 'Work that may be stopped.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeIsolatedSkill: async () => ({
+        threadId: 'isolated-thread-stopped',
+        agentRole: 'worker',
+        status: 'interrupted',
+        result: 'Partial findings before the stop',
+        transcriptPath: '/tmp/isolated-thread-stopped.md',
+      }),
+    });
+    await acceptSkillForTest(runtime, 'stoppable');
+
+    const invocation = await runtime.invokeSkill({ skill: 'stoppable', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.isolated?.status).toBe('interrupted');
+
+    const tool = createSkillTool(runtime);
+    const result = await tool.execute('call-stoppable', { skill: 'stoppable' });
+    const text = result.content.map((part) => part.type === 'text' ? part.text : '').join('\n');
+    expect(text).toContain('outcome: interrupted');
+    expect(text).toContain('Treat the text below as partial evidence only');
+    expect(text).toContain('Partial findings before the stop');
+    expect(result.details).toMatchObject({ ok: true, data: { outcome: 'interrupted' } });
+  });
+
   test('does not retain the legacy context-fork execution alias', async () => {
     const root = await createSkillFixture('forked', {
       frontmatter: [

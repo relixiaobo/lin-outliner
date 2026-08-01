@@ -12,11 +12,12 @@ import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdm
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
-import { childBudgetPoolId,turnBudgetPoolId,type SubagentBudgetLedger,type SubagentBudgetMember,type SubagentBudgetPool,type SubagentBudgetPoolId } from '../persistence/SubagentBudgetLedger';
+import { cappedChildPoolId,requestPoolIdForTurn,type SubagentRequestLedger,type SubagentRequestMember,type SubagentRequestPool,type SubagentRequestPoolId } from '../persistence/SubagentRequestLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
 import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
 import { SubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
+import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
 import type { SkillAdmissionResolution,SkillAdmissionResolutionInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import type { PendingSubagentActivity,StagedContextEvidence } from './SubagentCollaboration';
@@ -31,7 +32,7 @@ interface ActiveTurn {
   readonly queuedSteering: SteeredTurnInput[]; steeringDelivery: Promise<void>;
   readonly completion: Promise<void>; readonly resolveCompletion: () => void;
   recordedExecution: Turn['execution'] | null; budgetUsageAccrued: boolean;
-  modelCallTokens: number; inFlightPoolId: SubagentBudgetPoolId | null;
+  modelCallTokens: number; inFlightPoolId: SubagentRequestPoolId | null;
 }
 interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
   readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
@@ -49,18 +50,18 @@ interface TurnLifecycleCollaboration {
 }
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId): Promise<void>; }
 export interface ResolvedSubagentBudget {
-  readonly member: SubagentBudgetMember | null;
-  readonly pool: SubagentBudgetPool | null;
+  readonly member: SubagentRequestMember | null;
+  readonly pool: SubagentRequestPool | null;
   readonly resolutionFailed?: boolean;
 }
 export class TurnLifecycle {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>(); private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
-  private readonly inFlightPoolUsage = new Map<SubagentBudgetPoolId, Map<ThreadId, number>>();
+  private readonly inFlightPoolUsage = new Map<SubagentRequestPoolId, Map<ThreadId, number>>();
   constructor(
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: TurnLifecycleCatalog, private readonly collaboration: TurnLifecycleCollaboration,
     private readonly executor: TurnExecutor, private readonly extensions: ExtensionRegistry,
-    private readonly subagentBudgets: SubagentBudgetLedger,
+    private readonly subagentBudgets: SubagentRequestLedger,
     private readonly getDocumentProjection: () => DocumentProjection | null,
     private readonly resolveReferencedAsset: ((assetId: string) => Promise<import('../capabilities/agentReferencedAssets').ReferencedAssetResolution | null>) | undefined,
     private readonly resolveSkillAdmission: (input: SkillAdmissionResolutionInput) => Promise<SkillAdmissionResolution>,
@@ -534,7 +535,7 @@ export class TurnLifecycle {
   resolveSubagentSpawnBudget(parentThreadId: ThreadId, parentTurnId: TurnId): ResolvedSubagentBudget | null {
       const inherited = this.resolveSubagentBudgetFrom(parentThreadId, true);
       if (inherited?.pool || inherited?.resolutionFailed) return inherited;
-      const turnPool = this.subagentBudgets.readPool(turnBudgetPoolId(parentTurnId));
+      const turnPool = this.subagentBudgets.readPool(requestPoolIdForTurn(parentTurnId));
       if (!turnPool) return inherited;
       return { member: inherited?.member ?? null, pool: turnPool };
     }
@@ -602,12 +603,12 @@ export class TurnLifecycle {
    */
   private authoritativeSubagentPool(
       threadId: ThreadId,
-      member: SubagentBudgetMember | null,
-    ): SubagentBudgetPool | null {
+      member: SubagentRequestMember | null,
+    ): SubagentRequestPool | null {
       if (member) {
         const bound = member.poolId === null ? null : this.subagentBudgets.readPool(member.poolId);
         if (bound) return bound;
-        const originPool = this.subagentBudgets.readPool(turnBudgetPoolId(member.originTurnId));
+        const originPool = this.subagentBudgets.readPool(requestPoolIdForTurn(member.originTurnId));
         if (originPool) return originPool;
       }
       const visited = new Set<ThreadId>();
@@ -619,19 +620,52 @@ export class TurnLifecycle {
           ? null
           : this.subagentBudgets.readPool(ancestor.poolId);
         if (ancestorPool) return ancestorPool;
-        const anchored = this.subagentBudgets.readPool(childBudgetPoolId(currentThreadId));
+        const anchored = this.subagentBudgets.readPool(cappedChildPoolId(currentThreadId));
         if (anchored) return anchored;
         currentThreadId = this.core.requireThread(currentThreadId).thread.parentThreadId;
       }
       return null;
     }
+  /**
+   * The single gate for delegated work: non-user Turn admission, spawn, and the
+   * collaboration follow-up/message tools all pass through here. That is why
+   * the closed-request check belongs here and nowhere else — and why the user
+   * bright line holds for free, since a user-triggered Turn never reaches it.
+   */
   private assertResolvedSubagentBudgetAvailable(
       threadId: ThreadId,
       budget: ResolvedSubagentBudget | null,
     ): void {
+      const closedRequest = this.closedRequestFor(threadId, budget);
+      if (closedRequest) throw new SubagentRequestClosedError(closedRequest.originTurnId);
       const snapshot = this.subagentBudgetSnapshot(threadId, budget);
       if (snapshot && snapshot.tokensUsed >= snapshot.tokenBudget) {
         throw new SubagentBudgetExhaustedError(snapshot.tokensUsed, snapshot.tokenBudget);
+      }
+    }
+  /**
+   * The request that owns this Thread, when the user has closed it. Read by
+   * provenance rather than by spend binding: a capped child's spend binds to its
+   * own pool, but the request it belongs to is still the one that spawned it.
+   */
+  private closedRequestFor(
+      threadId: ThreadId,
+      budget: ResolvedSubagentBudget | null,
+    ): SubagentRequestPool | null {
+      try {
+        if (budget?.pool?.closedAt !== null && budget?.pool?.closedAt !== undefined) return budget.pool;
+        // Only the already-resolved member: `budget` came through the guarded
+        // walk, and a second unguarded read here would let a ledger fault fail
+        // the Turn instead of degrading (A12).
+        const originTurnId = budget?.member?.originTurnId ?? null;
+        if (originTurnId === null) return null;
+        const request = this.subagentBudgets.readPool(requestPoolIdForTurn(originTurnId));
+        return request?.closedAt === null || request === null ? null : request;
+      } catch (error) {
+        // Degrade OPEN: refusing work on unreadable state would invent a stop
+        // the user never pressed. Fail-closed is for write boundaries.
+        this.auditSubagentBudgetFailure('closed-request resolution', threadId, error);
+        return null;
       }
     }
   private subagentBudgetSnapshot(
@@ -643,8 +677,13 @@ export class TurnLifecycle {
       const poolInFlight = budget?.pool
         ? this.inFlightTokensForPool(budget.pool.poolId)
         : 0;
-      const poolUsed = budget?.pool ? budget.pool.tokensUsed + poolInFlight : Number.POSITIVE_INFINITY;
-      const poolRemaining = budget?.pool ? budget.pool.tokenBudget - poolUsed : Number.POSITIVE_INFINITY;
+      // A request with no budget is unbounded, not exhausted: it must contribute
+      // no constraint at all rather than let `null` into the arithmetic.
+      const boundedPool = budget?.pool && budget.pool.tokenBudget !== null
+        ? { ...budget.pool, tokenBudget: budget.pool.tokenBudget }
+        : null;
+      const poolUsed = boundedPool ? boundedPool.tokensUsed + poolInFlight : Number.POSITIVE_INFINITY;
+      const poolRemaining = boundedPool ? boundedPool.tokenBudget - poolUsed : Number.POSITIVE_INFINITY;
       const capInFlight = currentInFlight;
       const capUsed = budget?.member?.tokenCap === null || budget?.member?.tokenCap === undefined
         ? Number.POSITIVE_INFINITY
@@ -660,7 +699,7 @@ export class TurnLifecycle {
       ) {
         return { tokenBudget: budget.member.tokenCap, tokensUsed: capUsed };
       }
-      return budget?.pool ? { tokenBudget: budget.pool.tokenBudget, tokensUsed: poolUsed } : null;
+      return boundedPool ? { tokenBudget: boundedPool.tokenBudget, tokensUsed: poolUsed } : null;
     }
   private subagentBudgetUsage(
       threadId: ThreadId,
@@ -1136,15 +1175,19 @@ export class TurnLifecycle {
         // Either end of the request can be the last to settle: a member Thread,
         // or the delegating Turn itself when its children finished first.
         this.reapSubagentPoolIfSettled(this.subagentBudgets.readMember(threadId)?.poolId ?? null);
-        this.reapSubagentPoolIfSettled(turnBudgetPoolId(settledTurnId));
+        this.reapSubagentPoolIfSettled(requestPoolIdForTurn(settledTurnId));
       } catch (error) {
         this.auditSubagentBudgetFailure('settled pool reclamation', threadId, error);
       }
     }
-  private reapSubagentPoolIfSettled(poolId: SubagentBudgetPoolId | null): void {
+  private reapSubagentPoolIfSettled(poolId: SubagentRequestPoolId | null): void {
       if (poolId === null) return;
       const pool = this.subagentBudgets.readPool(poolId);
       if (!pool || pool.scope !== 'turn') return;
+      // A closed request is kept as a tombstone: reclaiming it would erase the
+      // fact that the user stopped this work, and its members would silently
+      // become admissible again. It goes with the Thread subtree instead.
+      if (pool.closedAt !== null) return;
       if (this.activeTurns.get(pool.originThreadId)?.turnId === pool.originTurnId) return;
       const members = this.subagentBudgets.membersForPool(poolId);
       if (members.some((member) => this.activeTurns.has(member.threadId))) return;
@@ -1173,7 +1216,7 @@ export class TurnLifecycle {
         this.resolveSubagentBudget(active.threadId)?.pool?.poolId ?? null,
       );
     }
-  private bindSubagentInFlightPool(active: ActiveTurn, poolId: SubagentBudgetPoolId | null): void {
+  private bindSubagentInFlightPool(active: ActiveTurn, poolId: SubagentRequestPoolId | null): void {
       if (active.inFlightPoolId !== poolId) this.clearSubagentInFlightUsage(active);
       active.inFlightPoolId = poolId;
       if (poolId === null || active.modelCallTokens === 0) return;
@@ -1192,7 +1235,7 @@ export class TurnLifecycle {
       this.clearSubagentInFlightUsage(active);
       active.modelCallTokens = 0;
     }
-  private inFlightTokensForPool(poolId: SubagentBudgetPoolId): number {
+  private inFlightTokensForPool(poolId: SubagentRequestPoolId): number {
       let total = 0;
       for (const tokens of this.inFlightPoolUsage.get(poolId)?.values() ?? []) total += tokens;
       return total;

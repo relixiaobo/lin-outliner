@@ -1203,6 +1203,10 @@ commandPalette: {
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
+      stopUnavailable: 'That work already finished.',
+      delegationCard: 'Delegated work',
+      stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
+      stopThisSubagent: 'Stop this Subagent',
       subagentStatuses: {
         pendingInit: 'Starting',
         running: 'Running',

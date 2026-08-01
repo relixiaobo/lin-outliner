@@ -8,7 +8,7 @@ import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensi
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { SubagentBudgetLedger, turnBudgetPoolId } from '../../src/main/agent/persistence/SubagentBudgetLedger';
+import { SubagentRequestLedger, requestPoolIdForTurn } from '../../src/main/agent/persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -469,15 +469,15 @@ describe('Agent Core persistence', () => {
     const goalsPath = join(root, 'goals.sqlite');
     const goalsDatabase = testDatabase(goalsPath);
     const goals = new GoalStore(goalsPath, goalsDatabase);
-    const budgets = new SubagentBudgetLedger(goalsDatabase);
+    const budgets = new SubagentRequestLedger(goalsDatabase);
     const persistentHolderId = uuidV7(3100);
     const persistentOriginTurnId = uuidV7(3150);
-    const persistentPoolId = turnBudgetPoolId(persistentOriginTurnId);
+    const persistentPoolId = requestPoolIdForTurn(persistentOriginTurnId);
     const persistentChildId = uuidV7(3200);
     const persistentSiblingId = uuidV7(3300);
     const ephemeralHolderId = uuidV7(3400);
     const ephemeralOriginTurnId = uuidV7(3450);
-    const ephemeralPoolId = turnBudgetPoolId(ephemeralOriginTurnId);
+    const ephemeralPoolId = requestPoolIdForTurn(ephemeralOriginTurnId);
     const ephemeralChildId = uuidV7(3500);
 
     goals.create(persistentChildId, 'Child-owned Goal', null, 10);
@@ -528,7 +528,7 @@ describe('Agent Core persistence', () => {
     goals.close();
 
     const reopenedDatabase = testDatabase(goalsPath);
-    const reopened = new SubagentBudgetLedger(reopenedDatabase);
+    const reopened = new SubagentRequestLedger(reopenedDatabase);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(reopened.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
     expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
