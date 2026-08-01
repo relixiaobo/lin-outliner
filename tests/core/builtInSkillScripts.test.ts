@@ -7,13 +7,13 @@ import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
-const dataCleanupSkillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'data-cleanup');
-const tenonImportTool = path.join(dataCleanupSkillRoot, 'scripts', 'tenon-import.ts');
+const tenonImportSkillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'tenon-import');
+const tenonImportTool = path.join(tenonImportSkillRoot, 'scripts', 'tenon-import.ts');
 
 describe('built-in skill helper scripts', () => {
-  test('data-cleanup Tana adapter emits a validated Import Pack preview', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-cleanup-tana-'));
-    const fixture = path.join(dataCleanupSkillRoot, 'fixtures', 'tana-fields-and-tags.json');
+  test('tenon-import Tana adapter emits a validated Import Pack preview', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-tana-'));
+    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-fields-and-tags.json');
     const packFile = path.join(dir, 'pack.json');
     const coverageFile = path.join(dir, 'coverage.json');
     const validationFile = path.join(dir, 'validation.json');
@@ -58,9 +58,9 @@ describe('built-in skill helper scripts', () => {
     expect(preview).toContain('trash_node');
   });
 
-  test('data-cleanup preview requires the running app import API by default', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-cleanup-api-required-'));
-    const fixture = path.join(dataCleanupSkillRoot, 'fixtures', 'tana-minimal.json');
+  test('tenon-import preview requires the running app import API by default', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-api-required-'));
+    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-minimal.json');
     const packFile = path.join(dir, 'pack.json');
     const previewFile = path.join(dir, 'preview.md');
 

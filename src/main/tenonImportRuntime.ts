@@ -35,7 +35,7 @@ export function configureTenonImportRuntime(options: TenonImportRuntimeOptions):
 export function resolveTenonImportRuntime(options: Omit<TenonImportRuntimeOptions, 'descriptorPath'>): TenonImportRuntimeConfig {
   if (options.isPackaged) {
     const cliRoot = path.join(options.resourcesPath, 'tenon-import');
-    const skillRoot = path.join(options.resourcesPath, 'built-in-skills', 'data-cleanup');
+    const skillRoot = path.join(options.resourcesPath, 'built-in-skills', 'tenon-import');
     return {
       binDir: path.join(skillRoot, 'bin'),
       cliEntry: path.join(cliRoot, 'tenon-import.mjs'),
@@ -44,7 +44,7 @@ export function resolveTenonImportRuntime(options: Omit<TenonImportRuntimeOption
     };
   }
   const repoRoot = path.resolve(options.moduleDir, '../..');
-  const root = path.join(repoRoot, 'src', 'main', 'builtInSkills', 'data-cleanup');
+  const root = path.join(repoRoot, 'src', 'main', 'builtInSkills', 'tenon-import');
   return {
     binDir: path.join(root, 'bin'),
     cliEntry: path.join(root, 'scripts', 'tenon-import.ts'),

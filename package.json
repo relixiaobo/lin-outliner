@@ -18,7 +18,7 @@
     "build": "tsc --noEmit && electron-vite build",
     "agent:dump": "bun scripts/agent-dump.ts",
     "skills:sync": "bun scripts/sync-built-in-skills.ts",
-    "import-cli:build": "bun build src/main/builtInSkills/data-cleanup/scripts/tenon-import.ts --outfile build/generated/tenon-import/tenon-import.mjs --target node --format esm",
+    "import-cli:build": "bun build src/main/builtInSkills/tenon-import/scripts/tenon-import.ts --outfile build/generated/tenon-import/tenon-import.mjs --target node --format esm",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",

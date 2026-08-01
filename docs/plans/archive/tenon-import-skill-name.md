@@ -65,7 +65,9 @@ application build.
 - `package.json`
 - `tests/core/agentSkills.test.ts`
 - `tests/core/builtInSkillScripts.test.ts`
+- `tests/core/tenonImportRuntime.test.ts`
 - `docs/spec/agent-skills.md`
+- `docs/plans/nodex-parity-decisions.md`
 
 `package.json` is an infrastructure-ownership file, so this remains an isolated
 single-purpose PR. The collision check found no overlap with open PR #472.

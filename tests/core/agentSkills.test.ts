@@ -802,7 +802,7 @@ describe('agent skills', () => {
       expect(await runtime.getSkill(name)).toBeNull();
       expect(catalog.entries.some((entry) => entry.name === name)).toBe(false);
     }
-    for (const name of ['skillify', 'research', 'data-cleanup']) {
+    for (const name of ['skillify', 'research', 'tenon-import']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
     }
   });
@@ -1039,17 +1039,19 @@ describe('agent skills', () => {
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
-      'data-cleanup',
       'research',
       'skillify',
+      'tenon-import',
     ]);
   });
 
-  test('ships data-cleanup as a tenon-import CLI workflow', async () => {
+  test('ships tenon-import as a Tenon-owned cleanup and import workflow', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    const skill = await runtime.getSkill('data-cleanup');
+    const skill = await runtime.getSkill('tenon-import');
 
+    expect(await runtime.getSkill('data-cleanup')).toBeNull();
     expect(skill?.allowedTools).toContain('bash');
+    expect(skill?.body).toContain('# Tenon Data Cleanup and Import');
     expect(skill?.body).toContain('tenon-import preview');
     expect(skill?.body).toContain('tenon-import commit');
   });
@@ -1575,8 +1577,9 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['data-cleanup']);
-    expect(await readFile(path.join(generatedRoot, 'data-cleanup', 'SKILL.md'), 'utf8')).toContain('Data Cleanup');
+    expect((await readdir(generatedRoot)).sort()).toEqual(['tenon-import']);
+    expect(await readFile(path.join(generatedRoot, 'tenon-import', 'SKILL.md'), 'utf8'))
+      .toContain('Tenon Data Cleanup and Import');
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       await expect(readFile(path.join(generatedRoot, name, 'SKILL.md'), 'utf8')).rejects.toThrow();
     }
