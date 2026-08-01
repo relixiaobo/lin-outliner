@@ -15,7 +15,7 @@ import type { SkillDefinition } from '../../../core/types';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
-import { AgentSkillAuthoringError, validateAgentSkillContentWrite } from './agentSkillAuthoring';
+import { AgentSkillAuthoringError, isValidSkillName, validateAgentSkillContentWrite } from './agentSkillAuthoring';
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
@@ -864,6 +864,13 @@ class SkillRegistry {
       : undefined;
   }
 
+  /** Absolute roots of every currently loaded Skill, for deepest-match resolution. */
+  loadedSkillRoots(): string[] {
+    return [...this.skills.values()]
+      .map((skill) => skill.rootDir)
+      .filter((dir) => path.isAbsolute(dir));
+  }
+
   /** The managed index's activation flag as of the last load. */
   activatedManagedSkillNames(): ReadonlySet<string> {
     return this.activeManagedSkillNames;
@@ -1060,6 +1067,7 @@ class SkillRegistry {
       includeUserSkills: this.includeUserSkills,
       additionalSkillDirectories: this.additionalSkillDirectories,
       selfSkillRoots: [...this.selfBoundSkillRoots],
+      loadedSkillRoots: this.loadedSkillRoots(),
       builtInSkillDirectories: this.builtInSkillDirectories,
       builtInSkillRoots: this.builtInSkillRoots,
       managedSkillContentRoot: this.managedSkillContentRoot,
@@ -1068,6 +1076,10 @@ class SkillRegistry {
 
   reloadAll(): void {
     this.loaded = false;
+    // Cleared with every other cache. Leaving it set kept an unbound directory
+    // being treated as a Skill root by a turn already in flight, which refused
+    // ordinary writes under it as skill-support-file violations.
+    this.selfBoundSkillRoots = new Set();
     this.loadGeneration += 1;
     this.skills.clear();
     this.conditionalSkills.clear();
@@ -1340,7 +1352,14 @@ function conventionSkillDirs(root: string, includeUserSkills: boolean): string[]
   ].map((dir) => path.resolve(dir));
 }
 
-/** Bound directories that are eligible to be a Skill root themselves. */
+/**
+ * Bound directories that are eligible to be a Skill root themselves.
+ *
+ * Eligibility includes being able to supply a canonical identity: identity IS
+ * the directory name, so `My Skills` cannot be one. Treating it as a Skill root
+ * anyway resolved every write beneath it to a skill target whose name the
+ * authoring validator rejects, failing writes that plainly succeeded before.
+ */
 function selfEligibleBoundDirs(
   root: string,
   includeUserSkills: boolean,
@@ -1349,7 +1368,7 @@ function selfEligibleBoundDirs(
   const convention = new Set(conventionSkillDirs(root, includeUserSkills));
   return additionalSkillDirectories
     .map((dir) => path.resolve(dir))
-    .filter((dir) => !convention.has(dir));
+    .filter((dir) => !convention.has(dir) && isValidSkillName(path.basename(dir)));
 }
 
 function skillSearchDirs(
@@ -1396,6 +1415,11 @@ export interface SkillDirConfig {
    * Supplied by the live registry; absent for a caller that has not loaded.
    */
   selfSkillRoots?: readonly string[];
+  /**
+   * Absolute roots of every loaded Skill. Used to let a nested Skill root win
+   * over an enclosing self-loaded one — the deepest match is the right owner.
+   */
+  loadedSkillRoots?: readonly string[];
   builtInSkillDirectories?: readonly string[];
   builtInSkillRoots?: readonly string[];
   managedSkillContentRoot?: string;
@@ -1474,12 +1498,21 @@ export function resolveSkillContentTarget(
   const boundSource = (dir: string): 'user' | 'project' =>
     (isPathInside(dir, path.resolve(config.root)) ? 'project' : 'user');
 
-  // 1. A bound directory the loader resolved to a Skill in its own right. This
-  //    precedes the container interpretation because for such a root a nested
-  //    file is that Skill's RESOURCE, not a sibling Skill of the same name as
-  //    its folder.
+  // 1. A bound directory the loader resolved to a Skill in its own right — but
+  //    only when nothing nested inside it owns the file more specifically. A
+  //    file under such a root is that Skill's RESOURCE, so the enclosing root
+  //    must not be skipped; a Skill nested BELOW it is still the closer owner,
+  //    and claiming it for the outer Skill wrote it as a support file, which
+  //    skips frontmatter validation and records no provenance.
   for (const dir of config.selfSkillRoots ?? []) {
-    const target = targetInsideSelfSkillRoot(filePath, dir, boundSource(dir));
+    const selfRoot = path.resolve(dir);
+    if (!isPathInside(filePath, selfRoot)) continue;
+    const nestedOwner = (config.loadedSkillRoots ?? []).some((loaded) => {
+      const root = path.resolve(loaded);
+      return root !== selfRoot && isPathInside(root, selfRoot) && isPathInside(filePath, root);
+    });
+    if (nestedOwner) break;
+    const target = targetInsideSelfSkillRoot(filePath, selfRoot, boundSource(selfRoot));
     if (target) return target;
   }
 

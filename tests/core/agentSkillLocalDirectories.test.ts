@@ -111,6 +111,63 @@ describe('bound local skill directories', () => {
     });
   });
 
+  test('a Skill nested under a self-loaded bound Skill owns its own files', async () => {
+    // The enclosing root must not swallow it. Claiming inner/SKILL.md for the
+    // outer Skill writes it as a support file, which skips frontmatter and
+    // execution-contract validation, records no provenance (so "Undo agent
+    // edit" never appears), and names the wrong Skill in the audit.
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'outer');
+    await writeSkill(bound, 'outer', 'The outer workflow.');
+    await writeSkill(path.join(bound, 'inner'), 'inner', 'The inner workflow.');
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(bound, 'inner', 'SKILL.md'))).toMatchObject({
+      skillName: 'inner',
+      relativePath: 'SKILL.md',
+      isSkillFile: true,
+    });
+    // And the outer Skill still owns its own SKILL.md.
+    expect(runtime.resolveSkillTarget(path.join(bound, 'SKILL.md'))).toMatchObject({
+      skillName: 'outer',
+      isSkillFile: true,
+    });
+  });
+
+  test('a directory whose name cannot be a Skill name is not loaded as one', async () => {
+    // Identity is the directory name. Loading it anyway made every write
+    // beneath it fail with invalid_skill_name — writes that plainly succeeded
+    // before this feature existed.
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'My Skills');
+    await writeSkill(bound, 'my-skills', 'Has a space in its folder name.');
+
+    const runtime = runtimeFor(workspace, [bound]);
+
+    expect(await runtime.listAllSkills()).toEqual([]);
+    // Ungoverned, exactly as it was before — not governed-and-always-failing.
+    expect(runtime.resolveSkillTarget(path.join(bound, 'SKILL.md'))).toBeNull();
+  });
+
+  test('unbinding stops treating the directory as a Skill root immediately', async () => {
+    // A turn already in flight keeps using the same runtime. Leaving the set
+    // populated refused ordinary writes under a directory Tenon no longer
+    // treats as a Skill at all.
+    const workspace = await temporaryRoot();
+    const bound = path.join(await temporaryRoot(), 'my-pdf-skill');
+    await writeSkill(bound, 'my-pdf-skill', 'Handle PDFs.');
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+    expect(runtime.resolveSkillTarget(path.join(bound, 'SKILL.md'))).not.toBeNull();
+
+    runtime.updateAdditionalSkillDirectories([]);
+
+    expect(runtime.resolveSkillTarget(path.join(bound, 'run.sh'))).toBeNull();
+  });
+
   test('a resource under a self-loaded bound skill belongs to that skill', async () => {
     const workspace = await temporaryRoot();
     const bound = path.join(await temporaryRoot(), 'my-pdf-skill');

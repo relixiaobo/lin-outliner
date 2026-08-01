@@ -35,6 +35,16 @@ const SKILL_FILE_NAME = 'SKILL.md';
 const MAX_SKILL_MARKDOWN_BYTES = 256 * 1024;
 const MAX_SUPPORT_FILE_BYTES = 256 * 1024;
 const SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * Whether a directory name can serve as a Skill's canonical identity. The loader
+ * consults this before treating a bound directory as a Skill root: identity IS
+ * the directory name, so a directory that cannot supply a valid one is not a
+ * Skill, and pretending otherwise makes every write beneath it fail validation.
+ */
+export function isValidSkillName(name: string): boolean {
+  return SKILL_NAME_PATTERN.test(name);
+}
 const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 const EXECUTABLE_SUPPORT_EXTENSIONS = new Set([
   '.bat',
