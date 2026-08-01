@@ -299,7 +299,21 @@ A bound directory may either **contain** Skills or **be** one — picking
 `my-pdf-skill/` is as natural as picking its parent, so both load. Canonical
 identity remains the directory name, as it is for every other source. This
 applies only to bound directories; the convention directories
-(`~/.agents/skills`, `.agents/skills`) are containers by definition.
+(`~/.agents/skills`, `.agents/skills`) are containers by definition, and binding
+one by hand does not change that.
+
+A directory that is itself a Skill puts its `SKILL.md` one path segment below
+the bound root rather than the usual two, so `resolveSkillContentTarget`
+resolves that shape explicitly. Without it the file that decides what the model
+executes would fall outside skill-write governance — no content validation, no
+write audit, no provenance, and therefore no "Undo agent edit" — purely because
+of which folder the user picked.
+
+Paths reach the renderer expanded. The stored setting may hold `~/skills` or
+`./skills`, and the library decides which rows belong to a bound directory by
+comparing against each Skill's `rootDir`, which is always expanded. The bound
+list is capped, and reaching the cap is reported rather than silently dropping
+the new entry.
 
 Revealing a bound directory checks that it still exists before reporting
 success, because the case a user clicks Reveal to investigate — a directory that
@@ -309,11 +323,21 @@ report success and open nothing.
 ### Update visibility
 
 Managed update checks resolve each record's tracking ref and set `updateCommit`
-when it differs. Two triggers, both ambient and both throttled per record on the
-record's `lastCheckedAt` (6 hours): once per launch, deferred until after first
-paint, and once when the Skills pane opens. An explicit per-row "check update"
-is never throttled. There is no periodic polling, no background download, and no
-auto-apply.
+when it differs. Only `managed` Skills have an upstream to compare against, so
+only they participate; a user, project, local, or built-in Skill is the user's
+own file.
+
+Two triggers are ambient, and both are throttled per record on that record's
+`lastCheckedAt` (6 hours): once per launch, deferred until after first paint,
+and once when the Skills pane opens. The stamp is written whether the attempt
+succeeded or failed — a failed attempt is still an attempt, and leaving it unset
+retries a failing endpoint on every launch and every mount.
+
+Two checks are explicit and never throttled: a header control that checks every
+managed Skill, and a per-row action that checks one. The header control is
+absent, not disabled, when no managed Skill is installed.
+
+There is no periodic polling, no background download, and no auto-apply.
 
 Availability surfaces as a **count badge on the Skills row in the settings
 navigation** — a neutral count, not a status colour.
