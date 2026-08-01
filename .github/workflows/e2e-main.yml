@@ -150,19 +150,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The most recent successful run ON main. Its artifacts are the same
-          # five-sample measurement, taken on the same runner image — which is the
-          # whole point: comparing across environments proves nothing.
-          run_id="$(gh run list --workflow=e2e-main.yml --branch main --status success \
-            --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
-          if [ -z "$run_id" ]; then
+          # The last three successful runs ON main, not the newest one. Same runner
+          # image — comparing across environments proves nothing — but ALSO enough
+          # samples for the baseline to be a rate rather than a snapshot.
+          #
+          # The first version used one run, and the first pull request it ran on
+          # showed why that is wrong: a test failing ~1/5 of the time is absent from
+          # any single five-sample baseline about two thirds of the time, so it turns
+          # up on the branch, is missing from the baseline, and gets reported as
+          # "introduced by this branch". That is the very mistake this tool exists to
+          # prevent, made one layer down — the comparison was guarding against a
+          # single sample on the branch side while relying on one for the baseline.
+          # Fifteen samples put a 1-in-5 test in the baseline ~96% of the time.
+          ids="$(gh run list --workflow=e2e-main.yml --branch main --status success \
+            --limit 3 --json databaseId --jq '.[].databaseId')"
+          if [ -z "$ids" ]; then
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          mkdir -p baseline
-          # A baseline we cannot fetch must not silently become "no baseline", or
-          # every failure gets blamed on the branch.
-          gh run download "$run_id" --pattern 'e2e-sample-*' --dir baseline
+          # Per-run directories: artifact names repeat across runs and would
+          # otherwise overwrite each other, silently shrinking the baseline.
+          for id in $ids; do
+            mkdir -p "baseline/run-$id"
+            # A baseline we cannot fetch must not silently become a smaller one, so
+            # this is not tolerated per-run: `set -e` fails the step.
+            gh run download "$id" --pattern 'e2e-sample-*' --dir "baseline/run-$id"
+          done
           echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Compare
         run: |

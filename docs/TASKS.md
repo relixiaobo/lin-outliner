@@ -997,6 +997,16 @@ anything.
   every failure as *unattributed* rather than as the branch's — blaming the wrong party is
   the one way this could do real damage, so that case is unit-tested
   (`tests/core/e2eCompare.test.ts`).
+  **The baseline pools three `main` runs, not one, and the first version got that wrong
+  too.** Its first pull request reported two failures as "introduced by this branch" that
+  the branch could not have caused — it touched only CI and scripts — and both were 1/5
+  intermittents absent from that day's single five-sample baseline. A test failing ~1/5 of
+  the time is missing from any given five samples about two thirds of the time, so the
+  comparison was guarding against a single sample on the branch side while relying on one
+  for the baseline: the same mistake this whole tool exists to prevent, one layer down.
+  Fifteen samples carry a 1-in-5 test ~96% of the time. The two sides keep their own
+  denominators (`2/5` vs `1/15`) rather than being normalised into a comparison the sample
+  sizes do not support.
 
 - **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
   *fast-track, no plan file*) — closed two boarded items,

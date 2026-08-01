@@ -12,8 +12,17 @@
  *
  * The fix is not to make the environments match — that may not be achievable for
  * headless compositing — but to take BOTH measurements in the SAME one. The
- * branch and `main` each get five whole-suite samples on the same runner image,
- * and the difference is attributable.
+ * branch and `main` each get whole-suite samples on the same runner image, and
+ * the difference is attributable.
+ *
+ * The two sides are deliberately NOT the same size. The branch gets five samples;
+ * the baseline pools the last three `main` runs, fifteen. A one-run baseline was
+ * tried first and was wrong for the reason this whole tool exists: a test failing
+ * ~1/5 of the time is missing from any given five-sample baseline about two thirds
+ * of the time, so it surfaces on the branch, is absent from the baseline, and gets
+ * blamed on the branch. Membership in fifteen samples is a rate; membership in
+ * five is a coin toss. Counts are therefore reported with their own denominators,
+ * never normalised into a comparison the sample sizes do not support.
  *
  * Reads two `e2e-classify --json` summaries. Exit code is always 0: this reports,
  * it does not gate.

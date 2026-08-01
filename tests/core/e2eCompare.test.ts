@@ -73,6 +73,19 @@ describe('e2e-compare', () => {
     expect(output).toContain('1 test(s) that fail on `main` did not fail here');
   });
 
+  test('keeps each side on its own denominator when the baseline is broader', () => {
+    // The baseline pools three `main` runs (15) against the branch's 5. Reporting
+    // a shared failure as anything other than "2/5 vs 1/15" would invent a
+    // comparison the sample sizes do not support.
+    const output = run(
+      { total: 5, tests: [{ ...THEIRS, count: 2 }] },
+      { total: 15, tests: [{ ...THEIRS, count: 1 }] },
+    );
+    expect(output).toContain('**5 samples on this branch, against 15 on `main`.**');
+    expect(output).toContain('| `old.spec.ts:2` | 2/5 | 1/15 |');
+    expect(output).toContain('**Nothing.** Every failure below also fails on `main`');
+  });
+
   test('carries the marker the workflow updates its comment by', () => {
     expect(run({ total: 5, tests: [] }, { total: 5, tests: [] })).toContain('<!-- e2e-compare -->');
   });
