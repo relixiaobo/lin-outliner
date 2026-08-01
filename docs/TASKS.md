@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463, plan-progress-pill #467, plan-visibility #468 — `agent-run-presentation-consistency` complete) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463, plan-progress-pill #467, plan-visibility #468 — `agent-run-presentation-consistency` complete; agent-subagent-navigation #471 — `agent-subagent-interaction` PR 2) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,18 +31,28 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-31).** Open PR queue: **empty** — #469 merged, so the review
-queue is at zero and the front is wide open.
+**In flight (2026-08-01).** Open PR queue: **empty** — #471 merged, so the review
+queue is back at zero and the front is wide open.
 **One claim is missing:** `cc/agent-skill-library-settings` is 8 commits ahead of
 `main` with no PR open, so the widest unmerged change in the repo is invisible on the
 collision radar — cc opens the Draft PR, then the review queue is at one.
-PM staffing after that: `agent-subagent-interaction` PR 2 (navigation + Thread-list
-hygiene) and PR 3 (delegation card + interrupt) are both unblocked now that PR 1 has
-landed, and PR 3's standing collision with #467 is released now that the pill has
-merged — but the two attach to the same divider region, where the plan warns that
-extraction refactors merge silently wrong, so **stagger them rather than running both
-at once**. `agent-browser-control` implementation is **shelved** pending upstream
+PM staffing after that: `agent-subagent-interaction` **PR 3** (delegation card +
+interrupt) is the next unit and is now unblocked twice over — PR 1 and PR 2 have both
+landed, and PR 3's standing collision with #467 was released when the pill merged. It
+starts from a divider region that PR 2 deliberately left alone (`threadProcessSummary` /
+`threadProcessNeutralHeader` untouched — only their two inputs changed), so the plan's
+warning that extraction refactors there merge silently wrong is still the thing to
+respect. **`test:e2e` is not a clean gate signal right now**: two B5 material guards are
+deterministically red on `main` — see `plan-progress-pill-material-scope`.
+`agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
+Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
+PR 2) after a **high** review gate — thirty candidates, ten verified findings, every
+one real and all ten answered in one hardening commit; the gate's own verify pass
+refuted seven candidates, including two that looked like the most alarming of the set.
+Post-fix: typecheck, `test:core` (1599), `test:renderer` (914), `docs:check` green, and
+`test:e2e`'s five failures each resolved to a non-cause (two pre-existing on `main`, two
+flaky, one a worktree artifact that reproduces at `main` in the same worktree).
 Recently merged: #469 (`codex/agent-transcript-disclosure-anchor`) after a **high**
 review gate whose ten findings the author answered in one hardening commit — see
 *Recently completed*.
@@ -497,7 +507,9 @@ before any directional/security-sensitive build.
   `docs/spec/agent-subagent-threads.md`; plan archived at
   `docs/plans/archive/subagent-transcript-artifact.md`.
 - **agent-subagent-interaction** (P2, `in-progress` — cc-2, plan merged #454 after gate
-  review; **PR 1 `done` 2026-07-31 via #466** (codex-2), PR 2 / PR 3 unclaimed;
+  review; **PR 1 `done` 2026-07-31 via #466** (codex-2), **PR 2 `done` 2026-08-01 via
+  #471** (cc-2) after a **high** review gate — ten verified findings, all real, all
+  answered in one hardening commit (`ec253672`); PR 3 unclaimed;
   shape (b): three complete PRs — PR 1 status truth in the parent transcript (one live
   presentation row per child over append-only Items, `agentsStates` widened to
   `{status, taskPath, nickname, role}`, product language, failure tinting), PR 2 navigation +
@@ -531,9 +543,21 @@ before any directional/security-sensitive build.
   `ThreadService.ts:NNNN` citations (they predated #451's decomposition and reached past
   EOF) were repaired on the #466 branch — each relocated to `thread/TurnLifecycle.ts`,
   `thread/SubagentCollaboration.ts`, or `thread/ThreadCatalogOps.ts` and revalidated
-  against current code. PR 1's design is folded into
+  against current code. PR 1's and PR 2's design are folded into
   `docs/spec/agent-thread-rendering.md` + `docs/spec/agent-subagent-threads.md`; the plan
-  stays out of `archive/` until PR 2 and PR 3 ship.
+  stays out of `archive/` until PR 3 ships.
+  **What PR 2's gate is worth remembering:** all ten findings traced to ONE design shift —
+  the renderer's Thread catalog went roots-only while children became navigable and
+  deletable, and every consumer that still read the catalog expecting children degraded in
+  its own way (children resolving to "Not found", the post-delete fallback selecting a
+  child, a permanent ghost row, a background dot keyed to a non-root id). The three worst
+  were the new delete affordances: they judged "finished" from a snapshot frozen when the
+  dialog opened, took no confirmation, and treated an idle child holding queued work as
+  settled — a destructive, cascading action deciding from stale and incomplete evidence.
+  The lesson is narrower than "refresh your state": **when one read becomes the only
+  evidence for something, every consumer of the old evidence is a site that has to be
+  found**, and a destructive action re-takes its decision at the moment it is confirmed,
+  not when it was offered.
   See `docs/plans/agent-subagent-interaction.md`.
 - **toolruntime-handler-contribution** (P2, `done` 2026-07-30; PR #456, codex-2) —
   collaboration handlers moved verbatim into `thread/SubagentCollaboration.ts` via the
@@ -940,6 +964,18 @@ anything.
   defect #467 fixed for the Plan pill (close path → focus destination), which makes a real
   timing bug at least as likely as a test-side race. Check whether the menu's focus restore runs
   before the element it returns to is re-enabled.
+- **plan-progress-pill-material-scope** (P3, *fast-track, no plan file*, filed 2026-08-01 at the
+  #471 gate) — `main` is **deterministically red** on two B5 guards:
+  `typography-tokens.spec.ts` › *"keeps material backgrounds scoped to registered chrome and
+  overlay surfaces"* and *"keeps backdrop filters scoped to material surfaces and preview HUD
+  controls"* both report `.thread-plan-progress-summary` (`thread.css`, `--material-popover` +
+  `--material-backdrop` on an unregistered surface). It arrived with **#467**; #470 and #471
+  both re-reported it, and #471's gate confirmed it reproduces identically on `main` in a
+  clean worktree. Not a guard to relax (B11): the question is whether the Plan pill is chrome
+  or content. If chrome, register the surface; if content, de-materialize it. Either answer is
+  a design call with light+dark visual verification attached, which is why it is its own change
+  and not a fold-in. Until it lands, `test:e2e` is not a clean gate signal — the same problem
+  `red-e2e-on-main` (#464) fixed for the previous round.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).

@@ -112,6 +112,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **A Subagent is a place you can go, and every delegated child says what it is
+  doing (PR #471, cc-2)** — child Threads leave the conversation history
+  entirely: `thread/list` pages root conversations only, and a child is reached
+  where it belongs — from its parent's transcript, from a new Subagents section
+  in Thread Details that browses the whole subtree with name, status, and last
+  activity, or from a neutral dot on a root whose descendant is still working
+  after the parent Turn ended. A child Thread's header carries a `← parent /
+  child` breadcrumb without giving up the Thread list, so no view is a dead end.
+  Bulk cleanup deletes only Threads whose entire subtree has stopped — deleting
+  cascades, so "delete finished" never takes a running grandchild with it, and a
+  child holding queued work counts as busy rather than finished. Both deletions
+  confirm first and re-take the decision against a fresh read at the moment of
+  confirmation, because a child that was idle when the dialog opened can be
+  running again by the time the button is pressed. Isolated-Skill delegation
+  gains the same per-child status row collaboration already had: previously one
+  in-progress `skill` row stood for the whole child run, with no sign an agent
+  was working, no elapsed, and no way in. The two roles behind that row are now
+  separated — recording widens to any child Thread, while only collaboration
+  children can end a `wait_agent`, appear in its outcomes, or count toward
+  "Waiting on N subagents".
 - **A delegation tree can no longer outspend its grant (PR #455, codex)** — the
   subagent token budget is now conserved across a whole tree instead of handed
   out per child: the root-most spawning thread holds ONE pool, every descendant
@@ -171,6 +191,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **A long conversation no longer loses the ability to delegate (PR #471,
+  cc-2)** — the descendant token pool was keyed on the parent Thread, so spend
+  accumulated across every Turn of that Thread's life against the 1.5M default.
+  Once it crossed, every later spawn was refused forever; the only reset was
+  subtree deletion, and `/clear` never touched the ledger. Because the user is
+  never shown a token number by design, this arrived as delegation silently
+  going dead with no cause and no way out. Spend is now request-scoped: a pool
+  belongs to the delegating Turn that opened it and is shared by everything
+  spawned inside that Turn's subtree, and the next Turn opens its own. A
+  fire-and-forget child keeps charging the request that asked for it until it
+  settles, and re-delegating to an idle child whose pool was already reclaimed
+  binds it to the pool of the Turn delegating now, so no descendant Turn runs
+  uncovered. Structure is deliberately not rescoped — depth 2 and the durable
+  sixteen-direct-children count stay Thread-lifetime.
 - **Expanding a transcript disclosure no longer moves the row you clicked (PR
   #469, codex)** — opening a Thought, a tool output, or a long user message in
   the agent transcript could shove that row up or down the screen, because
