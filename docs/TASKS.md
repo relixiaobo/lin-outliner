@@ -31,11 +31,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-08-01).** Open PR queue: **empty** — #471 merged, so the review
-queue is back at zero and the front is wide open.
-**One claim is missing:** `cc/agent-skill-library-settings` is 8 commits ahead of
-`main` with no PR open, so the widest unmerged change in the repo is invisible on the
-collision radar — cc opens the Draft PR, then the review queue is at one.
+**In flight (2026-08-01).** Open PR queue: **empty** — #471 and #470 both merged, so
+the review queue is back at zero and the front is wide open. #470 took five gate
+rounds; its scope call (cut the self-load seam, move Skill-name validity to load
+admission) left two boarded follow-ups under **Agent capabilities** —
+`skill-path-ownership` and `skill-directory-is-itself-a-skill` — which are one
+question and should be designed together, not picked up piecemeal.
 PM staffing after that: `agent-subagent-interaction` **PR 3** (delegation card +
 interrupt) is the next unit and is now unblocked twice over — PR 1 and PR 2 have both
 landed, and PR 3's standing collision with #467 was released when the pill merged. It
@@ -414,6 +415,30 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **skill-path-ownership** (P2, `draft`, *no plan file yet* — spun out of #470 at the
+  gate 2026-08-01; the two items below are one question and should be designed
+  together) — **who owns a path, and when is that decided?** `targetInsideSkillsDir`
+  resolves a write target from **path shape alone** and never asks whether a Skill
+  actually loaded there: under a bound directory, `<bound>/taxes/2025.md` is validated
+  as support content of a Skill "taxes" that does not exist, and
+  `<bound>/Research Notes/summary.md` is refused with `invalid_skill_name` though it is
+  not a Skill at all. That is correct for `.agents/skills` — a directory that is *for*
+  Skills by convention — and wrong for a folder a user bound by hand. Pre-existing
+  (verified on `origin/main` at the gate), but #470 is what made it reachable from the
+  UI, and #470's confirm-then-bind-the-parent flow aims it at a directory the user did
+  not pick. Design the ownership model — resolve against what the registry actually
+  loaded, or distinguish convention directories from bound ones — rather than adding
+  another guard to the branch ladder.
+- **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
+  at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
+  is at least as natural as picking its parent, but the loader only ever looks one
+  level down. #470 tried to support it and spent four review rounds re-creating the
+  same governance defect one level over each time — ordering, post-reload state, the
+  create and conditional paths, the container branch's own naming — because the
+  ambiguity "container **or** Skill?" was being resolved by ordered guesses at write
+  time (A7). #470 now asks whether to bind the parent instead, which is honest but not
+  the feature. Give this its own seam: settle identity and ownership first, then the
+  loading. Depends on `skill-path-ownership`.
 - **agent-context-integrity** (P1, `done` 2026-07-29; PRs #440, #441, #444) —
   restored the complete canonical model-context contract. PR 1 (#440): strict
   evidence Items and codecs, Thread-owned verified context payloads, typed
@@ -582,33 +607,6 @@ before any directional/security-sensitive build.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
-- **agent-skill-library-settings** (P2, `in-progress` — main-authored 2026-07-31 at the
-  PM's request; **built on `cc/agent-skill-library-settings` (8 commits) but no PR is
-  open, so the claim is invisible to every sibling clone — cc should open it**;
-  shape (a): one complete PR in eight staged commits) — Skill settings are split by
-  *provenance*, which is an implementation detail: `AgentSettingsView.tsx:980-1010`
-  renders the managed panel and then a second list filtered
-  `source !== 'managed'`, while `ManagedSkillsSettings.tsx` keeps catalog browse and a
-  GitHub URL field as permanent page furniture — four or five top-level groups where
-  there should be one list and a `+`. Two enable mechanisms coexist
-  (`agentSkills.ts:588` excludes managed from `disabledSkills`), and
-  `additionalSkillDirectories` (`core/types.ts:718`, honored at `main.ts:483/567/667`)
-  has **no renderer surface at all**, so adding a local Skill directory is unreachable
-  from the app. Shape (a): **one PR, eight staged commits** — (1) guard
-  `catalog/managed-skills-v1.json`, the only file here that reaches every installed
-  Tenon from `main` without a release and is validated by nothing, plus the Browser
-  Pilot recommendation entry (data, gated on its maintainer, not a blocker); (2) a
-  settings DOM-snapshot judge captured on `main` FIRST; (3) decompose the 1,281-line
-  settings god component (17 `useState` across four domains; `DraftConfig` already
-  spans two) into one component per category as a **pure move, snapshots
-  byte-unchanged, no test edited**; then (4-8) enable predicate → one list → `+`
-  acquisition panel → local directories → update visibility. Two judges land before
-  what they judge; that staging is what keeps a PR this wide reviewable. The
-  decomposition earns its place from evidence, not tidiness — the one extraction
-  already made (`ManagedSkillsSettings`) was cut along *provenance*, and that wrong
-  seam is what produced the split page this plan fixes. Gate: `/code-review ultra` +
-  light/dark visual verification. See
-  `docs/plans/agent-skill-library-settings.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -1008,6 +1006,40 @@ anything.
 
 ## Recently completed
 
+- **agent-skill-library-settings** (`cc/agent-skill-library-settings`, PR #470, cc,
+  merged 2026-08-01, plan-track; plan archived at
+  `docs/plans/archive/agent-skill-library-settings.md`) — Skill settings were split by
+  *provenance*, an implementation detail: a managed panel plus a second list filtered
+  `source !== 'managed'`, with catalog browse and a GitHub URL field as permanent page
+  furniture. Now **one list over every source** (`built-in` / `user` / `project` /
+  bound local directory / `managed`), sorted by the name the user reads, with
+  provenance as a row chip and acquisition behind a `+`. Two enable mechanisms
+  collapse into one predicate (`isSkillEnabled` — `disabledSkills` now applies to
+  managed sources too, and `MAX_DISABLED_SKILLS` rises 20 → 1000 so the 21st disable is
+  no longer silently dropped). `additionalSkillDirectories` gains its first renderer
+  surface: bind a local directory from the app, as a **container of Skills**. Managed
+  update checks are throttled (6h) with a launch sweep, and update availability
+  surfaces as a nav badge. Shipped as one PR in eight staged commits, two judges first
+  (a `catalog/managed-skills-v1.json` guard — the only file that reaches every
+  installed Tenon from `main` without a release — and a settings DOM snapshot captured
+  on `main`), then a pure-move decomposition of the 1,281-line settings component into
+  one per category, then the five behaviour commits. **Gate (main):** five rounds of
+  `/code-review high` (workflow-backed, 25-36 agents each; 10 findings reported per
+  round, each re-verified the following round) + `/security-review` (no HIGH/MEDIUM) +
+  light/dark visual verification. `/code-review ultra` is user-triggered and was not
+  available to the gate; the five high rounds plus the security pass stood in for it.
+  **The scope call at round 4:** four consecutive rounds landed the same defect class
+  one level over, because `resolveSkillContentTarget` was deciding *which Skill owns
+  this path* by ordered guesses at write time. Per A7 the ambiguity was cut rather than
+  guarded again — "a bound directory may itself be a Skill" is out of this PR (see the
+  two backlog items it spawned), and Skill-name validity moved from write-resolution to
+  **load admission** (A12: fail-closed belongs at an admission boundary, not on the
+  user path), which closed a hole where a Skill could load, list and run while its own
+  `SKILL.md` resolved to no write target at all. Picking a folder that is itself a
+  Skill now asks before binding its parent, naming the scope it widens. Verified at the
+  gate on the merge commit: typecheck clean, `test:core` 1683 pass / 0 fail,
+  `test:renderer` 950 pass / 0 fail, `docs:check` OK. Specs synced:
+  `docs/spec/agent-skills.md`.
 - **agent-transcript-disclosure-anchor** (`codex/agent-transcript-disclosure-anchor`,
   PR #469, codex, merged 2026-07-31, plan-track; plan archived at
   `docs/plans/archive/agent-transcript-disclosure-anchor.md`) — expanding or collapsing

@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **One Skill library, and a way to add your own (PR #470, cc)** — Skill
+  settings were organised by where a Skill came from: a managed panel, then a
+  separate list of everything else, with catalog browse and a GitHub URL field
+  standing open as permanent page furniture. Provenance is an implementation
+  detail — you think "my Skills" — so it is now **one list over every source**,
+  sorted by the name you read, with the source as a chip on the row and
+  everything that adds a Skill collected behind a `+`. A managed Skill and a
+  local one are turned off the same way now, by one predicate rather than two
+  mechanisms, and the cap on how many Skills you could disable rose from 20 to
+  1000 — past 20 the 21st was silently dropped and the Skill stayed available
+  to the model. You can point Tenon at **a folder of your own Skills** from the
+  app for the first time; Tenon reads the Skills *inside* the folder you
+  choose, so picking a folder that is itself a Skill asks before adding its
+  container and says plainly that every other Skill in there comes along.
+  Managed update checks no longer run on every glance — at most once every six
+  hours per Skill, once shortly after launch — and when an update is waiting,
+  the Skills row in the settings sidebar says how many. A folder whose name
+  cannot be a Skill's name (a space, non-ASCII) is refused when it is read
+  rather than when it is written to, so a Skill can no longer load, list and
+  run while edits to its own definition go ungoverned.
 - **The Plan says which step the agent is on (PR #467, cc-2)** — the progress
   pill above the composer showed a bare `Step 3 / 5`, so following along meant
   opening the checklist to find out what step 3 was. It now carries the current
