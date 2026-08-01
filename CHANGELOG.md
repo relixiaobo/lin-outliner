@@ -23,8 +23,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   than sharding or repeating individual tests, because the failures worth catching
   only appear in a full run. It does not gate pull requests, and retries stay at
   zero: making an unstable suite report green would hide the thing being measured.
-  Also fixed `trace: 'on-first-retry'` sitting alongside an unset `retries`, which
-  meant Playwright traces had never once been captured.
+  It runs on macOS, because the suite encodes the platform the product ships on —
+  the first version ran on Linux, where a different keyboard modifier and font
+  stack produced ten stable failures that pass on macOS, which is the kind of
+  false red people learn to ignore. Also fixed `trace: 'on-first-retry'` sitting
+  alongside an unset `retries`, which meant Playwright traces had never once been
+  captured.
 
 
 ### Fixed

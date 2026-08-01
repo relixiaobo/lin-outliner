@@ -47,8 +47,16 @@ permissions:
 jobs:
   sample:
     name: sample ${{ matrix.sample }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # macOS, because the product is macOS-only and the suite encodes that: it
+    # presses `Meta+A` and `Cmd+Enter`, where Linux binds a different modifier
+    # entirely, and it asserts alignment and row heights that come out of the
+    # platform font stack. The first run of this workflow was on ubuntu and
+    # reported ten *deterministic* failures that pass on macOS — a signal
+    # measuring a platform we do not ship, whose stable false red is exactly the
+    # thing people learn to ignore. Running on Linux was never the question;
+    # being right about macOS is.
+    runs-on: macos-latest
+    timeout-minutes: 45
     # A red sample is data, not a broken job: the matrix must complete so the
     # classifier sees all five.
     continue-on-error: true
@@ -60,7 +68,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium
+      # No `--with-deps`: that installs Linux system packages and has nothing to
+      # do on a macOS runner.
+      - run: bunx playwright install chromium
       - name: Run the full suite
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: report.json
@@ -76,6 +86,8 @@ jobs:
 
   verdict:
     name: classify and publish
+    # Linux here on purpose: this job only reads JSON and calls `gh`, so keeping
+    # it off macOS leaves the whole macOS concurrency allowance for the samples.
     runs-on: ubuntu-latest
     needs: sample
     if: always()

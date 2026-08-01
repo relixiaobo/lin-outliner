@@ -975,9 +975,16 @@ anything.
   `trace: 'on-first-retry'` while never setting `retries` (default 0), so **traces had
   never been produced** — which is why every e2e investigation here has been
   re-run-and-squint. Now `retain-on-failure`. Retries stay at 0 deliberately.
-  The cost objection that made this look expensive did not survive checking: the suite
-  never launches Electron (`renderer:dev` is plain `vite`, the main process is mocked), so
-  it is not macOS-bound, and the repository is public where Linux runners are free.
+  **It runs on `macos-latest`, and the first version got that wrong.** Drafting established
+  that the suite never launches Electron (`renderer:dev` is plain `vite`, the main process
+  is mocked) and therefore *can* run on Linux — true, and the wrong question. The suite
+  encodes macOS: it presses `Meta+A` and `Cmd+Enter`, where Linux binds a different
+  modifier, and it asserts alignment and row heights that come out of the platform font
+  stack. The first run, on ubuntu, reported **ten deterministic failures that pass on
+  macOS** — a signal measuring a platform we do not ship, and a stable false red is
+  precisely what people learn to ignore. Fixed the same day; the classifier job stays on
+  Linux since it only reads JSON, which leaves the whole macOS concurrency allowance for
+  the samples.
 
 - **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
   *fast-track, no plan file*) — closed two boarded items,
