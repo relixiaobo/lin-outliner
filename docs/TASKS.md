@@ -916,9 +916,13 @@ anything.
   intermittent rather than reporting one sample.
   Grounding facts for whoever drafts it: **the repository has no CI at all** — no
   `.github/workflows`, no other runner config — so this is not "add a job to the pipeline",
-  it is deciding whether there is a pipeline. macOS is the supported platform
-  (Electron + Playwright), so a hosted runner means a macOS runner and its cost, and a
-  local scheduled run means one machine's availability. And `playwright.config.ts` sets
+  it is deciding whether there is a pipeline. **The cost objection does not survive
+  checking** (an earlier version of this entry asserted it): the e2e suite never launches
+  Electron — `renderer:dev` is plain `vite`, `playwright.config.ts` drives headless
+  Chromium against it, and the main process is mocked (`tests/e2e/outlinerMock.ts`) — so it
+  is not macOS-bound, `build:native` runs only under `app:build`, there is no
+  `postinstall`, and the repository is public, where standard Linux runners are free. And
+  `playwright.config.ts` sets
   `trace: 'on-first-retry'` while never setting `retries`, so **traces have never been
   produced** — which is why every one of these investigations has been re-run-and-squint
   instead of opening a trace. That is worth fixing whatever else is decided.
