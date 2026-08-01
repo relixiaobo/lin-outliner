@@ -438,6 +438,27 @@ describe('skill library list', () => {
     expect(label).not.toContain('user');
   });
 
+  test('a local skill row offers one reveal and one unbind, not two reveals', async () => {
+    // The row already reveals its own folder; the bound-directory branch used
+    // to add a second entry with the identical label doing something different,
+    // which also collided on the menu's React key.
+    const rendered = await render({
+      skills: [{ ...localSkill('notes', 'user'), rootDir: '/work/skills/notes' }],
+      managed: [],
+      directories: ['/work/skills'],
+    });
+
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('[aria-label="notes actions"]')?.click();
+      await Promise.resolve();
+    });
+    const labels = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .map((button) => button.textContent?.trim());
+
+    expect(labels.filter((label) => label === 'Show in Finder')).toHaveLength(1);
+    expect(labels).toContain('Unbind directory');
+  });
+
   test('a bound directory with no skills is still listed, so it can be unbound', async () => {
     const rendered = await render({ skills: [], managed: [], directories: ['/work/empty'] });
 
@@ -532,6 +553,8 @@ async function openAddMenu(rendered: Rendered, label: string): Promise<void> {
   const entry = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
     .find((button) => button.textContent?.trim() === label);
   if (!entry) throw new Error(`Missing menu entry: ${label}`);
+  // Settled inside act: the entry's handler picks a directory, writes the
+  // setting, and may reload the list.
   await act(async () => {
     entry.click();
     await Promise.resolve();

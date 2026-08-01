@@ -222,6 +222,7 @@ import {
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
   AGENT_GENERATED_IMAGE_DIR,
+  isPathInside,
   pruneAgentScratch,
 } from './agent/capabilities/agentAttachmentMaterialization';
 import {
@@ -3410,6 +3411,23 @@ function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): Age
   return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
 }
 
+/**
+ * A reveal target must be a Skill location: a loaded Skill's own root, or a
+ * directory the user bound. The renderer supplies the path, so this is the
+ * authority — matching how lin:reveal-local-file and reveal_asset each gate to
+ * their own trusted root rather than trusting the caller.
+ */
+async function isRevealableSkillLocation(target: string): Promise<boolean> {
+  const resolved = resolve(target);
+  const settings = await getAgentRuntimeSettings().catch(() => null);
+  const bound = (settings?.additionalSkillDirectories ?? [])
+    .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
+    .filter(Boolean);
+  if (bound.some((dir) => isPathInside(dir, resolved))) return true;
+  const skills = await skillRuntime.listAllSkills().catch(() => []);
+  return skills.some((skill) => skill.rootDir.startsWith('/') && isPathInside(skill.rootDir, resolved));
+}
+
 async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
   try {
     return { ok: true, value: await operation() };
@@ -3447,6 +3465,11 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');
       if (!target) return { revealed: false };
+      // Only Skill locations, like every neighbouring reveal gates to its own
+      // trusted root. Without this the renderer could name any absolute path:
+      // it would open Finder there, and the existence check below would answer
+      // whether an arbitrary path exists.
+      if (!(await isRevealableSkillLocation(target))) return { revealed: false };
       // showItemInFolder returns void and reports nothing, so check first. The
       // common case is the failing one: a bound directory that was renamed,
       // deleted, or unmounted is exactly what the user clicks Reveal to

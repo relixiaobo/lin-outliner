@@ -300,7 +300,14 @@ export function SettingsSkillLibrarySection({
       }, t, busy)],
       actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
     } satisfies LibraryRow;
-  }), [disabledSkills, managed.busy, managed.skills, onToggleSkill, t]);
+    // skillRoots is read through revealAction. Omitting it memoized every
+    // managed row against an empty map — agent_list_all_skills resolves after
+    // agent_managed_skill_list — so managed rows lost "Show in Finder" for the
+    // life of the pane whenever nothing later replaced managed.skills.
+    // Data only. The controller object and its methods are rebuilt on every
+    // render, so depending on them would recompute every row every time and
+    // defeat the memo outright.
+  }), [disabledSkills, managed.busy, managed.skills, onPersistSkillDisabled, skillRoots, t]);
 
   const localRows: LibraryRow[] = useMemo(() => allSkills
     .filter((skill) => skill.source !== 'managed')
@@ -334,10 +341,10 @@ export function SettingsSkillLibrarySection({
       }
       const localDirectory = directoryContaining(skill.rootDir, additionalSkillDirectories);
       if (localDirectory) {
-        actions.push({
-          label: t.settings.skills.revealInFinder,
-          onSelect: () => void revealDirectory(localDirectory),
-        });
+        // No second "Show in Finder" here: the row already offers one for its
+        // own folder (revealAction above). A duplicate label did two different
+        // things, and AnchoredActionMenu keys on the label, so the two also
+        // collided as React children.
         actions.push({
           // "Unbind", never "remove" or "delete": the handler drops Tenon's
           // pointer and leaves every file where it is. The label has to say the
