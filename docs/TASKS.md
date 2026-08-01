@@ -529,11 +529,17 @@ before any directional/security-sensitive build.
   demonstrated need). Opens the task-contract Layer 1 surface (progress-visible / controllable);
   the standing "task contract meta doc" idea is folded here rather than written separately.
   PM rulings Q1-Q3 + bright-line-as-admission-invariant recorded in the plan. PR 2 and
-  PR 3 are both claimable now that PR 1 has landed — **whoever claims them starts from
-  the plan's "PR 1 landed" section**, which records the seams they attach to
-  (`subagentPresentation.ts` projection, the divider now co-owned with #463, the
-  `latestTurnByThread` fallback, the settled protocol shapes) and the integration
-  warning that extraction refactors in the divider region merge silently wrong.
+  PR 3 is the last unclaimed unit — **whoever claims it starts from the plan's
+  "PR 2 landed" section**, added at the #471 merge to the same standard PR 1 set: the
+  `thread/descendants` request and its `ThreadDescendantsView`, the projection's
+  `form` / `collaborationThreadIds` split, scoped budget pool ids, `interruptTurn` as
+  the unchanged single seam, and the list-row activity indicator that is the evidence
+  behind "no dock panel". It also names **the one genuinely open thing in PR 3**:
+  `queuedWorkThreadIds` describes descendants with queued work and *no Turn to
+  interrupt*, so the Q2 Stop cascade cannot be a pure walk of active Turns — PR 3 must
+  say what Stop does to work that has not started. "PR 1 landed" still holds for the
+  older seams and the warning that extraction refactors in the divider region merge
+  silently wrong.
   One standing constraint for those PRs: the codec clean cut means **every clone wipes
   `~/.lin-outliner-*` dev userData** before running any branch off this point. (The
   former collision for PR 3 — #467's plan-progress pill in the same parent process

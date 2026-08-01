@@ -415,6 +415,51 @@ Spec: `docs/spec/agent-subagent-threads.md` — the budget section states pool
 lifetime explicitly, which it does not today; that silence is what let the
 Thread-scoped reading look intended.
 
+### PR 2 landed — what PR 3 builds on
+
+Shipped in #471 (merged 2026-08-01), after a high gate whose ten findings were
+answered in one hardening commit (`ec253672`). Behavior lives in
+`docs/spec/agent-thread-rendering.md` and `docs/spec/agent-subagent-threads.md`;
+this section records only the seams PR 3 attaches to, by symbol name.
+
+- **`thread/descendants` is a new protocol request** (`protocol.ts`, exact-key
+  decoded in `codec.ts`): `{threadId}` in, `{data: Thread[],
+  queuedWorkThreadIds: ThreadId[]}` out. `ThreadDescendantsView` in
+  `threadStore` is its renderer shape and already backs
+  `ThreadDetailsDialog`. **PR 3 reads this rather than adding a parallel
+  descendant view.**
+- **`queuedWorkThreadIds` puts a question on PR 3's desk that did not exist
+  before.** It names descendants holding queued work that has not started a
+  Turn. Such a child has **no Turn to interrupt**, so the Q2 cascade cannot be
+  a pure walk of active Turns: leaving queued children to start *after* the
+  user pressed Stop is the same trust violation Q2 was ratified to prevent.
+  PR 3 must say explicitly what Stop does to queued-but-not-started work —
+  drop it, or refuse admission for the rest of the parent Turn — and cover it
+  in a test. This is the one genuinely open thing in PR 3's scope.
+- **The projection distinguishes delegation forms.**
+  `SubagentPresentation.form` is `'collaboration' | 'isolatedSkill'`, and
+  `SubagentTurnProjection.collaborationThreadIds` is the pre-derived set a wait
+  blocks on — its comment says it is derived once precisely so consumers do not
+  re-derive it. The card replaces the row *presentation*, not the projection:
+  take per-child lines from `byThreadId`, take "what the wait is accountable
+  for" from `collaborationThreadIds`, and do not re-split by source.
+- **Budget pool ids are scoped values now**: `SubagentBudgetPoolScope` is
+  `'turn' | 'thread'`, with `turnBudgetPoolId(turnId)` and
+  `childBudgetPoolId(threadId)`. PR 3 changes no budget behavior, but its
+  cascade must not disturb pool reclamation, and the bright line stands — a
+  human interrupt is never budget- or state-gated.
+- **`interruptTurn` is unchanged and is still the only seam**
+  (`TurnLifecycle.ts:450`, exposed at `ThreadService.ts:705`). PR 3 extends
+  reach to descendants with authorization, not the semantics.
+- **Cross-thread awareness already exists**: a root row renders
+  `.thread-list-activity` from `backgroundWork` (`ThreadList.tsx:136`). This is
+  the evidence behind "no dock-level agents panel" — the awareness gap the
+  panel would have filled is filled.
+- **#469 landed disclosure scroll anchoring** the same day
+  (`ui/interactions/disclosureScrollAnchor.ts`). The card is a live,
+  height-changing element inside the process block, which is the case that
+  mechanism governs; check it before inventing scroll handling.
+
 ### PR 3 — live delegation card + user interrupt
 
 Ratified shape (Q1/Q2, PM 2026-07-30):
@@ -494,7 +539,10 @@ None. Ratified by the PM on 2026-07-30, from the UX discussion:
   scope.
 - PR 3: E2E for card lifecycle (spawn/live/terminal), per-child interrupt of
   a running child, and parent-Stop cascade interrupting live descendants;
-  light + dark visual verification for card and indicators.
+  a core test that Stop also settles descendants named by
+  `queuedWorkThreadIds` — queued work that has not started a Turn is the case
+  a walk of active Turns silently misses; light + dark visual verification for
+  card and indicators.
 - All PRs: `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   focused `bun run test:e2e` scope, `bun run docs:check`; spec updated in the
   same change (A6); dev userData wipe noted in the PR body for the PR 1
