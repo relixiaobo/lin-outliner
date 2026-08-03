@@ -115,9 +115,12 @@ artifacts to carry the platform, so runs from before that are correctly excluded
 comparison reports every failure as *unattributed* until three fresh `main` runs exist.
 **Its first two baselines already paid for it**, and not in the way expected: four tests
 fail every single CI macOS sample and have never failed locally
-(`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
-baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
-broke them — there was no signal, so nobody knew.
+(`ci-macos-layout-and-material-red`, **closed by #479 on 2026-08-03**), while the test this
+board had called `main`'s red baseline passes 0/10 there and is now
+`file-attachment-inline-preview-local-flake`. Nothing broke them — there was no signal, so
+nobody knew. The board asked which of two endings it was; the answer was **both**, and the
+signal is what separated them: one of the four was a real product defect the tests had been
+catching all along, the other three asserted a media state they never declared.
 `agent-browser-control` is **closed as `superseded`** (2026-08-03) and its plan is archived.
 The 2026-07-31 ruling predicted that #406's managed-Skill channel made it unnecessary;
 that is now observable — `catalog/managed-skills-v1.json` ships `browser-pilot` as its
@@ -929,27 +932,17 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **ci-macos-layout-and-material-red** (P2, *fast-track, no plan file*, filed 2026-08-01 from
-  the first `e2e-signal-on-main` baselines) — four tests fail in **every** CI macOS sample
-  (5/5, then 10/10 across two runs) and have **never** failed on a developer's machine:
-  `agent-thread.spec.ts:1086` (one leading image gallery, file references in message order),
-  `outliner-bullet-parity.spec.ts:82` (top-level bullets align to the panel header content
-  start), `window-material.spec.ts:23` (rails translucent only with a material; wrappers and
-  panels stay opaque), `workspace-layout.spec.ts:409` (single panel centers bounded content).
-  **They are not new.** Nothing broke them; there was simply no signal, so nobody knew. That
-  is the first thing the signal bought.
-  They are one family — layout measurement and material/translucency — which points at a
-  single root cause rather than four: a GitHub macOS runner is headless with no real window
-  compositing or GPU, so `backdrop-filter`, window material, and anything measuring painted
-  geometry can legitimately differ. **Establish that before fixing anything**, because the
-  two possible endings need opposite work: either the product is wrong and the tests caught
-  it, or the tests assert conditions they never declared they need, in which case they
-  should declare them (skip, or assert the precondition) instead of failing silently
-  everywhere the condition does not hold. Do not "fix" them by loosening assertions to pass
-  in both places — that is the B11 trade, and it would make the signal report green about a
-  thing it stopped measuring.
-  Start from a trace: `playwright.config.ts` now sets `retain-on-failure`, so the CI run
-  artifacts carry one, which is the first time that has been true here.
+- **e2e-visual-media-baseline-fixture** (P3, *fast-track, no plan file*, filed 2026-08-03 at
+  the #479 gate) — #479 gave the suite `tests/e2e/emulatedMedia.ts`, which pins all five
+  visual preferences over CDP, but it is **opt-in per call site**: three specs call it, and
+  `rg 'test.extend' tests/e2e` returns nothing. The environmental premise it works around is
+  permanent — GitHub's macOS images report `prefers-reduced-transparency: reduce`, flipping
+  the whole `:root` override block in `a11y.css` — so any future guard that asserts a rail,
+  popover, menu, or HUD color is wrong on CI unless its author remembers the helper. It will
+  be written locally, pass, and turn red only after merge, which is the discovery-by-accident
+  failure `e2e-signal-on-main` exists to end. A `test.extend` fixture in a shared e2e base
+  that pins the baseline for every test by default (with an opt-out for the `reduce` case)
+  fixes it once instead of per spec.
 - **file-attachment-inline-preview-local-flake** (P3, *fast-track, no plan file*, filed
   2026-08-01 at the #475 gate, **rescoped 2026-08-01 once CI existed**) —
   `file-attachments.spec.ts:178`
@@ -1005,6 +998,47 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **ci-macos-layout-and-material-red** (codex, PR #479, merged 2026-08-03, *fast-track, no
+  plan file*) — the four tests that failed **every** CI macOS sample and had **never** failed
+  locally are closed, and the board's own question ("is the product wrong, or do the tests
+  assert an undeclared condition?") resolved to **both**, which is why the signal was worth
+  building. One was a **real defect**: `.outline-panel-surface .main-panel` used
+  `scrollbar-gutter: stable`, which reserves the gutter on the inline-end edge only, so on
+  any machine with non-overlay scrollbars — the runner's configuration, or
+  Appearance → "Show scroll bars: Always" — the 720px reading column sat ~5–6px left of the
+  pane's visual center in every wide single-pane window. It is now `stable both-edges`; the
+  gutters are symmetric and the column centers against the panel's visible border box.
+  The other three asserted a media state they never declared: GitHub's macOS images report
+  `prefers-reduced-transparency: reduce`, which flips the whole `:root` override block in
+  `a11y.css` (`--material-*`, `--media-hud-*`), so every material/HUD color guard was
+  measuring the opaque branch while asserting the translucent one. `tests/e2e/emulatedMedia.ts`
+  now pins all five visual preferences over CDP (Playwright's own `emulateMedia` has no
+  `prefers-reduced-transparency`) and verifies they applied.
+  **The gate is the part worth carrying.** `/code-review high` returned 23 candidates → 10
+  verified findings, and the three blocking ones were one mistake made three times: each
+  "fix" moved the assertion's **reference frame** or **media state** instead of the thing
+  under test. The centering guard was rewritten to measure both gaps inside the scrollport's
+  *content* box, where they are equal by construction for any gutter width — green for a 0px
+  gutter and a 100px gutter alike — and the spec was amended to bless the offset, which is
+  exactly the B11 trade this item was filed telling us not to make. The HUD hover/active
+  assertions were left running under the leftover `reduce` emulation, so the translucent
+  tokens users actually see stopped being exercised anywhere. And swapping a raw
+  `--media-hud-fg` read for a probe span turned "token missing" into the same *inherited*
+  `color` the badge computes, so deleting the token would have passed. All three were fixed
+  at the source and are now mutation-verified: renaming `--media-hud-fg` throws, and
+  collapsing the hover token onto its reduce value fails the cross-state check.
+  Post-merge: typecheck, `test:core`, `test:renderer`, `docs:check` green; `test:e2e`
+  550/2, both failures `file-attachments.spec.ts` — one the known
+  `file-attachment-inline-preview-local-flake` (reproduced at `origin/main` in the same
+  worktree), one full-suite-only. Light/dark visual pass done at 1900px: gutter 0 locally
+  (overlay scrollbars), `leftGap === rightGap === 304`.
+  **Not done, deliberately:** the media baseline is still opt-in per call site rather than a
+  `test.extend` fixture, so the next design-system guard written against a material surface
+  will still pass locally and turn red only on the runner — boarded below as
+  `e2e-visual-media-baseline-fixture`. The trace-artifact upload this PR originally bundled
+  was dropped rather than split; if it is wanted it needs its own PR and a
+  `github.event_name != 'pull_request'` guard.
 
 - **agent-model-first-picker** (cc-2, PR #478, merged 2026-08-03, plan archived) — model
   selection is model-first: one flat list of models across every listed connection, the model
