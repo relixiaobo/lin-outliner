@@ -7,7 +7,7 @@ import type {
   KernelAgentOptions,
   Message,
 } from './types';
-import { redactedReplayMarker, toolCallEvidenceText } from '../toolCallHistory';
+import { toolCallEvidenceText } from '../toolCallHistory';
 
 type MutableAgentState = { -readonly [Key in keyof AgentState]: AgentState[Key] };
 
@@ -142,10 +142,10 @@ export class NativeAgentRuntime {
       case 'tool_call_admission':
         this.recordToolResultHistoryDecision(
           event.toolCallId,
-          event.decision.modelCall.disposition !== 'evidenceOnly',
+          event.decision.execute,
         );
         this.pendingAssistantAdmissions.push(event);
-        this.sanitizeAdmittedToolCalls();
+        this.updateLiveAssistantToolCalls();
         break;
       case 'tool_execution_start': {
         const pending = new Set(this.mutableState.pendingToolCalls);
@@ -176,7 +176,7 @@ export class NativeAgentRuntime {
     }
   }
 
-  private sanitizeAdmittedToolCalls(): void {
+  private updateLiveAssistantToolCalls(): void {
     let index = this.mutableState.messages.length - 1;
     while (index >= 0 && this.mutableState.messages[index]?.role !== 'assistant') index -= 1;
     const message = this.mutableState.messages[index];
@@ -196,23 +196,18 @@ export class NativeAgentRuntime {
         continue;
       }
       const modelCall = event.decision.modelCall;
-      if (modelCall.disposition === 'evidenceOnly') {
+      if (!event.decision.execute) {
         content.push({
           type: 'text',
-          text: toolCallEvidenceText(event.toolCallId, modelCall),
+          text: modelCall.disposition === 'evidenceOnly'
+            ? toolCallEvidenceText(event.toolCallId, modelCall)
+            : `[Tool call ${event.toolCallId} was not executed.]`,
         });
         continue;
-      }
-      if (modelCall.disposition === 'redactedReplay') {
-        content.push({
-          type: 'text',
-          text: redactedReplayMarker(event.toolCallId, modelCall.redactedPaths),
-        });
       }
       content.push({
         ...part,
         id: event.toolCallId,
-        arguments: event.historyArguments as Record<string, any>,
       });
     }
     this.mutableState.messages[index] = { ...message, content };

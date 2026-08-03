@@ -36,6 +36,7 @@ import {
 } from '../../src/core/types';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
@@ -336,6 +337,75 @@ describe('Codex Memory contracts', () => {
     const evidence = collectMemoryEvidence({ thread, turns: thread.turns ?? [] }, store);
     expect(evidence.items.map((item) => item.content)).toEqual(['remember local evidence']);
     expect(evidence.items[0]?.sourceDate).toBe('2020-01-02');
+  });
+
+  test('keeps completed tool evidence attributable to its presentation arguments', () => {
+    const store = memoryStore();
+    const baseTurn = userTurn('run the tools');
+    const provenance = (id: string) => ({
+      originThreadId: THREAD_ID,
+      originTurnId: baseTurn.id,
+      originItemId: id,
+    });
+    const turn: Turn = {
+      ...baseTurn,
+      items: [
+        {
+          type: 'commandExecution',
+          id: 'memory-command',
+          provenance: provenance('memory-command'),
+          command: 'npm test',
+          description: 'Run tests',
+          cwd: '/workspace',
+          processId: null,
+          status: 'completed',
+          commandActions: [],
+          aggregatedOutput: '42 tests passed',
+          exitCode: 0,
+          durationMs: 10,
+          outputRef: null,
+          modelCall: replayableModelCall('bash', { command: 'npm test' }),
+        },
+        {
+          type: 'mcpToolCall',
+          id: 'memory-mcp',
+          provenance: provenance('memory-mcp'),
+          server: 'docs',
+          tool: 'search',
+          status: 'completed',
+          arguments: { query: 'canonical history' },
+          pluginId: null,
+          result: { matches: 2 },
+          error: null,
+          durationMs: 5,
+          outputRef: null,
+          modelCall: replayableModelCall('docs__search', { query: 'canonical history' }),
+        },
+        {
+          type: 'dynamicToolCall',
+          id: 'memory-dynamic',
+          provenance: provenance('memory-dynamic'),
+          namespace: null,
+          tool: 'file_read',
+          arguments: { file_path: '/workspace/spec.md' },
+          status: 'completed',
+          contentItems: [{ type: 'text', text: 'spec contents' }],
+          success: true,
+          durationMs: 4,
+          outputRef: null,
+          modelCall: replayableModelCall('file_read', { file_path: '/workspace/spec.md' }),
+        },
+      ],
+    };
+    store.writeAdmission(admissionSnapshot(turn));
+    const thread = rootThread([turn]);
+    const content = collectMemoryEvidence({ thread, turns: [turn] }, store).items
+      .map((item) => item.content).join('\n');
+
+    expect(content).toContain('"command":"npm test"');
+    expect(content).toContain('"cwd":"/workspace"');
+    expect(content).toContain('"query":"canonical history"');
+    expect(content).toContain('"file_path":"/workspace/spec.md"');
   });
 
   test('fingerprints all eligible evidence while sending only the latest bounded window', () => {

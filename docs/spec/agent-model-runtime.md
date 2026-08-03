@@ -72,22 +72,32 @@ not install that projection port or overflow recovery; they send a top-level
 snapshot of their raw in-memory transcript, which already preserves
 same-execution provider parts without canonical re-projection.
 
-Tool history is projected only from each Item's `modelCall` envelope. A replayable
-call resolves its canonical identity against the active registry, loads exact inline or
-Thread-owned arguments, validates them against the current schema, and preflights its
-complete result dependencies before the call/result pair is emitted. A stored schema
-digest is diagnostic evidence, not authority to bypass the current schema. Missing
-tools, incompatible schemas, corrupt/missing argument or output payloads, and missing
-image snapshots degrade the entire pair to bounded typed evidence on this runtime user
-path; they never throw the Turn, emit an orphan result, or derive replacement arguments
-from presentation fields.
+Tool history is projected only from each Item's `modelCall` envelope. Admission freezes
+the canonical identity, exact provider-visible name, arguments, and schema digest.
+Projection loads that frozen inline or Thread-owned value and preflights its complete
+argument/result dependencies before emitting the call/result pair. It never resolves
+the call through the current registry or validates it against a later schema; tool
+retirement, provider-name changes, and schema evolution cannot retroactively erase an
+exchange. The digest remains immutable audit evidence. Corrupt or missing argument or
+output payloads and missing image snapshots degrade the entire pair to bounded typed
+evidence on this runtime user path; they never throw the Turn, emit an orphan result, or
+derive replacement arguments from presentation fields.
 
-`redactedReplay` emits one indivisible marker/call/result unit when the redacted value
-still validates. The marker states that placeholders were not executed values and must
-not be copied or retried. If redaction makes the current call invalid, projection emits
-executed-call evidence with the visible outcome instead. `evidenceOnly` always projects
-correction evidence and never a tool call or result. Mixed batches preserve original
-call order across these units.
+Redacted replay compatibility is decided against the admission schema. A compatible
+copy freezes `redactedReplay` and later emits one indivisible marker/call/result unit;
+the marker states that placeholders were not executed values and must not be copied or
+retried. An incompatible redacted copy freezes executed `evidenceOnly`: the validated
+source call still executes, but later history emits only typed evidence with the visible
+outcome. Other rejected `evidenceOnly` calls never execute and project correction
+evidence without a tool call or result. Mixed batches preserve original call order
+across these units.
+
+The active Turn alone keeps a transient raw-call overlay for admitted executable calls,
+so an immediate follow-up provider request observes the exact value that executed. The
+overlay is never persisted and is unavailable to later Turns, restart, fork, or
+compaction. Once cancellation is observed, sequential and parallel batch loops stop
+before admitting any remaining call; no Item or argument payload is created for those
+unadmitted calls, while already admitted calls settle as interrupted results.
 
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all

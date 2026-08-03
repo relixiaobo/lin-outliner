@@ -14,7 +14,7 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from 'typebox';
-import type { JsonValue, ModelToolIdentity, TurnError } from '../../../../core/agent/protocol';
+import type { ModelToolIdentity, TurnError } from '../../../../core/agent/protocol';
 import type { ModelGateway } from './ModelGateway';
 import type {
   ToolCallAdmissionDecision,
@@ -110,7 +110,6 @@ export type KernelEvent =
       providerToolCallId: string;
       toolName: string;
       decision: ToolCallAdmissionDecision;
-      historyArguments: JsonValue | null;
     }
   | { type: 'tool_execution_start'; toolCallId: string; toolName: string }
   | {

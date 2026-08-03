@@ -841,8 +841,8 @@ function toolDetail(
     case 'commandExecution':
       return {
         ...empty,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
-        inputLanguage: 'json',
+        input: commandDetailInput(item),
+        inputLanguage: 'bash',
         output: item.aggregatedOutput,
         // A real non-zero code is the useful explanation; a failure that never
         // produced one says so plainly instead of borrowing "exit code 1".
@@ -1892,6 +1892,21 @@ function jsonText(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function commandDetailInput(
+  item: Extract<ThreadItem, { readonly type: 'commandExecution' }>,
+): string {
+  const argumentsValue = modelCallDisplayArguments(item.modelCall);
+  if (
+    argumentsValue !== null
+    && typeof argumentsValue === 'object'
+    && !Array.isArray(argumentsValue)
+  ) {
+    const command = (argumentsValue as Readonly<Record<string, unknown>>).command;
+    if (typeof command === 'string') return command;
+  }
+  return item.command;
 }
 
 function isJsonText(value: string): boolean {

@@ -25,6 +25,7 @@ export interface ToolCallAdmissionRequest {
         readonly identity: ModelToolIdentity;
         readonly arguments: JsonValue;
         readonly schemaDigest: string;
+        readonly redactedArgumentsReplayable: boolean;
       }
     | {
         readonly type: 'rejected';
@@ -40,7 +41,7 @@ export interface ToolCallAdmissionRequest {
 
 export interface ToolCallAdmissionDecision {
   readonly modelCall: ModelToolCallHistory;
-  /** Safe, bounded arguments used only by presentation Item construction. */
+  /** Transient, redacted presentation input; admitted calls retain their complete argument structure. */
   readonly displayArguments: JsonValue;
   readonly execute: boolean;
 }
@@ -52,6 +53,9 @@ export async function persistToolCallAdmission(
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
   const redacted = redactSecretLikeJson(request.outcome.arguments);
   const durableValue = redacted.value;
+  if (redacted.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
+    return incompatibleRedactedAdmission(request, durableValue);
+  }
   let source: ModelToolCallArguments;
   try {
     source = await modelToolCallArguments(durableValue, persistArguments);
@@ -63,11 +67,12 @@ export async function persistToolCallAdmission(
       modelCall: {
         disposition: 'redactedReplay',
         identity: request.outcome.identity,
+        providerName: request.providerName,
         redactedArguments: source,
         redactedPaths: redacted.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
       },
-      displayArguments: boundedJsonSummary(durableValue),
+      displayArguments: durableValue,
       execute: true,
     };
   }
@@ -75,10 +80,11 @@ export async function persistToolCallAdmission(
     modelCall: {
       disposition: 'replayable',
       identity: request.outcome.identity,
+      providerName: request.providerName,
       arguments: source,
       schemaDigest: request.outcome.schemaDigest,
     },
-    displayArguments: boundedJsonSummary(durableValue),
+    displayArguments: durableValue,
     execute: true,
   };
 }
@@ -86,12 +92,16 @@ export async function persistToolCallAdmission(
 export function transientToolCallAdmission(request: ToolCallAdmissionRequest): ToolCallAdmissionDecision {
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
   const redacted = redactSecretLikeJson(request.outcome.arguments);
+  if (redacted.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
+    return incompatibleRedactedAdmission(request, redacted.value);
+  }
   const source = inlineModelToolCallArguments(redacted.value);
   if (!source) return persistenceRejectedAdmission(request, redacted.value);
   const modelCall = redacted.redactedPaths.length > 0
     ? {
         disposition: 'redactedReplay' as const,
         identity: request.outcome.identity,
+        providerName: request.providerName,
         redactedArguments: source,
         redactedPaths: redacted.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
@@ -99,12 +109,13 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
     : {
         disposition: 'replayable' as const,
         identity: request.outcome.identity,
+        providerName: request.providerName,
         arguments: source,
         schemaDigest: request.outcome.schemaDigest,
       };
   return {
     modelCall,
-    displayArguments: boundedJsonSummary(redacted.value),
+    displayArguments: redacted.value,
     execute: true,
   };
 }
@@ -115,16 +126,6 @@ export function persistenceFailureAdmission(
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
   const redacted = redactSecretLikeJson(request.outcome.arguments).value;
   return persistenceRejectedAdmission(request, redacted);
-}
-
-export function providerHistoryArguments(
-  request: ToolCallAdmissionRequest,
-  decision: ToolCallAdmissionDecision,
-): JsonValue | null {
-  if (request.outcome.type === 'rejected' || decision.modelCall.disposition === 'evidenceOnly') return null;
-  return decision.modelCall.disposition === 'redactedReplay'
-    ? redactSecretLikeJson(request.outcome.arguments).value
-    : request.outcome.arguments;
 }
 
 export function modelToolSchemaDigest(schema: unknown): string {
@@ -166,7 +167,6 @@ export function boundedJsonSummary(value: unknown): JsonValue {
 export function evidenceCorrection(reason: ModelToolCallEvidenceReason): string {
   switch (reason) {
     case 'unresolvedTool':
-    case 'toolUnavailable':
       return 'Choose a currently exposed tool and derive a new call from its active schema.';
     case 'invalidArguments':
     case 'schemaIncompatible':
@@ -234,6 +234,25 @@ function persistenceRejectedAdmission(
     },
     displayArguments: boundedJsonSummary(redactedArguments),
     execute: false,
+  };
+}
+
+function incompatibleRedactedAdmission(
+  request: ToolCallAdmissionRequest,
+  redactedArguments: JsonValue,
+): ToolCallAdmissionDecision {
+  if (request.outcome.type !== 'admitted') throw new Error('Expected an admitted tool-call request.');
+  return {
+    modelCall: {
+      disposition: 'evidenceOnly',
+      identity: request.outcome.identity,
+      providerName: request.providerName,
+      redactedArgumentsSummary: boundedJsonSummary(redactedArguments),
+      reason: 'schemaIncompatible',
+      correction: 'The executed values were redacted and cannot be replayed. Preserve the outcome as evidence only.',
+    },
+    displayArguments: redactedArguments,
+    execute: true,
   };
 }
 

@@ -38,6 +38,7 @@ import { decodeThreadContextPayload } from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
+  type LiveModelToolCall,
 } from '../context/ContextProjector';
 import {
   ContextCapacityError,
@@ -159,7 +160,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
       const projectionContext = withTurnScopedContextReads(context);
-      const projector = new CanonicalContextProjector(runtime.model, projectionContext, tools);
+      const projector = new CanonicalContextProjector(runtime.model, projectionContext);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
       const initialPrompt = currentMessages.at(-1);
@@ -187,6 +188,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         },
       });
       const reasoningReplay = internalMemory ? null : new ActiveTurnReasoningReplay(context.turn.id);
+      const liveModelToolCalls = new Map<string, LiveModelToolCall>();
       const normalizer = new PiEventNormalizer(context, {
         ...(reasoningReplay ? {
           assistantCompleted: ({ itemId, message }) => reasoningReplay.retain(itemId, message),
@@ -245,6 +247,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               tools,
               prompt,
               reasoningReplay,
+              liveModelToolCalls,
               {
                 prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
                 compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
@@ -290,10 +293,19 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               return compacted ? await transformContext() : null;
             }
           : undefined,
-        admitToolCall: (request) => persistToolCallAdmission(
-          request,
-          (value) => context.persistToolCallArguments(value),
-        ),
+        admitToolCall: async (request) => {
+          const decision = await persistToolCallAdmission(
+            request,
+            (value) => context.persistToolCallArguments(value),
+          );
+          if (request.outcome.type === 'admitted' && decision.execute) {
+            liveModelToolCalls.set(request.toolCallId, {
+              providerName: request.providerName,
+              arguments: request.outcome.arguments,
+            });
+          }
+          return decision;
+        },
         getApiKey: runtime.getApiKey,
         transformContext,
         sessionId: cacheAffinity,
@@ -376,6 +388,7 @@ async function projectCanonicalProviderContext(
   tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
   reasoningReplay: ActiveTurnReasoningReplay | null,
+  liveModelToolCalls: ReadonlyMap<string, LiveModelToolCall>,
   observer?: {
     readonly prepared?: (input: {
       readonly messages: readonly Message[];
@@ -397,7 +410,11 @@ async function projectCanonicalProviderContext(
         ],
       },
     ];
-    const projector = new CanonicalContextProjector(model, context, tools);
+    const projector = new CanonicalContextProjector(model, context, {
+      liveToolCall: (turnId, itemId) => (
+        turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
+      ),
+    });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
     const initialUser = context.turn.items.find((item) => (
@@ -784,7 +801,6 @@ export class PiEventNormalizer {
       case 'tool_call_admission':
         await this.startTool(
           event.toolCallId,
-          event.toolName,
           event.decision.modelCall,
           event.decision.displayArguments,
         );
@@ -869,13 +885,10 @@ export class PiEventNormalizer {
 
   private async startTool(
     callId: string,
-    rawProviderName: string,
     modelCall: ModelToolCallHistory,
     args: unknown,
   ): Promise<void> {
-    const providerName = modelCall.disposition === 'evidenceOnly'
-      ? modelCall.providerName
-      : rawProviderName;
+    const providerName = modelCall.providerName;
     const identity = modelCall.identity ?? canonicalIdentity(providerName);
     const startedAt = Date.now();
     const item = startedToolItem(this.context, callId, identity, modelCall, args);
@@ -999,7 +1012,7 @@ function startedToolItem(
       ...base,
       type: 'fileChange',
       changes: [{
-        path,
+        path: boundedText(path, MAX_PERSISTED_TOOL_STRING_CHARS),
         kind: identity.name === 'file_delete' ? 'delete' : identity.name === 'file_write' ? 'add' : 'update',
       }],
       status: 'inProgress',
@@ -1010,7 +1023,9 @@ function startedToolItem(
     return {
       ...base,
       type: 'webSearch',
-      query: typeof input.query === 'string' ? input.query : '',
+      query: typeof input.query === 'string'
+        ? boundedText(input.query, MAX_PERSISTED_TOOL_STRING_CHARS)
+        : '',
       status: 'inProgress',
       results: [],
       error: null,

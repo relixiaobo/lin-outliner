@@ -4,7 +4,10 @@ import {
   type TurnError,
 } from '../../../../core/agent/protocol';
 import { streamWithPolicy } from './retryPolicy';
-import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
+import {
+  redactSecretLikeContent,
+  redactSecretLikeJson,
+} from '../../capabilities/agentSecretRedaction';
 import type {
   AgentTool,
   AgentToolCall,
@@ -20,8 +23,6 @@ import {
   evidenceCorrection,
   modelToolSchemaDigest,
   persistenceFailureAdmission,
-  providerHistoryArguments,
-  redactedReplayMarker,
   toolCallEvidenceText,
   transientToolCallAdmission,
   type ToolCallAdmissionDecision,
@@ -138,9 +139,9 @@ export async function runKernel(
         : await executeToolCalls(context, toolCalls, signal, emit, options.admitToolCall);
       toolResults.push(...batch.messages);
       hasMoreToolCalls = !batch.terminate && !signal.aborted;
-      const sanitizedAssistant = sanitizeAssistantToolHistory(message, batch.admissions);
-      context.messages[context.messages.length - 1] = sanitizedAssistant;
-      newMessages[newMessages.length - 1] = sanitizedAssistant;
+      const liveAssistant = liveAssistantToolHistory(message, batch.admissions);
+      context.messages[context.messages.length - 1] = liveAssistant;
+      newMessages[newMessages.length - 1] = liveAssistant;
       for (const result of batch.historyMessages) {
         context.messages.push(result);
         newMessages.push(result);
@@ -265,7 +266,6 @@ interface ToolCallAdmissionRecord {
   readonly providerToolCallId: string;
   readonly toolCallId: string;
   readonly decision: ToolCallAdmissionDecision;
-  readonly historyArguments: import('../../../../core/agent/protocol').JsonValue | null;
 }
 
 interface ExecutedToolCall {
@@ -343,7 +343,9 @@ async function executeToolCallsSequential(
   const historyMessages: ToolResultMessage[] = [];
   const admissions: ToolCallAdmissionRecord[] = [];
   for (const { providerToolCallId, toolCall } of toolCalls) {
+    if (signal.aborted) break;
     const preparation = await prepareToolCall(context, toolCall);
+    if (signal.aborted) break;
     const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
     admissions.push(admission);
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
@@ -382,7 +384,9 @@ async function executeToolCallsParallel(
   const entries: Array<{ readonly entry: FinalizedToolEntry; readonly includeInHistory: boolean }> = [];
   const admissions: ToolCallAdmissionRecord[] = [];
   for (const { providerToolCallId, toolCall } of toolCalls) {
+    if (signal.aborted) break;
     const preparation = await prepareToolCall(context, toolCall);
+    if (signal.aborted) break;
     const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
     admissions.push(admission);
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
@@ -460,6 +464,18 @@ async function prepareToolCall(
     const args = validateToolArguments(tool, preparedCall);
     const canonicalArguments = JSON.parse(JSON.stringify(args ?? null)) as import('../../../../core/agent/protocol').JsonValue;
     const canonicalCall = { ...toolCall, arguments: canonicalArguments as Record<string, any> };
+    const redacted = redactSecretLikeJson(canonicalArguments);
+    let redactedArgumentsReplayable = true;
+    if (redacted.redactedPaths.length > 0) {
+      try {
+        validateToolArguments(tool, {
+          ...canonicalCall,
+          arguments: redacted.value as Record<string, any>,
+        });
+      } catch {
+        redactedArgumentsReplayable = false;
+      }
+    }
     return {
       kind: 'prepared',
       toolCall: canonicalCall,
@@ -473,6 +489,7 @@ async function prepareToolCall(
           identity,
           arguments: canonicalArguments,
           schemaDigest: modelToolSchemaDigest(tool.parameters),
+          redactedArgumentsReplayable,
         },
       },
     };
@@ -562,24 +579,21 @@ async function admitAndEmit(
   } catch {
     decision = persistenceFailureAdmission(request);
   }
-  const historyArguments = providerHistoryArguments(request, decision);
   await emit({
     type: 'tool_call_admission',
     toolCallId: request.toolCallId,
     providerToolCallId,
     toolName: request.providerName,
     decision,
-    historyArguments,
   });
   return {
     providerToolCallId,
     toolCallId: request.toolCallId,
     decision,
-    historyArguments,
   };
 }
 
-function sanitizeAssistantToolHistory(
+function liveAssistantToolHistory(
   message: AssistantMessage,
   admissions: readonly ToolCallAdmissionRecord[],
 ): AssistantMessage {
@@ -594,25 +608,19 @@ function sanitizeAssistantToolHistory(
     admissionIndex += 1;
     if (!admission) continue;
     const { modelCall } = admission.decision;
-    if (modelCall.disposition === 'evidenceOnly') {
+    if (!admission.decision.execute) {
       content.push({
         type: 'text' as const,
-        text: toolCallEvidenceText(admission.toolCallId, modelCall),
+        text: modelCall.disposition === 'evidenceOnly'
+          ? toolCallEvidenceText(admission.toolCallId, modelCall)
+          : `[Tool call ${admission.toolCallId} was not executed.]`,
       });
       continue;
     }
-    const replay = {
+    content.push({
       ...part,
       id: admission.toolCallId,
-      arguments: admission.historyArguments as Record<string, any>,
-    };
-    if (modelCall.disposition === 'redactedReplay') {
-      content.push({
-        type: 'text' as const,
-        text: redactedReplayMarker(admission.toolCallId, modelCall.redactedPaths),
-      });
-    }
-    content.push(replay);
+    });
   }
   return { ...message, content };
 }

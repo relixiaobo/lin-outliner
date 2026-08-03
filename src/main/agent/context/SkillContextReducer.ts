@@ -222,6 +222,9 @@ export async function observedSkillFilePaths(
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
 ): Promise<string[]> {
   const paths = new Set<string>();
+  const payloadBackedCalls: Array<{
+    readonly ref: ThreadContextPayloadReference;
+  }> = [];
   for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type === 'fileChange' && item.status === 'completed') {
@@ -239,24 +242,31 @@ export async function observedSkillFilePaths(
         || !CORE_FILE_PATH_TOOLS.has(item.modelCall.identity.name)
       ) continue;
       const source = modelCallArgumentSource(item.modelCall);
-      const payload = source.storage === 'payload'
-        ? await readContext(source.ref).catch(() => null)
-        : null;
-      const args = source.storage === 'inline'
-        ? source.value
-        : payload?.kind === 'toolCallArguments'
-          ? payload.value
-          : null;
-      if (!args || typeof args !== 'object' || Array.isArray(args)) continue;
-      const value = 'file_path' in args
-        ? args.file_path
-        : 'path' in args
-          ? args.path
-          : null;
-      if (typeof value === 'string' && value.trim()) paths.add(value);
+      if (source.storage === 'payload') {
+        payloadBackedCalls.push({ ref: source.ref });
+        continue;
+      }
+      addObservedFilePath(paths, source.value);
     }
   }
+  const refs = [...new Map(payloadBackedCalls.map(({ ref }) => [ref.id, ref])).values()];
+  const payloads = await Promise.all(refs.map(async (ref) => (
+    readContext(ref).catch(() => null)
+  )));
+  for (const payload of payloads) {
+    if (payload?.kind === 'toolCallArguments') addObservedFilePath(paths, payload.value);
+  }
   return [...paths].sort(compareStableText);
+}
+
+function addObservedFilePath(paths: Set<string>, args: unknown): void {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return;
+  const value = 'file_path' in args
+    ? args.file_path
+    : 'path' in args
+      ? args.path
+      : null;
+  if (typeof value === 'string' && value.trim()) paths.add(value);
 }
 
 function applyCatalogEntries(

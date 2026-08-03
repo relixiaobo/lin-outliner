@@ -57,6 +57,12 @@ The phases remain observable and separate:
 - a schema-valid unblocked call reaches the native tool under Full Access, where shell,
   operating-system, network, provider, and service failures remain execution results.
 
+Identity resolution, strict-schema validation, and redacted-copy compatibility are
+admission-time decisions. The resulting provider-visible name, arguments, and schema
+digest are immutable history; later registry, schema, or block changes do not
+retroactively turn a past admitted exchange into a denial or erase its result. Current
+selection and blocks govern only new execution.
+
 ## Explicit Blocks
 
 Blocks operate on normalized action descriptors such as outline read/write,
@@ -96,7 +102,10 @@ transaction metadata.
 
 Audit and diagnostics retain canonical identity, admission disposition, schema digest,
 and redacted observable arguments. Raw secret-like model values and host credentials do
-not enter Items, argument payloads, transcripts, renderer detail, or diagnostics.
+not enter Items, argument payloads, transcripts, renderer detail, or diagnostics. The
+active Turn may retain exact admitted arguments in a transient provider-history overlay;
+that overlay is neither audit data nor durable history and disappears before any later
+Turn or restart.
 
 ## Shared Resource Concurrency
 

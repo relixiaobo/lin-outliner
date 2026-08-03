@@ -22,7 +22,12 @@ const SCHEMA_DIGEST = modelToolSchemaDigest({
 
 describe('canonical model tool-call admission', () => {
   test('keeps ordinary arguments exact and persists only structure-preserving secret redactions', async () => {
-    const ordinaryArguments = { command: 'pwd', description: 'Print the working directory' } as const;
+    const ordinaryArguments = {
+      command: 'pwd',
+      description: 'Print the working directory',
+      token_budget: 200_000,
+      max_total_tokens: 80_000,
+    } as const;
     const ordinary = await persistToolCallAdmission(
       admittedRequest(ordinaryArguments),
       async () => { throw new Error('Small arguments must stay inline.'); },
@@ -31,6 +36,7 @@ describe('canonical model tool-call admission', () => {
       modelCall: {
         disposition: 'replayable',
         identity: { namespace: null, name: 'bash' },
+        providerName: 'bash',
         arguments: { storage: 'inline', value: ordinaryArguments },
         schemaDigest: SCHEMA_DIGEST,
       },
@@ -63,6 +69,26 @@ describe('canonical model tool-call admission', () => {
     expect(secretArguments.nested['secret/key~name']).toBe('do-not-persist');
   });
 
+  test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {
+    const secret = 'abcdefghijklmnop';
+    const decision = await persistToolCallAdmission(
+      admittedRequest({ authorization: secret }, false),
+      async () => { throw new Error('Evidence-only arguments must not allocate a payload.'); },
+    );
+
+    expect(decision).toMatchObject({
+      execute: true,
+      displayArguments: { authorization: '[redacted]' },
+      modelCall: {
+        disposition: 'evidenceOnly',
+        providerName: 'bash',
+        reason: 'schemaIncompatible',
+        redactedArgumentsSummary: { authorization: '[redacted]' },
+      },
+    });
+    expect(JSON.stringify(decision)).not.toContain(secret);
+  });
+
   test('stores large arguments exactly in a Thread payload and refuses transient inline overflow', async () => {
     const argumentsValue = { content: '界'.repeat(12_000), path: '/workspace/large.txt' } as const;
     let persisted: JsonValue | null = null;
@@ -79,6 +105,7 @@ describe('canonical model tool-call admission', () => {
     });
 
     expect(persisted).toEqual(argumentsValue);
+    expect(durable.displayArguments).toEqual(argumentsValue);
     expect(durable).toMatchObject({
       execute: true,
       modelCall: {
@@ -127,7 +154,10 @@ describe('canonical model tool-call admission', () => {
   });
 });
 
-function admittedRequest(argumentsValue: JsonValue): ToolCallAdmissionRequest {
+function admittedRequest(
+  argumentsValue: JsonValue,
+  redactedArgumentsReplayable = true,
+): ToolCallAdmissionRequest {
   return {
     toolCallId: 'call-1',
     providerName: 'bash',
@@ -136,6 +166,7 @@ function admittedRequest(argumentsValue: JsonValue): ToolCallAdmissionRequest {
       identity: { namespace: null, name: 'bash' },
       arguments: argumentsValue,
       schemaDigest: SCHEMA_DIGEST,
+      redactedArgumentsReplayable,
     },
   };
 }

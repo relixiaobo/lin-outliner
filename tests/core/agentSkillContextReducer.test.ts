@@ -207,7 +207,18 @@ describe('Skill context reducer', () => {
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/payload.ts', content: 'x'.repeat(40_000) },
     });
+    const secondPayloadRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/second-payload.ts', pattern: 'canonical' },
+    });
     const payloadBacked = dynamicTool('payload-read', null, 'file_grep', '/workspace/presentation-only.ts');
+    const secondPayloadBacked = dynamicTool(
+      'second-payload-read',
+      null,
+      'file_read',
+      '/workspace/second-presentation-only.ts',
+    );
     if (payloadBacked.type !== 'dynamicToolCall') throw new Error('Expected a dynamic tool fixture.');
     const turns = [turn([
       dynamicTool('core-read', null, 'file_read', '/workspace/core.ts'),
@@ -216,7 +227,18 @@ describe('Skill context reducer', () => {
         modelCall: {
           disposition: 'replayable',
           identity: { namespace: null, name: 'file_grep' },
+          providerName: 'file_grep',
           arguments: { storage: 'payload', ref: payloadRef },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        },
+      },
+      {
+        ...secondPayloadBacked,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_read' },
+          providerName: 'file_read',
+          arguments: { storage: 'payload', ref: secondPayloadRef },
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
       },
@@ -225,10 +247,22 @@ describe('Skill context reducer', () => {
       dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
     ])];
 
-    expect(await observedSkillFilePaths(turns, store.read)).toEqual([
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    const read = async (ref: ThreadContextPayloadReference) => {
+      activeReads += 1;
+      maxActiveReads = Math.max(maxActiveReads, activeReads);
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      const payload = await store.read(ref);
+      activeReads -= 1;
+      return payload;
+    };
+    expect(await observedSkillFilePaths(turns, read)).toEqual([
       '/workspace/core.ts',
       '/workspace/payload.ts',
+      '/workspace/second-payload.ts',
     ]);
+    expect(maxActiveReads).toBe(2);
   });
 });
 

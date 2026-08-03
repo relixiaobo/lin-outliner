@@ -18,7 +18,12 @@ const SECRET_LIKE_REDACTION_PATTERNS: RegExp[] = [
 
 // Object keys whose values are credentials — redacted by NAME before anything
 // reaches an on-screen surface (complements the value-pattern pass above).
-const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|passwd|pwd|token/i;
+const SECRET_KEY_PATTERNS: readonly RegExp[] = [
+  /^(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|bearer|password|passwd|pwd|(?:client[_-]?)?secret)$/i,
+  /^token$/i,
+  /^(?:[a-z0-9]+[_-])*(?:access|refresh|auth|id|api|github|gitlab|slack)[_-]?token$/i,
+  /^secret[/~].*$/i,
+];
 
 // A long unbroken token run (base64 / blob / data URI) — elided to a length note
 // so an inline image/blob can't bloat a debug payload or the cache.
@@ -50,7 +55,7 @@ export function redactSecretKeyedValues(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactSecretKeyedValues);
   const output: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    output[key] = SECRET_KEY_PATTERN.test(key) ? '[redacted]' : redactSecretKeyedValues(item);
+    output[key] = isSecretKey(key) ? '[redacted]' : redactSecretKeyedValues(item);
   }
   return output;
 }
@@ -85,7 +90,7 @@ export function redactSecretLikeJson<T>(value: T): SecretRedactionResult<T> {
     const output: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(input as Record<string, unknown>)) {
       const childPath = `${path}/${escapeJsonPointerToken(key)}`;
-      output[key] = visit(entry, childPath, SECRET_KEY_PATTERN.test(key));
+      output[key] = visit(entry, childPath, isSecretKey(key));
     }
     return output;
   };
@@ -100,6 +105,10 @@ function redactValuePreservingShape(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return null;
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
     .map(([key, entry]) => [key, redactValuePreservingShape(entry)]));
+}
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERNS.some((pattern) => pattern.test(key));
 }
 
 function escapeJsonPointerToken(value: string): string {

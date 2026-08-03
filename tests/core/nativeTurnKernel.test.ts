@@ -358,7 +358,7 @@ describe('native turn kernel parity', () => {
       .toBe(replayCalls[0]?.id);
   });
 
-  test('executes a secret-bearing call once and replays only its marked redacted exchange', async () => {
+  test('executes a secret-bearing call once and keeps its raw arguments only in the live Turn exchange', async () => {
     const secret = 'abcdefghijklmnop';
     const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
     const executedArguments: unknown[] = [];
@@ -378,9 +378,9 @@ describe('native turn kernel parity', () => {
       () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
     ]);
     const runtime = createRuntime(gateway, { tools: [bash] });
-    let terminalMessages: Message[] = [];
+    let admission: Extract<AgentEvent, { readonly type: 'tool_call_admission' }> | null = null;
     runtime.subscribe((event) => {
-      if (event.type === 'agent_end') terminalMessages = event.messages;
+      if (event.type === 'tool_call_admission') admission = event;
     });
 
     await runtime.prompt(USER);
@@ -388,17 +388,17 @@ describe('native turn kernel parity', () => {
     expect(executedArguments).toEqual([{ command }]);
     const replay = gateway.requests[1]!.context.messages;
     const serializedReplay = JSON.stringify(replay);
-    expect(serializedReplay).not.toContain(secret);
-    expect(serializedReplay).toContain('redacted after execution');
-    expect(serializedReplay).toContain('[redacted secret-like content]');
-    expect(JSON.stringify(runtime.state.messages)).toContain('authorized source');
+    expect(serializedReplay).toContain(secret);
+    expect(serializedReplay).not.toContain('redacted after execution');
     expect(replay.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
     const replayAssistant = replay[1];
     expect(replayAssistant?.role).toBe('assistant');
     if (replayAssistant?.role !== 'assistant') throw new Error('Expected replay assistant message.');
-    expect(replayAssistant.content.map((part) => part.type)).toEqual(['text', 'toolCall']);
-    expect(JSON.stringify(runtime.state.messages)).not.toContain(secret);
-    expect(JSON.stringify(terminalMessages)).not.toContain(secret);
+    expect(replayAssistant.content.map((part) => part.type)).toEqual(['toolCall']);
+    expect(admission).toMatchObject({
+      decision: { modelCall: { disposition: 'redactedReplay' } },
+    });
+    expect(JSON.stringify(admission)).not.toContain(secret);
   });
 
   test('keeps payload-backed history exact across NativeAgentRuntime prompts', async () => {
@@ -470,12 +470,10 @@ describe('native turn kernel parity', () => {
     expect(gateway.requests).toHaveLength(1);
     expect(events.filter((event) => event.type === 'tool_call_admission')).toMatchObject([
       { toolCallId: 'cancel-one', decision: { execute: true, modelCall: { disposition: 'replayable' } } },
-      { toolCallId: 'cancel-two', decision: { execute: true, modelCall: { disposition: 'replayable' } } },
     ]);
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
     expect(events.filter((event) => event.type === 'tool_execution_end')).toMatchObject([
       { toolCallId: 'cancel-one', isError: true, result: { content: [{ text: 'Operation aborted' }] } },
-      { toolCallId: 'cancel-two', isError: true, result: { content: [{ text: 'Operation aborted' }] } },
     ]);
     expect(JSON.stringify(runtime.state.messages)).not.toContain('invalidArguments');
   });

@@ -3318,17 +3318,24 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
     'item.modelCall.disposition',
   );
   if (disposition === 'replayable') {
-    exactKeys(record, ['disposition', 'identity', 'arguments', 'schemaDigest'], 'item.modelCall');
+    exactKeys(record, [
+      'disposition', 'identity', 'providerName', 'arguments', 'schemaDigest',
+    ], 'item.modelCall');
     return deepFreeze({
       disposition,
       identity: decodeModelToolIdentity(record.identity, 'item.modelCall.identity'),
+      providerName: boundedUtf8String(
+        record.providerName,
+        'item.modelCall.providerName',
+        MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+      ),
       arguments: decodeModelToolCallArguments(record.arguments, 'item.modelCall.arguments'),
       schemaDigest: sha256(record.schemaDigest, 'item.modelCall.schemaDigest'),
     });
   }
   if (disposition === 'redactedReplay') {
     exactKeys(record, [
-      'disposition', 'identity', 'redactedArguments', 'redactedPaths', 'schemaDigest',
+      'disposition', 'identity', 'providerName', 'redactedArguments', 'redactedPaths', 'schemaDigest',
     ], 'item.modelCall');
     const redactedPaths = stringArray(record.redactedPaths, 'item.modelCall.redactedPaths');
     if (redactedPaths.length === 0) fail('item.modelCall.redactedPaths', 'expected at least one JSON pointer');
@@ -3341,6 +3348,11 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
     return deepFreeze({
       disposition,
       identity: decodeModelToolIdentity(record.identity, 'item.modelCall.identity'),
+      providerName: boundedUtf8String(
+        record.providerName,
+        'item.modelCall.providerName',
+        MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+      ),
       redactedArguments: decodeModelToolCallArguments(
         record.redactedArguments,
         'item.modelCall.redactedArguments',

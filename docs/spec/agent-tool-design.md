@@ -244,19 +244,31 @@ optional model fields while `commandExecution.cwd` remains host-owned audit meta
 
 The immutable envelope has three dispositions:
 
-- `replayable` stores canonical identity, exact arguments, and schema digest.
-- `redactedReplay` stores structure-preserving redacted arguments, RFC 6901 redaction
-  paths, and schema digest; execution receives the transient validated source value.
+- `replayable` stores canonical identity, exact provider-visible name, exact arguments,
+  and schema digest.
+- `redactedReplay` stores canonical identity, the same frozen provider name,
+  structure-preserving redacted arguments, RFC 6901 redaction paths, and schema digest;
+  execution receives the transient validated source value.
 - `evidenceOnly` stores no replayable call, only identity when resolved, a bounded
   secret-redacted provider name and argument summary, a stable reason, and correction.
 
 Exact JSON up to 32 KiB stays inline. Larger values use a content-addressed,
 Thread-owned `toolCallArguments` payload and participate in fork, child inheritance,
 rollback, deletion, and startup reconciliation. Truncation is never presented as an
-exact call. Projection revalidates against the active registry and degrades the whole
-call/result pair to typed evidence when the tool, schema, argument payload, complete
-output, or image dependency is unavailable. Item-specific fields are presentation and
-audit projections only; no reverse mapper may recreate model arguments from them.
+exact call. Projection replays the admission-time provider name and arguments without
+consulting the current registry or schema; the schema digest is audit evidence only.
+The whole call/result pair degrades to typed evidence only when a persisted argument,
+complete output, or image dependency is unavailable. Item-specific fields are
+presentation and audit projections only; no reverse mapper may recreate model
+arguments from them.
+
+Secret redaction compatibility is decided once against the admission schema. A
+compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
+`evidenceOnly` while the validated raw source still reaches the tool. The active Turn
+may overlay that raw admitted call transiently for its immediate follow-up provider
+request, but later Turns and every durable surface see only the frozen disposition.
+Cancellation stops each batch loop before it admits any remaining call, so those calls
+create neither Items nor argument payloads.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID

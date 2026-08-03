@@ -27,7 +27,6 @@ export const MODEL_TOOL_CALL_EVIDENCE_REASONS = Object.freeze([
   'invalidArguments',
   'truncatedArguments',
   'argumentPersistenceUnavailable',
-  'toolUnavailable',
   'schemaIncompatible',
   'argumentPayloadUnavailable',
   'resultPayloadUnavailable',
@@ -42,12 +41,14 @@ export type ModelToolCallHistory =
   | {
       readonly disposition: 'replayable';
       readonly identity: ModelToolIdentity;
+      readonly providerName: string;
       readonly arguments: ModelToolCallArguments;
       readonly schemaDigest: string;
     }
   | {
       readonly disposition: 'redactedReplay';
       readonly identity: ModelToolIdentity;
+      readonly providerName: string;
       readonly redactedArguments: ModelToolCallArguments;
       readonly redactedPaths: readonly string[];
       readonly schemaDigest: string;

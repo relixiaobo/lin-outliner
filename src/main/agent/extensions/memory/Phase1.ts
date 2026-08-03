@@ -518,17 +518,31 @@ function evidenceContent(item: ThreadItem): string | null {
       return item.phase === 'final_answer' || item.phase === null ? item.text.trim() || null : null;
     case 'commandExecution':
       return item.status === 'completed'
-        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), output: item.aggregatedOutput, exitCode: item.exitCode })
+        ? JSON.stringify({
+            tool: modelCallDisplayName(item.modelCall),
+            command: item.command,
+            cwd: item.cwd,
+            output: item.aggregatedOutput,
+            exitCode: item.exitCode,
+          })
         : null;
     case 'fileChange':
       return item.status === 'completed' ? JSON.stringify(item.changes) : null;
     case 'mcpToolCall':
       return item.status === 'completed'
-        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), result: item.result })
+        ? JSON.stringify({
+            tool: modelCallDisplayName(item.modelCall),
+            arguments: item.arguments,
+            result: item.result,
+          })
         : null;
     case 'dynamicToolCall':
       return item.status === 'completed'
-        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), result: item.contentItems })
+        ? JSON.stringify({
+            tool: modelCallDisplayName(item.modelCall),
+            arguments: item.arguments,
+            result: item.contentItems,
+          })
         : null;
     default:
       return null;

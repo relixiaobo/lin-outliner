@@ -22,6 +22,7 @@ export function replayableModelCall(
   return {
     disposition: 'replayable',
     identity: testToolIdentity(providerName),
+    providerName,
     arguments: { storage: 'inline', value: args },
     schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
   };
@@ -37,7 +38,6 @@ export function toolAdmissionEvent(
     toolCallId,
     providerToolCallId: toolCallId,
     toolName,
-    historyArguments: args,
     decision: {
       modelCall: replayableModelCall(toolName, args),
       displayArguments: args,

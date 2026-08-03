@@ -504,6 +504,7 @@ describe('Codex Agent Core protocol codec', () => {
     const redactedReplay = {
       disposition: 'redactedReplay' as const,
       identity: { namespace: null, name: 'bash' },
+      providerName: 'bash',
       redactedArguments: { storage: 'inline' as const, value: { command: '[redacted]' } },
       redactedPaths: ['/command', '/nested/a~0b~1c'],
       schemaDigest: TEST_TOOL_SCHEMA_DIGEST,

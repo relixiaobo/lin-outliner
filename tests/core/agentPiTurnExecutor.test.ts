@@ -135,7 +135,6 @@ describe('PiTurnExecutor event normalization', () => {
       toolCallId: 'call-bash-invalid',
       providerToolCallId: 'call-bash-invalid',
       toolName: 'bash',
-      historyArguments: null,
       decision: {
         execute: false,
         displayArguments: { command: 'pwd', cwd: '/model-supplied' },
@@ -216,7 +215,6 @@ describe('PiTurnExecutor event normalization', () => {
       toolCallId: 'unknown-call',
       providerToolCallId: 'unknown-call',
       toolName: rawProviderName,
-      historyArguments: null,
       decision,
     });
     normalizer.handle({
@@ -2259,10 +2257,7 @@ describe('PiTurnExecutor event normalization', () => {
       }],
     };
 
-    const messages = await new CanonicalContextProjector(testModel, context, [
-      historyTestTool('bash'),
-      historyTestTool('docs__search'),
-    ])
+    const messages = await new CanonicalContextProjector(testModel, context)
       .projectTurns(context.historyBeforeTurn);
     expect(messages.map((message) => message.role)).toEqual([
       'user', 'assistant', 'toolResult', 'assistant', 'toolResult',
@@ -2301,7 +2296,6 @@ describe('PiTurnExecutor event normalization', () => {
       toolCallId: 'call-file-1',
       providerToolCallId: 'call-file-1',
       toolName: 'file_read',
-      historyArguments: largeArguments,
       decision: await persistToolCallAdmission({
         toolCallId: 'call-file-1',
         providerName: 'file_read',
@@ -2310,6 +2304,7 @@ describe('PiTurnExecutor event normalization', () => {
           identity: { namespace: null, name: 'file_read' },
           arguments: largeArguments,
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+          redactedArgumentsReplayable: true,
         },
       }, fixture.context.persistToolCallArguments),
     });
@@ -2419,6 +2414,50 @@ describe('PiTurnExecutor event normalization', () => {
       },
     });
     expect(JSON.stringify([images, budgetedImages])).not.toContain(nearLimitImage.slice(0, 100));
+  });
+
+  test('keeps file identity fields when canonical arguments are payload-backed', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    const argumentsValue = {
+      file_path: '/workspace/report.md',
+      content: 'x'.repeat(MAX_PERSISTED_TOOL_ARGUMENT_CHARS * 2),
+    };
+    const decision = await persistToolCallAdmission({
+      toolCallId: 'large-file-write',
+      providerName: 'file_write',
+      outcome: {
+        type: 'admitted',
+        identity: { namespace: null, name: 'file_write' },
+        arguments: argumentsValue,
+        schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        redactedArgumentsReplayable: true,
+      },
+    }, fixture.context.persistToolCallArguments);
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'large-file-write',
+      providerToolCallId: 'large-file-write',
+      toolName: 'file_write',
+      decision,
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'large-file-write',
+      toolName: 'file_write',
+      result: { content: [{ type: 'text', text: 'written' }], details: {} },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'fileChange',
+      changes: [{ path: '/workspace/report.md', kind: 'add' }],
+      modelCall: {
+        disposition: 'replayable',
+        arguments: { storage: 'payload' },
+      },
+    });
   });
 
   test('never persists inline image bytes as text and reports snapshot quota omission', async () => {
@@ -2881,6 +2920,78 @@ describe('PiTurnExecutor provider payload', () => {
       execution: { usage: { totalTokens: 14 } },
     });
     expect(providerCalls).toBe(2);
+  });
+
+  test('uses raw secret arguments only for the live Turn and redacted history afterward', async () => {
+    const fixture = createContext();
+    const secret = 'abcdefghijklmnop';
+    const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
+    const executions: unknown[] = [];
+    const bash = {
+      name: 'bash',
+      label: 'Run command',
+      description: 'Run a shell command.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { command: { type: 'string' } },
+        required: ['command'],
+      },
+      execute: async (_callId: string, args: unknown) => {
+        executions.push(args);
+        return { content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
+      },
+    } as AgentTool;
+    const providerContexts: Message[][] = [];
+    let providerCalls = 0;
+    const runtime = runtimeSelection();
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtime,
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [bash],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (_model, providerContext) => {
+          providerCalls += 1;
+          providerContexts.push([...providerContext.messages]);
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'secret-call',
+                  name: 'bash',
+                  arguments: { command },
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(executions).toEqual([{ command }]);
+    expect(JSON.stringify(providerContexts[1])).toContain(secret);
+    expect(JSON.stringify(fixture.recorder.orderedItems())).not.toContain(secret);
+    expect(fixture.recorder.orderedItems()).toContainEqual(expect.objectContaining({
+      type: 'commandExecution',
+      modelCall: expect.objectContaining({ disposition: 'redactedReplay' }),
+    }));
+
+    const historical = await new CanonicalContextProjector(runtime.model, fixture.context).projectTurns([{
+      ...fixture.context.turn,
+      items: fixture.recorder.orderedItems(),
+    }]);
+    expect(JSON.stringify(historical)).not.toContain(secret);
+    expect(JSON.stringify(historical)).toContain('[redacted secret-like content]');
+    expect(JSON.stringify(historical)).toContain('replay notice');
   });
 
   test('persists unique canonical Items when one provider batch repeats a call id', async () => {

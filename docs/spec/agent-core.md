@@ -34,16 +34,23 @@ Completed Items and terminal Turns are immutable.
 Every tool Item carries one immutable `modelCall` envelope in addition to its
 type-specific audit and presentation fields. The envelope is the sole authority for
 provider tool-call history and has exactly one disposition: `replayable` stores the
-exact admitted canonical identity and model arguments; `redactedReplay` stores a
+exact admitted canonical identity, provider-visible name, model arguments, and schema
+digest; `redactedReplay` freezes the same provider name and digest with a
 structure-preserving redacted value plus RFC 6901 paths; and `evidenceOnly` stores a
 bounded redacted summary, stable reason, and correction without a replayable call.
+The digest is audit evidence, not future admission authority. Historical projection
+never consults the current registry or schema to rewrite or erase an admitted exchange;
+only a missing or corrupt persisted argument/result dependency degrades the pair to
+typed evidence.
 The runtime preserves the first non-empty unused provider call ID and replaces empty or
 repeated IDs with fresh Turn-local UUIDv7 values before admission. Only the resulting
 canonical ID identifies the Item, execution causation, paired result, and replay.
 Command text, file changes, MCP/dynamic display arguments, collaboration summaries,
 results, and host execution metadata never reconstruct model arguments. In particular,
 `commandExecution.cwd` is the Thread's host-resolved working directory and is not part
-of the `bash` model call.
+of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
+the next provider boundary observe the exact just-executed arguments. It is not durable;
+later Turns, restart, fork, and compaction use only the frozen envelope.
 
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
@@ -380,8 +387,11 @@ under the Thread mutex; failed publication and Turn terminalization prune any co
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
 than truncation. Secret-like model arguments are structurally redacted before either
-the Item or payload becomes durable. Evidence provider names, corrections, and argument
-summaries have independent UTF-8 bounds, and malformed redaction pointers fail at the
+the Item or payload becomes durable. Redacted replay compatibility is decided once
+against the admission schema: a compatible copy becomes `redactedReplay`; an
+incompatible copy becomes executed `evidenceOnly`, while the validated transient source
+call may still run. Evidence provider names, corrections, and argument summaries have
+independent UTF-8 bounds, and malformed redaction pointers fail at the
 codec boundary. A newly written tool image that
 no terminal Item references is reclaimed at Turn finalization; startup reconciliation
 handles crash leftovers. Every
@@ -413,7 +423,9 @@ Startup reconciles catalog and history projections from rollouts. A Turn left
 streamed or executable Item first receives its terminal completion fact. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
-path.
+path. This required-envelope format intentionally has no legacy reader; existing
+isolated dev and packaged Tenon `userData` must be reset before first launch of the
+new format.
 
 ## Transport
 

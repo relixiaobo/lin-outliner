@@ -79,7 +79,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   identity until main resolves it, or bounded rejection evidence. Host execution
   metadata such as command `cwd` is labelled separately and never appears as a model
   argument. Structured arguments and results render as their JSON rather than a second
-  presentation model, while command output,
+  presentation model. `bash` is the deliberate exception to JSON argument rendering:
+  its expanded input shows the envelope's `command` as copyable shell text with bash
+  highlighting, while optional fields remain available through canonical diagnostics.
+  Presentation Item construction receives the complete transient redacted argument
+  structure and applies bounds to each stored display field, so a large `file_write`
+  retains its path even when content moves to a payload. Command output,
   file interaction, copy actions, and image previews retain their native
   affordances; a successful shell exit code is redundant with the completed row
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
@@ -418,9 +423,10 @@ one batch; a transient tool with no canonical Item remains an explicit execution
 Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
 provider SDK remain part of that SDK invocation.
 Each tool entry exposes its recorded admission disposition, canonical identity, and
-schema digest when present. Rejected admission is labelled argument/tool admission,
-never permission denial; a later capability-unavailable result remains a separate
-execution fact.
+admission-time schema digest when present. Those are historical facts rather than a
+revalidation against the currently loaded tool catalog. Rejected admission is labelled
+argument/tool admission, never permission denial; a later capability-unavailable result
+remains a separate execution fact.
 The timeline expresses hierarchy with disclosure indentation and horizontal activity
 separators only; it does not draw a vertical guide-line axis through nested content.
 

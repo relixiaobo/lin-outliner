@@ -29,8 +29,8 @@ dynamic tools rather than special-casing `bash`.
   catalog. Renderer changes are limited to sourcing arguments from the new
   canonical record and keeping host metadata visually distinct.
 - Do not migrate or reconstruct old Thread data. This is a pre-release format
-  change: isolated dev `userData` is reset and the old reverse-mapping reader is
-  deleted.
+  change: both isolated dev `userData` and packaged Tenon `userData` are reset,
+  and the old reverse-mapping reader is deleted.
 
 ## Background
 
@@ -130,10 +130,12 @@ underlying two-authority model intact.
 - **DEC-01:** Attach one immutable model-call envelope to every existing tool
   Item; keep the specialized Item fields as execution and presentation data.
 - **DEC-02:** Introduce one kernel admission event for every raw call. It carries
-  either a replayable canonical call or redacted rejection evidence;
-  execution-start events occur only for admitted calls.
-- **DEC-03:** Replay only envelope arguments that validate against the active
-  registry. All other history becomes typed evidence, never a fabricated call.
+  one of the three persisted dispositions; execution-start events occur only for
+  admitted calls.
+- **DEC-03:** Freeze the exact provider-visible name, admitted arguments, and
+  schema digest at admission. Historical projection never re-resolves or
+  revalidates them against the current registry; only broken persisted
+  dependencies degrade replay to typed evidence.
 - **DEC-04:** Keep schemas strict and capability evaluation after schema
   admission. The existing managed Browser Pilot path remains unchanged and
   exercises the generic `bash` behavior.
@@ -148,12 +150,14 @@ type ModelToolCallHistory =
   | {
       disposition: 'replayable';
       identity: ModelToolIdentity;
+      providerName: string;
       arguments: InlineJsonArguments | ThreadOwnedArgumentsReference;
       schemaDigest: string;
     }
   | {
       disposition: 'redactedReplay';
       identity: ModelToolIdentity;
+      providerName: string;
       redactedArguments: InlineJsonArguments | ThreadOwnedArgumentsReference;
       redactedPaths: readonly JsonPointer[];
       schemaDigest: string;
@@ -168,15 +172,16 @@ type ModelToolCallHistory =
     };
 ```
 
-The Item ID remains the tool-call ID. A replayable identity is canonical
-`namespace + name`, not a provider's flattened spelling; projection encodes it
-for the active provider registry.
+The Item ID remains the tool-call ID. Canonical `namespace + name` identity is
+retained for audit and product semantics. The exact provider-visible name is a
+separate admission-time fact and is replayed unchanged; projection never
+re-encodes historical identity through a later registry.
 
 The three layers have separate owners:
 
 | Layer | Contains | May enter provider history |
 | --- | --- | --- |
-| Canonical model call | resolved identity, exact admitted model arguments, schema digest | yes, after replay validation |
+| Canonical model call | resolved identity, provider-visible name, exact admitted model arguments, schema digest | yes, from the frozen disposition |
 | Host execution context | Thread `cwd`, workspace/scratch roots, process policy, environment, private handles and credentials | never |
 | Item presentation/audit | command label, file changes, process ID, duration, result/output references, capability audit | result projection only; never a source of call arguments |
 
@@ -235,8 +240,9 @@ presentation fields but never rewrites the call.
 An admitted call whose arguments contain secret-like values receives a
 `redactedReplay` envelope instead. The ephemeral validated arguments still reach
 execution, while only structure-preserving redacted arguments and JSON-pointer
-redaction locations become durable. When those redacted arguments remain valid
-under the active schema, provider history emits an atomic three-part unit:
+redaction locations become durable. The runtime validates the redacted copy
+against the admission schema before it persists a disposition. When that copy
+remains valid, later provider history emits an atomic three-part unit:
 
 1. typed host evidence stating that listed historical argument paths were
    redacted after execution; the redacted value must neither trigger a retry nor
@@ -246,10 +252,11 @@ under the active schema, provider history emits an atomic three-part unit:
 3. its original projected result.
 
 The marker makes clear that the displayed value is not the literal executed
-value. If redaction makes the arguments schema-invalid, projection emits one
-typed executed-call evidence unit containing the redacted structure and outcome
-instead. In both cases the model sees that the operation ran and what happened;
-the raw secret is never persisted or replayed.
+value. If redaction makes the arguments invalid under the admission schema,
+admission persists `evidenceOnly` while the already validated source call still
+executes; later projection emits one typed executed-call evidence unit containing
+the redacted structure and outcome. In both cases the model sees that the
+operation ran and what happened; the raw secret is never persisted or replayed.
 
 Provider history emits the stored call and its projected result as one atomic
 unit. `ContextProjector` must not consult Item-type-specific reverse mappings.
@@ -257,10 +264,13 @@ unit. `ContextProjector` must not consult Item-type-specific reverse mappings.
 replacement is allowed to derive arguments from `command`, `cwd`, `changes`,
 collaboration display fields, or results.
 
-The live no-`transformContext` kernel path and the canonical projector path use
-the same admission outcome. After a response is admitted, the kernel's next
-in-memory provider context is rebuilt or sanitized from replayable envelopes;
-it does not retain a raw invalid assistant tool-call part as hidden history.
+The active Turn keeps a transient raw-call overlay keyed by canonical Turn and
+Item identity. It lets the next provider request in that same Turn observe the
+exact call that just executed, including values needed for a follow-up edit,
+without writing those values to the Item, payload, diagnostics, or transcript.
+Later Turns, restart, fork, and compaction have no overlay and project only the
+persisted `replayable`, `redactedReplay`, or `evidenceOnly` disposition. Raw
+invalid calls never enter either path.
 
 ### Rejected calls and failure recovery
 
@@ -294,20 +304,19 @@ they are not truncated into a different value. The reference participates in
 the same dependency enumeration, fork copy, deletion, and integrity checks as
 other Thread-owned context resources.
 
-Before every provider submission, replay resolves the current canonical tool
-registry and preflights the entire call/result unit. It validates loaded
-arguments against the current schema and resolves every result dependency,
-including full-output and image payload references. The stored schema digest
-provides diagnostics, not permission to bypass the current contract. If the
-tool is absent, its schema changed incompatibly, or any argument/result payload
-is missing or corrupt, projection records a bounded diagnostic and degrades the
-whole pair to typed evidence. Available Item output and resource identity become
-the bounded fallback; the evidence names anything unavailable. Projection must
-not throw on the user path, emit an orphan, or send known-invalid history.
+Before every provider submission, replay loads the frozen provider name and
+arguments and resolves every persisted call/result dependency, including argument,
+full-output, and image payload references. The schema digest is immutable audit
+evidence only. Tool retirement, provider-registry changes, and schema evolution
+do not retroactively alter an admitted exchange. If a payload is missing or
+corrupt, projection records a bounded diagnostic and degrades the whole pair to
+typed evidence. Available Item output and resource identity become the bounded
+fallback; the evidence names anything unavailable. Projection must not throw on
+the user path or emit an orphan.
 
-This validation is a final invariant check, not a second source of arguments.
-The normal successful path round-trips the same admitted JSON value byte-for-byte
-after canonical JSON encoding.
+This dependency preflight is an integrity check, not a second source of arguments
+or a new admission decision. The normal path round-trips the same admission-time
+JSON value byte-for-byte after canonical JSON encoding.
 
 ### Presentation, transcript, diagnostics, and memory
 
@@ -341,7 +350,8 @@ facts.
 | Permission | schema rejection can look like denial | admission and capability phases are explicit | Full Access plus explicit capability blocks |
 | Host metadata | rejected model `cwd` can overwrite the audit value and re-enter arguments | host-resolved only, bound at execution and displayed as metadata | workspace, process, and audit behavior |
 | Secret-like model argument | entire admitted call can disappear after redaction | marked redacted call/result replay or executed-call evidence | no durable or replayed raw secret |
-| Schema/tool/resource drift | stale arguments or missing result payloads can throw | pair-level preflight and typed evidence degradation | immutable source Item and diagnostics |
+| Tool/schema evolution | current registry state can erase an honest past exchange | replays the admission-time provider name and arguments unchanged | immutable source Item, schema digest, and diagnostics |
+| Resource loss | missing argument or result payloads can throw or orphan a result | pair-level dependency preflight and typed evidence degradation | available bounded Item evidence |
 
 ### Implementation scope
 
@@ -349,7 +359,7 @@ Expected production ownership:
 
 - `src/core/agent/protocol.ts` and `src/core/agent/codec.ts`: exact envelope,
   payload-reference, and evidence-reason contracts.
-- `src/core/agent/tools.ts`: deterministic schema digest and active-registry
+- `src/core/agent/tools.ts`: deterministic schema digest and admission-time
   lookup/validation helpers if they do not belong beside the runtime registry.
 - `src/main/agent/runtime/kernel/{types,kernel}.ts`: admission outcome, event
   ordering, and sanitized live history.
@@ -358,8 +368,8 @@ Expected production ownership:
   retirement of raw `input.cwd` precedence in `startedToolItem`; command Items
   take `cwd` only from the host Thread execution context.
 - `src/main/agent/context/{ContextProjector,contextDependencies,ContextCompaction}.ts`:
-  envelope-only replay, final registry validation, graceful evidence fallback,
-  and payload lifecycle.
+  envelope-only replay, dependency preflight, graceful evidence fallback, and
+  payload lifecycle.
 - `src/main/agent/thread/TranscriptRenderer.ts` and
   `src/main/agent/extensions/memory/Phase1.ts`: consume canonical/evidence
   arguments without reverse reconstruction.
@@ -387,26 +397,27 @@ Main owns board/changelog updates at merge.
   the next provider request. It is never replayed as a tool call.
 - **AC-03:** Representative calls for every enabled tool family -- local read/write,
   outline, control, collaboration, web, Skills, MCP, and dynamic/plugin tools --
-  round-trip through persistence and validate against the active registry with
+  round-trip through persistence with the admission-time provider name and
   deep-equal canonical arguments.
 - **AC-04:** File mutations replay `file_path`, content/edit parameters, and flags from the
   admitted call; no projected call contains a synthetic `changes` property.
 - **AC-05:** Schema-valid capability-blocked calls retain their call/result pair and audit;
   schema-invalid calls produce no capability decision.
-- **AC-06:** Missing tools, incompatible current schemas, and missing/corrupt
-  argument, full-output, or image payloads produce diagnostics plus typed
-  pair-level evidence without throwing, orphaning a tool result, or
-  contaminating later requests.
+- **AC-06:** Retired tools and incompatible current schemas do not change past
+  exchanges. Missing/corrupt argument, full-output, or image payloads produce
+  diagnostics plus typed pair-level evidence without throwing, orphaning a tool
+  result, or contaminating later requests.
 - **AC-07:** Large arguments remain exact through Thread-owned payload storage and fork;
   no bounded/truncated value is presented as the original call.
 - **AC-08:** An admitted call with secret-like model arguments persists as
   `redactedReplay`: the model sees marked redacted arguments and the original
   outcome, never receives a retry-inducing rejection merely because redaction
   occurred, is told not to copy the redacted value into a new call, and never
-  sees the raw secret. If redaction breaks the active schema, typed executed-call
-  evidence preserves the same facts. Host credentials/environment are absent
-  from Items, payloads, transcript exports, provider diagnostics, and rollout
-  diagnostics.
+  sees the raw secret. If redaction breaks the admission schema, that disposition
+  is frozen as typed executed-call evidence before execution. The same active
+  Turn may use a transient raw-call overlay; later Turns cannot. Host
+  credentials/environment are absent from Items, payloads, transcript exports,
+  provider diagnostics, and rollout diagnostics.
 - **AC-09:** Mixed parallel/sequential tool batches preserve order, keep exact
   call/result pairs atomic, keep each `redactedReplay` marker/call/result triple
   atomic through projection and compaction, and place rejection evidence
@@ -424,6 +435,11 @@ Main owns board/changelog updates at merge.
   call and success result, not the synthetic secret, an erased call, or an
   admission-rejection retry signal. Browser Pilot `--client-key` is explicitly
   not used as this fixture because that spelling does not match the policy.
+- **AC-14:** Once cancellation is observed, sequential and parallel batch loops
+  do not admit remaining calls, create their Items, or persist their argument
+  payloads. Calls already admitted settle through the normal interrupted result.
+- **AC-15:** The new required envelope has no legacy reader. Both packaged Tenon
+  and isolated dev `userData` are reset before this format is launched.
 
 ### Risks and mitigations
 
@@ -437,9 +453,9 @@ Main owns board/changelog updates at merge.
   admission. `redactedReplay` stores paths plus redacted structure, and its
   atomic marker states that the visible value is not the executed value; no raw
   secret or misleading unmarked call can enter history.
-- **Provider/tool evolution.** Canonical identity plus current-registry
-  validation prevents stale provider spellings or schema digests from becoming
-  execution authority.
+- **Provider/tool evolution.** The provider-visible name, arguments, and schema
+  digest are frozen together at admission. Current registry state cannot rewrite
+  history, and replay never turns a historical call into new execution authority.
 - **Runtime regression from event reordering.** Golden kernel tests cover
   success, validation rejection, truncated calls, cancellation, mixed batches,
   retry, and no-`transformContext` memory mode.
