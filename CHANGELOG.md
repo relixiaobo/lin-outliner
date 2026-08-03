@@ -88,6 +88,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Pick a model, not a provider (PR #478, cc-2)** — the Thread's model control
+  is now one flat list of models across your connections. The model name leads
+  each row; the connection it comes from appears only as a small secondary
+  label, and only when more than one is listed. Connections still bound how many
+  models each contributes, so a long catalog stays collapsed behind its own
+  "show all" (which now says whose models it expands) and a model you have
+  pinned stays visible even when it falls outside that window. The list leads
+  with **Always newest**, which follows your connection's newest model instead
+  of pinning one — choosing it never moves the Thread to a different connection,
+  and it names the model it would switch you to. A pinned model is shown exactly
+  as stored: the pill and the check mark always name the model that will
+  actually run, so you can no longer be shown one model while another answers
+  the turn.
+
 - **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
   delegating Turn now carries a live card in its process block: one line per
   child agent with a readable name, its status, and elapsed time, so a

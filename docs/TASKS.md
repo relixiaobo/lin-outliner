@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | (see note) | **building `agent-model-first-picker`** — one-pager reviewed 2026-08-03, no Draft PR yet (shipped #461, #463, #467, #468, #471, #472 — `agent-run-presentation-consistency` and `agent-subagent-interaction` both complete) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,6 +31,17 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`agent-model-first-picker` shipped (#478, 2026-08-03)** and is archived `done` — the second
+item on the top-of-queue list is gone, and cc-2 is free. The gate ran `/code-review high` and
+found ten defects, two of them blocking, both from the same root: the un-pin row read the model
+being un-pinned where it needed the model the `inherit` sentinel resolves to. The fix is worth
+knowing about because it is the shape this keeps taking — `buildModelChoices` now exposes
+`connectionHead` as its own field, keyed on `selection.modelProvider` rather than the resolved
+provider, so clamping, labelling, and offering the row all read one value that means "what the
+sentinel resolves to on THIS connection". A cross-provider pin makes those two providers differ,
+which is exactly when the old code was wrong. Nothing about the merge is blocked on the light/dark
+visual pass: the PM waived it.
 
 **In flight (2026-08-01).** Open PR queue: **empty** — #471 and #470 both merged, so
 the review queue is back at zero and the front is wide open. #470 took five gate
@@ -347,10 +358,7 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    largest remaining product item; design ratified (D1–D8), retrieval dep shipped (#111). It is
    at the dev-drafted build one-pager step (phases / file-scope / tests) → PM ratify → build.
    **Do not pick this up.**
-2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
-   model-first model picker (merge Provider + Model Override, provider as secondary label,
-   "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
+2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
    import, and yielding import cache/finalization; #414 shipped the main-side document read model
@@ -367,14 +375,14 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    #427 cached active tag selector candidates and the empty-query order per snapshot.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
-4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+4. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-6. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+5. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
    and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
    ratify+sandbox and opt-in curation dry-run.
-7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+6. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
@@ -734,26 +742,7 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
-- **agent-model-first-picker** (P2, *direction PM-ratified 2026-06-23 — needs a dev-drafted
-  build one-pager*) — make the agent profile's model setting **model-first, not provider-first**.
-  Today `AgentModelEffortSelector` makes the user pick **Provider** (with an `Inherit` abstraction)
-  → **Model Override** (another `Inherit`) → **Thinking Level**; the user's mental model is just
-  "use the best/newest model," and they don't care which connection it comes from. Worse, the product
-  is now **single-agent** (one Neva, #300), so per-profile provider-pinning is vestigial multi-agent
-  baggage. **Goal:** collapse Provider + Model Override into **one "Model" picker** that lists models
-  flat **across all connected providers**, with provider shown only as a **secondary label** per
-  model; **default = "best available"** (the catalog's first-ranked model — which `Inherit` already
-  resolves to today, so the capability exists, only the presentation hides it). When exactly **one**
-  provider is connected, the provider concept should not surface at all. **Key constraint /
-  cheapness:** a model belongs to a connection, so provider can't fully vanish in multi-connection
-  setups (keep it as the secondary label) — but the **saved value stays the canonical
-  `providerId/modelId`** (`core/agentModelId`), so this is **renderer/UX-only, no protocol/data-model
-  change**. **Scope for the dev plan:** the profile editor (`AgentEditor` / `AgentModelEffortSelector`)
-  AND the composer quick-switcher (`AgentComposerModelControl`) for consistency; relabel `Inherit` →
-  "best available" framing; decide the ranking/"best" source (catalog `firstRanked`) and whether the
-  default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
-  i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
-  this is model *selection* UX).
+
 ### Files & media
 
 The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
@@ -971,6 +960,32 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-model-first-picker** (cc-2, PR #478, merged 2026-08-03, plan archived) — model
+  selection is model-first: one flat list of models across every listed connection, the model
+  name leading each row and the provider demoted to a secondary origin label shown only when
+  more than one provider is listed. Providers survive as a **truncation** unit, not a visual
+  one — each keeps its own "show all" budget (whose expander names its provider) and a pinned
+  model outside that window stays visible. The list leads with a floating selection that
+  follows the connection's newest model, written as the `inherit` sentinel and never rewriting
+  the Thread's provider, so choosing it cannot migrate a Thread to another connection.
+  Renderer-only: the stored value is still the canonical `providerId/modelId`.
+  **The gate's finding worth carrying forward** — `/code-review high` returned ten defects, and
+  the two blocking ones were one mistake made twice: the un-pin row clamped the reasoning effort
+  and drew its label from the model being un-pinned, not from the model `inherit` resolves to.
+  Pinned `high` on a model that supports it, with a ranked head that does not, main's validator
+  rejected the commit, `commit` swallowed the throw, and the Thread could not be un-pinned at
+  all — the feature the branch existed to ship was unreachable for real catalog pairs, and the
+  round-trip e2e could not see it because `'GPT-5.4'` is a substring of `'GPT-5.4 Mini'`. The fix
+  gives that model its own name: `buildModelChoices` exposes `connectionHead`, keyed on
+  `selection.modelProvider` rather than the resolved provider (a cross-provider pin makes them
+  differ), and clamping, labelling, and whether to offer the row at all now read it — the row is
+  withheld when that connection lists no models, where it previously rendered off the aggregate
+  count and committed a sentinel main cannot satisfy. A pinned model is also reported verbatim
+  now, including an id stored without a `providerId/` qualifier: the old head fallback named the
+  head while the runtime ran the bare id, which is the show-one-run-another confusion the
+  floating/pinned split exists to remove. Design folded into
+  `docs/spec/agent-thread-rendering.md`. Light/dark visual pass waived by the PM.
 
 - **e2e-signal-on-main** (main-agent, landed 2026-08-01 directly on `main`,
   *fast-track, no plan file*; PM ratified the one-pager) — **the repository now has CI**,
