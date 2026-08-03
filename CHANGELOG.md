@@ -73,6 +73,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **The agent toggle collapses the dock again (PR #481, codex-2)** — clicking the
+  fixed top-right toggle did nothing in the real macOS window, though it worked in
+  every browser-based test. `.thread-dock-header` declared
+  `-webkit-app-region: drag` from a sibling DOM subtree whose box extends under the
+  toggle, and macOS consumed the press as title-bar drag before React ever saw a
+  click. Electron only carves a `no-drag` control out of a drag region reliably when
+  that control is a DOM *descendant* of the region — a rule `shell.css` already
+  documented and this file was quietly contradicting. Dragging goes back to the right
+  window-chrome zone, which owns it. One deliberate trade: with the dock open, the
+  ~290px of header band to the left of that zone no longer drags the window or
+  double-click-zooms; restoring it needs an inner spacer bounded to the header's
+  content box, recorded in the plan as a follow-up. The Thread-list trigger also drops
+  its redundant leading agent glyph and now shows its chevron at rest instead of only
+  on hover, so it reads as a list trigger without being pointed at. The regression
+  guard is geometric rather than selector-pinned: no element carrying
+  `app-region: drag` outside the window-chrome subtrees may intersect the toggle's
+  box, so the next overlapping element gets caught too. Native macOS click
+  verification remains outstanding — Chromium ignores app regions, so no
+  browser-based test can prove this class of bug fixed.
+
 - **Closing a menu in the agent panel no longer bounces your focus to the
   composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
   Escape put focus back on the trigger, as it should, and then a frame later the
