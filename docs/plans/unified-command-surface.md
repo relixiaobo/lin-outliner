@@ -2,255 +2,327 @@
 
 ## Goal
 
-Collapse the two overlapping command/search surfaces — the in-app `Cmd+K`
-`CommandPalette` and the global launcher — into **one** context-aware command
-surface. Not "one absorbs the other": there is only **one** surface, summoned the
-same way everywhere, with the same UI and the same logic. The **only** difference
-between contexts is the **ambient context auto-attached at summon time** — context
-is a passive attachment, never a mode the user picks.
+**One action registry** behind every surface that acts on an outline node, and
+**one retrieval implementation** behind every surface that finds a node.
 
-This plan records the **design decisions ratified by the PM** (a co-design pass,
-2026-06-04, grounded in a product survey of launchers, PKM/outliner apps, and AI
-products — see "Research basis"). It is the *what + how direction*. The
-**implementation one-pager** (phase sequencing, file scope, tests) is left for a
-dev agent to draft (the `search-retrieval-stack` retrieval dependency this waited
-on shipped in #111, so it is unblocked), with the PM ratifying that build plan
-before code.
+- The node context menu becomes a *filtered, anchored view* of the registry.
+- The command surface becomes the registry's *searchable view* — and the only
+  one summoned by a hotkey, in-app and out-of-app alike.
+- Everything the context menu can do, the command surface can do. The context
+  menu is a **subset**, never a second implementation.
+
+The user-visible promise: **one action, one habit.** Multiple entry points are
+fine; multiple implementations are not.
+
+## Positioning (why this shape)
+
+`README.md`: Tenon "uses an outliner-shaped interface, but the product is aimed
+at structuring context, directing local agents, and keeping work inspectable."
+The outline is the substrate, not the point. Two consequences drive this plan:
+
+1. **Captured material earns its keep by being findable and agent-readable**, not
+   by looking rich. Hence no destination picker, no embed cards, no rich extraction
+   here — capture lands in Today with an optional user tag, and can be handed to
+   the agent panel.
+2. **Actions are the product surface**, so they need one catalog. A verb that
+   exists only in a right-click menu is invisible to the keyboard and to search.
+
+### Reference source and its boundary (Lazy)
+
+This surface started as "build a Lazy-like command window, and merge it with the
+in-app `Cmd+K` that looks similar." The reverse-engineering record is
+`archive/lazy-like-global-launcher.md` (Lazy v2.0.10, analysed 2026-06-02); its
+first slice shipped as #103 and is now `spec/launcher.md`. Record what is borrowed
+and what is not, so this boundary is not silently re-opened:
+
+**Borrowed — the feel.** One global hotkey, no modes, one always-focused input
+that is simultaneously filter / search / draft, fuzzy match, Enter runs the
+highlighted row, a non-activating panel that never makes you leave what you were
+doing. This shipped and this plan preserves it.
+
+**Borrowed — the command surface as *the* entry point.** Lazy's launcher is a
+command runner, not a search box. That ambition is what the action registry (D1)
+delivers — but populated from **Tenon's own action set**, not Lazy's.
+
+**Not borrowed — Lazy's command families.** The observed table
+(`Clip article` / `Clip PDF` / `Clip email` / `Clip DM` / `Read later` /
+`Watch later` / `Summarize video` / `Generate tags`, ibid. §"Lazy command families
+observed") is entirely *bring the outside in*; **not one entry operates on the
+user's own notes.** So Lazy's window and Tenon's `Cmd+K` were never two similar
+things — they share a silhouette, not a job. Merging them therefore needed an
+abstraction spanning two non-overlapping jobs, and `Target × Verb` was invented to
+fill an intersection that does not exist. That is why the earlier revision of this
+plan grew a verb matrix, a chip-arity model, habit learning, and a reversibility
+tier. **The merge still happens here** — one hotkey, one surface,
+`CommandPalette.tsx` deleted — but because the launcher is already a superset of
+the palette, not because two similar things were fused.
+
+**Structurally out of reach.** Half of Lazy's table (DMs, email, LinkedIn/X
+threads, anything signed-in) requires injecting JS into the *user's own browser* —
+an extension or CDP. **Tenon builds no extension** (PM, iteration change). The
+approved rich-extraction backend is a **main-process static URL reader** — fetch +
+parse, no injected JS, no new OS permission — which covers public articles, blogs,
+videos, and repos: what capture actually meets most of the time. The seam is
+already in the code (`PageContentExtractor`, `contextCapture.ts`); only the
+implementer changed. Reading an already-visible Tenon URL Preview stays a deferred
+*second* source for JS-rendered or signed-in pages.
+
+**Direction check.** Lazy is a read-later/collection product; Tenon is a context +
+agent workbench. Deleting the `embedType`/`embedId` schema (`embed-strategy.md`,
+option C) is a deliberate step *away* from read-later. Capture here earns its keep
+by being findable and agent-readable (D9), not by looking rich.
+
+### The evidence this plan is built on
+
+The repository already contains the controlled experiment, one line right and one
+line wrong:
+
+| Action | Entry points | Implementations | Result |
+|---|---|---|---|
+| Apply a tag | `#` trigger popover, node context menu, batch selector, `TagSelector` | **one** (`ui/interactions/tagSelector.ts`) | four doors, **one habit** |
+| Find a node | context-menu *Move to*, `@`/`#`/`/` candidates, command palette, launcher | **three** | same query, **three different orderings** |
+
+`NodeContextMenu.tsx:222-230` filters the whole projection with `.includes()` and
+**no ranking at all**; `ui/interactions/candidateRanking.ts` ranks by text match;
+`main/nodeRetrievalService.ts` ranks with the personal-access boost (#111, #307).
+Searching "project" in *Move to* and in the command surface returns different
+orders today. That divergence — not the number of surfaces — is the defect.
 
 ## Non-goals
 
-- **No in-editor `/` rewrite.** The in-editor triggers (`/` block insertion,
-  `@` references, `#`/supertags) stay separate and fixed — they are *positional*
-  (insert at the caret), a job a global modal cannot do. They are NOT unified into
-  this surface (decision #5).
-- **No new AI runtime.** "Ask AI" is an entry point into the existing
-  `ThreadDock`, not a new AI surface (decision #3).
-- **No search-backend work here.** The shared node retrieval kernel is
-  `search-retrieval-stack`'s territory (codex, #107). This plan consumes it.
-- **No arbitrary-app Accessibility reading in v1** (decision #4) — deferred,
-  fragile, and a heavy A3 surface.
+- **No habit-adaptive default action.** The default highlight is a fixed rule.
+  Personalization already exists where it belongs: search *ordering*
+  (`nodeAccessStore`). It never moves what Enter does.
+- **No Inbox and no capture-destination picker.** Today's date node is the
+  chronological inbox; a second bucket contradicts the standing no-special-buckets
+  stance (cf. `floating-toolbar-polish.md` → *Destination policy*).
+- **No screenshot-as-context.** It serves a general desktop-assistant need, off
+  this product's line, and would pull in a Screen Recording (TCC) grant plus a
+  dependency on the unapproved `agent-computer-control.md`.
+- **No rich page extraction here, and no provider-breadth work.** Rich extraction
+  lands as a main-process static URL reader (`file-preview.md`) plugged into the
+  existing `PageContentExtractor` seam; this plan neither builds nor blocks it, and
+  the capture loop (D9) works with or without it. Provider breadth stays in
+  `launcher-provider-expansion.md`. **No browser extension is built by anyone** —
+  `browser-extension-integration.md` is a historical filename for a plan whose own
+  non-goals exclude extensions.
+- **No embed rendering.** The `embedType`/`embedId` schema removal is its own
+  change (`embed-strategy.md`).
+- **No positional-trigger rewrite.** `/`, `@`, `#` are *at-caret* insertion and
+  stay separate and disjoint from the registry.
+- **Non-node context menus stay out of the registry** — the sidebar row menu,
+  Thread item menu, inline-file menu, and field-row menu act on things that are
+  not outline nodes. Folding them in would turn the command surface into a
+  junk drawer and destroy its searchability.
+- **No AI runtime work.** "Send to the agent panel" reuses the shipped
+  `agent/agentReveal.ts` handoff.
 
-## Model baseline
+## Design
 
-- **One surface, one global hotkey `Cmd+Shift+Space`, everywhere** — in-app AND
-  when Tenon is not focused. `Cmd+K` retires (a plain `Cmd+K` cannot be a
-  system-global accelerator without hijacking it in every app).
-- **Context is the ambient attachment**: in-app = the currently **focused node**
-  or the **selected nodes**; out-of-app = the foreground app (e.g. the active
-  browser tab).
-- **Action model = `Target × Verb`.** A small, universal verb set —
-  **Go to · Capture · Reference · Tag · Ask AI · Run command** — where the
-  attached context decides which verbs are available and which is the default.
+### D1 — The registry lives in `src/core/`, not the renderer
 
-## Design (ratified decisions)
+This is the load-bearing decision. The command surface's out-of-app view runs in
+the **locked-down launcher renderer, which has no document** (`spec/launcher.md`:
+it resolves search hits over IPC precisely because it cannot read the projection).
+So a registry that lives in renderer state cannot serve both views.
 
-### D1 — The Enter contract (spine: WYSIWYG)
+Registry entry shape:
 
-**Enter always fires the highlighted row's primary action**, and every row shows
-its primary verb inline (`↵ Go to`, `↵ Capture to Today`, `↵ Tag #x`). Context
-only changes *which rows appear*, *which is pre-highlighted*, and *each row's
-primary verb* — it never changes the rule "Enter = the highlighted row." This is
-the predictability spine (Raycast/Superhuman): what you see highlighted is what
-Enter does, even as you type (typing moves the highlight to the top match).
+```ts
+interface ActionDefinition {
+  id: ActionId;                      // stable, i18n-independent
+  target: 'node' | 'selection' | 'panel' | 'app';
+  applicable(ctx: ActionContext): readonly NodeId[] | boolean;
+  command: CoreCommandRef;           // A4: mutation goes through core commands
+}
+```
 
-### D2 — Default-highlight policy (context-forward + habit-adaptive)
+`ActionContext` is built from the shared `DocumentProjection` (already crosses
+IPC), never from the renderer-only `DocumentIndex`. The predicates that decide
+applicability **already exist as pure functions** — `idsAllowedForMoveTo`,
+`idsAllowedForDuplicate`, `idsEnabledForSelectionAction`,
+`idsAllowedForStructuralBatch/IndentBatch/OutdentBatch`, `planSelectionDelete`,
+`trashActions.ts`, `nodeLocation.isNodeInTrash`,
+`contextMenuSelection.resolveActiveNodeSelection`. The work is moving them from
+`renderer/ui/interactions/` to core and re-basing them on `DocumentProjection`,
+not writing new logic.
 
-On summon (empty query) the surface **auto-highlights the ambient/contextual
-default action**, and **learns from habit**: the verb the user most often picks in
-a given context is promoted to the default. Cold-start uses a seed default per
-context; habit then overrides it.
+The `target` union is **read out of the existing action set**, not designed up
+front: the node context menu already mixes node actions (Move to, Add tag),
+panel actions (View as table/outline), and app actions.
 
-- **Learning granularity:** v1 = per-context-type (foreground-tab / focused-node /
-  selection); supertag-level (per node type) is a v2 extension. *(provisional)*
-- **Predictability guard:** adaptation is slow, explainable, and
-  inspectable/resettable; never jumpy. The D1 WYSIWYG label is what keeps an
-  adaptive default safe — even if the default verb changed, you see it before
-  pressing Enter.
+### D2 — The context menu is an anchored view of the registry
 
-### D3 — Reversibility tier (B): what may be a blind-Enter default
+The menu renders `registry.filter(applicable(clicked node))`, anchored beside the
+node. Anchoring is the reason it survives: **position carries the operand.** You
+can never mistake which node a right-click menu acts on, whereas a centred
+overlay must state its operand in words.
 
-- **Additive / instantly-undoable** verbs — Capture, Go to, Tag, Reference,
-  Ask AI — **may** be the auto-highlighted blind-Enter default (with an undo
-  toast where they mutate).
-- **Lossy / irreversible / external** — Move, Delete, anything that loses data or
-  sends outward — **never** auto-default; they require an explicit pick or a
-  confirm step.
+**Equivalence is the acceptance criterion:** for every node state the current menu
+distinguishes (single/multi selection, in-Trash, descendant constraints, field
+rows), the registry-driven menu must render the *same action set in the same
+order*. This is a behaviour-preserving refactor and is proven mechanically.
 
-(We are event-sourced + undoable per A4, so the additive/undoable set is safe to
-fire on Enter; the tier only fences the genuinely destructive verbs.)
+### D3 — The command surface is the registry's searchable view, and the only hotkey
 
-### D4 — Context chip model (chip rail)
+- **`Cmd+Shift+Space` everywhere; `Cmd+K` retires.** Delete
+  `global.command_palette` (`shortcutRegistry.ts:139`) and the `Cmd+K` hint on the
+  `/` menu's palette row (`slashCommands.ts:71`).
+- **One rendered surface: the existing launcher panel.** `CommandPalette.tsx` is
+  deleted. The launcher is already a superset of it (node search + open in the
+  main window + "new node in Today"); the only thing it lacks is the five static
+  navigation rows, which the sidebar shows permanently anyway (`workspace-layout.md`:
+  Today / Library / Recents / Schema / pinned nodes).
+- **In-app summon must not read external context.** Today the hotkey classifies
+  Tenon itself as `unknown-app`; when the main window is frontmost, skip the
+  external capture and attach in-app context instead (D4).
+- **Return focus.** After a jump or an action, focus goes back to the editor
+  position it came from.
 
-The attached context renders as a **chip rail**: ambient context pre-filled as
-chip(s); the user can `@`-add more targets (nodes, tabs, saved views) into **one
-namespace**; each chip is removable. Chips are **named, type-iconed, and always
-visible** (never silent). Removing all chips falls back to global/no-target search.
+### D4 — Context is attached and removable
 
-The highlighted verb **consumes the chip set per its arity**:
+Ambient context attaches on summon and renders as a visible, removable chip:
+in-app the focused/selected node (pushed from the main renderer over IPC),
+out-of-app the foreground page. Removing every chip falls back to global search.
+Nothing is ever attached silently.
 
-- **Go to** — single target (the highlighted node), ignores extra chips.
-- **Capture** — content comes from the query/context; the **destination** is a
-  separate single target (default Today; picker ties `launcher-capture-destinations`).
-- **Tag / Reference / Ask AI** — operate on the **whole chip set**.
+The chip is the **operand the surface carries**, which is what lets it reach a
+target that is not on screen — the one thing direct manipulation cannot do, and
+the reason the context menu itself grew a search box inside *Move to*.
 
-**Rollout (provisional):** the rail is architected for multiple targets from day
-one; v1 ships ambient pre-fill + removal; `@`-add turns on as the verbs that need
-it (Ask AI, Reference) land.
+### D5 — One retrieval implementation
 
-### D5 — "Ask AI" routes to the Thread dock; continues the Thread
+Every "find a node" path resolves through the shared retrieval service
+(`main/nodeRetrievalService.ts`): the command surface, the context menu's *Move
+to* picker, and the `@`/`#`/`/` candidate lists. Same ranking, same ordering,
+everywhere. Where a path needs renderer-local latency it consumes the same
+ranking primitives rather than re-deriving them.
 
-"Ask AI" hands off to the existing `ThreadDock`: the **chip set becomes Turn
-input**, and the typed query becomes the accepted `userMessage` Item. AI has one
-home with tools, multi-Turn continuity, and streaming; the launcher does not
-create a duplicate AI UI or persistence path.
+### D6 — Enter contract and default highlight
 
-- **Thread:** continue the selected or most recently active root user Thread,
-  appending the chips + query through `turn/start`. The chips are represented as
-  canonical `nodeReference` or `attachment` content on that Turn's
-  `userMessage`, so old history and new context remain distinguishable. A
-  one-key **New Thread** escape calls `thread/start` before `turn/start` when a
-  clean context is needed.
-- **Conventions:** AI-written nodes carry **provenance** (visually distinct until
-  accepted); the no-usable-provider guard **reuses #109** (Ask AI guides to
-  Settings › Providers instead of failing at runtime).
-- **Known trade-off:** routing everything to chat risks the "dead-end chat"
-  pitfall. Mitigation is on the agent side — the agent has write tools (A4), so a
-  Thread can produce nodes back into the outline; this becomes an
-  *agent-behavior* concern (reliably turning answers into nodes), not a surface
-  dead-end.
+Enter fires the highlighted row's action, and every row shows that action inline.
+The default highlight is a **fixed rule**, never learned:
 
-### D6 — Out-of-app context fidelity + fallback (phased)
+- page context attached → the capture row;
+- otherwise → the first search result, or nothing when the query is empty.
 
-- **Now:** active browser tab **URL + title** (the existing #103 path: read-only
-  AX addon + `osascript` front-tab fallback) + **clipboard** as the fallback when
-  the foreground isn't a supported browser.
-- **Later:** **screenshot-as-context** may become a deeper fallback, especially
-  for Ask AI on an unreadable foreground. Authenticated page content or selection
-  from an external browser has no approved reader plan. Internal URL Preview rich
-  capture and Agent Browser Control are independent capabilities; neither is a
-  D6 out-of-app capture source.
-- **v1 excludes** arbitrary-app Accessibility reading (fragile; heavy A3 surface).
-- **Conventions:** *visible-or-it-didn't-happen* — the out-of-app chip names the
-  tier (`⧉ Safari — <title>` / `Clipboard` / `Screenshot`); read nothing → no
-  context chip, degrade to plain capture. Reading foreground content is A3-locked
-  (#103); any expansion needs a security-review gate. The fallback is an **ordered
-  chain**: structured read → URL+title → clipboard → screenshot → manual.
+Rationale: a user who types-and-blindly-Enters always exists. Putting a
+document-mutating action under a blind Enter buys one saved arrow key and costs
+the habit of blind-Enter entirely the first time it surprises them.
 
-### D7 — In-editor `/` stays separate (disjoint, not unified)
+### D7 — Applicable-only, never disabled
 
-The in-editor `/` (and `@`/`#`) command set is **fixed and separate** from this
-surface — they are the *at-caret* versions (insert here). The surface holds the
-*operate-on-target* versions (Reference/Tag the focused/selected node). **Guard:
-keep the two sets disjoint** — no command reachable from both — so there is never
-a "which surface holds this?" confusion (the Logseq pitfall). Same concept, two
-mechanics, independently implemented.
+An action that does not apply to the current context **does not appear** (the
+VS Code `when`-clause model). A searchable list that surfaces inapplicable rows
+teaches users to distrust it.
 
-### D8 — Architecture invariant: one engine, context-as-pure-function
+### D8 — Action naming is part of the contract
 
-There is **one command/verb engine** everywhere. **Verb availability is a pure
-function of `(attached context, query)`** — never a per-surface hardcoded reduced
-set. Out-of-app shows fewer verbs *only because* its context (a browser tab, not a
-node) makes fewer verbs applicable, not because the out-of-app surface is a
-crippled build. This is the invariant that makes "one surface" true rather than
-aspirational, and it generalizes the already-shared `search_nodes` path to the
-whole verb engine. (Avoids the Tana failure mode, where the Global Clipper dropped
-the command line and fields and broke the "same logic everywhere" promise.)
+In a menu, position and icon carry meaning; in a searchable list only the name
+does. Every registry entry gets a reviewed, searchable name in **both** locales
+(`spec/i18n.md`). Names are reviewed as a set, not one at a time.
 
-## Research basis
+### D9 — Capture closes its loop
 
-Decisions were grounded in a 2026-06-04 product survey across three categories:
+- **Destination is Today.** No picker, no Inbox.
+- **Success is visible.** Capture currently resets and hides with no confirmation
+  (`LauncherApp.tsx:121-127`) — when Tenon is in the background the user gets no
+  evidence at all. Show a brief confirmation before dismissing.
+- **One optional user tag at capture time.** Findability comes from tags and
+  search, not from location. (The capture-kind tag `#article`/`#video` → `#capture`
+  already exists; what is missing is *the user's own* tag.)
+- **"Send to the agent panel" is a registry action, not a new AI surface.** It
+  raises the main window, reveals the rail, and stages the page/node as a
+  reference in the composer — the user types and submits. Shape and contract come
+  from `agent/agentReveal.ts` and `agent-conversation-model.md` /
+  `agent-data-model.md` (which own `ThreadUserContent`; this plan must not
+  re-describe it).
 
-- **Launchers / command surfaces:** Raycast (Action Panel = `Target × Verb`;
-  AI Commands + Quick AI = AI as one launcher verb; `@`-context attachments),
-  Alfred Universal Actions (content-type → verb set), macOS 26 Spotlight (actions +
-  Quick Keys + clipboard-as-context), Linear `⌘K` (selection-scoped verbs),
-  Superhuman (reorder-don't-hide; predictable ranking), Slack (cost of splitting
-  navigate/search/act), VS Code (sigil scopes), Arc `⌘T`/Little Arc (same surface
-  in-app and unfocused) **and the Arc→Dia warning** (don't let AI chat swallow the
-  command bar — Ask AI stays one verb, not the center).
-- **PKM / outliner:** Tana (Global Clipper on `Cmd+Shift+Space`, supertag/field
-  commands — **and its retreat from parity**, the D8 anti-lesson), Notion
-  (positional slash vs modal `Cmd+K`, the D7 reason), Obsidian/Logseq (divergent
-  command sets = the D7 pitfall; no native global capture = the differentiator),
-  **Things Quick Entry + Autofill** (ambient context auto-attached since 2017 —
-  the D6 precedent), Capacities (2025 search+command merge), Mem (also
-  `Cmd+Shift+Space`, unified global modal).
-- **AI products:** Cursor (context chips, auto + `@`-added in one namespace — D4),
-  ChatGPT "Work with Apps" (frontmost-app banner = "visible-or-it-didn't-happen",
-  D6), Raycast AI (AI verb in the unified launcher — D5 validation), Apple Writing
-  Tools (implicit selection-as-context), Notion AI (result routing: Replace /
-  Insert / Discard), Dia (`@tab` context chips).
+### D10 — Out-of-app fidelity chain
 
-## Open questions (for the build one-pager)
+Structured read (AX browser tab) → URL + title → clipboard → manual entry. No
+screenshot tier. Read nothing → no chip, degrade to a plain note. Per A12 this
+path degrades; it never throws on the user's action.
 
-1. **Cold-start seed defaults** per context — especially in-app *focused-node +
-   empty query*: what seed verb before habit kicks in (Ask AI? New child?)? D2.
-2. **Habit-learning granularity** — confirm v1 per-context-type; spec the
-   supertag-level v2 trigger.
-3. **Per-verb arity rules** — precise consumption of the chip set per verb (D4),
-   and the Capture **destination** picker (default Today; ties
-   `launcher-capture-destinations`).
-4. **AI provenance** — how Node mutations whose command causation points at a
-   Thread/Turn/Item are visually marked until accepted.
-5. **New Thread affordance** from the surface into the dock (key + UX).
-6. **Screenshot-as-context** handling for Ask AI (vision) when the fallback lands.
-7. **Hotkey migration** — `Cmd+K` retirement; does `Cmd+Shift+Space` cover the
-   in-app summon cleanly, or keep `Cmd+K` as a temporary in-app alias to the same
-   surface?
+## Shape and build order
 
-## Dependencies & sequencing
+**Shape (a): one complete feature in one PR.** The stages below are build order
+*within* that PR (A7: settle the mechanism before its consumers), not releases.
 
-- **Retrieval dependency satisfied.** `search-retrieval-stack` Phases 1–4 shipped
-  in **#111** (shared node-retrieval path `NodeRetrievalService` + analyzer
-  primitives; `agentNodeToolProjection.scoreTerm` duplicate removed). The
-  node-path-unification gate this plan waited on is met — **the surface is
-  unblocked.** Next step is a dev-drafted **build one-pager**.
-- **Absorbs the launcher command-surface follow-ups** (now superseded): the Ask AI
-  verb (was `launcher-ai-actions`, see D5) and Capture destinations / secondary
-  actions / navigation (was `launcher-capture-destinations`, see D4 + the preserved
-  contracts below). **Coordinates with** the surviving capture-pipeline tracks —
-  `launcher-provider-expansion` (capture provider breadth), which this plan
-  consumes but does not own. External-browser rich content remains unplanned;
-  `browser-extension-integration` is limited to explicit internal URL Preview
-  capture and is not a D6 dependency.
-- **Reuses #109** (`agent-empty-state-onboarding`) for the no-provider guard on
-  Ask AI.
+1. Move the applicability predicates to core, re-based on `DocumentProjection`.
+2. Define the registry and populate it from the node context menu's action set.
+3. Re-render the context menu as a registry view — **behaviour identical**.
+4. Converge node retrieval onto the shared service (three implementations → one).
+5. Render the registry as the command surface's searchable view; add the in-app
+   context path and focus return.
+6. Capture loop: confirmation, optional tag, send-to-agent action.
+7. Delete `CommandPalette.tsx`, the `Cmd+K` binding, and the stale `/`-menu hint.
 
-## Preserved contracts (folded from the superseded launcher follow-ups)
+Stages 1-3 change no user-visible behaviour, which is what makes a PR this size
+reviewable: they are provable mechanically.
 
-Concrete, still-valid contracts the build one-pager must carry (the rest of those
-plans is replaced by D1–D8; the standalone ⌘K secondary-action *menu mechanism* is
-NOT carried — it is replaced by the chip rail + WYSIWYG verb rows):
+## Verification
 
-- **Capture destination** (→ D4 / open question #3): an **Inbox** node resolved/
-  created in main; a `destination` param on the capture IPC
-  (`launcher.createContextCapture`); default Today, picker selects Today / Inbox /
-  a chosen node.
-- **Recent destinations** (→ D2 cold-start): persist the last N capture/jump
-  targets in `userData`; surface as empty-query quick rows.
-- **Navigation** (→ D1 "Go to" verb): reuse `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` →
-  `navigateRoot` + `focusNode` for Go-to-Today/Library and node jumps.
-- **Ask AI handoff** (→ D5): a launcher-to-renderer handoff containing normalized
-  `ThreadUserContent`; the renderer focuses `ThreadDock`, resolves the selected
-  root user Thread or calls `thread/start`, then submits the content through
-  `turn/start`. The launcher does not define another Agent command family.
+- **Menu equivalence (stages 1-3).** A generated table of (node state → action set,
+  in order) captured on `main` before the refactor must match the registry-driven
+  menu exactly. Same technique that carried #451's 4,700-line move to zero review
+  findings: freeze the observable surface, prove it unchanged, then build on it.
+- **Retrieval convergence (stage 4).** One ranking chokepoint; a test asserts the
+  same query returns the same ordering from every entry point.
+- **Applicability (D7).** Property test: no rendered action is inapplicable to the
+  context it was rendered for.
+- **Capture (D9).** E2E: capture with a tag from a background app, assert the node,
+  the tag, and the confirmation.
+- Light + dark visual verification (UI diff); `typecheck`, `test:core`,
+  `test:renderer`, `test:e2e`, `docs:check`.
+
+## Open questions
+
+1. How much of `renderer/ui/interactions/` can move to core without churning
+   unrelated call sites? The predicates are pure, but they are typed against
+   `DocumentIndex`; the adapter cost is the main unknown in stage 1.
+2. Which panel/app-scoped actions belong in the registry's first population —
+   only what the node context menu already offers, or also menu-bar items with no
+   keyboard path?
+3. Does the in-app context chip carry the focused node, the selection, or both
+   when they disagree?
+4. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
+   outside the renderer's `icons.ts` so the launcher bundle stays small), or do
+   registry entries carry icon ids resolved per view? See `icon-semantics.md`.
+5. Confirmation UX for capture: in-panel dwell before dismiss, or a main-window
+   surface the user may not be looking at?
+
+## Related plans
+
+- `floating-toolbar-polish.md` — its *Destination policy* question is answered by
+  the same ruling as D9 (Today, no special bucket); its `#` selection-extract is a
+  registry action once the registry exists.
+- `embed-strategy.md` — resolved as option C (delete the dead `embedType`/`embedId`
+  schema). This is why D9 needs no rich rendering.
+- `launcher-provider-expansion.md` — provider breadth is downstream of that ruling
+  and drops in priority accordingly; this plan consumes classification, never owns
+  it. (Breadth becomes worth more once the static reader lands, since a recognised
+  provider then yields real content rather than a better-labelled link.)
+- `file-preview.md` — its **static URL reader** is the approved rich-extraction
+  backend; capture consumes it through `PageContentExtractor` once it exists. That
+  plan's open question ("is the static reader still valuable beside the hardened
+  preview?") is answered yes by this decision: it has a second consumer.
+- `browser-extension-integration.md` — record-only, and a **deferred second
+  extraction source** (JS-rendered / signed-in pages) behind the static reader. Two
+  corrections it needs: its filename says "extension" while its own non-goals
+  exclude one, and it asserts the same not-yet-built "clipboard, screenshot"
+  fallback chain that D10 corrects. Renaming it breaks the `docs/TASKS.md` link, so
+  coordinate with the main agent.
+- `agent-conversation-model.md` / `agent-data-model.md` — authorities for the
+  handoff content shape in D9.
 
 ## Collision self-check
 
-Last refreshed 2026-07-01: no open PR currently claims this command-surface
-work. The eventual build will touch `CommandPalette.tsx`, the launcher
-(`src/main/launcher/*`, `src/renderer/launcher/*`), the agent panel, and the
-command/verb engine. The old launcher follow-ups have folded into this plan, and
-the verb/retrieval dependency shipped via #111. Because build is **deferred** (the
-design is ratified; a dev still drafts the build one-pager), there is no active
-collision now; the build one-pager must re-run this check and coordinate
-sequencing with whatever launcher/retrieval branches are then in flight.
-
-## Checklist (design phase)
-
-- [x] Ratify the model baseline (one surface / one hotkey / context-as-attachment
-  / `Target × Verb`).
-- [x] Ratify D1–D8 (Enter contract, default-highlight, reversibility tier, chip
-  model, Ask AI routing, out-of-app fidelity, slash boundary, engine invariant).
-- [ ] Dev agent drafts the implementation one-pager (phases, file scope, tests),
-  PM ratifies — **retrieval dependency now satisfied (#111); unblocked**.
+To re-run at build time. At drafting: the only open PR is #477
+(`main-agent/e2e-pr-comparison`), no overlap. The build touches
+`src/core/` (new registry + moved predicates), `src/renderer/ui/outliner/NodeContextMenu.tsx`,
+`src/renderer/ui/CommandPalette.tsx` (deleted), `src/renderer/ui/interactions/*`,
+`src/renderer/launcher/*`, `src/main/launcher/*`, `src/main/context/contextCapture.ts`,
+and both locale message files. It does **not** touch `src/core/commands.ts` or
+`src/core/types.ts` — the registry references existing commands rather than adding
+mutations.
