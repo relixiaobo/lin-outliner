@@ -30,6 +30,7 @@ export const MODEL_TOOL_CALL_EVIDENCE_REASONS = Object.freeze([
   'schemaIncompatible',
   'argumentPayloadUnavailable',
   'resultPayloadUnavailable',
+  'canonicalHistoryUnavailable',
 ] as const);
 export type ModelToolCallEvidenceReason = typeof MODEL_TOOL_CALL_EVIDENCE_REASONS[number];
 

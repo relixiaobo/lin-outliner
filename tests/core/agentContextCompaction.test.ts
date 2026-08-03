@@ -91,6 +91,148 @@ describe('context compaction reducer', () => {
     }]);
   });
 
+  test('uses structured evidence summaries to invalidate the affected file observation', async () => {
+    const store = createPayloadStore();
+    const edited = observation(
+      store,
+      'edited-file-read',
+      'file_read',
+      { file_path: '/workspace/edited.md' },
+      'Edited file snapshot',
+    );
+    const retained = observation(
+      store,
+      'retained-file-read',
+      'file_read',
+      { file_path: '/workspace/retained.md' },
+      'Retained file snapshot',
+    );
+    const degradedMutation = {
+      ...toolItem('degraded-file-edit', 'file_edit', { file_path: '/workspace/edited.md' }),
+      modelCall: {
+        disposition: 'evidenceOnly' as const,
+        identity: { namespace: null, name: 'file_edit' },
+        providerName: 'file_edit',
+        redactedArgumentsSummary: { file_path: '/workspace/edited.md' },
+        reason: 'schemaIncompatible' as const,
+        correction: 'Inspect current file state before editing again.',
+      },
+    } satisfies ThreadItem;
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [...edited.items, ...retained.items]), turn(2, [degradedMutation])],
+      readContext: store.read,
+    });
+
+    expect(plan?.restoredState.activeObservations).toEqual([{
+      key: 'file:/workspace/retained.md',
+      tool: 'file_read',
+      subject: '/workspace/retained.md',
+      outputRef: retained.outputRef,
+      projectionRef: retained.projectionRef,
+    }]);
+  });
+
+  test('conservatively clears observations when successful mutation arguments are unavailable', async () => {
+    const store = createPayloadStore();
+    const node = observation(
+      store,
+      'stale-node-read',
+      'node_read',
+      { node_id: 'node-a' },
+      'Stale node snapshot',
+    );
+    const file = observation(
+      store,
+      'stale-file-read',
+      'file_read',
+      { file_path: '/workspace/stale.md' },
+      'Stale file snapshot',
+    );
+    const nodeArgumentsRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { operation: 'replace_outline', node_id: 'node-a' },
+    });
+    const fileArgumentsRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/stale.md', content: 'updated' },
+    });
+    store.remove(nodeArgumentsRef);
+    store.remove(fileArgumentsRef);
+    const nodeMutation = payloadBackedToolItem('missing-node-arguments', 'node_edit', nodeArgumentsRef);
+    const fileMutation = payloadBackedToolItem('missing-file-arguments', 'file_write', fileArgumentsRef);
+
+    const plan = await planContextCompaction({
+      turns: [
+        turn(1, [...node.items, ...file.items]),
+        turn(2, [nodeMutation]),
+        turn(3, [fileMutation]),
+      ],
+      readContext: store.read,
+    });
+
+    expect(plan?.restoredState.activeObservations).toEqual([]);
+  });
+
+  test('reads payload-backed canonical arguments once per Item during compaction', async () => {
+    const store = createPayloadStore();
+    const file = observation(
+      store,
+      'payload-file-read',
+      'file_read',
+      { file_path: '/workspace/payload.md' },
+      'Payload-backed file snapshot',
+    );
+    const argumentsRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/payload.md' },
+    });
+    const payloadItem = {
+      ...file.items[0]!,
+      modelCall: {
+        ...replayableModelCall('file_read', {}),
+        arguments: { storage: 'payload' as const, ref: argumentsRef },
+      },
+    } satisfies ThreadItem;
+    let argumentReads = 0;
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [payloadItem, file.items[1]!])],
+      readContext: async (ref) => {
+        if (ref.id === argumentsRef.id) argumentReads += 1;
+        return store.read(ref);
+      },
+    });
+
+    expect(plan?.restoredState.activeObservations).toHaveLength(1);
+    expect(argumentReads).toBe(1);
+  });
+
+  test('does not read payload-backed arguments for tools unrelated to observations', async () => {
+    const store = createPayloadStore();
+    const argumentsRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { query: 'unrelated tool arguments' },
+    });
+    const unrelated = payloadBackedToolItem('unrelated-tool', 'unrelated_tool', argumentsRef);
+    let argumentReads = 0;
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [unrelated])],
+      readContext: async (ref) => {
+        if (ref.id === argumentsRef.id) argumentReads += 1;
+        return store.read(ref);
+      },
+    });
+
+    expect(plan).not.toBeNull();
+    expect(argumentReads).toBe(0);
+  });
+
   test('retains complete typed output identities for active observation checkpoints', async () => {
     const store = createPayloadStore();
     const digest = createHash('sha256').update('shared-output').digest('hex');
@@ -566,6 +708,20 @@ function toolItem(
   };
 }
 
+function payloadBackedToolItem(
+  id: string,
+  tool: string,
+  argumentsRef: ThreadContextPayloadReference,
+): ThreadItem {
+  return {
+    ...toolItem(id, tool, {}),
+    modelCall: {
+      ...replayableModelCall(tool, {}),
+      arguments: { storage: 'payload', ref: argumentsRef },
+    },
+  };
+}
+
 function turn(index: number, items: readonly ThreadItem[], id?: ReturnType<typeof uuidV7>): Turn {
   const startedAt = 1_720_000_000_000 + index * 100;
   const turnId = id ?? uuidV7(startedAt);
@@ -607,6 +763,9 @@ function createPayloadStore() {
       };
       payloads.set(ref.id, payload);
       return ref;
+    },
+    remove(ref: ThreadContextPayloadReference): void {
+      payloads.delete(ref.id);
     },
     read: async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? null,
   };

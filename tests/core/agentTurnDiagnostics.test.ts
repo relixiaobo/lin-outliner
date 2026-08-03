@@ -345,6 +345,63 @@ describe('Turn diagnostics', () => {
     })).toThrow('expected at least one context entry');
   });
 
+  test('redacts structured secrets from canonical messages and post-adapter requests', () => {
+    const rawSecret = 'generic-model-secret';
+    const toolMessage: AssistantMessage = {
+      ...assistantMessage(''),
+      content: [{
+        type: 'toolCall',
+        id: 'secret-call',
+        name: 'alpha',
+        arguments: { api_key: rawSecret, query: 'keep' },
+      }],
+      stopReason: 'toolUse',
+    };
+    const collector = new TurnDiagnosticsCollector({
+      contextEpochId: 'initial',
+      cacheAffinity: 'c'.repeat(64),
+      configuration: {
+        profileName: 'default',
+        developerInstructions: [],
+        model: model.id,
+        reasoningEffort: 'medium',
+        tools: ['alpha'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      },
+      stablePrompt: null,
+      tools: [tool('alpha')],
+      model,
+      thinkingLevel: 'medium',
+      providerOptions: {},
+      initialInput: { acceptedAt: 10, itemIds: ['initial-user'] },
+    });
+
+    prepare(collector, [toolMessage], 0, 20);
+    collector.captureProviderRequest({
+      model: model.id,
+      input: [{
+        type: 'function_call',
+        name: 'alpha',
+        arguments: JSON.stringify({ api_key: rawSecret, query: 'keep' }),
+      }],
+      metadata: { session_token: rawSecret },
+    });
+
+    const payload = collector.payload();
+    expect(JSON.stringify(payload)).not.toContain(rawSecret);
+    expect(payload.canonicalMessages[0]?.value).toMatchObject({
+      content: [{ arguments: { api_key: '[redacted]', query: 'keep' } }],
+    });
+    expect(materializeRequest(payload, 0)).toMatchObject({
+      input: [{
+        arguments: JSON.stringify({ api_key: '[redacted]', query: 'keep' }),
+      }],
+      metadata: { session_token: '[redacted]' },
+    });
+  });
+
   test('records retry, compaction, steering, and transient tools as ordered activities', () => {
     const firstMessage: UserMessage = {
       role: 'user',

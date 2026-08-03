@@ -455,13 +455,30 @@ describe('Codex Agent Core protocol codec', () => {
     expect((decoded as Extract<typeof decoded, { type: 'commandExecution' }>).description).toBeNull();
   });
 
-  test('rejects tool Items without canonical model-call history', () => {
-    const legacy = JSON.parse(encodeThreadItem(
-      allItems.find((item) => item.type === 'commandExecution')!,
-    )) as Record<string, unknown>;
-    delete legacy.modelCall;
+  test('degrades tool Items without canonical model-call history to non-replayable evidence', () => {
+    const toolTypes = [
+      'commandExecution',
+      'fileChange',
+      'mcpToolCall',
+      'dynamicToolCall',
+      'collabAgentToolCall',
+      'webSearch',
+    ] as const;
 
-    expect(() => decodeThreadItem(legacy)).toThrow('item.modelCall');
+    for (const type of toolTypes) {
+      const historical = JSON.parse(encodeThreadItem(
+        allItems.find((item) => item.type === type)!,
+      )) as Record<string, unknown>;
+      delete historical.modelCall;
+
+      const decoded = decodeThreadItem(historical);
+      expect('modelCall' in decoded ? decoded.modelCall : null).toMatchObject({
+        disposition: 'evidenceOnly',
+        identity: null,
+        reason: 'canonicalHistoryUnavailable',
+        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
+      });
+    }
   });
 
   test('enforces canonical model-call storage, evidence, and JSON-pointer bounds', () => {

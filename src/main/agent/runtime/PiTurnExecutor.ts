@@ -321,6 +321,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       }
       unsubscribe = agent.subscribe(async (event) => {
         diagnostics.captureEvent(event);
+        if (event.type === 'tool_call_admission') {
+          reasoningReplay?.associateToolCall(event.providerToolCallId, event.toolCallId);
+        }
         normalizer.handle(event);
         await normalizer.flush();
       });
@@ -534,6 +537,8 @@ type SignedThinkingContent = Extract<AssistantMessage['content'][number], { type
 
 class ActiveTurnReasoningReplay {
   private readonly retained = new Map<string, Map<string, readonly SignedThinkingContent[]>>();
+  private readonly assistantItemByCanonicalToolCallId = new Map<string, string>();
+  private pendingAssistantItemByProviderToolCallId = new Map<string, string>();
 
   constructor(private readonly turnId: string) {}
 
@@ -548,6 +553,14 @@ class ActiveTurnReasoningReplay {
     const messages = this.retained.get(key) ?? new Map<string, readonly SignedThinkingContent[]>();
     messages.set(itemId, thinking);
     this.retained.set(key, messages);
+    this.pendingAssistantItemByProviderToolCallId = new Map(message.content.flatMap((part) => (
+      part.type === 'toolCall' ? [[part.id, itemId] as const] : []
+    )));
+  }
+
+  associateToolCall(providerToolCallId: string, canonicalToolCallId: string): void {
+    const assistantItemId = this.pendingAssistantItemByProviderToolCallId.get(providerToolCallId);
+    if (assistantItemId) this.assistantItemByCanonicalToolCallId.set(canonicalToolCallId, assistantItemId);
   }
 
   reattach(projection: CanonicalContextProjection, model: Model<Api>): CanonicalContextProjection {
@@ -562,7 +575,13 @@ class ActiveTurnReasoningReplay {
     const byMessageIndex = new Map<number, SignedThinkingContent[]>();
     for (const boundary of projection.assistantBoundaries) {
       if (boundary.turnId !== this.turnId) continue;
-      const thinking = boundary.itemIds.flatMap((itemId) => retained.get(itemId) ?? []);
+      const retainedItemIds = new Set(boundary.itemIds.flatMap((itemId) => [
+        itemId,
+        ...(this.assistantItemByCanonicalToolCallId.get(itemId)
+          ? [this.assistantItemByCanonicalToolCallId.get(itemId)!]
+          : []),
+      ]));
+      const thinking = [...retainedItemIds].flatMap((itemId) => retained.get(itemId) ?? []);
       if (thinking.length === 0) continue;
       const message = projection.messages[boundary.messageIndex];
       if (message?.role !== 'assistant') continue;

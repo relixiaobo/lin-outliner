@@ -12,6 +12,7 @@ import type {
   CollaborationToolName,
   DynamicToolOutputContent,
   ItemExecutionStatus,
+  JsonValue,
   ThreadAttachmentContent,
   ThreadItem,
   ThreadUserContent,
@@ -68,7 +69,10 @@ import {
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
 import { basenameForPath } from '../../../../core/referenceMarkup';
-import { modelCallDisplayArguments } from '../../../../core/agent/modelCallHistory';
+import {
+  modelCallArgumentSource,
+  modelCallDisplayArguments,
+} from '../../../../core/agent/modelCallHistory';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
@@ -111,6 +115,7 @@ interface ThreadItemViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
 
@@ -176,6 +181,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           expandState={props.expandState}
           index={props.index}
           item={props.item}
+          onReadArguments={props.onReadToolArguments}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
           subagents={props.subagents}
@@ -228,6 +234,7 @@ export function ThreadToolActivityGroup({
   index,
   items,
   onReadToolOutput,
+  onReadToolArguments,
   onOpenThread,
   subagents,
   threadId,
@@ -236,6 +243,7 @@ export function ThreadToolActivityGroup({
   readonly expandState: ThreadDisclosureState;
   readonly index?: DocumentIndex;
   readonly items: readonly ThreadToolItem[];
+  readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
@@ -277,6 +285,7 @@ export function ThreadToolActivityGroup({
               index={index}
               item={item}
               key={item.id}
+              onReadArguments={onReadToolArguments}
               onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
               subagents={subagents}
@@ -614,6 +623,7 @@ function ToolItemDisclosure({
   expandState,
   index,
   item,
+  onReadArguments,
   onReadOutput,
   onOpenThread,
   subagents,
@@ -623,6 +633,7 @@ function ToolItemDisclosure({
   readonly expandState: ThreadDisclosureState;
   readonly index?: DocumentIndex;
   readonly item: ThreadToolItem;
+  readonly onReadArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
@@ -632,7 +643,7 @@ function ToolItemDisclosure({
   const t = useT();
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
-  const detail = toolDetail(item, t, onOpenThread, threadId, subagents);
+  const argumentRefId = toolArgumentPayloadId(item);
   const outputRefId = item.type === 'collabAgentToolCall' ? null : item.outputRef?.id ?? null;
   const itemRef = useRef(item);
   itemRef.current = item;
@@ -641,10 +652,17 @@ function ToolItemDisclosure({
     readonly text: string | null;
   } | null>(null);
   const outputLoaded = loadedOutput?.outputRefId === outputRefId;
+  const [loadedArguments, setLoadedArguments] = useState<{
+    readonly argumentRefId: string;
+    readonly value: JsonValue | null;
+  } | null>(null);
+  const argumentsLoaded = loadedArguments?.argumentRefId === argumentRefId;
   const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
   const holdAnchorUntilSettled = expandState.holdAnchorUntilSettled;
   useEffect(() => {
-    if (!expanded || !outputRefId || outputLoaded) return undefined;
+    const needsOutput = Boolean(outputRefId && !outputLoaded);
+    const needsArguments = Boolean(argumentRefId && !argumentsLoaded);
+    if (!expanded || (!needsOutput && !needsArguments)) return undefined;
     let cancelled = false;
     const anchorHold = outputAnchorHoldRef.current ?? holdAnchorUntilSettled();
     outputAnchorHoldRef.current = anchorHold;
@@ -652,21 +670,40 @@ function ToolItemDisclosure({
       anchorHold?.settle();
       if (outputAnchorHoldRef.current === anchorHold) outputAnchorHoldRef.current = null;
     };
-    void onReadOutput(itemRef.current)
-      .then(
-        (text) => {
-          if (!cancelled) setLoadedOutput({ outputRefId, text });
-        },
-        () => {
-          if (!cancelled) setLoadedOutput({ outputRefId, text: null });
-        },
-      )
+    const outputRead = needsOutput
+      ? onReadOutput(itemRef.current).catch(() => null)
+      : Promise.resolve(undefined);
+    const argumentsRead = needsArguments
+      ? onReadArguments(itemRef.current).catch(() => null)
+      : Promise.resolve(undefined);
+    void Promise.all([outputRead, argumentsRead])
+      .then(([text, value]) => {
+        if (cancelled) return;
+        if (needsOutput && outputRefId) setLoadedOutput({ outputRefId, text: text ?? null });
+        if (needsArguments && argumentRefId) setLoadedArguments({ argumentRefId, value: value ?? null });
+      })
       .finally(settleAnchorHold);
     return () => {
       cancelled = true;
       settleAnchorHold();
     };
-  }, [expanded, holdAnchorUntilSettled, onReadOutput, outputLoaded, outputRefId]);
+  }, [
+    argumentRefId,
+    argumentsLoaded,
+    expanded,
+    holdAnchorUntilSettled,
+    onReadArguments,
+    onReadOutput,
+    outputLoaded,
+    outputRefId,
+  ]);
+  const argumentsValue = argumentsLoaded && loadedArguments.value !== null
+    ? loadedArguments.value
+    : modelCallDisplayArguments(item.modelCall);
+  const detail = toolDetail(item, t, onOpenThread, threadId, subagents, argumentsValue);
+  const detailInput = argumentRefId && (!argumentsLoaded || loadedArguments.value === null)
+    ? item.type === 'commandExecution' ? item.command : null
+    : detail.input;
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
   const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
   // A caller-authored description replaces the shell text in the label, so the
@@ -685,7 +722,7 @@ function ToolItemDisclosure({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => {
           expandState.toggle(disclosureId, expanded, event.currentTarget);
-          if (!expanded && outputRefId && !outputLoaded) {
+          if (!expanded && ((outputRefId && !outputLoaded) || (argumentRefId && !argumentsLoaded))) {
             outputAnchorHoldRef.current = holdAnchorUntilSettled();
           }
         }}
@@ -695,10 +732,10 @@ function ToolItemDisclosure({
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-body">
-          {detail.input ? (
+          {detailInput ? (
             <ToolDetailSection label={t.agent.thread.item.arguments}>
               <ToolCodeBlock
-                code={detail.input}
+                code={detailInput}
                 copyLabel={t.agent.thread.item.copyArguments}
                 cwd={threadCwd}
                 language={detail.inputLanguage}
@@ -827,6 +864,7 @@ function toolDetail(
   onOpenThread: (threadId: string) => Promise<void>,
   threadId: string,
   subagents?: ReadonlyMap<string, SubagentPresentation>,
+  argumentsValue: JsonValue = modelCallDisplayArguments(item.modelCall),
 ): ToolDetail {
   const empty = {
     input: null,
@@ -841,7 +879,7 @@ function toolDetail(
     case 'commandExecution':
       return {
         ...empty,
-        input: commandDetailInput(item),
+        input: commandDetailInput(item, argumentsValue),
         inputLanguage: 'bash',
         output: item.aggregatedOutput,
         // A real non-zero code is the useful explanation; a failure that never
@@ -855,7 +893,7 @@ function toolDetail(
     case 'fileChange':
       return {
         ...empty,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        input: jsonText(argumentsValue),
         inputLanguage: 'json',
         error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
@@ -874,7 +912,7 @@ function toolDetail(
     case 'mcpToolCall':
       return {
         ...empty,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        input: jsonText(argumentsValue),
         inputLanguage: 'json',
         output: item.result === null ? null : jsonText(item.result),
         outputLanguage: 'json',
@@ -891,7 +929,7 @@ function toolDetail(
       const failed = item.success === false;
       return {
         ...empty,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        input: jsonText(argumentsValue),
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
@@ -912,7 +950,7 @@ function toolDetail(
       return {
         ...empty,
         error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        input: jsonText(argumentsValue),
         inputLanguage: 'json',
         output: jsonText(collaborationResultSnapshot(item)),
         outputLanguage: 'json',
@@ -933,7 +971,7 @@ function toolDetail(
     case 'webSearch':
       return {
         ...empty,
-        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        input: jsonText(argumentsValue),
         inputLanguage: 'json',
         output: item.results.length > 0 ? jsonText(item.results) : null,
         outputLanguage: 'json',
@@ -1896,8 +1934,8 @@ function jsonText(value: unknown): string {
 
 function commandDetailInput(
   item: Extract<ThreadItem, { readonly type: 'commandExecution' }>,
+  argumentsValue: JsonValue = modelCallDisplayArguments(item.modelCall),
 ): string {
-  const argumentsValue = modelCallDisplayArguments(item.modelCall);
   if (
     argumentsValue !== null
     && typeof argumentsValue === 'object'
@@ -1907,6 +1945,12 @@ function commandDetailInput(
     if (typeof command === 'string') return command;
   }
   return item.command;
+}
+
+function toolArgumentPayloadId(item: ThreadToolItem): string | null {
+  if (item.modelCall.disposition === 'evidenceOnly') return null;
+  const source = modelCallArgumentSource(item.modelCall);
+  return source.storage === 'payload' ? source.ref.id : null;
 }
 
 function isJsonText(value: string): boolean {

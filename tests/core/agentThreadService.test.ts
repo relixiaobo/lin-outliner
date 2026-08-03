@@ -2914,6 +2914,34 @@ describe('ThreadService', () => {
       kind: 'toolCallArguments',
       value: FORK_MODEL_ARGUMENTS,
     });
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      contextId: forkArgumentRef.id,
+    })).toEqual({
+      context: {
+        ref: forkArgumentRef,
+        payload: {
+          schemaVersion: 1,
+          kind: 'toolCallArguments',
+          value: FORK_MODEL_ARGUMENTS,
+        },
+      },
+    });
+    const unrelatedItem = forkTurn.items.find((item) => item.id !== forkItem.id)!;
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: unrelatedItem.id,
+      contextId: forkArgumentRef.id,
+    })).toEqual({ context: null });
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      contextId: 'f'.repeat(64),
+    })).toEqual({ context: null });
 
     await opened.service.deleteThread(source.id);
 

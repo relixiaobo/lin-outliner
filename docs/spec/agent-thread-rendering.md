@@ -76,10 +76,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   status plus direct argument/result data. Its readable act may use type-specific
   presentation fields, but the Arguments detail and copy source only the Item's
   `modelCall` envelope: exact inline arguments, marked redacted arguments, a payload
-  identity until main resolves it, or bounded rejection evidence. Host execution
-  metadata such as command `cwd` is labelled separately and never appears as a model
-  argument. Structured arguments and results render as their JSON rather than a second
-  presentation model. `bash` is the deliberate exception to JSON argument rendering:
+  resolved on demand by main, or bounded rejection evidence. The renderer never renders
+  a payload-reference stub as if it were arguments. Expansion and Turn copy request the
+  exact payload; a missing or mismatched payload remains explicitly unavailable. Host
+  execution metadata such as command `cwd` is labelled separately and never appears as
+  a model argument. Structured arguments and results render as their JSON rather than a
+  second presentation model. `bash` is the deliberate exception to JSON argument rendering:
   its expanded input shows the envelope's `command` as copyable shell text with bash
   highlighting, while optional fields remain available through canonical diagnostics.
   Presentation Item construction receives the complete transient redacted argument
@@ -490,6 +492,9 @@ schemas, provider messages, responses, and Item JSON mount
 only while their disclosure is open. Expanding an evidence Item issues one exact
 `(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
 payload; it never receives a canonical payload path or gains digest-only read authority.
+The same IPC method may read payload-backed tool arguments only when main derives the
+requested reference from that exact Item's canonical `modelCall`; another Item or digest
+is rejected. Renderer caching keys the immutable Thread-owned payload identity.
 All argument-bearing views consume the canonical envelope. Diagnostics and exports show
 only structured secret-redacted values and RFC 6901 redaction paths; they never reveal a
 raw model-authored secret or host-injected credential.

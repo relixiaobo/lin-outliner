@@ -105,6 +105,7 @@ export class CanonicalContextProjector {
   private previousAdditionalContext: ReadonlyMap<string, ContextTextEntry> | null = null;
   private readonly payloads = new Map<string, ThreadContextPayload>();
   private readonly toolOutputProjections = new Map<string, ToolOutputProjectionContextPayload>();
+  private readonly unavailableToolOutputProjections = new Set<string>();
 
   constructor(
     private readonly model: Model<Api>,
@@ -143,21 +144,34 @@ export class CanonicalContextProjector {
   }
 
   private async prepareToolOutputProjections(turns: readonly Turn[]): Promise<void> {
+    this.toolOutputProjections.clear();
+    this.unavailableToolOutputProjections.clear();
     for (const turn of turns) {
       for (const item of turn.items) {
         if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
+        const declaredKeys = item.outputRefs.map(outputReferenceKey);
+        const markUnavailable = () => {
+          for (const key of declaredKeys) {
+            this.toolOutputProjections.delete(key);
+            this.unavailableToolOutputProjections.add(key);
+          }
+        };
         const payload = await this.readEvidencePayload(item).catch(() => null);
         if (!payload || payload.kind !== 'toolOutputProjection') {
           console.warn(`[agent] Skipping unavailable tool-output projection: ${item.payloadRef.id}`);
+          markUnavailable();
           continue;
         }
         const key = outputReferenceKey(payload.outputRef);
         const existing = this.toolOutputProjections.get(key);
         if (existing && JSON.stringify(existing) !== JSON.stringify(payload)) {
           console.warn(`[agent] Skipping conflicting tool-output projection: ${payload.outputRef.id}`);
+          markUnavailable();
+          this.toolOutputProjections.delete(key);
+          this.unavailableToolOutputProjections.add(key);
           continue;
         }
-        this.toolOutputProjections.set(key, payload);
+        if (!this.unavailableToolOutputProjections.has(key)) this.toolOutputProjections.set(key, payload);
       }
     }
   }
@@ -278,6 +292,10 @@ export class CanonicalContextProjector {
           messagePartProvenance.push(...inherited.messagePartProvenance.map((parts) => [...parts]));
           continue;
         }
+        if (
+          item.kind === 'toolOutputProjection'
+          && item.outputRefs.some((ref) => this.unavailableToolOutputProjections.has(outputReferenceKey(ref)))
+        ) continue;
         appendContextParts(await this.projectEvidence(item));
         continue;
       }
@@ -309,14 +327,16 @@ export class CanonicalContextProjector {
       }
       if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
-        const projection = item.outputRef
-          ? this.toolOutputProjections.get(outputReferenceKey(item.outputRef)) ?? null
+        const projectionKey = item.outputRef ? outputReferenceKey(item.outputRef) : null;
+        const projection = projectionKey
+          ? this.toolOutputProjections.get(projectionKey) ?? null
           : null;
         const tool = await historyTool(
           item,
           turn.startedAt,
           this.resources,
           projection,
+          projectionKey !== null && this.unavailableToolOutputProjections.has(projectionKey),
           this.options.liveToolCall?.(turn.id, item.id) ?? null,
         );
         if (tool.kind === 'evidence') {
@@ -1000,6 +1020,7 @@ async function historyTool(
   timestamp: number,
   resources: Pick<ProjectionResources, 'readContext' | 'readOutput' | 'readResource'>,
   projection: ToolOutputProjectionContextPayload | null,
+  projectionUnavailable: boolean,
   liveCall: LiveModelToolCall | null,
 ): Promise<
   | { readonly kind: 'exchange'; readonly marker: TextContent | null; readonly call: ToolCall; readonly result: ToolResultMessage }
@@ -1026,6 +1047,9 @@ async function historyTool(
       }
       args = payload.value;
     }
+  }
+  if (projectionUnavailable) {
+    return { kind: 'evidence', text: historicalToolEvidence(item, 'resultPayloadUnavailable') };
   }
   let resultContent: Array<TextContent | ImageContent>;
   try {
@@ -1068,18 +1092,21 @@ function historicalToolEvidence(
   const correction = stored.disposition === 'evidenceOnly'
     ? stored.correction
     : evidenceCorrection(reason);
-  return `[Historical tool-call evidence: ${JSON.stringify(boundedJsonSummary({
-    callId: item.id,
-    identity,
+  const visibleOutput = reason === 'resultPayloadUnavailable'
+    ? { unavailable: 'frozen tool-result projection' }
+    : boundedJsonSummary(toolItemVisibleOutputText(item), 8 * 1024);
+  return `[Historical tool-call evidence: ${JSON.stringify({
+    callId: boundedJsonSummary(item.id, 2 * 1024),
+    identity: boundedJsonSummary(identity, 2 * 1024),
     providerName: stored.providerName,
     reason,
-    redactedArgumentsSummary: argumentSummary,
+    redactedArgumentsSummary: boundedJsonSummary(argumentSummary, 8 * 1024),
     outcome: {
       status: item.status,
-      visibleOutput: boundedJsonSummary(toolItemVisibleOutputText(item)),
+      visibleOutput,
     },
     correction,
-  }))}]`;
+  })}]`;
 }
 
 async function historyToolResultContent(

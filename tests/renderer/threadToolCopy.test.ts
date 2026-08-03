@@ -8,6 +8,7 @@ import {
   threadToolItemSegments,
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
+import { buildTurnCopyText } from '../../src/renderer/agent/components/ThreadView';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
@@ -271,6 +272,45 @@ describe('node subjects prefer the title over the id', () => {
 });
 
 describe('review regressions — each of these shipped broken once', () => {
+  test('copy turn resolves payload-backed arguments instead of copying the storage stub', async () => {
+    const ref = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 64,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic('plugin_call', {}, 'completed', { namespace: 'plugin' }),
+      modelCall: {
+        ...replayableModelCall('plugin__plugin_call', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
+    const turn = {
+      id: 'turn-copy',
+      items: [item],
+      itemsView: 'full' as const,
+      provenance: { originThreadId: 't', originTurnId: 'turn-copy', trigger: { kind: 'user' as const } },
+      status: 'completed' as const,
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    const copied = await buildTurnCopyText(
+      turn,
+      async () => ({ query: 'exact payload-backed query' }),
+      async () => null,
+      'Resource limit reached.',
+    );
+
+    expect(copied).toContain('exact payload-backed query');
+    expect(copied).not.toContain('storedArguments');
+    expect(copied).not.toContain(ref.id);
+  });
+
   test('a search query is never resolved as if it were a node id', () => {
     // `'nodeSearch'.startsWith('node')` sent queries through title resolution,
     // so a query equal to a node uuid rendered as that node's title.

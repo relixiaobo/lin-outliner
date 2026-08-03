@@ -123,6 +123,41 @@ describe('ThreadItemView tool output disclosure', () => {
     expect(readCount).toBe(1);
     expect(settleCount).toBe(1);
   });
+
+  test('loads exact payload-backed arguments without rendering the storage stub', async () => {
+    const ref = {
+      id: 'b'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 64,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...commandItem(),
+      command: 'bounded command preview',
+      outputRef: null,
+      modelCall: {
+        ...replayableModelCall('bash', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies CommandExecutionThreadItem;
+    let reads = 0;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => {
+        reads += 1;
+        return { command: 'printf exact-payload-command' };
+      },
+    });
+
+    await flush();
+
+    expect(reads).toBe(1);
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('printf exact-payload-command');
+    expect(argumentsSection?.textContent).not.toContain('storedArguments');
+    expect(argumentsSection?.textContent).not.toContain('bounded command preview');
+  });
 });
 
 describe('ThreadItemView tool row status presentation', () => {
@@ -446,6 +481,7 @@ function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Doc
       }}
       items={items}
       onOpenThread={async () => undefined}
+      onReadToolArguments={async () => null}
       onReadToolOutput={async () => null}
       threadCwd="/workspace"
       threadId="thread-1"
@@ -458,6 +494,7 @@ interface RenderItemOptions {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
   readonly streaming?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
@@ -469,6 +506,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
 } {
   const { document, root } = installDom();
   const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
+  const onReadToolArguments = options.onReadToolArguments ?? (async () => null);
   const renderWith = (nextItem: ThreadItem, next: RenderItemOptions) => act(() => root.render(
     <I18nProvider>
       <ThreadItemProbe
@@ -476,6 +514,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
+        onReadToolArguments={onReadToolArguments}
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
         subagents={options.subagents}
@@ -529,6 +568,7 @@ function ThreadItemProbe({
   initiallyExpanded,
   item,
   onReadToolOutput,
+  onReadToolArguments,
   streaming,
   subagents,
 }: {
@@ -537,6 +577,7 @@ function ThreadItemProbe({
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
   readonly streaming: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
@@ -558,6 +599,7 @@ function ThreadItemProbe({
       onEditUserMessage={async () => undefined}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}
+      onReadToolArguments={onReadToolArguments}
       onReadToolOutput={onReadToolOutput}
       showMessageActions={false}
       streaming={streaming}

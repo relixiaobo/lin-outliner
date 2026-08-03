@@ -69,6 +69,27 @@ describe('canonical model tool-call admission', () => {
     expect(secretArguments.nested['secret/key~name']).toBe('do-not-persist');
   });
 
+  test('does not rewrite ambiguous token assignments in commands or file content', async () => {
+    const argumentsValue = {
+      command: "sed -i 's/token=old/token=abcdefghijklmnop/' config.ini",
+      content: 'const token = "placeholder1234";',
+    } as const;
+
+    const decision = await persistToolCallAdmission(
+      admittedRequest(argumentsValue),
+      async () => { throw new Error('Small arguments must stay inline.'); },
+    );
+
+    expect(decision).toMatchObject({
+      execute: true,
+      displayArguments: argumentsValue,
+      modelCall: {
+        disposition: 'replayable',
+        arguments: { storage: 'inline', value: argumentsValue },
+      },
+    });
+  });
+
   test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {
     const secret = 'abcdefghijklmnop';
     const decision = await persistToolCallAdmission(

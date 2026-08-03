@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { ThreadStore, mergeLoadedTurns } from '../../src/renderer/agent/store/threadStore';
 import type { api } from '../../src/renderer/api/client';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>;
 
@@ -695,6 +696,53 @@ describe('renderer Thread store', () => {
         turnId: 'turn-1',
         itemId: item.id,
         outputId: 'a'.repeat(64),
+      },
+    }]);
+  });
+
+  test('deduplicates exact payload-backed tool argument reads by immutable context identity', async () => {
+    const owner = thread('thread-1', 1);
+    const payload = {
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+      value: { query: 'exact payload-backed arguments' },
+    };
+    const ref = {
+      id: 'd'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        requests.push({ method, input });
+        if (method === 'thread/context/read') return { context: { ref, payload } };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    const item = {
+      ...commandTurn('turn-1', 'completed').items[0]!,
+      modelCall: {
+        ...replayableModelCall('bash', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } as ThreadItem;
+
+    expect(await Promise.all([
+      store.readToolArguments(owner.id, 'turn-1', item),
+      store.readToolArguments(owner.id, 'turn-1', item),
+    ])).toEqual([payload.value, payload.value]);
+    expect(requests).toEqual([{
+      method: 'thread/context/read',
+      input: {
+        threadId: owner.id,
+        turnId: 'turn-1',
+        itemId: item.id,
+        contextId: ref.id,
       },
     }]);
   });

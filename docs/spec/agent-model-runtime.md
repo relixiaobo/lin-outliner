@@ -81,7 +81,10 @@ retirement, provider-name changes, and schema evolution cannot retroactively era
 exchange. The digest remains immutable audit evidence. Corrupt or missing argument or
 output payloads and missing image snapshots degrade the entire pair to bounded typed
 evidence on this runtime user path; they never throw the Turn, emit an orphan result, or
-derive replacement arguments from presentation fields.
+derive replacement arguments from presentation fields. Evidence bounds its argument and
+outcome fields independently, so call identity, reason, and correction always survive.
+If a frozen output projection is unavailable, evidence explicitly marks that result
+unavailable and never substitutes mutable Item output text.
 
 Redacted replay compatibility is decided against the admission schema. A compatible
 copy freezes `redactedReplay` and later emits one indivisible marker/call/result unit;
@@ -90,7 +93,9 @@ retried. An incompatible redacted copy freezes executed `evidenceOnly`: the vali
 source call still executes, but later history emits only typed evidence with the visible
 outcome. Other rejected `evidenceOnly` calls never execute and project correction
 evidence without a tool call or result. Mixed batches preserve original call order
-across these units.
+across these units. If evidence splits one provider assistant batch into multiple
+assistant segments, every segment that retains tool calls receives the same unmodified
+signed-thinking blocks owned by that batch.
 
 The active Turn alone keeps a transient raw-call overlay for admitted executable calls,
 so an immediate follow-up provider request observes the exact value that executed. The
@@ -196,7 +201,7 @@ their provider projection contains only mode, meaningful delta state, names, dis
 display names, descriptions, and usage guidance. Skill invocation similarly omits storage
 identity, content hash, resource root, and admission timestamps from model-visible prose.
 Literal user-authored `<system-reminder>` or `<context-evidence>` text is never parsed or
-upgraded, and there is no legacy reader or compatibility fallback. The active provider
+upgraded, and there is no compatibility parser for those wrappers. The active provider
 supplies message metadata. No hidden provider transcript is stored or used as a history
 authority.
 
@@ -475,7 +480,11 @@ active Node observations because one bounded `node_read` can project descendants
 references, and definition-dependent content that cannot be reconstructed from mutation
 arguments alone. Successful `outline_undo_stack` undo/redo has the same effect; list,
 preview, failed, and interrupted calls do not. File observations remain path-keyed and
-invalidate only after a completed mutation of that path.
+invalidate after a completed mutation of that path. The reducer resolves canonical
+arguments once per Item. A structured `evidenceOnly` summary may identify a conservative
+invalidation target, but it never creates a new observation. When a successful Node or
+file mutation's argument payload is unavailable, the reducer clears every observation
+in that domain rather than checkpointing a snapshot that may already be stale.
 
 `/clear` records a `contextReset` in a completed feature Turn without invoking the
 provider. Projection starts after the latest reset, clears the user-view diff baseline,
@@ -571,6 +580,9 @@ Each tool execution diagnostic records its admission disposition, canonical iden
 and schema digest when one exists. Assistant responses and tool observations pass the
 same structured secret-like redaction policy before diagnostics persistence; raw
 secret-bearing model arguments and host credentials are not diagnostic history.
+Canonical-message snapshots and post-adapter request fragments are redacted only in the
+diagnostic copy immediately before persistence; the live provider request remains
+unchanged.
 
 The post-adapter provider payload is observed after compatibility, reasoning-summary,
 and cache-breakpoint policy and immediately before provider transport. Diagnostics

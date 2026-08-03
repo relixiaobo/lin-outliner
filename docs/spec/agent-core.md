@@ -51,6 +51,10 @@ results, and host execution metadata never reconstruct model arguments. In parti
 of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope.
+Persisted pre-envelope tool Items do not gain reconstructed calls during decode. They
+open as `evidenceOnly` with `canonicalHistoryUnavailable`, preserving the visible Item
+and outcome while preventing replay of guessed arguments. This is a read-path
+degradation, not a format migration or legacy replay authority.
 
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
@@ -423,9 +427,9 @@ Startup reconciles catalog and history projections from rollouts. A Turn left
 streamed or executable Item first receives its terminal completion fact. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
-path. This required-envelope format intentionally has no legacy reader; existing
-isolated dev and packaged Tenon `userData` must be reset before first launch of the
-new format.
+path. New tool Items always write the required envelope. Decode of a pre-envelope
+tool Item synthesizes only `canonicalHistoryUnavailable` evidence in memory; it does
+not migrate storage, reconstruct arguments, or introduce a legacy replay path.
 
 ## Transport
 

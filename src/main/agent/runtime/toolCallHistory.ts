@@ -140,11 +140,14 @@ export function canonicalToolIdentity(tool: AgentTool): ModelToolIdentity {
     : { namespace: tool.name.slice(0, separator), name: tool.name.slice(separator + 2) };
 }
 
-export function boundedJsonSummary(value: unknown): JsonValue {
+export function boundedJsonSummary(
+  value: unknown,
+  maxBytes = MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
+): JsonValue {
   const normalized = redactSecretLikeJson(jsonValue(value)).value;
   const encoded = JSON.stringify(normalized);
   const originalBytes = utf8Bytes(encoded);
-  if (originalBytes <= MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES) return normalized;
+  if (originalBytes <= maxBytes) return normalized;
   const summary = (preview: string): JsonValue => ({
     truncated: true,
     originalChars: encoded.length,
@@ -155,7 +158,7 @@ export function boundedJsonSummary(value: unknown): JsonValue {
   let high = encoded.length;
   while (low < high) {
     const midpoint = Math.ceil((low + high) / 2);
-    if (serializedBytes(summary(encoded.slice(0, midpoint))) <= MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES) {
+    if (serializedBytes(summary(encoded.slice(0, midpoint))) <= maxBytes) {
       low = midpoint;
     } else {
       high = midpoint - 1;
@@ -178,6 +181,8 @@ export function evidenceCorrection(reason: ModelToolCallEvidenceReason): string 
       return 'Do not retry from this record; re-derive any later call from an authorized source.';
     case 'resultPayloadUnavailable':
       return 'Treat the historical outcome as incomplete and inspect current state before acting.';
+    case 'canonicalHistoryUnavailable':
+      return 'Inspect current state before deriving any new tool call; historical arguments are unavailable.';
   }
 }
 

@@ -25,6 +25,7 @@ import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import type {
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  JsonValue,
   ProviderRetryStatus,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
@@ -144,6 +145,7 @@ interface ThreadViewProps {
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
@@ -345,6 +347,7 @@ export function ThreadView({
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
+  onReadToolArguments,
   onReadToolOutput,
   onSend,
   onSubmitUserInput,
@@ -1360,6 +1363,7 @@ export function ThreadView({
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
+                        onReadToolArguments={onReadToolArguments}
                         onReadToolOutput={onReadToolOutput}
                         latchedReasoning={latchedReasoning}
                         threadId={threadId}
@@ -1570,6 +1574,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
+  onReadToolArguments,
   onReadToolOutput,
   threadId,
   threadCwd,
@@ -1589,6 +1594,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
+  readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
   readonly threadCwd: string;
@@ -1646,10 +1652,19 @@ const ThreadTurnView = memo(function ThreadTurnView({
     (item: ThreadToolItem) => onReadToolOutput(turn.id, item),
     [onReadToolOutput, turn.id],
   );
+  const readToolArguments = useCallback(
+    (item: ThreadToolItem) => onReadToolArguments(turn.id, item),
+    [onReadToolArguments, turn.id],
+  );
   const copyTurn = useCallback(async () => {
-    const text = await buildTurnCopyText(turn, readToolOutput, t.agent.thread.resourceLimitReached);
+    const text = await buildTurnCopyText(
+      turn,
+      readToolArguments,
+      readToolOutput,
+      t.agent.thread.resourceLimitReached,
+    );
     if (text) await navigator.clipboard.writeText(text);
-  }, [readToolOutput, t.agent.thread.resourceLimitReached, turn]);
+  }, [readToolArguments, readToolOutput, t.agent.thread.resourceLimitReached, turn]);
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     const action = await window.lin?.showThreadMessageContextMenu?.({
@@ -1687,6 +1702,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onOpenNodeReference={onOpenNodeReference}
       onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
+      onReadToolArguments={readToolArguments}
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
@@ -1719,6 +1735,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   items={group.items}
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
+                  onReadToolArguments={readToolArguments}
                   onReadToolOutput={readToolOutput}
                   subagents={subagents.byThreadId}
                   threadId={threadId}
@@ -2000,8 +2017,9 @@ function hasTurnCopyContent(turn: Turn): boolean {
   ) || isThreadToolItem(item)) || Boolean(turn.error?.message);
 }
 
-async function buildTurnCopyText(
+export async function buildTurnCopyText(
   turn: Turn,
+  readToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>,
   readToolOutput: (item: ThreadToolItem) => Promise<string | null>,
   resourceLimitMessage: string,
 ): Promise<string> {
@@ -2013,7 +2031,8 @@ async function buildTurnCopyText(
       continue;
     }
     if (!isThreadToolItem(item)) continue;
-    parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item)}\n\`\`\``);
+    const argumentsValue = await readToolArguments(item);
+    parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item, argumentsValue)}\n\`\`\``);
     const output = item.type === 'collabAgentToolCall'
       ? projectedToolOutput(item)
       : await readToolOutput(item) ?? projectedToolOutput(item);
@@ -2032,7 +2051,14 @@ function toolCopyName(item: ThreadToolItem): string {
   return modelCallDisplayName(item.modelCall);
 }
 
-function toolCopyArguments(item: ThreadToolItem): string {
+function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | null): string {
+  if (argumentsValue !== null) return jsonText(argumentsValue);
+  if (item.modelCall.disposition !== 'evidenceOnly') {
+    const source = item.modelCall.disposition === 'replayable'
+      ? item.modelCall.arguments
+      : item.modelCall.redactedArguments;
+    if (source.storage === 'payload') return jsonText({ unavailable: 'stored tool arguments' });
+  }
   return jsonText(modelCallDisplayArguments(item.modelCall));
 }
 

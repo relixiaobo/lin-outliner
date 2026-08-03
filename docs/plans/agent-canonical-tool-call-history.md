@@ -28,9 +28,9 @@ dynamic tools rather than special-casing `bash`.
 - Do not redesign tool rows, result envelopes, output compaction, or the tool
   catalog. Renderer changes are limited to sourcing arguments from the new
   canonical record and keeping host metadata visually distinct.
-- Do not migrate or reconstruct old Thread data. This is a pre-release format
-  change: both isolated dev `userData` and packaged Tenon `userData` are reset,
-  and the old reverse-mapping reader is deleted.
+- Do not migrate or reconstruct old Thread data. Persisted tool Items without a
+  canonical envelope decode as typed `canonicalHistoryUnavailable` evidence;
+  the old reverse-mapping reader remains deleted and no guessed call is replayed.
 
 ## Background
 
@@ -283,6 +283,7 @@ stable reason code, and actionable correction text. Reasons cover at least:
 - invalid arguments;
 - provider-truncated arguments;
 - unresolved argument persistence failures.
+- unavailable canonical history on a pre-envelope persisted Item.
 
 On the next request, typed correction evidence replaces the rejected call. The
 projector never emits the invalid tool call, never emits an orphaned tool
@@ -351,7 +352,7 @@ facts.
 | Host metadata | rejected model `cwd` can overwrite the audit value and re-enter arguments | host-resolved only, bound at execution and displayed as metadata | workspace, process, and audit behavior |
 | Secret-like model argument | entire admitted call can disappear after redaction | marked redacted call/result replay or executed-call evidence | no durable or replayed raw secret |
 | Tool/schema evolution | current registry state can erase an honest past exchange | replays the admission-time provider name and arguments unchanged | immutable source Item, schema digest, and diagnostics |
-| Resource loss | missing argument or result payloads can throw or orphan a result | pair-level dependency preflight and typed evidence degradation | available bounded Item evidence |
+| Resource loss | missing argument or result payloads can throw or orphan a result | pair-level dependency preflight and typed unavailable evidence | call identity, reason, and correction; never mutable output fallback |
 
 ### Implementation scope
 
@@ -438,8 +439,9 @@ Main owns board/changelog updates at merge.
 - **AC-14:** Once cancellation is observed, sequential and parallel batch loops
   do not admit remaining calls, create their Items, or persist their argument
   payloads. Calls already admitted settle through the normal interrupted result.
-- **AC-15:** The new required envelope has no legacy reader. Both packaged Tenon
-  and isolated dev `userData` are reset before this format is launched.
+- **AC-15:** The new envelope has no legacy call reconstructor. A pre-envelope
+  persisted tool Item remains openable as `canonicalHistoryUnavailable`
+  evidence and cannot emit a guessed call/result exchange.
 
 ### Risks and mitigations
 

@@ -2662,6 +2662,56 @@ describe('PiTurnExecutor provider payload', () => {
     expect(JSON.stringify(providerContexts[1])).not.toContain('[Reasoning]');
   });
 
+  test('reattaches signed thinking to every assistant segment around rejected-call evidence', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    const signature = openAIReasoningSignature('rs_mixed_evidence');
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [historyTestTool('first_tool'), historyTestTool('third_tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (_model, providerContext) => {
+          providerContexts.push(structuredClone(providerContext.messages));
+          providerCalls += 1;
+          const message = providerCalls === 1
+            ? reasoningAssistantMessage(
+                'One signed thought owns the complete mixed batch.',
+                signature,
+                5,
+                [
+                  { type: 'toolCall', id: 'mixed-first', name: 'first_tool', arguments: {} },
+                  { type: 'toolCall', id: 'mixed-rejected', name: 'missing_tool', arguments: {} },
+                  { type: 'toolCall', id: 'mixed-third', name: 'third_tool', arguments: {} },
+                ],
+              )
+            : assistantMessage([{ type: 'text', text: 'Continued after the mixed batch.' }]);
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() => emitAssistantMessage(stream, message));
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    const replay = providerContexts[1] ?? [];
+    const assistantSegments = replay.filter((message): message is AssistantMessage => (
+      message.role === 'assistant' && message.content.some((part) => part.type === 'toolCall')
+    ));
+    expect(assistantSegments).toHaveLength(2);
+    expect(assistantSegments.map((message) => outboundThinkingSignatures([message]))).toEqual([
+      [signature],
+      [signature],
+    ]);
+    expect(assistantSegments.map((message) => message.content.flatMap((part) => (
+      part.type === 'toolCall' ? [part.name] : []
+    )))).toEqual([['first_tool'], ['third_tool']]);
+    expect(JSON.stringify(replay)).toContain('unresolvedTool');
+  });
+
   test('retries payload preparation without same-identity thinking when its signature is unrecognised', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];

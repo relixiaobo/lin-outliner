@@ -887,6 +887,19 @@ describe('canonical context projection', () => {
       fileName: 'missing.png',
     };
     const payloads = new Map<string, ThreadContextPayload>();
+    const unavailableProjectionOutputRef = {
+      id: '4'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 80_000,
+      summary: 'Projection payload is unavailable',
+    };
+    const unavailableProjectionEvidence = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef: unavailableProjectionOutputRef,
+      projection: { type: 'inline', text: 'FROZEN OUTPUT THAT MUST NOT BE REPLACED' },
+    }, 'unavailable-projection-evidence');
+    payloads.delete(unavailableProjectionEvidence.payloadRef.id);
     const cases: Array<{ reason: string; items: ThreadItem[] }> = [
       {
         reason: 'argumentPayloadUnavailable',
@@ -931,6 +944,13 @@ describe('canonical context projection', () => {
           modelCall: projectionModelCall('visual__render', {}),
         }],
       },
+      {
+        reason: 'resultPayloadUnavailable',
+        items: [
+          commandToolItem('missing-projection-payload', unavailableProjectionOutputRef, 'mutable bounded fallback'),
+          unavailableProjectionEvidence,
+        ],
+      },
     ];
 
     for (const [index, testCase] of cases.entries()) {
@@ -947,7 +967,35 @@ describe('canonical context projection', () => {
       expect(messages.flatMap((message) => (
         typeof message.content === 'string' ? [] : message.content.filter((part) => part.type === 'toolCall')
       ))).toEqual([]);
+      if (index === cases.length - 1) expect(projectedText).not.toContain('mutable bounded fallback');
     }
+  });
+
+  test('bounds evidence fields without truncating away identity, reason, or correction', async () => {
+    const evidenceOnly = {
+      ...commandToolItem('large-evidence-call', null, 'o'.repeat(40_000)),
+      modelCall: {
+        disposition: 'evidenceOnly' as const,
+        identity: { namespace: null, name: 'bash' },
+        providerName: 'bash',
+        redactedArgumentsSummary: { command: 'a'.repeat(40_000) },
+        reason: 'schemaIncompatible' as const,
+        correction: 'KEEP THIS CORRECTION',
+      },
+    } satisfies ThreadItem;
+    const messages = await new CanonicalContextProjector(
+      model,
+      projectionResources(new Map()),
+    ).projectTurns([turn(49, [
+      userItem('large-evidence-user', 1_720_000_000_123, 'Inspect history.'),
+      evidenceOnly,
+    ], true)]);
+    const text = messages.map(messageText).join('\n');
+
+    expect(text).toContain('"callId":"large-evidence-call"');
+    expect(text).toContain('"reason":"schemaIncompatible"');
+    expect(text).toContain('"correction":"KEEP THIS CORRECTION"');
+    expect(text).not.toContain('Historical tool-call evidence: {"truncated":true');
   });
 
   test('keeps a redaction marker atomic with replay or degrades it to executed evidence', async () => {

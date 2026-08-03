@@ -106,6 +106,12 @@ not enter Items, argument payloads, transcripts, renderer detail, or diagnostics
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
+Structured redaction classifies complete camelCase, snake_case, and kebab-case key
+segments, so credential keys such as `secretKey`, `session_token`, and `private-key`
+are covered without treating budget/count fields as secrets. JSON encoded inside a
+string is parsed and redacted structurally when valid. Free-form command and file text
+is changed only for high-confidence credential formats; ordinary source/config text
+such as placeholder token assignments remains byte-identical.
 
 ## Shared Resource Concurrency
 

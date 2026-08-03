@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { containsSecretLikeContent, elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from '../../src/main/agent/capabilities/agentSecretRedaction';
+import {
+  containsSecretLikeContent,
+  elideLargeBlobs,
+  redactSecretKeyedValues,
+  redactSecretLikeContent,
+  redactSecretLikeJson,
+} from '../../src/main/agent/capabilities/agentSecretRedaction';
 
 describe('agent secret redaction', () => {
   test('detects truncated private key headers for skill write rejection', () => {
@@ -35,6 +41,72 @@ describe('agent secret redaction', () => {
     expect(redacted.api_key).toBe('[redacted]');
     expect((redacted.nested as Record<string, unknown>).authorization).toBe('[redacted]');
     expect((redacted.nested as Record<string, unknown>).safe).toBe('keep');
+  });
+
+  test('recognizes credential key segments without treating token accounting as a credential', () => {
+    const secret = 'do-not-persist';
+    const result = redactSecretLikeJson({
+      secret_key: secret,
+      secretKey: secret,
+      session_token: secret,
+      bot_token: secret,
+      private_key: secret,
+      api_keys: [secret],
+      APIKey: secret,
+      authorizationHeader: secret,
+      token_budget: 200_000,
+      max_total_tokens: 80_000,
+    });
+
+    expect(result.value).toEqual({
+      secret_key: '[redacted]',
+      secretKey: '[redacted]',
+      session_token: '[redacted]',
+      bot_token: '[redacted]',
+      private_key: '[redacted]',
+      api_keys: ['[redacted]'],
+      APIKey: '[redacted]',
+      authorizationHeader: '[redacted]',
+      token_budget: 200_000,
+      max_total_tokens: 80_000,
+    });
+    expect(result.redactedPaths).toEqual([
+      '/secret_key',
+      '/secretKey',
+      '/session_token',
+      '/bot_token',
+      '/private_key',
+      '/api_keys',
+      '/APIKey',
+      '/authorizationHeader',
+    ]);
+  });
+
+  test('keeps ambiguous command and source text exact while redacting strong credential formats', () => {
+    const command = "sed -i 's/token=old/token=abcdefghijklmnop/' config.ini";
+    const source = 'const token = "placeholder1234";';
+    const bearer = 'curl -H "Authorization: Bearer abcdefghijklmnop" https://example.test';
+
+    expect(redactSecretLikeJson({ command, source }).value).toEqual({ command, source });
+    expect(redactSecretLikeJson({ command: bearer }).value).toEqual({
+      command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test',
+    });
+  });
+
+  test('redacts secret keys inside JSON-encoded provider arguments', () => {
+    const encoded = JSON.stringify({ api_key: 'generic-model-secret', query: 'keep' });
+    expect(redactSecretLikeJson({ arguments: encoded }).value).toEqual({
+      arguments: JSON.stringify({ api_key: '[redacted]', query: 'keep' }),
+    });
+  });
+
+  test('keeps formatting in JSON-encoded strings when structural redaction is unnecessary', () => {
+    const encoded = '{\n  "token_budget": 120000,\n  "query": "keep spacing"\n}';
+
+    expect(redactSecretLikeJson({ arguments: encoded })).toEqual({
+      value: { arguments: encoded },
+      redactedPaths: [],
+    });
   });
 
   test('elideLargeBlobs collapses long base64 runs to a length note', () => {

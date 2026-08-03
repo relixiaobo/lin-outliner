@@ -213,17 +213,23 @@ async function reduceActiveObservations(
         replaceEntries(active, restored.activeObservations, (entry) => entry.key);
         continue;
       }
-      const invalidation = await observationInvalidation(item, readContext);
+      const resolvedArguments = needsObservationArguments(item)
+        ? await canonicalToolArguments(item, readContext)
+        : null;
+      const invalidation = observationInvalidation(item, resolvedArguments);
       for (const invalidated of invalidation.keys) active.delete(invalidated);
-      if (invalidation.clearNodeObservations) {
+      if (invalidation.clearNodeObservations || invalidation.clearFileObservations) {
         for (const key of active.keys()) {
-          if (key.startsWith('node:')) active.delete(key);
+          if (
+            (invalidation.clearNodeObservations && key.startsWith('node:'))
+            || (invalidation.clearFileObservations && key.startsWith('file:'))
+          ) active.delete(key);
         }
       }
-      if (!isHistoryTool(item) || !item.outputRef) continue;
+      if (!isHistoryTool(item) || !item.outputRef || !resolvedArguments) continue;
       const projectionRef = projections.get(outputReferenceKey(item.outputRef));
       if (!projectionRef) continue;
-      for (const identity of await observationIdentities(item, readContext)) {
+      for (const identity of observationIdentities(item, resolvedArguments)) {
         active.set(identity.key, {
           key: identity.key,
           tool: identity.tool,
@@ -375,13 +381,13 @@ function replaceEntries<K, V>(
   for (const value of source) target.set(keyOf(value), value);
 }
 
-async function observationIdentities(
+function observationIdentities(
   item: HistoryToolItem,
-  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<Array<{ key: string; tool: string; subject: string }>> {
+  resolvedArguments: CanonicalToolArgumentsResolution,
+): Array<{ key: string; tool: string; subject: string }> {
   if (item.status !== 'completed' || item.modelCall.identity?.namespace !== null) return [];
-  const args = await canonicalToolArguments(item, readContext);
-  if (!args) return [];
+  if (resolvedArguments.kind !== 'canonical') return [];
+  const args = resolvedArguments.value;
   const tool = item.modelCall.identity.name;
   if (tool === 'file_read') {
     const path = stringArgument(args, ['file_path', 'path']);
@@ -404,12 +410,13 @@ async function observationIdentities(
 interface ObservationInvalidation {
   readonly keys: readonly string[];
   readonly clearNodeObservations: boolean;
+  readonly clearFileObservations: boolean;
 }
 
-async function observationInvalidation(
+function observationInvalidation(
   item: ThreadItem,
-  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<ObservationInvalidation> {
+  resolvedArguments: CanonicalToolArgumentsResolution | null,
+): ObservationInvalidation {
   if (item.type === 'fileChange') {
     return {
       keys: item.status === 'completed'
@@ -419,33 +426,49 @@ async function observationInvalidation(
           ])
         : [],
       clearNodeObservations: false,
+      clearFileObservations: false,
     };
   }
   if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) {
     return noObservationInvalidation();
   }
-  const args = await canonicalToolArguments(item, readContext);
-  if (!args) return noObservationInvalidation();
   if (item.status !== 'completed' || item.success !== true) return noObservationInvalidation();
   const tool = item.modelCall.identity.name;
+  const args = resolvedArguments?.value ?? null;
   if (isFileMutation(tool)) {
-    const path = stringArgument(args, ['file_path', 'path']);
-    return { keys: path ? [`file:${path}`] : [], clearNodeObservations: false };
+    const path = args ? stringArgument(args, ['file_path', 'path']) : null;
+    return {
+      keys: path ? [`file:${path}`] : [],
+      clearNodeObservations: false,
+      clearFileObservations: path === null,
+    };
   }
-  if (isNodeMutation(tool) && args.preview_only !== true) {
-    return { keys: [], clearNodeObservations: true };
+  if (isNodeMutation(tool) && args?.preview_only !== true) {
+    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
   }
-  if (tool === 'outline_undo_stack' && (args.action === 'undo' || args.action === 'redo')) {
-    return { keys: [], clearNodeObservations: true };
+  if (
+    tool === 'outline_undo_stack'
+    && (!args || args.action === 'undo' || args.action === 'redo')
+  ) {
+    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
   }
   return noObservationInvalidation();
 }
 
+type CanonicalToolArgumentsResolution =
+  | { readonly kind: 'canonical'; readonly value: Record<string, unknown> }
+  | { readonly kind: 'summary'; readonly value: Record<string, unknown> }
+  | { readonly kind: 'unavailable'; readonly value: null };
+
 async function canonicalToolArguments(
   item: HistoryToolItem,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<Record<string, unknown> | null> {
-  if (item.modelCall.disposition === 'evidenceOnly') return null;
+): Promise<CanonicalToolArgumentsResolution> {
+  if (item.modelCall.disposition === 'evidenceOnly') {
+    return isRecord(item.modelCall.redactedArgumentsSummary)
+      ? { kind: 'summary', value: item.modelCall.redactedArgumentsSummary }
+      : { kind: 'unavailable', value: null };
+  }
   const source = modelCallArgumentSource(item.modelCall);
   let value: import('../../../core/agent/protocol').JsonValue | null;
   if (source.storage === 'inline') {
@@ -454,7 +477,9 @@ async function canonicalToolArguments(
     const payload = await readContext(source.ref).catch(() => null);
     value = payload?.kind === 'toolCallArguments' ? payload.value : null;
   }
-  return isRecord(value) ? value : null;
+  return isRecord(value)
+    ? { kind: 'canonical', value }
+    : { kind: 'unavailable', value: null };
 }
 
 async function deterministicSummary(
@@ -570,8 +595,18 @@ function isNodeMutation(tool: string): boolean {
   return tool === 'node_create' || tool === 'node_edit' || tool === 'node_delete';
 }
 
+function needsObservationArguments(item: ThreadItem): item is HistoryToolItem {
+  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) return false;
+  const tool = item.modelCall.identity.name;
+  return tool === 'file_read'
+    || tool === 'node_read'
+    || tool === 'outline_undo_stack'
+    || isFileMutation(tool)
+    || isNodeMutation(tool);
+}
+
 function noObservationInvalidation(): ObservationInvalidation {
-  return { keys: [], clearNodeObservations: false };
+  return { keys: [], clearNodeObservations: false, clearFileObservations: false };
 }
 
 function catalogCheckpoint(

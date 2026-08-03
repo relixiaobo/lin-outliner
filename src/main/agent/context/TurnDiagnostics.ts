@@ -136,7 +136,7 @@ export class TurnDiagnosticsCollector {
     const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
-    const normalizedRequest = jsonValue(payload, true);
+    const normalizedRequest = redactSecretLikeJson(jsonValue(payload, true)).value;
     const index = this.providerCalls.length;
     this.bindPendingActivities(index);
     this.providerCalls.push({
@@ -376,7 +376,7 @@ export class TurnDiagnosticsCollector {
   }
 
   private rememberMessage(message: Message): string {
-    const value = jsonValue(message, true);
+    const value = redactSecretLikeJson(jsonValue(message, true)).value;
     const id = fingerprint(stableJson(value));
     if (!this.canonicalMessages.has(id)) {
       this.canonicalMessages.set(id, {

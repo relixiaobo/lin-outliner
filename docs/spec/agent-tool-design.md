@@ -261,6 +261,10 @@ The whole call/result pair degrades to typed evidence only when a persisted argu
 complete output, or image dependency is unavailable. Item-specific fields are
 presentation and audit projections only; no reverse mapper may recreate model
 arguments from them.
+Existing persisted tool Items that predate the envelope decode as
+`canonicalHistoryUnavailable` evidence. No decoder reconstructs their calls from
+presentation fields. Payload-backed arguments are available to renderer detail and Turn
+copy only through an Item-bound main-process read of the exact reference.
 
 Secret redaction compatibility is decided once against the admission schema. A
 compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
@@ -269,6 +273,9 @@ may overlay that raw admitted call transiently for its immediate follow-up provi
 request, but later Turns and every durable surface see only the frozen disposition.
 Cancellation stops each batch loop before it admits any remaining call, so those calls
 create neither Items nor argument payloads.
+Secret-key matching uses complete camelCase, snake_case, and kebab-case segments.
+Durable free-form strings redact only high-confidence credential formats, while valid
+JSON strings are parsed for structural key redaction before storage.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID
