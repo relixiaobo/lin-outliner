@@ -50,6 +50,7 @@ import {
   threadNodeReferenceOpenOptionsFromClick,
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
+import { isCompleteNewThreadMenuQuery } from '../threadComposerCommands';
 
 export interface ThreadComposerNodeReference {
   nodeId: NodeId;
@@ -636,6 +637,18 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
               return true;
             }
             if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+              // A fully typed token submits on the first Enter. Menu navigation
+              // still inserts without executing, and casing variants keep their
+              // original text so the submit classifier can treat them normally.
+              if (event.key === 'Enter'
+                && openTrigger.mode === 'slash'
+                && isCompleteNewThreadMenuQuery(openTrigger.query, propsRef.current.slashCommands)) {
+                event.preventDefault();
+                triggerRef.current = null;
+                setTrigger(null);
+                propsRef.current.onSubmit();
+                return true;
+              }
               const button = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]')
                 ?.[clampMenuIndex(selectedIndexRef.current, itemCountRef.current)];
               if (button) {

@@ -55,6 +55,8 @@ interface MockFixtureOptions {
   agentTurnFailure?: boolean | string;
   /** Rejects turn/start before accepting a Turn. */
   agentTurnStartReject?: boolean | string;
+  /** Leaves accepted mock Turns active so background-work flows can be tested. */
+  agentTurnStaysActive?: boolean;
   /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
   attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
@@ -76,6 +78,8 @@ type E2EWindow = Window & {
     }) => { id: string };
     /** Flips a mock Thread between idle and active, as a Turn boundary would. */
     setMockThreadActive: (threadId: string, active: boolean) => void;
+    /** Applies one delayed or failed outcome to the next thread/start call. */
+    setNextThreadStartBehavior: (behavior: { delayMs?: number; error?: string }) => void;
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
@@ -323,6 +327,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    let nextThreadStartBehavior: { delayMs: number; error: string | null } | null = null;
     const attachmentUploads = new Map<string, {
       threadId: string;
       attachmentId: string;
@@ -1650,6 +1655,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         thread.updatedAt = ++now;
         emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
       },
+      setNextThreadStartBehavior: (behavior) => {
+        nextThreadStartBehavior = {
+          delayMs: Math.max(0, behavior.delayMs ?? 0),
+          error: behavior.error ?? null,
+        };
+      },
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
@@ -1903,6 +1914,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ thread: input.includeTurns ? { ...thread, turns: mockTurns.get(thread.id) ?? [] } : thread }) as T;
         }
         if (method === 'thread/start') {
+          const behavior = nextThreadStartBehavior;
+          nextThreadStartBehavior = null;
+          if (behavior?.delayMs) await delay(behavior.delayMs);
+          if (behavior?.error) throw new Error(behavior.error);
           const thread = createMockThread(input);
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
           return clone({ thread }) as T;
@@ -2296,6 +2311,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               item: { ...responseItem, text: '' },
               startedAt: startedAt + 1,
             });
+          }
+          if (options.agentTurnStaysActive) {
+            return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
+          }
+          if (!options.agentTurnFailure) {
             emitAgentCoreNotification({
               type: 'item/completed',
               threadId: thread.id,
@@ -3787,6 +3807,16 @@ export async function emitAgentCoreNotification(page: Page, notification: unknow
     const win = window as E2EWindow;
     win.__LIN_E2E__?.emitAgentCoreNotification(nextNotification);
   }, notification);
+}
+
+export async function setNextThreadStartBehavior(
+  page: Page,
+  behavior: { delayMs?: number; error?: string },
+) {
+  await page.evaluate((nextBehavior) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.setNextThreadStartBehavior(nextBehavior);
+  }, behavior);
 }
 
 // Push one main->renderer OAuth login event (device-code / auth / progress /

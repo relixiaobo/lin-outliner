@@ -1402,6 +1402,8 @@ commandPalette: {
       slashCommandsLabel: '线程斜杠命令',
       compactCommandDescription: '用持久摘要替换较早的上下文',
       clearCommandDescription: '保留历史记录并开始新的上下文周期',
+      newThreadCommandDescription: '新建线程',
+      newThreadStructuredContentError: '请先移除附件和引用，再新建线程。',
       mentionSuggestionsLabel: '线程引用建议',
       noCommands: '暂无命令',
       searchingFiles: '正在搜索文件……',

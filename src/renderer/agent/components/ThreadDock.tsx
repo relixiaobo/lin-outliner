@@ -26,6 +26,7 @@ import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
+import { NEW_THREAD_SLASH_COMMAND_ID } from '../threadComposerCommands';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -103,15 +104,19 @@ export function ThreadDock({
     && thread.status.type === 'active'
     && lineageRoot(thread, threadsById)?.threadSource === 'user';
   /**
-   * "This conversation has background work running" — derived from catalog
-   * status, so it also covers a fire-and-forget child whose parent Turn already
-   * ended, which is the case the list can no longer show any other way.
+   * "This conversation has background work running" — either the unselected
+   * root itself is active, or one of its descendants is. The selected root's
+   * own foreground Turn does not need a duplicate background indicator.
    */
   const rootsWithBackgroundWork = useMemo(() => {
     const parentById = new Map(snapshot.threads.map((candidate) => [candidate.id, candidate.parentThreadId]));
     const roots = new Set<string>();
     for (const candidate of snapshot.threads) {
-      if (candidate.parentThreadId === null || candidate.status.type !== 'active') continue;
+      if (candidate.status.type !== 'active') continue;
+      if (candidate.parentThreadId === null) {
+        if (candidate.id !== snapshot.selectedThreadId) roots.add(candidate.id);
+        continue;
+      }
       const seen = new Set<string>([candidate.id]);
       let current: string | null = candidate.parentThreadId;
       while (current !== null && !seen.has(current)) {
@@ -127,7 +132,7 @@ export function ThreadDock({
       if (current !== null) roots.add(current);
     }
     return roots;
-  }, [snapshot.threads]);
+  }, [snapshot.selectedThreadId, snapshot.threads]);
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
@@ -167,6 +172,7 @@ export function ThreadDock({
         setSlashCommands(slashCommandsFromSkills(skills, {
           compactDescription: t.agent.composer.compactCommandDescription,
           clearDescription: t.agent.composer.clearCommandDescription,
+          newThreadDescription: t.agent.composer.newThreadCommandDescription,
         }));
       }
     } catch {
@@ -174,6 +180,7 @@ export function ThreadDock({
         setSlashCommands(runtimeSlashCommands({
           compactDescription: t.agent.composer.compactCommandDescription,
           clearDescription: t.agent.composer.clearCommandDescription,
+          newThreadDescription: t.agent.composer.newThreadCommandDescription,
         }));
       }
     }
@@ -230,7 +237,7 @@ export function ThreadDock({
   }, [t]);
 
   const createThread = useCallback(async () => {
-    if (creatingRef.current || providerBlocksCreation) return;
+    if (creatingRef.current || providerBlocksCreation) return false;
     creatingRef.current = true;
     setCreating(true);
     setActionError(null);
@@ -238,8 +245,10 @@ export function ThreadDock({
       await threadStore.createThread();
       setListOpen(false);
       setComposerFocusToken((token) => token + 1);
+      return true;
     } catch (error) {
       setActionError(errorMessage(error));
+      return false;
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -413,6 +422,7 @@ export function ThreadDock({
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
+              onCreateThread={createThread}
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
                 threadStore.rollbackAndSend(thread.id, content, userView)
               )}
@@ -432,6 +442,8 @@ export function ThreadDock({
               providerRetry={providerRetry}
               plan={plan}
               slashCommands={slashCommands}
+              threadCreationBlocked={providerBlocksCreation}
+              threadCreationPending={creating}
               threadCwd={thread.cwd}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}
@@ -559,10 +571,18 @@ function errorMessage(error: unknown): string {
 interface RuntimeSlashCommandLabels {
   readonly compactDescription: string;
   readonly clearDescription: string;
+  readonly newThreadDescription: string;
 }
 
 function runtimeSlashCommands(labels: RuntimeSlashCommandLabels): AgentSlashCommandView[] {
   return [
+    {
+      id: NEW_THREAD_SLASH_COMMAND_ID,
+      kind: 'runtime',
+      label: '/new',
+      description: labels.newThreadDescription,
+      insertText: '/new',
+    },
     {
       id: 'runtime:compact',
       kind: 'runtime',
