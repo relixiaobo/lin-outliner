@@ -20,9 +20,10 @@ dynamic tools rather than special-casing `bash`.
 - Do not add a permission prompt, approval mode, filesystem sandbox, or new
   capability policy. A valid exposed tool remains authorized under the existing
   Full Access boundary unless an explicit capability block applies.
-- Do not implement, resume, or otherwise change the shelved Browser Pilot
-  integration. Its client key, output directory, and any future credentials
-  remain host-only execution inputs.
+- Do not revive the superseded Tenon-native Browser Pilot integration or change
+  the shipped `browser-pilot` managed Skill/catalog path. Browser Pilot already
+  runs through the generic `bash` contract and is an acceptance case for this
+  Core fix, not a separate implementation surface.
 - Do not redesign tool rows, result envelopes, output compaction, or the tool
   catalog. Renderer changes are limited to sourcing arguments from the new
   canonical record and keeping host metadata visually distinct.
@@ -51,21 +52,32 @@ inside the native kernel before `ToolRuntime` could evaluate the capability or
 execute the command. Full Access grants authority to execute a valid exposed
 operation; it does not make malformed model-tool calls valid.
 
+Browser Pilot does not have a Tenon-native runtime or host-injected client key.
+It already reaches users as a managed Skill and drives `bp` through ordinary
+`bash` command text. Secret-like values can therefore be model-authored
+arguments inside a successful call. Canonical history must preserve the
+successful call/result relationship while redacting those values; dropping the
+whole call would create a second retry loop.
+
 ### Causal chain
 
 1. A valid `bash` call is admitted with model arguments such as `command` and
-   `description`.
-2. `PiEventNormalizer` creates a `commandExecution` Item. That Item stores both
-   display data (`command`) and host execution metadata (`cwd`).
-3. `ContextProjector.historyToolArguments()` later reverse-engineers a supposed
-   model call from the Item as `{ command, cwd }`.
-4. `PiTurnExecutor.transformContext` rebuilds provider history through that
-   projector before each model call.
-5. The model treats its replayed history as a few-shot example and emits `cwd`
-   again. The kernel correctly rejects the unknown property.
-6. The failed call becomes another Item, and the same reverse projection puts
-   the invalid argument back into the next request. The history therefore
-   reinforces the failure instead of correcting it.
+   `description`; its Item carries the Thread working directory used by the
+   host.
+2. `ContextProjector.historyToolArguments()` reverse-engineers a supposed model
+   call as `{ command, cwd }`, adding an invalid argument while dropping the
+   valid `description` argument.
+3. `PiTurnExecutor.transformContext` submits that invented call before the next
+   model response. The model treats it as a few-shot example and emits `cwd`.
+4. The kernel emits `tool_execution_start` with the raw model arguments before
+   `prepareToolCall` validates them. `PiEventNormalizer` therefore creates an
+   Item before admission finishes.
+5. Item creation gives raw `input.cwd` precedence over `context.thread.cwd`, so
+   the rejected model value is persisted as if it were the effective execution
+   directory. The schema then correctly rejects the call before execution.
+6. The reverse mapper replays that rejected value byte-for-byte, and the model
+   emits it again. The Item is therefore both a false audit record and a
+   self-reinforcing invalid example.
 
 The `bash` symptom exposes a general category error. A `ThreadItem` is an audit
 and presentation projection of an execution, not a lossless source call:
@@ -115,7 +127,8 @@ underlying two-authority model intact.
 - **DEC-03:** Replay only envelope arguments that validate against the active
   registry. All other history becomes typed evidence, never a fabricated call.
 - **DEC-04:** Keep schemas strict and capability evaluation after schema
-  admission. Browser Pilot remains outside this implementation.
+  admission. The existing managed Browser Pilot path remains unchanged and
+  exercises the generic `bash` behavior.
 
 ### One authority, three data layers
 
@@ -128,6 +141,13 @@ type ModelToolCallHistory =
       disposition: 'replayable';
       identity: ModelToolIdentity;
       arguments: InlineJsonArguments | ThreadOwnedArgumentsReference;
+      schemaDigest: string;
+    }
+  | {
+      disposition: 'redactedReplay';
+      identity: ModelToolIdentity;
+      redactedArguments: InlineJsonArguments | ThreadOwnedArgumentsReference;
+      redactedPaths: readonly JsonPointer[];
       schemaDigest: string;
     }
   | {
@@ -153,9 +173,11 @@ The three layers have separate owners:
 | Item presentation/audit | command label, file changes, process ID, duration, result/output references, capability audit | result projection only; never a source of call arguments |
 
 Non-secret host facts such as the effective `cwd` may remain on an Item for
-audit and display. They are still not model arguments. Secret host values are
-transient and must not enter Items, argument payloads, transcript artifacts,
-rollout records, or diagnostics.
+audit and display. `commandExecution.cwd` is always resolved from the host
+Thread execution context, including for a rejected call; raw model input can
+never override it. These facts are still not model arguments. Secret host
+values are transient and must not enter Items, argument payloads, transcript
+artifacts, rollout records, or diagnostics.
 
 ### FLOW-01: Admission, execution, and replay
 
@@ -198,6 +220,23 @@ survives tool success, capability unavailability, command failure, cancellation,
 restart, fork, and compaction. The result may change the Item's status and
 presentation fields but never rewrites the call.
 
+An admitted call whose arguments contain secret-like values receives a
+`redactedReplay` envelope instead. The ephemeral validated arguments still reach
+execution, while only structure-preserving redacted arguments and JSON-pointer
+redaction locations become durable. When those redacted arguments remain valid
+under the active schema, provider history emits an atomic three-part unit:
+
+1. typed host evidence stating that listed historical argument paths were
+   redacted after execution and must not trigger a retry;
+2. the call with redacted arguments;
+3. its original projected result.
+
+The marker makes clear that the displayed value is not the literal executed
+value. If redaction makes the arguments schema-invalid, projection emits one
+typed executed-call evidence unit containing the redacted structure and outcome
+instead. In both cases the model sees that the operation ran and what happened;
+the raw secret is never persisted or replayed.
+
 Provider history emits the stored call and its projected result as one atomic
 unit. `ContextProjector` must not consult Item-type-specific reverse mappings.
 `historyToolArguments()` and `historyToolIdentity()` are deleted, and no
@@ -219,7 +258,7 @@ stable reason code, and actionable correction text. Reasons cover at least:
 - unresolved/disabled tool identity;
 - invalid arguments;
 - provider-truncated arguments;
-- arguments that cannot be persisted or replayed without exposing a secret.
+- unresolved argument persistence failures.
 
 On the next request, typed correction evidence replaces the rejected call. The
 projector never emits the invalid tool call, never emits an orphaned tool
@@ -228,10 +267,10 @@ admitted call/result pair intact and append rejection evidence in original call
 order.
 
 Model-supplied arguments pass the existing secret-like key/value redaction
-policy before persistence. If redaction changes the semantic value, the call is
-evidence-only even when the redacted substitute would satisfy the schema;
-Tenon must not falsely claim that the substitute was executed. Host-injected
-secrets never reach this decision because they are absent from the model call.
+policy before persistence. Admitted calls whose values change use
+`redactedReplay`; rejected calls retain only evidence. Host-injected secrets
+remain outside model calls, while shell commands and other free-form model
+arguments are explicitly treated as possible secret carriers.
 
 ### Argument storage and lifecycle
 
@@ -242,12 +281,15 @@ the same dependency enumeration, fork copy, deletion, and integrity checks as
 other Thread-owned context resources.
 
 Before every provider submission, replay resolves the current canonical tool
-registry and validates the loaded arguments against that tool's current schema.
-The stored schema digest provides diagnostics, not permission to bypass the
-current contract. If the tool is absent, its schema changed incompatibly, or an
-argument payload is missing/corrupt, projection records a bounded diagnostic and
-degrades that call/result pair to typed evidence. It must not throw on the user
-path and must not send known-invalid history.
+registry and preflights the entire call/result unit. It validates loaded
+arguments against the current schema and resolves every result dependency,
+including full-output and image payload references. The stored schema digest
+provides diagnostics, not permission to bypass the current contract. If the
+tool is absent, its schema changed incompatibly, or any argument/result payload
+is missing or corrupt, projection records a bounded diagnostic and degrades the
+whole pair to typed evidence. Available Item output and resource identity become
+the bounded fallback; the evidence names anything unavailable. Projection must
+not throw on the user path, emit an orphan, or send known-invalid history.
 
 This validation is a final invariant check, not a second source of arguments.
 The normal successful path round-trips the same admitted JSON value byte-for-byte
@@ -257,9 +299,9 @@ after canonical JSON encoding.
 
 Existing specialized Items remain the source for readable rows and execution
 facts. Surfaces that label data as tool arguments use the canonical envelope;
-`cwd` and similar values are shown only as execution context. Transcript export
-uses replayable arguments or the evidence-only redacted summary, never an Item
-reverse mapper.
+the host-resolved `cwd` and similar values are shown only as execution context.
+Transcript export uses exact arguments, marked redacted arguments, or the
+evidence-only redacted summary, never an Item reverse mapper.
 
 Diagnostics record admission phase, canonical identity, schema digest,
 replay/evidence disposition, and bounded redacted validation errors. They never
@@ -276,12 +318,13 @@ same replay decision from the same persisted facts.
 
 | Concern | Current | After this change | Preserved |
 | --- | --- | --- | --- |
-| `bash` history | reconstructs `{ command, cwd }` | replays the admitted schema-valid arguments exactly | shell runs in the Thread `cwd` with host-account authority |
+| `bash` history | adds `cwd` and drops valid arguments such as `description` | replays all admitted model arguments and no invented fields | shell runs in the Thread `cwd` with host-account authority |
 | File history | infers a tool and fabricates `{ changes }` | replays the original file tool and arguments | file-change rows and result evidence |
 | Invalid call | failed Item is replayed as another invalid call | redacted correction evidence, never a tool call | visible failure and model opportunity to recover |
 | Permission | schema rejection can look like denial | admission and capability phases are explicit | Full Access plus explicit capability blocks |
-| Host metadata | can leak into reconstructed model arguments | bound only at execution and displayed as metadata | workspace, process, and audit behavior |
-| Schema/tool drift | can throw or submit stale history | validation then typed evidence degradation | immutable source Item and diagnostics |
+| Host metadata | rejected model `cwd` can overwrite the audit value and re-enter arguments | host-resolved only, bound at execution and displayed as metadata | workspace, process, and audit behavior |
+| Secret-like model argument | entire admitted call can disappear after redaction | marked redacted call/result replay or executed-call evidence | no durable or replayed raw secret |
+| Schema/tool/resource drift | stale arguments or missing result payloads can throw | pair-level preflight and typed evidence degradation | immutable source Item and diagnostics |
 
 ### Implementation scope
 
@@ -294,7 +337,9 @@ Expected production ownership:
 - `src/main/agent/runtime/kernel/{types,kernel}.ts`: admission outcome, event
   ordering, and sanitized live history.
 - `src/main/agent/runtime/{ToolRuntime,PiTurnExecutor}.ts`: capability/host seam,
-  canonical Item capture, rejection completion, and payload persistence.
+  canonical Item capture, rejection completion, payload persistence, and
+  retirement of raw `input.cwd` precedence in `startedToolItem`; command Items
+  take `cwd` only from the host Thread execution context.
 - `src/main/agent/context/{ContextProjector,contextDependencies,ContextCompaction}.ts`:
   envelope-only replay, final registry validation, graceful evidence fallback,
   and payload lifecycle.
@@ -331,20 +376,32 @@ Main owns board/changelog updates at merge.
   admitted call; no projected call contains a synthetic `changes` property.
 - **AC-05:** Schema-valid capability-blocked calls retain their call/result pair and audit;
   schema-invalid calls produce no capability decision.
-- **AC-06:** Missing tools, incompatible current schemas, and missing/corrupt argument
-  payloads produce diagnostics plus typed evidence without throwing, orphaning
-  a tool result, or contaminating later requests.
+- **AC-06:** Missing tools, incompatible current schemas, and missing/corrupt
+  argument, full-output, or image payloads produce diagnostics plus typed
+  pair-level evidence without throwing, orphaning a tool result, or
+  contaminating later requests.
 - **AC-07:** Large arguments remain exact through Thread-owned payload storage and fork;
   no bounded/truncated value is presented as the original call.
-- **AC-08:** Secret-like model arguments persist only as evidence-only redacted summaries.
-  Host credentials/environment are absent from Items, payloads, transcript
-  exports, provider diagnostics, and rollout diagnostics.
+- **AC-08:** An admitted call with secret-like model arguments persists as
+  `redactedReplay`: the model sees marked redacted arguments and the original
+  outcome, never receives a retry-inducing rejection merely because redaction
+  occurred, and never sees the raw secret. If redaction breaks the active
+  schema, typed executed-call evidence preserves the same facts. Host
+  credentials/environment are absent from Items, payloads, transcript exports,
+  provider diagnostics, and rollout diagnostics.
 - **AC-09:** Mixed parallel/sequential tool batches preserve order, keep admitted
   call/result pairs atomic, and place rejection evidence deterministically.
 - **AC-10:** `rg "historyToolArguments|historyToolIdentity" src tests` is empty, and tests
   prevent new Item-to-argument reverse mappers.
 - **AC-11:** `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, and
   `bun run docs:check` pass after the implementation and spec fold-in.
+- **AC-12:** For both admitted and rejected `bash` calls, the Item and UI `cwd`
+  equal the host-resolved Thread execution directory and never a model-supplied
+  `cwd` value.
+- **AC-13:** A managed `browser-pilot` `bash` call containing a secret-like
+  client value executes once; the next provider context contains its marked
+  redacted call and success result, not an erased call or an admission-rejection
+  retry signal.
 
 ### Risks and mitigations
 
@@ -354,8 +411,10 @@ Main owns board/changelog updates at merge.
 - **Payload retention leaks.** New argument references must join existing
   dependency enumeration and deletion/fork tests before any large argument can
   use them.
-- **Secret persistence.** Redaction occurs before durable admission; changed
-  values are evidence-only, and host secrets are injected after admission.
+- **Secret persistence and replay truth.** Redaction occurs before durable
+  admission. `redactedReplay` stores paths plus redacted structure, and its
+  atomic marker states that the visible value is not the executed value; no raw
+  secret or misleading unmarked call can enter history.
 - **Provider/tool evolution.** Canonical identity plus current-registry
   validation prevents stale provider spellings or schema digests from becoming
   execution authority.
@@ -365,23 +424,8 @@ Main owns board/changelog updates at merge.
 - **Context growth.** Large values stay out of Items, while replayable pairs and
   evidence use existing budget/compaction units and bounded summaries.
 
-### Collision result
-
-The plan-time GitHub scan found open PRs #478-#481. Their scopes cover model
-selection UI, macOS CI layout/material tests, release infrastructure, and an
-Agent dock hit region; none touches Agent Core tool admission, Item persistence,
-or context projection.
-
-The higher-level authority remains `agent-conversation-model.md`, and the
-shipped canonical-context mechanism remains documented by the archived
-`agent-context-integrity.md`. This plan is a narrow invariant repair inside that
-architecture: canonical Items stay the durable history authority, but each tool
-Item now carries the source call instead of attempting to infer it. It does not
-take ownership of the conversation plan's `needs-input` tail or the shelved
-`agent-browser-control.md` implementation.
-
 ## Open questions
 
-None are blocking. Main review should ratify the two directional constraints
-before implementation: tool schemas remain strict, and Browser Pilot remains
-out of scope until its shelved plan is independently resumed.
+None. Tool schemas remain strict, and no Item-to-argument reverse mapper is
+permitted. The shipped managed Browser Pilot path is covered through the generic
+`bash` contract; the superseded Tenon-native plan is not revived.
