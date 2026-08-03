@@ -25,15 +25,19 @@ and the sidebar toggle sit at its top. Default width is `216px`, range
 radius, `16px` icon slots, neutral hover, and no persistent selected-fill for the
 workspace tree. Product Settings stays pinned at the bottom.
 
-**Top strip.** One drag-region strip at traffic-light height holds:
+**Top strip.** One visually continuous strip at traffic-light height holds:
 
 - left: traffic lights + sidebar toggle;
 - center: each pane breadcrumb header and its close affordance;
 - right: selected Thread header when open plus the fixed agent toggle.
 
-Everything shares the traffic-light centreline. Header controls follow
-[patterns.md → Header Chrome](./patterns.md#header-chrome): fixed position,
-stable hit target, colour-deepen hover, no rounded-square hover box.
+Everything shares the traffic-light centreline. Native window dragging is split
+across the fixed left/right `WindowChrome` zones and pane breadcrumb chrome; it
+is not inherited by every header aligned to the strip. In particular, the
+selected Thread header is visually aligned but is not a drag region because its
+box overlaps the fixed agent toggle from a sibling DOM tree. Header controls
+follow [patterns.md → Header Chrome](./patterns.md#header-chrome): fixed
+position, stable hit target, colour-deepen hover, no rounded-square hover box.
 
 **Rail toggles.** Sidebar and agent toggles are fixed window-chrome controls in
 stable absolute positions. They change state in place, never move with pane count,
@@ -228,10 +232,12 @@ The agent dock is a right glass rail subordinate to the outliner workspace. It i
 toggled by the fixed top-right control; open squeezes the layout, closed hides the
 rail. Motion follows [foundations.md → Motion](./foundations.md#motion).
 
-**Header and Thread list.** The header shows the selected Thread title and compact
-actions. It carries no provider line, decorative status dot, or member chrome.
-The Thread list is scan-first and single-line. Child Threads are visibly nested;
-ordinary rows expose a compact actions menu for fork, rename, and delete.
+**Header and Thread list.** The header shows the selected Thread title followed
+by an always-visible downward chevron that rotates when the Thread list opens.
+It carries no redundant agent glyph, provider line, decorative status dot, or
+member chrome. The Thread list is scan-first and single-line. Child Threads are
+visibly nested; ordinary rows expose a compact actions menu for fork, rename,
+and delete.
 
 Creating a Thread is immediate and focuses the composer. Rename uses the shared
 dialog and delete uses the shared confirmation surface. The selected row is a

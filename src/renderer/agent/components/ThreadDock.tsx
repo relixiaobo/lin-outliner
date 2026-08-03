@@ -7,7 +7,6 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
-  AgentIcon,
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
@@ -338,9 +337,6 @@ export function ThreadDock({
                 ref={threadListAnchorRef}
                 type="button"
               >
-                {thread?.parentThreadId
-                  ? null
-                  : <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />}
                 <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
                 <ChevronDownIcon
                   className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
