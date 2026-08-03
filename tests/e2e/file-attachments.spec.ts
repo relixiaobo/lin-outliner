@@ -1223,6 +1223,26 @@ test.describe('file attachments', () => {
     const { chapter, readerPane } = await openEpubSplitReader(page, 'translated-book.epub');
     const translationToggle = readerPane.locator('.file-preview-translation-toggle');
     await expect(translationToggle).toHaveAttribute('aria-label', 'Translation settings: Translation off');
+    const headerActions = readerPane.locator('.panel-breadcrumb-actions .file-preview-reader-actions');
+    await expect(headerActions).toHaveCount(2);
+    const headerActionPositions = await readerPane.locator('.panel-sticky-breadcrumb').evaluate((header) => {
+      const actions = [...header.querySelectorAll<HTMLElement>('.file-preview-reader-actions')];
+      const close = header.querySelector<HTMLElement>('.panel-breadcrumb-close');
+      if (actions.length !== 2 || !close) throw new Error('Missing reader header actions');
+      const translationRect = actions[0].getBoundingClientRect();
+      const moreRect = actions[1].getBoundingClientRect();
+      const closeRect = close.getBoundingClientRect();
+      return {
+        translationLeft: translationRect.left,
+        moreLeft: moreRect.left,
+        moreRight: moreRect.right,
+        closeLeft: closeRect.left,
+      };
+    });
+    expect(headerActionPositions.translationLeft).toBeLessThan(headerActionPositions.moreLeft);
+    expect(headerActionPositions.moreLeft).toBeLessThan(headerActionPositions.closeLeft);
+    expect(headerActionPositions.closeLeft - headerActionPositions.moreRight).toBeGreaterThanOrEqual(0);
+    expect(headerActionPositions.closeLeft - headerActionPositions.moreRight).toBeLessThanOrEqual(12);
     await page.waitForTimeout(200);
     expect((await commandCalls(page)).filter((call) => call.cmd === 'url_page_translate_blocks')).toHaveLength(0);
 

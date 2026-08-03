@@ -90,6 +90,7 @@ interface PanelStickyBreadcrumbProps {
   previousPageLabel: string;
   showClose: boolean;
   stickyRef: RefObject<HTMLDivElement | null>;
+  trailingActions?: ReactNode;
   titleDocked: boolean;
 }
 
@@ -112,6 +113,8 @@ function breadcrumbContent(props: PanelStickyBreadcrumbProps) {
 }
 
 export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
+  const hasTrailingActions = props.trailingActions !== null && props.trailingActions !== undefined;
+
   return (
     <div className="panel-sticky-breadcrumb" ref={props.stickyRef}>
       <div className="panel-breadcrumb-leading">
@@ -147,19 +150,24 @@ export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
           </span>
         ) : breadcrumbContent(props)}
       </nav>
-      {/* Close lives INSIDE the breadcrumb (the pane's toolbar row): it is a no-drag
-          DOM descendant of the breadcrumb's drag region - the only reliable carve-out
-          on macOS (see breadcrumb.css) - and aligns to the same --panel-content-x as
-          the content on the right. */}
-      {props.showClose && (
-        <IconButton
-          className="panel-breadcrumb-close"
-          icon={CloseIcon}
-          label={props.closeLabel}
-          onClick={props.onClose}
-          title={props.closeLabel}
-          variant="panel"
-        />
+      {/* Pane actions and Close stay outside the fit-content reorder handle. This
+          keeps them right-aligned while the empty header area remains window-drag. */}
+      {(hasTrailingActions || props.showClose) && (
+        <div className="panel-breadcrumb-trailing">
+          {hasTrailingActions ? (
+            <div className="panel-breadcrumb-actions">{props.trailingActions}</div>
+          ) : null}
+          {props.showClose ? (
+            <IconButton
+              className="panel-breadcrumb-close"
+              icon={CloseIcon}
+              label={props.closeLabel}
+              onClick={props.onClose}
+              title={props.closeLabel}
+              variant="panel"
+            />
+          ) : null}
+        </div>
       )}
     </div>
   );
