@@ -2,8 +2,7 @@
 
 ## Goal
 
-**One action registry** behind every surface that acts on an outline node, and
-**one retrieval implementation** behind every surface that finds a node.
+**One action registry** behind every surface that acts on an outline node.
 
 - The node context menu becomes a *filtered, anchored view* of the registry.
 - The command surface becomes the registry's *searchable view* — and the only
@@ -13,6 +12,17 @@
 
 The user-visible promise: **one action, one habit.** Multiple entry points are
 fine; multiple implementations are not.
+
+**Shape (b): two independent complete features**, split at the proof boundary
+(see *Shape and build order*). PR 1 makes the context menu a view of the registry
+with **zero behaviour change**, mechanically proven, and fixes the `Move to`
+picker. PR 2 builds the command surface and the capture loop on that foundation.
+
+**The retrieval promise is scoped to what actually ships.** This plan converges the
+*node-picker* paths — the command surface (already shared) and `Move to` (which has
+no ranking at all). The at-caret `@`/`#`/`/` candidate paths keep their typed domain
+policies and are **not** folded onto the shared kernel here; D5 says why, and doing
+it is a separate, separately-judged change.
 
 ## Positioning (why this shape)
 
@@ -64,16 +74,21 @@ does not need them to build.
   `browser-extension-integration.md` is a historical filename for a plan whose own
   non-goals exclude extensions.
 
-  **It is not a drop-in for the existing seam, and whoever builds it must know
-  why.** `captureExternalContext` runs on *every* hotkey press (`main.ts:1618-1634`),
-  so hanging a network fetcher off `PageContentExtractor` would request whatever
-  page is in front of the user before they have chosen anything — a silent outbound
-  request per summon. Ambient metadata discovery and explicit content reading must
-  stay separate: **network access begins only after an explicit action**, with
-  cancellation, SSRF/local-address restrictions, and persistence semantics defined
-  there. The contracts also differ (`GenericWebpageRaw` is metadata with no body;
-  the capture sidecar stores provenance, not content), so it is an adapter, not a
-  plug-in.
+  **It is a separate API, not the ambient seam.** `captureExternalContext` runs on
+  *every* hotkey press (`main.ts:1618-1634`), so nominating `PageContentExtractor`
+  as the reader's home would fetch whatever page is in front of the user before they
+  chose anything — one silent outbound request per summon. So the reader gets its
+  own explicit entry point:
+
+  ```ts
+  interface ExplicitPageReader { read(url: string, signal: AbortSignal): Promise<PageReadResult>; }
+  ```
+
+  called **only** by a chosen capture or agent action, with cancellation,
+  SSRF/local-address restrictions and persistence semantics owned there.
+  `PageContentExtractor` stays what it is: an ambient metadata hook with no
+  implementation. The contracts differ anyway — `GenericWebpageRaw` is metadata with
+  no body, the capture sidecar stores provenance, not content.
 - **No embed rendering.** The `embedType`/`embedId` schema removal is its own
   change (`embed-strategy.md`).
 - **No positional-trigger rewrite.** `/`, `@`, `#` are *at-caret* insertion and
@@ -133,57 +148,120 @@ surface is a lesser build, but because outdent is defined relative to a panel an
 there is no panel. That is D7 doing its job, not a compromise. Every other node
 action resolves identically in both views.
 
-Registry entry shape:
+### D1a — Five contracts, not one interface
+
+Two review rounds killed a single `ActionDefinition` written in prose, each time
+because one field could not hold the real action set. The failure was structural:
+**a type asserted in a document cannot be falsified.** These land as compiling
+TypeScript in PR 1 (see *Shape*), populated with the whole existing action set, so
+the compiler decides whether they hold.
 
 ```ts
-interface ActionDefinition {
-  id: ActionId;                                     // stable, i18n-independent
-  scope: 'node' | 'selection' | 'panel' | 'app';    // which views may show it (D2, layer 1)
-  operands(ctx: ActionContext): readonly NodeId[];  // what it would act on; empty = N/A
-  parameter?: ParameterSpec;                        // a second step, when one is needed
-  confirm?: ConfirmationSpec;                       // required before any effect exists
-  effect(operands, parameter): Effect;              // a serializable instruction
+// 1. INVOCATION — what the user is acting from. Main-owned; crosses the seam as an id.
+type ActionInvocation =
+  | { kind: 'node';      nodeId: NodeId; targetId: NodeId; panelRootId: NodeId; isPinned: boolean }
+  | { kind: 'selection'; nodeIds: readonly NodeId[]; panelRootId: NodeId }
+  | { kind: 'panel';     panelId: string; panelRootId: NodeId; toolbarVisible: boolean }
+  | { kind: 'app' }
+  | { kind: 'page';      contextId: ExternalContextId };   // main holds the ExternalContext
+
+// 2. EVALUATION — three states, never a bare list. D7 needs to tell them apart.
+type ActionEvaluation =
+  | { status: 'applicable'; operands: ResolvedOperands }
+  | { status: 'rejected';   reason: ActionRejection }   // shown WITH the reason
+  | { status: 'absent' };                               // no operand at all → hidden
+
+// 3. PRESENTATION — what a view renders. Both locales; icon by id, resolved per view.
+interface ActionPresentation {
+  id: ActionId; names: LocalizedNames; iconId: IconId;
+  evaluation: ActionEvaluation;
+  parameter?: ParameterSpec;      // a second step (Move to → destination, Add tag → tag)
+  confirm?: ConfirmationSpec;     // Delete forever, Empty Trash
 }
 
-type Effect =
-  | { kind: 'command'; ... }        // main performs it (A4)
-  | { kind: 'renderer'; op: RendererOp; ... };
+// 4. REQUEST — the ONLY thing a renderer may send. No command, no effect.
+interface ActionRequest {
+  actionId: ActionId; invocationRef: InvocationRef;
+  parameter?: ActionParameterValue; confirmed?: true;
+}
 
-type RendererOp =
-  | 'navigate' | 'reveal' | 'workspace' | 'clipboard' | 'composerHandoff';
+// 5. EFFECT — produced by main, never accepted from a renderer. Discriminated.
+type ActionEffect =
+  | { kind: 'command'; /* main executes; never crosses inbound */ }
+  | { kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
+  | { kind: 'reveal'; surface: RevealTarget }
+  | { kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
+  | { kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
+  | { kind: 'composerHandoff'; operand: ComposerOperand; draftText: string };
 ```
 
-Four deliberate choices, each of which the obvious shape gets wrong:
+Why each exists, in the order the reviews forced them:
 
-**`operands()` returns a list, never a boolean.** "Not applicable" is the empty
-list. The existing predicates already return id lists — `idsAllowedForMoveTo`,
-`idsAllowedForDuplicate`, `idsEnabledForSelectionAction`,
-`idsAllowedForStructuralBatch/IndentBatch/OutdentBatch`, `planSelectionDelete`,
-plus `trashActions.ts`, `nodeLocation.isNodeInTrash`, and
-`contextMenuSelection.resolveActiveNodeSelection` — because an action often
-applies to *part* of a selection. A `boolean | NodeId[]` union would throw that
-away and force every caller to re-derive the subset.
+**Invocation is a discriminated union because `NodeId[]` cannot describe the
+operand.** The current menu needs `targetId`, `visualRowId`, `selectedIds`,
+`isPinned`, and toolbar visibility (`NodeContextMenu.tsx:63-81`); a foreground page
+is not a node at all. Flattening all of that into a node list was the mistake.
 
-**`parameter` is what makes half the action set expressible at all.** *Move to*
-needs a destination, *Add tag* needs a tag: they are two-step actions, and a
-registry that only carries "what to run" cannot describe them. A parameter's
-candidates come from the one retrieval service (D5) or the one tag selector, so
-**the *Move to* picker converges onto shared ranking by construction** — not by
-someone remembering to fix it. The plan's most visible defect and its central
-abstraction close each other.
+**Evaluation has three states because D2 and D7 disagree about what "empty"
+means.** D2 filters on applicability; D7 must show a rejected action *with its
+reason* and hide an action that has no operand. One empty array cannot be both, and
+carries no reason either way.
 
-**`effect` is data, not a closure — and it splits by *executor*, not by verb.** An
-inventory of the node context menu's ~22 actions shows the naive
-`mutate | navigate | handoff` union under-counts badly: *Pin* writes renderer
+**Presentation is separate from definition** because the same entry renders in two
+projections with different affordances, and because icon ids resolve per view
+(below).
+
+**Request is the admission contract** — see D1b. It is deliberately the smallest
+thing that can name an action.
+
+**Effect is discriminated and outbound-only.** The action inventory (~22 items)
+shows `mutate | navigate | handoff` under-counts badly: *Pin* writes renderer
 workspace chrome (localStorage, not document state), *Open in split pane* creates a
 panel, *Copy text* / *Copy node id* write the clipboard, *Add description* and the
-*Filter / Sort / Group / Display* rows reveal a UI surface, and *Send to composer*
-is the handoff. Only about half are core commands. So the axis is **who performs
-it** — main for commands, the main renderer for everything else — with the renderer
-side enumerated honestly. A `command: CoreCommandRef` field expresses one of these,
-and a callback cannot cross a process boundary. As serializable data the effect is
-produced wherever applicability is evaluated and performed by whoever owns it; the
-panel performs nothing itself, it returns the chosen effect.
+*Filter / Sort / Group / Display* rows reveal UI. Only about half are core commands.
+`op + ...` is not an executable contract, so each carries its own payload.
+
+**Parameter** is what makes half the set expressible at all: *Move to* needs a
+destination, *Add tag* a tag. Their candidates come from the one retrieval kernel
+(D5) or the one tag selector, so **the *Move to* picker converges onto shared
+ranking by construction** rather than by someone remembering to fix it.
+
+### D1b — Admission: a renderer may name an action, never author one
+
+The previous revision said the panel "returns the chosen effect" and main performs
+it. Taken literally that makes the locked-down launcher renderer a **generic
+mutation client**: submit `{ kind: 'command', … }` with fabricated operands and the
+document changes. That is an A2/A3/A4 violation and it was the sharpest finding
+across both reviews.
+
+The shipped code already demonstrates the correct pattern:
+`launcher:createContextCapture` accepts only an optional note while **main holds
+the authoritative `ExternalContext`**, and the intent is validated at the seam
+before it reaches durable storage. The registry follows it exactly:
+
+1. A view asks main to evaluate an invocation → main returns `ActionPresentation[]`.
+2. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
+   ref, typed parameter**. Nothing else.
+3. **Main re-evaluates** that action against the *latest* projection and its own
+   invocation record, then produces and executes the effect itself.
+
+So `ActionEffect` only ever travels **main → renderer**, which is the trusted
+direction. A stale or forged request fails re-evaluation instead of mutating.
+
+**One narrow exception, stated as a rule rather than an oversight.** Some
+invocation fields are renderer-owned facts main cannot know — `isPinned` is
+localStorage workspace chrome (`useWorkspacePinnedNodes.ts`), as is toolbar
+visibility. They may be renderer-supplied **only where the resulting effect is also
+renderer-side** (`workspace`, `reveal`, `clipboard`). Any action whose effect is a
+`command` must resolve entirely from main-owned state. Pin cannot corrupt the
+document because pinning never touches it.
+
+**Confirmation is structural, not conventional.** An action carrying `confirm`
+produces no effect on a request without `confirmed`; main returns a
+confirmation-required presentation, the view raises the dialog, and only the
+confirmed request yields an effect. *Delete forever* and *Empty Trash* are outside
+`Cmd+Z`'s reach — which is why they were given a dialog, and why D9's
+fire-to-commit rule applies only *after* this point.
 
 **`confirm` is a first-class field because deletion already demands one.**
 *Delete forever* and *Empty Trash* route through `ConfirmDialog` today
@@ -386,12 +464,16 @@ exist or merely does not apply right now. VS Code survives that because its comm
 names come from documentation; this action set is learned by exploration. So two
 tiers:
 
-- **No operand at all** (empty query, no chip, no selection) → node/selection
-  actions are **hidden**. Opening the surface must not present a screen of things
-  that cannot run.
-- **An operand exists but a predicate rejects it** → the action is **shown with its
-  reason** ("Move to — unavailable in Trash"), not silently dropped. A reason
-  teaches the rule; a disappearance teaches distrust.
+- **`status: 'absent'`** — no operand at all (empty query, no chip, no selection) →
+  **hidden**. Opening the surface must not present a screen of things that cannot
+  run.
+- **`status: 'rejected'`** — an operand exists but a predicate refuses it → shown
+  **with its `reason`** ("Move to — unavailable in Trash"), not silently dropped. A
+  reason teaches the rule; a disappearance teaches distrust.
+
+These are the two non-applicable states of `ActionEvaluation` (D1a). They exist as
+distinct variants *because of this rule*: a single empty operand list collapses them
+and carries no reason.
 
 The context-menu view keeps its current behaviour under the same rule, since it
 always has an operand. Inside the command surface the tiers apply to the `⌘K`
@@ -469,13 +551,26 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
   reader text later if the static reader lands), the user's typed text is the actual
   user message, and the agent can tell the two apart. Capture-into-a-node-first was
   considered and rejected — asking a question should not silently create a node.
-- **The handoff needs a new leg, and the estimate must say so.**
-  `agent/agentReveal.ts` is renderer-local pub/sub: a module-level listener set, no
-  IPC, no window raise, and its only caller today already lives in the main window.
-  Reaching it from the panel adds a cross-process hop, a window raise, and
-  queue-until-loaded for the case where the renderer is not up — the same shape as
-  the existing `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` queue that flushes on
-  `did-finish-load`. Reuse that mechanism rather than inventing a second one.
+- **The handoff needs a new leg *and* a new composer concept.** Three separate
+  gaps, none of which the existing code covers:
+  - `agent/agentReveal.ts` is renderer-local pub/sub queueing `{ nodeId, title }`
+    only — no IPC, no window raise, and its only caller already lives in the main
+    window. The panel path adds a cross-process hop, a window raise, and
+    queue-until-loaded, reusing the `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`
+    flush-on-`did-finish-load` shape rather than a second mechanism.
+  - `ThreadView.onSend` accepts `ThreadUserContent[]` and `ThreadStore.send`
+    forwards content plus user-view hints — **neither carries
+    `additionalContext`**, so a page staged today would be dropped at submit.
+  - Nothing owns staged-but-unsent context.
+
+  **`PendingComposerContext`** closes all three. It is **bound to one Thread**,
+  **visible**, and **removable** — never invisible sticky state. Its semantics are
+  part of the contract, not implementation detail: a second handoff **replaces**
+  rather than accumulates; switching Threads leaves it with the Thread it was
+  staged on; it is **consumed when a turn is accepted**, and **restored** if the
+  send fails. It passes through `ThreadView` and `ThreadStore` on both `turn/start`
+  and steer. Proven by an E2E asserting the user's text and the untrusted page
+  context reach **exactly one** turn.
 
 ### D10 — Out-of-app fidelity chain
 
@@ -491,52 +586,62 @@ degrades correctly without the middle tier.
 
 ## Shape and build order
 
-**Shape (a): one complete feature in one PR.** The stages below are build order
-*within* that PR, not releases.
+**Shape (b): two independent complete features**, split at the **proof boundary**
+rather than by feature. Each is useful and verifiable alone; PR 2 depends on PR 1
+only because it builds on a foundation PR 1 has already proven.
 
-0. ~~Spike~~ — **done before approval**; the result is folded into D1. The
-   predicates carry no renderer dependency that survives tracing: `rowMap` is a
-   cache with an existing derivation fallback, `actionPolicy` derives from the
-   projection, and `panelRootId` is read by one predicate. Stage 2 has no fork.
-1. **Fix the `Move to` picker** — route it through the shared retrieval kernel
-   (D5). *Highest user-visible payoff and independent of everything below* — it is
-   not a dependency of the registry, so it goes first rather than fourth. The
-   at-caret paths are deliberately **not** touched here (D5: typed candidate
-   policies stay with their domain). If the PR
-   is ever cut short under pressure, the part that mattered has landed.
-2. Registry + predicates in core (D1), per the stage-0 verdict.
-3. Populate the registry. **First population is exactly** the node context menu's
-   action set plus the navigation destinations (D3) — a bounded, already-implemented
-   set. Menu-bar items with no keyboard path are a later pass, not this PR: the
-   registry's value is that adding them later is cheap.
-4. Re-render the context menu as a registry view, **differentially proven against
-   the old path** (D2), which stays in the tree as the oracle.
-5. Render the registry as the command surface's searchable view: rows into the
-   existing ordering, `Actions ⌘K` into the existing action bar and the action
-   list behind it (D6), in-app context path and aggregate chip (D4), focus return
-   and result signal (D9).
-6. Capture loop: confirmation, optional tag, send-to-agent action.
-7. Delete the old menu path, `CommandPalette.tsx`, the global `Cmd+K` binding
+### PR 1 — the context menu becomes a view of a core registry
+
+Zero behaviour change, mechanically proven, plus one bug fix.
+
+1. **Contracts in `src/core/actions/`** (D1a) as compiling TypeScript with codec
+   tests — invocation, evaluation, presentation, request, effect — and the
+   main-owned admission path (D1b).
+2. **Predicates move to core** (D1). The stage-0 spike, done before approval,
+   found no renderer dependency that survives tracing: `rowMap` is a cache with an
+   existing derivation fallback, `actionPolicy` derives from the projection, and
+   `panelRootId` is read by exactly one predicate.
+3. **Populate the registry with the entire existing node-menu action set.** This is
+   the point of PR 1: the compiler, not a document, decides whether the contracts
+   can express *Pin* (workspace chrome), *Copy* (clipboard), *View as* (panel),
+   *Delete forever* (confirmation) and *Move to* (parameter).
+4. **Re-render the context menu as a registry view**, differentially proven against
+   the old path (D2), which stays in the tree as the oracle until the last commit.
+5. **Fix the `Move to` picker** — route it through the shared retrieval kernel
+   (D5). The one user-visible win in this PR, and it lives in the same file.
+
+**Why this is a complete feature and not groundwork.** It has a real consumer (the
+context menu), a mechanical proof (differential vs the old path), and it ships a
+bug fix a user meets immediately: *Move to* currently slices ten matches in
+document order with no ranking, so a target can simply fail to appear. It is the
+`#451` pattern — freeze the observable surface, prove it unchanged, build on it —
+which carried a 4,700-line move to zero review findings.
+
+**It also touches no agent or composer file**, so it does not collide with #486.
+
+### PR 2 — the command surface and the capture loop
+
+6. Render the registry as the command surface's searchable view: rows into the
+   existing ordering, `Actions ⌘K` into the existing action bar and the action list
+   behind it (D6), in-app invocation path and aggregate chip (D4), focus return and
+   result signal (D9).
+7. Capture loop: confirmation, optional tag, send-to-agent action with its
+   `PendingComposerContext` (D9).
+8. Delete the old menu path, `CommandPalette.tsx`, the global `Cmd+K` binding
    (`shortcutRegistry.ts:139` — the keystroke lives on inside the panel as
    *Actions*), and the stale `/`-menu hint.
 
-Stages 2-4 change no user-visible behaviour, which is what makes a PR this size
-reviewable: they are provable mechanically.
+**Sequenced after #486 merges**, since step 7 touches `ThreadView` / `ThreadDock` /
+both locale files.
 
-**Shape (a) was challenged at review and re-affirmed by the PM.** The gate's case
-for splitting is real and worth recording: stage 1 is independently complete and is
-a bug-level fix, and a single PR spanning core + renderer + launcher + main + both
-locale files, deleting two files and standing up a differential harness, costs more
-at the gate (ultra review + visual verification + e2e) than two medium PRs would.
-The PM weighed that against one ratification and one merge and chose **(a)**.
+### Why the split moved here
 
-**The mitigation is structural, not a promise.** Stage 1 lands as a self-contained
-first commit that touches no registry code, so the gate can read and judge it on its
-own inside the PR, and stages 2-4 are provable mechanically. Stage 6's confirmation
-and tag work touch neither the registry nor retrieval — they ride along for
-review-bandwidth reasons, not architectural ones. ("Send to the agent panel" is
-genuinely a registry action and belongs here.) If the PR does have to be cut, the
-commit boundary is already the split line.
+The PM originally chose one PR to spend one ratification and one merge. Two full
+review rounds later that PR had produced zero code, so the bandwidth argument had
+been answered by events. Both NO-GOs had the same root cause — **a type asserted in
+prose cannot be falsified**, so each round fixed the prose and the next round found
+the next thing prose could not hold. The split puts the contracts where a compiler
+and a differential test can judge them instead.
 
 ## Verification
 
@@ -564,13 +669,20 @@ commit boundary is already the split line.
 
 ## Open questions
 
-1. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
-   outside the renderer's `icons.ts` so the launcher bundle stays small), or do
-   registry entries carry icon ids resolved per view? See `icon-semantics.md`.
-2. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
-   dwell before dismissal, an OS notification, or a main-window surface? The
-   ordering is settled; the presentation is not, and it must work with Tenon in
-   the background.
+None open. Both former questions were settled before approval, because each one
+changes a contract or a user-visible behaviour rather than a private helper:
+
+- **Icons: registry entries carry an `iconId`; each view resolves it.** The
+  launcher keeps `launcherIcons.tsx` as its own resolver so the locked-down bundle
+  never pulls the renderer's full `icons.ts` — the bundle split is deliberate
+  (`icon-semantics.md` records it as the one sanctioned lucide import outside the
+  renderer). Ids are locale- and bundle-independent, so a view that lacks a glyph
+  falls back rather than failing.
+- **Result signal: a brief in-panel confirmation before dismissal.** Chosen by
+  elimination. An OS notification needs a permission grant and is easy to miss; a
+  main-window surface is invisible exactly when it is needed, since the case that
+  motivates the signal is Tenon sitting in the background. The panel is the one
+  thing the user is looking at, it needs no permission, and it steals no focus.
 
 ## Related plans
 
@@ -598,14 +710,27 @@ commit boundary is already the split line.
 
 ## Collision self-check
 
-To re-run at build time. At drafting: the only open PR is #477
-(`main-agent/e2e-pr-comparison`), no overlap. The build touches
-`src/core/` (new registry + moved predicates), `src/renderer/ui/outliner/NodeContextMenu.tsx`,
-`src/renderer/ui/CommandPalette.tsx` (deleted), `src/renderer/ui/interactions/*`,
-`src/renderer/launcher/*`, `src/main/launcher/*`, `src/main/context/contextCapture.ts`,
-and both locale message files. It does **not** touch `src/core/commands.ts` or
-`src/core/types.ts` — the registry references existing commands rather than adding
-mutations.
+Re-run at the start of each PR. As of 2026-08-03:
+
+**PR 1 — no collision.** Touches `src/core/actions/` (new), the moved predicates
+out of `src/renderer/ui/interactions/`, `src/renderer/ui/outliner/NodeContextMenu.tsx`,
+and the main-side admission handler. **No agent, composer, launcher or locale
+file**, which is what keeps it clear of #486.
+
+**PR 2 — one real collision, already identified.**
+[#486](https://github.com/relixiaobo/lin-outliner/pull/486)
+(`codex-2/agent-new-thread-slash-command`, open, not draft) changes
+`ThreadView.tsx`, `ThreadDock.tsx`, `ThreadComposerEditor.tsx` and **both locale
+message files** — exactly the surface D9's `PendingComposerContext` needs.
+**PR 2 is sequenced behind #486 and rebases onto it**; it does not attempt to land
+in parallel. PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx`
+(deleted), `src/renderer/launcher/*`, `src/main/launcher/*`,
+`src/main/context/contextCapture.ts`, and the locale files.
+
+Neither PR touches `src/core/commands.ts` or `src/core/types.ts` — the registry
+references existing commands rather than adding mutations. (An earlier draft of
+this section named #477 as the only open PR; that was stale by the time #486
+opened, which is why this check is re-run per PR rather than once per plan.)
 
 ## Appendix — provenance
 

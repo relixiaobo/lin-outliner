@@ -4,7 +4,8 @@
 // on: provider ids, permission requirements, capture warnings, and the live
 // "what is the user looking at right now" contract (ExternalContext). Capture is
 // basic-info-only today (app + tab + classification); richer extraction is
-// deferred to a main-process static URL reader — no extension, no CDP (A7).
+// deferred to an explicit main-process page reader, invoked only after the user
+// picks an action — never on the hotkey path. No extension, no CDP (A7).
 //
 // Plan: docs/plans/unified-command-surface.md (surface + capture loop);
 // the shipped behavior is docs/spec/launcher.md.
@@ -76,7 +77,8 @@ export interface ContextWarning {
  * Capture is basic-info-only today: app + browser tab (URL/title) +
  * provider classification. In-page content/selection/media extraction was
  * intentionally removed; the approved rich-extraction backend is a main-process
- * static URL reader (docs/plans/file-preview.md), not a browser extension.
+ * explicit page reader (docs/plans/unified-command-surface.md), not an extension
+ * and not the ambient capture seam.
  */
 export interface ExternalContext {
   id: string;

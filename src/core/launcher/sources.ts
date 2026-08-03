@@ -4,8 +4,9 @@
 // sidecar (CaptureNodeMetadata) on NodeBase. The sidecar holds provenance only —
 // normalized source identity (URL/title/author/kind) plus capture origin and
 // warnings. Capture is basic-info only: no page body, transcript, email body, or
-// PDF text is extracted (that is deferred to a main-process static URL reader —
-// no extension, no CDP). This keeps captures first-class, searchable, undoable nodes.
+// PDF text is extracted (deferred to an explicit main-process page reader invoked
+// only after the user picks an action). This keeps captures first-class, searchable,
+// undoable nodes.
 //
 // Calibrated to landed code (PR #80): local-file identity is the canonical path
 // (ReferenceTarget local-file shape), NOT a `FileReferenceValue`/`fileRefId`,
@@ -147,7 +148,8 @@ export function isCaptureIntent(value: unknown): value is CaptureIntent {
  * metadata for a captured node — what it is and where it came from. Rich captured
  * content (page body, transcript, email/DM threads, …) is NOT stored here today:
  * capture is basic-info only, and the content + enrichment model returns through a
- * main-process static URL reader (docs/plans/file-preview.md), not an extension.
+ * explicit main-process page reader (docs/plans/unified-command-surface.md), never
+ * the ambient hotkey capture path.
  *
  * The sidecar is written now and consumed later: today only the outline projection
  * (tag + fields) is read back, while the sidecar's own consumers (re-open original,

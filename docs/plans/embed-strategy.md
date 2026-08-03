@@ -1,115 +1,63 @@
-# Embed Strategy
+# Embed Schema Removal
 
-The schema in `src/core/types.ts` still carries `embedType` and `embedId` for
-historically representing external embeds (YouTube, Twitter). No renderer
-exists. nodex ships `EmbedNodeRenderer.tsx`. Before we copy or rewrite that,
-we need to decide whether embeds belong in a local-first app at all, and if
-so in what form.
+`src/core/types.ts` still carries `embedType` and `embedId`, and `NodeType` still
+carries `'embed'`, from an early plan to render external links (YouTube, Twitter)
+as rich cards. **No renderer was ever built, and no command produces such a node.**
+The schema is dead weight in the protocol surface.
 
-This plan is decision-first, implementation-second.
+Remove it.
 
 ## Goal
 
-Pick one of three paths and either implement it or remove the dead schema.
+Delete `embedType`, `embedId`, and the `'embed'` node type, so an external link is
+what it already is everywhere in practice: text carrying a `link` mark.
 
-## Options
+## Non-goals
 
-### A. Live iframe embed (nodex's approach)
+- No rich link card, metadata fetch, poster asset, or provider override map.
+- No live iframe embed.
+- No migration (see below).
 
-Render embeds as iframes pointing at the source (e.g.
-`youtube.com/embed/<id>`). Cheapest to build. Worst for local-first:
-nothing works offline, the iframe can phone home, the embedded provider
-controls what shows.
+## Why removal rather than a card
 
-### B. Locally-cached metadata embed (recommended)
+Positional, not technical. Tenon "uses an outliner-shaped interface, but the
+product is aimed at structuring context, directing local agents, and keeping work
+inspectable" (`README.md`). Captured material earns its keep by being **findable
+and agent-readable**, not by looking rich. A metadata card is what a read-later
+product needs, and this is not one.
 
-At embed time, the main process fetches OpenGraph / oEmbed metadata and a
-poster image, stores the poster as an asset (see
-[`asset-subsystem.md`](asset-subsystem.md)), and persists:
-
-```ts
-{
-  id, type: 'embed',
-  embedType: string,            // 'youtube' | 'twitter' | 'generic'
-  embedUrl: string,             // canonical source URL
-  embedTitle?: string,
-  embedDescription?: string,
-  embedPosterAssetId?: string,  // local thumbnail
-  capturedAt: number,
-}
-```
-
-Renderer shows a rich link card (poster + title + description + source).
-Clicking opens the URL in the system browser or, optionally, expands an
-iframe on-demand. Works offline (card stays), respects local-first, reuses
-the asset subsystem.
-
-### C. Remove embed schema
-
-Drop `embedType` / `embedId` from `types.ts`, drop the `'embed'` node type.
-Force users to paste a URL as text — the text becomes a regular inline
-reference, perhaps decorated as a link via the existing `link` mark.
-
-Lowest cost. Loses the "card preview of external content" affordance that
-some users expect.
-
-## Decision — Option C (PM, 2026-08-03)
-
-**Option C.** Drop `embedType` / `embedId` and the `'embed'` node type; an external
-link is text carrying a `link` mark. Removing the dead schema is its own small
-change; it is not part of any other plan.
-
-The reasoning is positional rather than technical. Tenon "is aimed at structuring
-context, directing local agents, and keeping work inspectable" (`README.md`) —
-captured material earns its keep by being findable and agent-readable, not by
-looking rich. A metadata card is what a read-later product needs; this is not one.
 The same ruling is what lets `unified-command-surface.md` keep capture to a plain
 node in Today, and it lowers the priority of `launcher-provider-expansion.md`,
 whose breadth pays off mainly through richer presentation.
 
-The earlier recommendation was **Option B, deferred** — kept below as the
-path not taken. It was never scheduled; the asset subsystem it depended on
-(`asset-subsystem.md`, `image-rendering.md`, PR #8) stays useful regardless.
-The self-imposed "~2026-07-25 auto-switch to Option C" trigger had been removed by
-PM decision (2026-06-04); this ruling supersedes that open state.
+## Design
 
-## Non-goals
-
-- Provider-specific player UIs (custom YouTube controls, Twitter card
-  styles). One generic card template.
-- Authenticated embeds (Notion, Figma share links behind login).
-- Server-side rendering of the metadata fetch. Main process is enough.
-
-## Open questions (if Option B)
-
-- Should the metadata fetch be on a timer (re-fetch every N days to update
-  posters) or strictly one-shot? One-shot keeps things deterministic;
-  user can right-click → "refresh embed" if they need an update.
-- oEmbed providers vs. raw OpenGraph: OpenGraph is universal but lower
-  quality. Maintain a small per-provider override map for YouTube /
-  Twitter / Vimeo.
-- Privacy: the metadata fetch reveals to the source that lin is interested
-  in that URL. Make this opt-in per user or document it clearly.
-
-## Implementation sketch (Option B)
-
-1. Add `embed` ingest IPC: `ingest_embed(url)` → main fetches metadata +
-   poster → returns the populated node payload.
-2. Slash command `/embed <url>` → ingest → `create_embed_node`.
-3. `EmbedCard.tsx` renderer.
-4. Right-click → "Refresh metadata", "Open source", "Convert to plain
-   link".
-
-## Implementation sketch (Option C)
-
-1. Remove `embedType`, `embedId` from `Node` in `src/core/types.ts`.
+1. Remove `embedType` and `embedId` from `Node` in `src/core/types.ts`.
 2. Remove `'embed'` from `NodeType`.
+3. Delete the codec/validation branches that read them.
 
-**No migration.** Pre-release, a format change wipes `~/.lin-outliner-*` dev
-userData and deletes the old reader rather than shipping a migration or a
-compatibility branch (`AGENTS.md`). No `type: 'embed'` node has ever been
-creatable — there is no renderer and no command that produces one — so there is
-nothing to convert in the first place.
+**No migration, and nothing to migrate.** Pre-release, a format change wipes
+`~/.lin-outliner-*` dev userData and deletes the old reader rather than shipping a
+migration or compatibility branch (`AGENTS.md`). Independently, no `type: 'embed'`
+node has ever been creatable — there is no renderer and no command that produces
+one — so no document contains one to convert.
 
-`src/core/types.ts` is an infrastructure-ownership file, so this lands as its own
-small isolated change, not folded into a feature PR.
+## Shape
+
+**(a) One complete change in one PR**, and a small one. `src/core/types.ts` is an
+infrastructure-ownership file, so it lands **isolated** rather than folded into a
+feature PR, and siblings rebase once after it merges.
+
+## Verification
+
+`typecheck` (the compiler finds every reader of the removed fields), `test:core`,
+and a grep proving no `embedType` / `embedId` / `'embed'` reference survives
+outside this change.
+
+## Path not taken
+
+A locally-cached metadata card — fetch OpenGraph/oEmbed at capture time, store a
+poster as an asset, render title/description/source offline — was the standing
+recommendation until 2026-08-03. It was never scheduled, and it lost on
+positioning rather than cost. Recorded here so the decision is not silently
+re-opened; the reasoning and the alternatives it beat are in git history.
