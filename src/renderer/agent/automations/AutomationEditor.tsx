@@ -10,7 +10,8 @@ import type { Thread } from '../../../core/agent/protocol';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, TrashIcon } from '../../ui/icons';
-import { isProviderUsable } from '../../ui/agent/providerUsability';
+import { formatProviderName } from '../../ui/agent/providerNames';
+import { buildModelChoices, flattenModelChoices, type ModelChoiceGroup } from '../../ui/agent/modelChoices';
 import { Button } from '../../ui/primitives/Button';
 import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
@@ -80,14 +81,23 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const destinationThreads = props.threads.filter((thread) => (
     !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user'
   ));
-  const modelGroups = useMemo(
-    () => automationModelGroups(props.providerSettings, state.modelProvider),
-    [props.providerSettings, state.modelProvider],
+  const choices = useMemo(
+    () => buildModelChoices(props.providerSettings, { modelProvider: state.modelProvider, model: state.model }),
+    [props.providerSettings, state.model, state.modelProvider],
   );
-  const selectedModel = automationModelValue(state.modelProvider, state.model, modelGroups);
+  // A native select cannot truncate, so the provider grouping collapses fully.
+  const modelChoices = useMemo(() => flattenModelChoices(choices), [choices]);
+  const showProviderLabel = choices.showProviderLabel;
+  // Memoized and keyed on the groups, not the flattened models: this only needs
+  // the handful of provider ids, and an unmemoized Set over an OpenRouter-sized
+  // catalog would be rebuilt on every keystroke in the name/prompt fields.
+  const selectedModel = useMemo(
+    () => automationModelValue(state.modelProvider, state.model, choices.groups),
+    [choices.groups, state.model, state.modelProvider],
+  );
   const knownModelValues = useMemo(
-    () => new Set(modelGroups.flatMap((group) => group.models.map((model) => model.value))),
-    [modelGroups],
+    () => new Set(modelChoices.map((choice) => choice.value)),
+    [modelChoices],
   );
   const timezones = useMemo(() => automationTimezones(state.timezone), [state.timezone]);
 
@@ -262,16 +272,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
                 value={selectedModel}
                 variant="popup"
               >
+                {/* "Inherit" overrides nothing — it stores null for BOTH provider and
+                    model. It is not the composer's "always newest", which pins a
+                    provider; keep the two distinct. */}
                 <option value="">{t.inherited}</option>
                 {selectedModel && !knownModelValues.has(selectedModel) ? (
                   <option value={selectedModel}>{state.model}</option>
                 ) : null}
-                {modelGroups.map((group) => (
-                  <optgroup key={group.providerId} label={group.providerId}>
-                    {group.models.map((model) => (
-                      <option key={model.value} value={model.value}>{model.name}</option>
-                    ))}
-                  </optgroup>
+                {modelChoices.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {showProviderLabel
+                      ? `${choice.option.name || choice.option.id} · ${formatProviderName(choice.providerId)}`
+                      : choice.option.name || choice.option.id}
+                  </option>
                 ))}
               </SelectControl>
             </Field>
@@ -406,41 +419,10 @@ interface EditorState {
   readonly reasoningEffort: ReasoningEffort | '';
 }
 
-interface AutomationModelChoice {
-  readonly value: string;
-  readonly name: string;
-}
-
-interface AutomationModelGroup {
-  readonly providerId: string;
-  readonly models: readonly AutomationModelChoice[];
-}
-
-function automationModelGroups(
-  settings: AgentProviderSettingsView | null,
-  selectedProviderId: string,
-): readonly AutomationModelGroup[] {
-  if (!settings) return [];
-  const usableProviderIds = settings.providers
-    .filter((provider) => isProviderUsable(settings, provider))
-    .map((provider) => provider.providerId);
-  const providerIds = [...new Set([selectedProviderId, ...usableProviderIds].filter(Boolean))];
-  return providerIds.flatMap((providerId) => {
-    const models = settings.availableProviders.find((provider) => provider.providerId === providerId)?.models ?? [];
-    return models.length === 0 ? [] : [{
-      providerId,
-      models: models.map((option) => ({
-        value: composeProviderQualifiedModel(providerId, option.id),
-        name: option.name || option.id,
-      })),
-    }];
-  });
-}
-
 function automationModelValue(
   providerId: string,
   model: string,
-  groups: readonly AutomationModelGroup[],
+  groups: readonly ModelChoiceGroup[],
 ): string {
   if (!model.trim()) return '';
   const knownProviderIds = new Set(groups.map((group) => group.providerId));

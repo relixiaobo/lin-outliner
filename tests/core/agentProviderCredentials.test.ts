@@ -80,6 +80,8 @@ const {
   upsertProviderConfig,
 } = await import('../../src/main/agent/capabilities/agentSettings');
 
+const { resolveProviderModel } = await import('../../src/main/agent/capabilities/agentModelResolution');
+
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -186,6 +188,48 @@ function installCcSwitchRegistry(options: {
 }
 
 describe('provider credential resolver', () => {
+  // The model list the renderer receives is ordered by `providerModelOptions`;
+  // an unpinned Thread runs whatever `resolveProviderModel` picks. The picker
+  // presents the head of that list as "always newest", so the two heads must be
+  // the same model. Pinning this in main is the point: the renderer only reads
+  // index 0, so a renderer-side assertion would compare an array to itself and
+  // stay green through exactly the drift that makes the UI name a model that
+  // does not run.
+  test('the head of the renderer model list is the model an unpinned Thread runs', async () => {
+    const providerId = 'parity-test';
+    const model = (id: string) => ({
+      id,
+      name: id,
+      api: 'anthropic-messages' as const,
+      provider: providerId,
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000,
+      maxTokens: 100,
+    });
+    // Deliberately unranked on the way in, so the assertion proves a sort ran.
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Parity Test',
+      models: [model('paritytest-3-9'), model('paritytest-4-10'), model('paritytest-4-5')],
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+    try {
+      const view = await getProviderSettings();
+      const rendererHead = view.availableProviders
+        .find((candidate) => candidate.providerId === providerId)
+        ?.models[0];
+      expect(rendererHead?.id).toBe('paritytest-4-10');
+      expect(resolveProviderModel({ providerId }).id).toBe(rendererHead?.id);
+    } finally {
+      piModels().deleteProvider(providerId);
+    }
+  });
+
   test('provider settings preserve model-specific effort levels and display labels', async () => {
     const view = await getProviderSettings();
     const model = view.availableProviders

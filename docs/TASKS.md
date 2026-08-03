@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | (see note) | **building `agent-model-first-picker`** — one-pager reviewed 2026-08-03, no Draft PR yet (shipped #461, #463, #467, #468, #471, #472 — `agent-run-presentation-consistency` and `agent-subagent-interaction` both complete) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,6 +31,17 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`agent-model-first-picker` shipped (#478, 2026-08-03)** and is archived `done` — the second
+item on the top-of-queue list is gone, and cc-2 is free. The gate ran `/code-review high` and
+found ten defects, two of them blocking, both from the same root: the un-pin row read the model
+being un-pinned where it needed the model the `inherit` sentinel resolves to. The fix is worth
+knowing about because it is the shape this keeps taking — `buildModelChoices` now exposes
+`connectionHead` as its own field, keyed on `selection.modelProvider` rather than the resolved
+provider, so clamping, labelling, and offering the row all read one value that means "what the
+sentinel resolves to on THIS connection". A cross-provider pin makes those two providers differ,
+which is exactly when the old code was wrong. Nothing about the merge is blocked on the light/dark
+visual pass: the PM waived it.
 
 **In flight (2026-08-01).** Open PR queue: **empty** — #471 and #470 both merged, so
 the review queue is back at zero and the front is wide open. #470 took five gate
@@ -62,16 +73,14 @@ fail every single CI macOS sample and have never failed locally
 (`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
 baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
 broke them — there was no signal, so nobody knew.
-`agent-browser-control` implementation is **shelved** (PM ruling 2026-07-31) — and this
-line used to say "pending upstream Browser Pilot stabilization", which is **not** what was
-ruled. Corrected 2026-08-03: most of the plan was **superseded**, not paused. #406's
-managed-Skill channel already ships catalog recommendation, install from any public
-repository, and pinned-commit updates with preview and rollback, so Browser Pilot
-integrates through that path with **no Tenon code and no release**; the plan's distribution
-half would have coupled Tenon's release cadence to another project's for no security gain.
-What survives is narrower and real — turning browser artifacts (screenshots, PDFs,
-downloads) into durable Thread resources — and needs a re-scope plus a fresh PM go-ahead
-before anyone claims it. See the full entry under *Agent capabilities*.
+`agent-browser-control` is **closed as `superseded`** (2026-08-03) and its plan is archived.
+The 2026-07-31 ruling predicted that #406's managed-Skill channel made it unnecessary;
+that is now observable — `catalog/managed-skills-v1.json` ships `browser-pilot` as its
+first entry, and `src/` has no browser-control code. Browser Pilot reaches users with no
+Tenon code and no Tenon release. One piece never got built and is not obsolete: turning
+tool artifacts into durable Thread resources with a per-Turn output root. It is not
+browser-specific, and being filed inside a browser plan is part of why it never started —
+board it tool-agnostically if it is wanted.
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
 PR 2) after a **high** review gate — thirty candidates, ten verified findings, every
 one real and all ten answered in one hardening commit; the gate's own verify pass
@@ -349,10 +358,7 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    largest remaining product item; design ratified (D1–D8), retrieval dep shipped (#111). It is
    at the dev-drafted build one-pager step (phases / file-scope / tests) → PM ratify → build.
    **Do not pick this up.**
-2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
-   model-first model picker (merge Provider + Model Override, provider as secondary label,
-   "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
+2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
    import, and yielding import cache/finalization; #414 shipped the main-side document read model
@@ -369,14 +375,14 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    #427 cached active tag selector candidates and the empty-query order per snapshot.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
-4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+4. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-6. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+5. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
    and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
    ratify+sandbox and opt-in curation dry-run.
-7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+6. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
@@ -466,6 +472,27 @@ before any directional/security-sensitive build.
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
   loading. Depends on `skill-path-ownership`.
+- **agent-canonical-tool-call-history** (P1, `draft` — plan PR **#482** merged 2026-08-03,
+  codex-3) — make the exact admitted tool call the sole authority for tool history.
+  `ContextProjector.historyToolArguments()` currently reverse-engineers a model call from the
+  presentation Item: `commandExecution` becomes `{ command, cwd }` — inventing a `cwd` the
+  strict `bash` schema rejects (`additionalProperties: false`) while dropping the valid
+  `description` — and `fileChange` becomes a fabricated `{ changes }` no file schema accepts.
+  Compounding it, `startedToolItem` gives raw `input.cwd` precedence over `context.thread.cwd`
+  and `tool_execution_start` fires *before* `prepareToolCall` validates, so the model's own
+  rejected value is persisted as the audit record and replayed as a few-shot example — a
+  self-reinforcing loop that cost the packaged-task incident 64 pre-execution rejections and
+  ~$2.17. Fix: one immutable `modelCall` envelope per tool Item with three dispositions
+  (`replayable` / `redactedReplay` / `evidenceOnly`), a kernel admission event ahead of
+  execution-start, current-registry validation before every submission, and a pair-level
+  preflight that degrades to typed evidence rather than throwing on the user path (A12).
+  Secret-bearing model arguments (`Authorization: Bearer …`, `sk-…`) replay redacted with an
+  atomic marker instead of vanishing, closing an existing leak without teaching the model that
+  a command it ran never happened. `historyToolArguments`/`historyToolIdentity` are deleted and
+  AC-10 makes the empty `rg` the completion test (A11). **Shape (a): ONE complete feature in
+  ONE PR** — the PM ruled against splitting the large-argument payload store into its own PR.
+  **Gate at implementation:** `/code-review ultra` (protocol surface).
+  See `docs/plans/agent-canonical-tool-call-history.md`.
 - **agent-context-integrity** (P1, `done` 2026-07-29; PRs #440, #441, #444) —
   restored the complete canonical model-context contract. PR 1 (#440): strict
   evidence Items and codecs, Thread-owned verified context payloads, typed
@@ -652,55 +679,25 @@ see *Recently completed*.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1 design, **implementation `shelved` by PM ruling
-  2026-07-31, and its distribution half `superseded`**; design updated #443, revised
-  #459) — the in-repo blockers cleared (#455/#460 landed, #456's catalog judge guards
-  the landing zone), but the review of *how* Browser Pilot should arrive concluded the
-  plan was solving a problem we had already solved. Its distribution design (checked-in
-  release manifest, build-time `extraResources` staging, `resourcesPath`-only executable
-  resolution, bundled upstream skill directory, and the non-goal at `:38` forbidding
-  PATH discovery / `npx` / install-during-a-task) **couples Tenon's release cadence to
-  Browser Pilot's for no security gain** — Full Access already permits arbitrary
-  commands through `bash`, so refusing to discover one binary buys reproducibility, not
-  safety. #406's managed-Skill channel already ships catalog recommendation, install
-  from any public repository, pinned-commit updates with preview and rollback; a tool's
-  own Skill owns its preflight and version pairing (see *Third-Party Tool Integration*
-  in `docs/spec/agent-skills.md`). Browser Pilot integrates through that path with **no
-  Tenon code and no release**. What survives as genuinely Tenon-side value is narrower:
-  **turning browser artifacts (screenshots, PDFs, downloads) into durable Thread
-  resources** readable by `file_read` and pruned by the resource system, plus the
-  per-Turn output root and browser-shaped capability effects. The output-flag
-  vocabulary at `:362-371` should go with the rest — parsing another project's flags to
-  guess where it writes is the same category of mistake, and it means adding a flag to
-  Browser Pilot can break Tenon admission; push containment into the tool via
-  `BROWSER_PILOT_OUTPUT_DIR` instead. Re-scope before any claim; do not claim without a
-  fresh PM go-ahead.
-
-  The shelved design: Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
-  its classified `bash` path rather than reimplementing browser automation or
-  exposing a Tenon-native tool family. One complete feature PR first establishes
-  prepared execution and durable projection, then adds deterministic distribution,
-  the direct command provider, Thread identity, Turn files, conservative Browser
-  capabilities, transient stdin, lifecycle cleanup, and per-Turn Skill availability.
-  **Plan revision shipped 2026-07-30 (PR #459, codex-3)**: Prepared Tool
-  Execution is rebuilt on the kernel's runner port — four-operation
-  `ToolExecutionContract` (adding `projectUpdate` for transient/durable update
-  splitting), a durable intent/decision start-event envelope consumed by
-  `PiEventNormalizer` (which stays the sole tool-Item translator with the
-  #444 diagnostics chain intact), `ToolExecutionAdapter` replacing
-  `ToolRuntime.instrumentTool` as the sole prepared-lifecycle and
-  extension-hook owner, the host-only `ToolSafetyEffect` vocabulary with the
-  new ordered `decide(effect)` stage (non-user-configurable safety floor
-  first — PM-ruled 2026-07-30 — then explicit user blocks), and fail-closed
-  `unrecognized_output_path` admission for unclassified commands. The
-  2026-07-30/31 rulings (no catalog admission gate, worst-case unclassified
-  marker, Apple Silicon launch, Full Access sensitive-read default,
-  conversation-only authorization remediation) are folded in. The claiming
-  dev rebases on the landed #455/#460 catalog baseline and repeats the
-  open-PR scope check before claiming code. URL Preview remains wholly
-  independent. See `docs/plans/agent-browser-control.md`. **This is the single
-  largest unclaimed P1;** codex-3 authored the #459 revision and holds the most
-  context, but the claim is open.
+- **agent-browser-control** (P1 design, **`superseded` and closed 2026-08-03** — plan archived
+  at `docs/plans/archive/agent-browser-control.md`; design authored #442/#443, revised #459;
+  **no product code ever shipped, and none is needed**) — the 2026-07-31 review concluded the
+  plan was solving a problem #406's managed-Skill channel had already solved, and that is now
+  observable rather than predicted: **`catalog/managed-skills-v1.json` ships `browser-pilot`
+  as its first entry** (`relixiaobo/browser-pilot`, `plugin/skills/browser-pilot`, tracked
+  `main`, with a compatibility range), while `rg -il 'browserPilot|browser-control' src/` is
+  empty. Browser Pilot reaches users through catalog recommendation, install from a public
+  repository, and pinned-commit updates with preview and rollback — no Tenon code, no Tenon
+  release. The plan's distribution half (checked-in release manifest, build-time
+  `extraResources` staging, `resourcesPath`-only executable resolution, and the non-goal
+  forbidding PATH discovery) would have coupled Tenon's release cadence to another project's
+  for no security gain: Full Access already permits arbitrary commands through `bash`, so
+  refusing to discover one binary buys reproducibility, not safety.
+  **What did not get built, and is not obsolete:** turning tool artifacts — screenshots, PDFs,
+  downloads — into durable Thread resources readable by `file_read` and pruned by the resource
+  system, plus a per-Turn output root. That is worth having and is **not browser-specific**;
+  filing it inside a browser plan is part of why it never started. If it is wanted, board it
+  as a tool-agnostic item rather than reviving this one.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
@@ -745,26 +742,7 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
-- **agent-model-first-picker** (P2, *direction PM-ratified 2026-06-23 — needs a dev-drafted
-  build one-pager*) — make the agent profile's model setting **model-first, not provider-first**.
-  Today `AgentModelEffortSelector` makes the user pick **Provider** (with an `Inherit` abstraction)
-  → **Model Override** (another `Inherit`) → **Thinking Level**; the user's mental model is just
-  "use the best/newest model," and they don't care which connection it comes from. Worse, the product
-  is now **single-agent** (one Neva, #300), so per-profile provider-pinning is vestigial multi-agent
-  baggage. **Goal:** collapse Provider + Model Override into **one "Model" picker** that lists models
-  flat **across all connected providers**, with provider shown only as a **secondary label** per
-  model; **default = "best available"** (the catalog's first-ranked model — which `Inherit` already
-  resolves to today, so the capability exists, only the presentation hides it). When exactly **one**
-  provider is connected, the provider concept should not surface at all. **Key constraint /
-  cheapness:** a model belongs to a connection, so provider can't fully vanish in multi-connection
-  setups (keep it as the secondary label) — but the **saved value stays the canonical
-  `providerId/modelId`** (`core/agentModelId`), so this is **renderer/UX-only, no protocol/data-model
-  change**. **Scope for the dev plan:** the profile editor (`AgentEditor` / `AgentModelEffortSelector`)
-  AND the composer quick-switcher (`AgentComposerModelControl`) for consistency; relabel `Inherit` →
-  "best available" framing; decide the ranking/"best" source (catalog `firstRanked`) and whether the
-  default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
-  i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
-  this is model *selection* UX).
+
 ### Files & media
 
 The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
@@ -982,6 +960,32 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **agent-model-first-picker** (cc-2, PR #478, merged 2026-08-03, plan archived) — model
+  selection is model-first: one flat list of models across every listed connection, the model
+  name leading each row and the provider demoted to a secondary origin label shown only when
+  more than one provider is listed. Providers survive as a **truncation** unit, not a visual
+  one — each keeps its own "show all" budget (whose expander names its provider) and a pinned
+  model outside that window stays visible. The list leads with a floating selection that
+  follows the connection's newest model, written as the `inherit` sentinel and never rewriting
+  the Thread's provider, so choosing it cannot migrate a Thread to another connection.
+  Renderer-only: the stored value is still the canonical `providerId/modelId`.
+  **The gate's finding worth carrying forward** — `/code-review high` returned ten defects, and
+  the two blocking ones were one mistake made twice: the un-pin row clamped the reasoning effort
+  and drew its label from the model being un-pinned, not from the model `inherit` resolves to.
+  Pinned `high` on a model that supports it, with a ranked head that does not, main's validator
+  rejected the commit, `commit` swallowed the throw, and the Thread could not be un-pinned at
+  all — the feature the branch existed to ship was unreachable for real catalog pairs, and the
+  round-trip e2e could not see it because `'GPT-5.4'` is a substring of `'GPT-5.4 Mini'`. The fix
+  gives that model its own name: `buildModelChoices` exposes `connectionHead`, keyed on
+  `selection.modelProvider` rather than the resolved provider (a cross-provider pin makes them
+  differ), and clamping, labelling, and whether to offer the row at all now read it — the row is
+  withheld when that connection lists no models, where it previously rendered off the aggregate
+  count and committed a sentinel main cannot satisfy. A pinned model is also reported verbatim
+  now, including an id stored without a `providerId/` qualifier: the old head fallback named the
+  head while the runtime ran the bare id, which is the show-one-run-another confusion the
+  floating/pinned split exists to remove. Design folded into
+  `docs/spec/agent-thread-rendering.md`. Light/dark visual pass waived by the PM.
 
 - **e2e-signal-on-main** (main-agent, landed 2026-08-01 directly on `main`,
   *fast-track, no plan file*; PM ratified the one-pager) — **the repository now has CI**,
@@ -1394,7 +1398,7 @@ anything.
 - **browser-control-plan-refresh**
   (`codex-3/agent-browser-control-plan-refresh`, PR #459, codex-3, merged
   2026-07-30, plan-track design update) — realigned
-  `docs/plans/agent-browser-control.md` with the post-#444/#445/#451/#456
+  `docs/plans/archive/agent-browser-control.md` with the post-#444/#445/#451/#456
   runtime and folded in the 2026-07-30/31 PM rulings; plan-only, no product
   code. **Gate (main):** medium review confirmed 7 findings — the plan leaned
   on a nonexistent `decide(effect)`/safety-floor mechanism, `capabilityIntent`
@@ -1537,7 +1541,7 @@ anything.
   prepared-execution and durable-projection boundary followed by the direct CLI
   provider, deterministic distribution, Thread identity, Turn files, capability
   mapping, lifecycle cleanup, and atomic Skill availability. The implementation
-  remains pending in `docs/plans/agent-browser-control.md`; no product code shipped.
+  remains pending in `docs/plans/archive/agent-browser-control.md`; no product code shipped.
   **Gate (main):** ultra review closed the external-message block bypass, missing
   non-shell stdin transport, and restricted-Thread Skill visibility findings.
   Final head `830aaa12` had no reportable findings; `docs:check` and diff check
@@ -1551,7 +1555,7 @@ anything.
   and pre-persistence input/output redaction. URL Preview rich capture is now a
   separate future read-only internal-Preview feature; launcher provider breadth
   owns classification only. The implementation plans remain active at
-  `docs/plans/agent-browser-control.md`,
+  `docs/plans/archive/agent-browser-control.md`,
   `docs/plans/browser-extension-integration.md`,
   `docs/plans/launcher-provider-expansion.md`, and
   `docs/plans/unified-command-surface.md`.
@@ -2749,7 +2753,7 @@ anything.
   directional/security-sensitive. **Gate (main):** deep document review against both reference projects
   found stale built-in-skill packaging wording, an incorrect `cu` paste method name, and missing
   `bp net --after` coverage; codex fixed all before merge. Verified on the merge: `bun run docs:check`
-  and `git diff --check`. Shape (b), active plan files: `docs/plans/agent-browser-control.md` and
+  and `git diff --check`. Shape (b), active plan files: `docs/plans/archive/agent-browser-control.md` and
   `docs/plans/agent-computer-control.md`.
 
 - **linlab-built-in-skills** (`codex-3/linlab-built-in-skills`, PR #359, codex-3,

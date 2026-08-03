@@ -83,8 +83,10 @@ a Preview or external browser invisibly.
 - Guest identity and read state are ephemeral and discarded when the Preview is
   destroyed.
 - Clearing URL Preview website data remains the user's global Settings action.
-- Browser Control safety and user-browser authorization live exclusively in
-  `agent-browser-control.md`.
+- Browser Control safety and user-browser authorization lived in
+  `agent-browser-control.md`, **superseded 2026-08-03** — Browser Pilot ships
+  through the managed-Skill catalog instead, so that authority is the Skill's,
+  not Tenon's. Archived at `docs/plans/archive/agent-browser-control.md`.
 
 ### Relationship To Current Modules
 
@@ -92,8 +94,9 @@ a Preview or external browser invisibly.
 - `src/core/preview.ts` remains URL Preview target and navigation authority.
 - `docs/spec/workspace-layout.md` remains the authority for the shipped URL
   Preview session and sandbox.
-- `agent-browser-control.md` is an independent Browser Pilot CLI integration and
-  consumes none of this plan's interfaces.
+- `docs/plans/archive/agent-browser-control.md` was an independent Browser Pilot
+  CLI integration and consumed none of this plan's interfaces; it is superseded
+  and this plan never depended on it.
 - Current specs change only when this complete feature ships.
 
 ## Open Questions
