@@ -85,19 +85,11 @@ context menu calls `api.moveNode(...)` over IPC and Core applies it. Only
 the renderer's `DocumentIndex`. Main holds the document (`documentService.ts`), so
 main can evaluate them once they are shared code.
 
-**Placement A (preferred).** Registry and predicates in `src/core/`, evaluated in
-main against `DocumentProjection`; both views render what they are given.
-
-**Placement B (named fallback, if A's migration proves expensive).** Registry stays
-in the renderer; the panel receives an **evaluated action list** over IPC, exactly
-the pattern already shipped for search — `launcher:searchNodes` resolves hits into
-`LauncherNodeMatch` views in main *because* the launcher cannot read the document.
-Cost: the main renderer must be alive, so out-of-app actions on a node target
-degrade to unavailable. Capture, search, jump, and send-to-agent are unaffected.
-
-Both placements keep **one** registry and one implementation; they differ only in
-where it is evaluated. Open question 1 decides between them, and it is answered by
-a spike **before** stage 2 — not discovered during it.
+**So the registry and its predicates live in `src/core/`**, evaluated against
+`DocumentProjection` wherever a projection is at hand, and both views render what
+they are given. The migration cost of the predicates is measured by the stage-0
+spike (open question 1), which also names the contingency if it proves expensive —
+a cost question, not a second design.
 
 Registry entry shape:
 
@@ -218,6 +210,13 @@ individually — not five chips. Five chips overflow a 760px panel and make "rem
 everything → global search" ambiguous, and the actions that accept a selection take
 the set, not its members.
 
+**Focus versus selection is not a new rule** — the operand resolves through the
+shipped `contextMenuSelection.resolveActiveNodeSelection`: the selection wins only
+when the focused node is *part of* a multi-selection (collapsed to roots by
+`selectedRootIds`), otherwise the focused node alone, with reference rows resolving
+to their target. Reusing it is what makes the two projections (D2) agree by
+construction instead of by inspection.
+
 ### D5 — One retrieval implementation
 
 Every "find a node" path resolves through the shared retrieval service
@@ -330,15 +329,17 @@ path degrades; it never throws on the user's action.
 **Shape (a): one complete feature in one PR.** The stages below are build order
 *within* that PR, not releases.
 
-0. **Spike:** cost of moving the predicates to core (D1 placement A vs B). Decides
-   stage 2's shape before it is built.
+0. **Spike:** the migration cost of the predicates into core (D1, open question 1).
+   Confirms stage 2's shape, or triggers the named contingency, before it is built.
 1. **Converge node retrieval** onto the shared service (three implementations →
    one). *Highest user-visible payoff and independent of everything below* — it is
    not a dependency of the registry, so it goes first rather than fourth. If the PR
    is ever cut short under pressure, the part that mattered has landed.
-2. Registry + predicates per the stage-0 verdict.
-3. Populate the registry from the node context menu's action set plus the
-   navigation destinations (D3).
+2. Registry + predicates in core (D1), per the stage-0 verdict.
+3. Populate the registry. **First population is exactly** the node context menu's
+   action set plus the navigation destinations (D3) — a bounded, already-implemented
+   set. Menu-bar items with no keyboard path are a later pass, not this PR: the
+   registry's value is that adding them later is cheap.
 4. Re-render the context menu as a registry view, **differentially proven against
    the old path** (D2), which stays in the tree as the oracle.
 5. Render the registry as the command surface's searchable view: rows into the
@@ -380,19 +381,17 @@ ones. ("Send to the agent panel" is genuinely a registry action and belongs here
 
 ## Open questions
 
-1. **Placement A or B (D1)** — how much of `renderer/ui/interactions/` moves to
-   core without churning unrelated call sites? The predicates are pure but typed
-   against `DocumentIndex`. **Answered by the stage-0 spike, before stage 2 is
-   built**; B is the named fallback, so this cannot block the PR.
-2. Beyond the node context menu's action set and the navigation destinations (both
-   settled), do menu-bar items with no keyboard path join the first population, or
-   wait for a second pass?
-3. Does the in-app context chip carry the focused node, the selection, or both
-   when they disagree?
-4. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
+1. **Migration cost of the predicates into core (D1)** — they are pure but typed
+   against `DocumentIndex`; the adapter cost onto `DocumentProjection` is the one
+   real unknown, and the stage-0 spike measures it before stage 2 is built. If it
+   proves expensive, the contingency is to keep the definitions in the renderer and
+   hand the panel an evaluated list over IPC — the pattern `launcher:searchNodes`
+   already ships. That costs out-of-app actions on a node operand and nothing else,
+   so this question cannot block the PR.
+2. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
    outside the renderer's `icons.ts` so the launcher bundle stays small), or do
    registry entries carry icon ids resolved per view? See `icon-semantics.md`.
-5. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
+3. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
    dwell before dismissal, an OS notification, or a main-window surface? The
    ordering is settled; the presentation is not, and it must work with Tenon in
    the background.
