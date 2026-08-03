@@ -40,12 +40,13 @@ The important boundaries:
 
 ## Window Chrome (Top Strip)
 
-The window chrome is a single thin strip at the window top, at traffic-light
-height. It is the window's title-bar drag region and is part of the app shell.
-There is **no global tab strip and no top-bar back/forward**; page-history
-navigation is keyboard-driven. The full visual contract is in
-[`design-system/surfaces.md`](./design-system/surfaces.md#shell); this section
-covers only the ownership model.
+The window chrome is a single thin visual strip at the window top, at
+traffic-light height, and is part of the app shell. Native title-bar dragging is
+owned by the fixed left/right window-chrome zones and pane breadcrumb chrome,
+not by every header aligned to that strip. There is **no global tab strip and no
+top-bar back/forward**; page-history navigation is keyboard-driven. The full
+visual contract is in [`design-system/surfaces.md`](./design-system/surfaces.md#shell);
+this section covers only the ownership model.
 
 The strip holds three regions on one shared centreline:
 
@@ -80,9 +81,11 @@ Center — per-pane breadcrumb headers:
 
 Right corner — agent chrome:
 
-- The selected Thread title and compact Thread actions when the dock is open.
+- The selected Thread title and compact Thread actions when the dock is open;
+  this header is visually aligned to the strip but is not a native drag region.
 - The agent toggle, pinned to the top-right corner as a fixed window-chrome
-  control.
+  control. Its containing right window-chrome zone owns native dragging, and the
+  toggle is its `no-drag` descendant so macOS delivers the click.
 
 The sidebar and agent toggles are symmetric: fixed, neutral, and signalling
 open/collapsed by glyph state in place, never by a selected background or a

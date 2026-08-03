@@ -25,15 +25,19 @@ and the sidebar toggle sit at its top. Default width is `216px`, range
 radius, `16px` icon slots, neutral hover, and no persistent selected-fill for the
 workspace tree. Product Settings stays pinned at the bottom.
 
-**Top strip.** One drag-region strip at traffic-light height holds:
+**Top strip.** One visually continuous strip at traffic-light height holds:
 
 - left: traffic lights + sidebar toggle;
 - center: each pane breadcrumb header and its close affordance;
 - right: selected Thread header when open plus the fixed agent toggle.
 
-Everything shares the traffic-light centreline. Header controls follow
-[patterns.md → Header Chrome](./patterns.md#header-chrome): fixed position,
-stable hit target, colour-deepen hover, no rounded-square hover box.
+Everything shares the traffic-light centreline. Native window dragging is split
+across the fixed left/right `WindowChrome` zones and pane breadcrumb chrome; it
+is not inherited by every header aligned to the strip. In particular, the
+selected Thread header is visually aligned but is not a drag region because its
+box overlaps the fixed agent toggle from a sibling DOM tree. Header controls
+follow [patterns.md → Header Chrome](./patterns.md#header-chrome): fixed
+position, stable hit target, colour-deepen hover, no rounded-square hover box.
 
 **Rail toggles.** Sidebar and agent toggles are fixed window-chrome controls in
 stable absolute positions. They change state in place, never move with pane count,
