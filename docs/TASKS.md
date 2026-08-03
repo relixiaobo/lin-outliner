@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-dock-collapse-hit-region` | **building `agent-dock-header-interactions`** — Draft PR #481, gate ran `/code-review medium` (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,6 +31,26 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`agent-dock-header-interactions` — in-progress (#481, codex-2, still draft).** Design:
+`docs/plans/agent-dock-collapse-hit-region.md`. The fixed top-right agent toggle stopped
+collapsing the dock in the native macOS window, and the cause is worth carrying forward:
+`.thread-dock-header` declared `-webkit-app-region: drag` from a *sibling* DOM subtree whose
+box overlaps the toggle's hit box, so macOS consumed the press as title-bar drag before React
+saw the click. Electron only carves a `no-drag` control out of a drag region reliably when the
+control is a DOM **descendant** of that region — which `shell.css` already documented and
+`thread.css` was contradicting. The fix drops the declaration and hands dragging back to the
+right window-chrome zone; the Thread-list trigger also loses its redundant leading `AgentIcon`
+and shows its chevron at rest. **Gate: `/code-review medium`, four findings.** Two are answered
+on the branch — this board entry (the plan was orphaned, so `docs:check` C2 was red) and the
+now-dead `.thread-dock-header button/input { no-drag }` rule, which sat four lines under the new
+comment saying the header is *not* a drag region and would have re-taught the exact belief that
+caused the bug. Two are open and deliberate: the fix trades away ~290px of window-drag surface
+(dock open, the top-right band no longer drags or double-click-zooms), recoverable by putting
+`drag` on an inner spacer bounded to the header's **content** box, which stops exactly at the
+right zone's inner edge; and the new E2E asserts a CSS declaration rather than native behavior,
+so nothing in CI actually proves the bug is fixed — Chromium ignores app regions, and the native
+click check was blocked by the single-instance lock.
 
 **`agent-model-first-picker` shipped (#478, 2026-08-03)** and is archived `done` — the second
 item on the top-of-queue list is gone, and cc-2 is free. The gate ran `/code-review high` and

@@ -33,11 +33,6 @@
   user-select: none;
 }
 
-.thread-dock-header button,
-.thread-dock-header input {
-  -webkit-app-region: no-drag;
-}
-
 .thread-dock-title-button {
   display: inline-flex;
   width: fit-content;
