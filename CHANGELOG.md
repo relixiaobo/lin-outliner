@@ -289,6 +289,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **`/new` starts a Thread without leaving the composer (PR #486, codex-2)** —
+  typing `/new` and pressing Enter creates an empty Thread and selects it, so
+  starting a fresh conversation no longer means reaching for the Thread list.
+  The completion is offered in the slash menu like any other command, but once
+  the token is typed in full the menu gets out of the way: a slash command that
+  takes no argument (`/new`, `/clear` — the ones whose `insertText` carries no
+  trailing space) closes its own trigger on an exact match and submits on the
+  first Enter, while argument-taking commands like `/compact` keep their menu
+  open. Casing variants are treated as an unfinished token, so `/New` offers the
+  completion rather than being sent to the model as a message. `/new` is gated on
+  any usable provider rather than the current Thread's own send gate, and when no
+  provider is configured it says so inline instead of doing nothing; a failed
+  creation keeps both the draft and the Thread you were in, and returns focus to
+  the composer once it is editable again. Runtime command names are reserved, so
+  a user Skill named `new` no longer renders a duplicate, uninvocable row.
+  Leaving for a new Thread never interrupts the one you left: a Thread whose own
+  Turn is still running now carries the same background-work dot the Thread list
+  already showed for working descendants — but a Thread merely parked on a
+  question does not, because that state needs you to come back, not to be told it
+  is busy.
+
 - **A Subagent is a place you can go, and every delegated child says what it is
   doing (PR #471, cc-2)** — child Threads leave the conversation history
   entirely: `thread/list` pages root conversations only, and a child is reached

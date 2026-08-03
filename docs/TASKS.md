@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,6 +31,28 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`agent-new-thread-slash-command` shipped (#486, codex-2, 2026-08-03)** and is archived `done`
+(`docs/plans/archive/agent-new-thread-slash-command.md`). `/new` in the Thread composer now creates
+an empty Thread from the keyboard, so starting a Thread no longer means reaching for the Thread
+list. **Gate: `/code-review high` (multi-agent), 10 findings — 9 answered on the branch in
+c8cd9da4, the tenth was this board entry.** The one to carry forward is where the fix lives, not
+what it fixed: the first implementation special-cased `NEW_THREAD_SLASH_COMMAND_ID` inside the
+*shared* composer keydown handler, and that placement generated three separate defects — keying the
+Enter pre-empt on the typed query alone meant it never consulted `selectedIndexRef` (arrow down to
+`/clear`, which matches the `/new` query through its description, and Enter created a Thread
+instead), and comparing case-insensitively while the submit classifier demanded exact `/new` meant
+`/New` + Enter shipped a literal `/New` to the provider as a billed Turn. The answer was to raise
+the rule one layer, into the trigger: `filterComposerTrigger` now closes the menu when the query
+exactly matches a command whose `label === insertText` — i.e. one that takes no argument. `/new`
+and `/clear` both submit on the first Enter, `/compact` (trailing space, takes an argument) keeps
+its menu, and all three findings dissolve together. **A special case in a shared handler is the
+smell; the general rule almost always belongs one layer up.** Two smaller carry-forwards: runtime
+command labels are now reserved against user Skills (a Skill named `new` used to render a second
+identical `/new` row that could never be invoked), and `waitingOnUserInput` no longer counts as
+background work — an unselected Thread parked on a question was showing the "Background work
+running" dot, which reads as *still working* and is exactly the state a user must be pulled back
+to, not away from.
 
 **`preview-header-action-alignment` shipped (#484, codex, 2026-08-03)** — fast-track, no plan
 file. In split layouts the file-preview header pulled Translate and More next to the filename
