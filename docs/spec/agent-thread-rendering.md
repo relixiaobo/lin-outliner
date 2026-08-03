@@ -20,10 +20,13 @@ displace a root between pages — and the list renders no lineage indent. A chil
 is reached from the parent transcript, from the parent's Thread Details, or by
 direct id; the renderer's Thread map is a catalog rather than the list, so a
 child recovered that way keeps its identity and live status, and a reload's
-omission of children proves nothing about them. A root whose subtree has a live
-descendant Turn shows a neutral background-activity indicator on its list row,
-which is also the only place a fire-and-forget child is visible after its
-parent Turn ended.
+omission of children proves nothing about them. A root shows a neutral
+background-activity indicator on its list row when it is not selected and its
+own Turn is actively running, or whenever its subtree has an actively running
+descendant Turn. A Thread flagged `waitingOnUserInput` is blocked rather than
+running and does not receive that indicator. The selected root's own foreground
+Turn does not duplicate its status in the list. This is also the only place a
+fire-and-forget child is visible after its parent Turn ended.
 
 A selected child Thread gains a back affordance naming its parent, ahead of the
 list affordance rather than in place of it: the Thread list is the only route to
@@ -575,16 +578,40 @@ the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
 `request_user_input` suspends the hand-back entirely.
 
-Typing `/` opens the established composer command menu. It is populated from
-the reserved `/compact` and `/clear` commands plus the current user-invocable Skill
-catalog. `/compact` inserts a trailing space for optional instructions; `/clear` inserts
-the complete command. Skill entries insert `/<skill> ` without
-flattening other structured composer content. A direct Skill invocation without
-attachments is resolved by the Turn's Skill runtime before the model prompt is
-sent; the canonical userMessage Item retains exactly what the user submitted.
-The two reserved commands are recognized only as the sole text part and require an idle
-Thread; they create completed feature Turns without sending a user message or launching
-the model. Messages with attachments and unknown slash text remain ordinary Turn input.
+Typing `/` opens the established composer command menu. It keeps `/compact` as
+the default entry, followed by `/clear` and `/new`, then appends the current
+user-invocable Skill catalog. Runtime names are reserved case-insensitively, so
+a conflicting Skill entry is omitted rather than rendered as an unreachable
+duplicate. Filtering ranks label matches ahead of description-only matches.
+`/new` and `/clear` insert their complete command; an exact-cased complete token
+closes the menu so the next Enter submits it. `/compact` inserts a trailing
+space for optional instructions. A case-variant query remains in the menu, so
+Enter accepts the selected canonical command text and waits for a subsequent
+submission. Skill entries insert `/<skill> ` without flattening other structured
+composer content. A direct Skill invocation without attachments is resolved by
+the Turn's Skill runtime before the model prompt is sent; the canonical
+userMessage Item retains exactly what the user submitted.
+
+Submitting `/new` as the exact trimmed text with no attachments, Node
+references, file references, or other structured content routes to the same
+dock-owned `thread/start` action as the Thread list. It creates and selects one
+root user Thread, focuses its empty composer, and starts no Turn. The prior
+Thread remains intact; an active prior Turn continues in the background without
+an interrupt or steer request. Thread creation uses the list action's
+any-usable-provider gate, pending guard, and dock error presentation rather than
+the selected Thread's send gate. A failed creation keeps the old selection and
+the `/new` draft and restores focus only after the pending disabled state has
+cleared. A keyboard submission blocked by the provider gate shows the existing
+provider-required copy inline. Structured content accompanying exact `/new`
+blocks both Thread and Turn creation, preserves the complete draft, and shows
+inline validation until the user removes that content or edits away from the
+command.
+
+`/compact` and `/clear` are recognized only as the sole text part and require an
+idle Thread; they create completed feature Turns without sending a user message
+or launching the model. A case variant submitted without accepting its canonical
+menu completion, `/new` with additional text, messages with attachments that are
+not exact `/new`, and unknown slash text remain ordinary Turn input.
 
 Only a root user Thread exposes the composer. Child, Automation, Memory, and
 other feature Threads remain fully inspectable but are driven through their

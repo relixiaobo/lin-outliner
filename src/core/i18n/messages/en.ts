@@ -1486,6 +1486,8 @@ commandPalette: {
       slashCommandsLabel: 'Thread slash commands',
       compactCommandDescription: 'Replace earlier context with a durable summary',
       clearCommandDescription: 'Start a new context epoch without deleting history',
+      newThreadCommandDescription: 'Start a new Thread',
+      newThreadStructuredContentError: 'Remove attachments and references before starting a new Thread.',
       mentionSuggestionsLabel: 'Thread reference suggestions',
       noCommands: 'No commands',
       searchingFiles: 'Searching files...',

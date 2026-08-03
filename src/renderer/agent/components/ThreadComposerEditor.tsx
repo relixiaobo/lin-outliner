@@ -50,6 +50,7 @@ import {
   threadNodeReferenceOpenOptionsFromClick,
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
+import { isExactSlashCommandMenuQuery } from '../threadComposerCommands';
 
 export interface ThreadComposerNodeReference {
   nodeId: NodeId;
@@ -802,7 +803,10 @@ function filterComposerTrigger(
   props: ThreadComposerEditorProps,
 ): ComposerTrigger | null {
   if (!trigger) return null;
-  if (trigger.mode === 'slash' && props.allowSlashCommands === false) return null;
+  if (trigger.mode === 'slash') {
+    if (props.allowSlashCommands === false) return null;
+    if (isExactSlashCommandMenuQuery(trigger.query, props.slashCommands)) return null;
+  }
   if (
     trigger.mode === 'mention'
     && props.allowNodeReferences === false
@@ -1096,12 +1100,14 @@ function isComposerAtom(node: PMNode | null | undefined): node is PMNode {
 
 function filterSlashCommands(commands: readonly AgentSlashCommandView[], query: string): AgentSlashCommandView[] {
   const normalized = query.trim().toLowerCase();
-  const items = normalized
-    ? commands.filter((command) => (
-        command.label.toLowerCase().includes(normalized)
-        || command.description?.toLowerCase().includes(normalized)
-      ))
-    : [...commands];
+  if (!normalized) return commands.slice(0, 12);
+  const labelMatches = commands.filter((command) => command.label.toLowerCase().includes(normalized));
+  const labelMatchIds = new Set(labelMatches.map((command) => command.id));
+  const descriptionMatches = commands.filter((command) => (
+    !labelMatchIds.has(command.id)
+    && command.description?.toLowerCase().includes(normalized)
+  ));
+  const items = [...labelMatches, ...descriptionMatches];
   return items.slice(0, 12);
 }
 
