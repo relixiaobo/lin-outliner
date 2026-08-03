@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
-| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
@@ -31,6 +31,24 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`preview-header-action-alignment` shipped (#484, codex, 2026-08-03)** — fast-track, no plan
+file. In split layouts the file-preview header pulled Translate and More next to the filename
+while Close stayed at the far right. The cause is a seam `pane-reorder` (#452) opened: it made the
+crumb *content* a fit-content `.pane-drag-handle`, and the preview actions were rendered as
+breadcrumb children, so they were swept inside that handle. The shared breadcrumb now has a
+`trailingActions` slot outside the handle, sharing the trailing grid column with Close.
+**Gate: `/code-review medium`, three findings plus a nit, all answered in f86df952.** The one to
+remember is the same descendant/carve-out family as #481, one level down: `.panel-breadcrumb-trailing`
+was not in the `no-drag` list, so the 4px token gap **between two adjacent icon buttons** stayed a
+live window-drag strip — it is not enough for the buttons to opt out, the group's own gaps must
+too. The E2E now reads that gap from `columnGap` instead of a hardcoded tolerance and asserts the
+wrapper's `app-region`, so both halves are pinned. A fourth finding was withdrawn at the gate and
+should not be re-litigated: the last crumb now matching `.panel-breadcrumb-segment:last-child` is
+not a regression — on `main` every non-translatable file-node header already matched it, and the
+percentage inside `min(12rem, 46%)` cannot widen the fit-content handle. **The light/dark pass was
+the dev's, not the gate's**; the follow-up commit is visually inert (a `no-drag` declaration and a
+dead `justify-self`), so it does not invalidate that pass.
 
 **`agent-dock-header-interactions` shipped (#481, 2026-08-03)** and is archived `done`
 (`docs/plans/archive/agent-dock-collapse-hit-region.md`). The fixed top-right agent toggle had

@@ -73,6 +73,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Preview header actions stay beside Close in split layouts (PR #484, codex)** —
+  with more than one pane open, an EPUB or URL preview pulled its Translate and
+  More controls up next to the filename while the `×` sat alone at the far right.
+  The pane-reorder work had narrowed the breadcrumb's drag-to-reorder handle to the
+  crumb content, and the preview actions — rendered as breadcrumb children — went
+  inside that fit-content wrapper with it. The shared pane breadcrumb now has a
+  trailing-actions slot outside the reorder handle, so pane actions and Close share
+  the right-hand column while the empty header space between the crumbs and that
+  group stays window-drag. One drag detail the fix also closes: the 4px gap between
+  the two icon buttons belonged to the window drag region even though both buttons
+  opted out, so a press landing a couple of pixels off started a window drag instead
+  of hitting the button — a control opting out of the drag region is not enough, its
+  group's gaps have to as well. The regression test reads that gap from the layout
+  token rather than a hardcoded tolerance.
+
 - **The agent toggle collapses the dock again (PR #481, codex-2)** — clicking the
   fixed top-right toggle did nothing in the real macOS window, though it worked in
   every browser-based test. `.thread-dock-header` declared
