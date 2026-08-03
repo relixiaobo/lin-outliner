@@ -1,22 +1,24 @@
-import type { OAuthProviderId } from '@earendil-works/pi-ai';
-import { getOAuthProvider } from '@earendil-works/pi-ai/oauth';
+import { piModels } from '../../piModels';
 import { createOAuthLoginManager } from './agentOAuth';
 import {
-  deleteProviderCredential,
   ensureProviderConfig,
   getProviderSettings,
-  persistOAuthCredential,
+  refreshProviderModels,
 } from './agentSettings';
 
 // Composition root for the OAuth sign-in manager: it injects the real pi-ai
-// provider lookup and the secret-store / provider-config writes into the pure
+// Models login/logout operations and the provider-config writes into the pure
 // orchestration in `agentOAuth.ts`. Keeping this wiring out of that module means a
 // unit test can import the orchestration without pulling in Electron / the secret
 // store / pi-ai's runtime. main.ts imports the singleton from here.
 export const oauthLoginManager = createOAuthLoginManager({
-  getProvider: (providerId) => getOAuthProvider(providerId as OAuthProviderId),
-  persist: persistOAuthCredential,
+  login: async (providerId, interaction) => {
+    await piModels().login(providerId, 'oauth', interaction);
+  },
   ensureProviderConfig,
-  removeCredential: deleteProviderCredential,
+  refreshProviderModels: async (providerId) => {
+    await refreshProviderModels(providerId);
+  },
+  logout: (providerId) => piModels().logout(providerId),
   getSettings: getProviderSettings,
 });

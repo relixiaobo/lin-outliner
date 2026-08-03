@@ -10,7 +10,7 @@ import {
   isQuickEnableProviderId,
   isRefreshableLocalGatewayProviderId,
 } from '../../../core/localGatewayProviders';
-import { providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
+import { providerHasCredential, resolveUsableActiveProvider } from './providerUsability';
 import { formatProviderName } from './providerNames';
 import { preferredProviderIndex } from './providerOrder';
 
@@ -68,7 +68,11 @@ export function buildProviderChoices(
       connectionStatus: providerCatalog?.connectionStatus,
       connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
-      canRefreshModels: isRefreshableLocalGatewayProviderId(provider.providerId) && provider.enabled,
+      canRefreshModels: provider.enabled && (
+        isRefreshableLocalGatewayProviderId(provider.providerId)
+        || Boolean(providerCatalog?.modelsRefreshable)
+        || Boolean(providerCatalog?.capabilities?.some((capability) => capability.refreshable))
+      ),
     });
   }
 
@@ -174,4 +178,3 @@ export function providerStatusLabel(provider: ProviderChoice, t: Messages): stri
   if (!provider.hasCredential) return s.needsKey;
   return provider.active ? s.active : s.ready;
 }
-

@@ -26,9 +26,10 @@
 
 /** Per-provider product lines, highest priority first. Version-independent. */
 export const MODEL_LINES: Record<string, readonly string[]> = {
-  // gemini is the flagship line; gemma is open-weights. Without this, `gemma-4`
-  // would outrank `gemini-3.5` on raw version number.
-  google: ['gemini', 'gemma'],
+  // gemini is the flagship line, deep-research is a specialized hosted line,
+  // and gemma is open-weights. Without this, `gemma-4` would outrank
+  // `gemini-3.5` on raw version number.
+  google: ['gemini', 'deep-research', 'gemma'],
   // gpt-5.x is the current line; the o-series is the legacy reasoning line.
   openai: ['gpt', 'o'],
   // anthropic is intentionally absent: every id shares one `claude` 4.x numbering,

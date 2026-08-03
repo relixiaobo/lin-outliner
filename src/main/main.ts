@@ -3721,6 +3721,10 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
+    // Restore persisted dynamic model catalogs before Threads or Automations can
+    // resolve a saved model. The same best-effort pass cleans legacy keyless rows;
+    // neither local catalog corruption nor cleanup failure may block app startup.
+    await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
     await documentService.initWorkspace();
     await threadService.initialize();
     await memoryExtension.startWorker();
@@ -3766,11 +3770,6 @@ if (!app.requestSingleInstanceLock()) {
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
     // matches the chosen theme rather than the OS default.
     nativeTheme.themeSource = loadAppPreferences().theme;
-    // One-time, best-effort cleanup of any keyless junk provider row left on disk
-    // (the old save-side-effect bug); skips itself when secrets are unreadable so a
-    // transient secret-file read failure never turns into row loss. Fire-and-forget — boot never waits
-    // on or fails from it. See `reconcileProviderConfig`.
-    void reconcileProviderConfig().catch(() => { /* best-effort; cleaned next launch */ });
     configureSessionSecurity();
     urlPreviewSession = session.fromPartition(URL_PREVIEW_WEBVIEW_PARTITION);
     configureUrlPreviewSession(urlPreviewSession);

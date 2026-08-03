@@ -29,6 +29,9 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   'minimax-cn': 'MiniMax (CN)',
   huggingface: 'Hugging Face',
   'kimi-coding': 'Kimi Coding',
+  'qwen-token-plan': 'Qwen Token Plan',
+  'qwen-token-plan-cn': 'Qwen Token Plan (CN)',
+  radius: 'Radius',
   'github-copilot': 'GitHub Copilot',
   'amazon-bedrock': 'Amazon Bedrock',
   'vercel-ai-gateway': 'Vercel AI Gateway',
@@ -53,6 +56,7 @@ const NAME_TOKEN_OVERRIDES: Record<string, string> = {
   sgp: 'SGP',
   gpt: 'GPT',
   github: 'GitHub',
+  qwen: 'Qwen',
 };
 
 export function formatProviderName(providerId: string): string {

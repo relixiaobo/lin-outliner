@@ -16,7 +16,7 @@ import {
 } from './oauthLoginFlow';
 
 // The OAuth sign-in surface, rendered in place of the API-key form for providers
-// whose `authKind` is `oauth` (Anthropic / GitHub Copilot / OpenAI Codex). It owns
+// whose provider-owned auth exposes OAuth. It owns
 // only presentation + the interactive reply steps; main runs the real sign-in and
 // holds every secret. Layout/classNames mirror ProviderConfigForm so the two read
 // as one dialog family. Selection/focus stay neutral (B3/B4); the primary button is
@@ -35,7 +35,7 @@ interface ProviderOAuthFormProps {
   signInHint?: string;
   docsUrl?: string;
   docsLabel?: string;
-  /** When set, offer "Use an API key instead" (Anthropic accepts a console key too). */
+  /** When set, offer "Use an API key instead" for a provider with dual auth. */
   onUseApiKey?: () => void;
   onSetActive?: () => void;
   onOpenExternal: (url: string) => void;
