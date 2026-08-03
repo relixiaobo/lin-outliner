@@ -234,7 +234,9 @@ redaction locations become durable. When those redacted arguments remain valid
 under the active schema, provider history emits an atomic three-part unit:
 
 1. typed host evidence stating that listed historical argument paths were
-   redacted after execution and must not trigger a retry;
+   redacted after execution; the redacted value must neither trigger a retry nor
+   be copied into a new call, and any later operation must re-derive the hidden
+   value from its authorized source;
 2. the call with redacted arguments;
 3. its original projected result.
 
@@ -316,10 +318,13 @@ capture raw secret-bearing values or host-only environment. Memory extraction
 may summarize completed outcomes but cannot reconstruct calls from presentation
 fields.
 
-Compaction treats a replayable call/result as an indivisible unit and treats
-rejection evidence as an ordinary typed evidence unit. Restart, fork, current
-Turn tool loops, retry, and post-compaction projection must therefore make the
-same replay decision from the same persisted facts.
+Compaction treats an exact replayable call/result pair as an indivisible unit and
+a `redactedReplay` marker/call/result triple as a different indivisible unit. The
+marker can never be dropped, summarized, or moved independently while its
+redacted call survives. Rejection evidence remains an ordinary typed evidence
+unit. Restart, fork, current Turn tool loops, retry, and post-compaction
+projection must therefore make the same replay decision from the same persisted
+facts.
 
 ### Current, changed, and preserved behavior
 
@@ -392,12 +397,15 @@ Main owns board/changelog updates at merge.
 - **AC-08:** An admitted call with secret-like model arguments persists as
   `redactedReplay`: the model sees marked redacted arguments and the original
   outcome, never receives a retry-inducing rejection merely because redaction
-  occurred, and never sees the raw secret. If redaction breaks the active
-  schema, typed executed-call evidence preserves the same facts. Host
-  credentials/environment are absent from Items, payloads, transcript exports,
-  provider diagnostics, and rollout diagnostics.
-- **AC-09:** Mixed parallel/sequential tool batches preserve order, keep admitted
-  call/result pairs atomic, and place rejection evidence deterministically.
+  occurred, is told not to copy the redacted value into a new call, and never
+  sees the raw secret. If redaction breaks the active schema, typed executed-call
+  evidence preserves the same facts. Host credentials/environment are absent
+  from Items, payloads, transcript exports, provider diagnostics, and rollout
+  diagnostics.
+- **AC-09:** Mixed parallel/sequential tool batches preserve order, keep exact
+  call/result pairs atomic, keep each `redactedReplay` marker/call/result triple
+  atomic through projection and compaction, and place rejection evidence
+  deterministically. No redacted call can survive without its marker.
 - **AC-10:** `rg "historyToolArguments|historyToolIdentity" src tests` is empty, and tests
   prevent new Item-to-argument reverse mappers.
 - **AC-11:** `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, and
