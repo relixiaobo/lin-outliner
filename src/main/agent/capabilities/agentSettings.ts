@@ -398,7 +398,7 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
       delete secrets.credentials[providerId];
     }
   });
-  if (apiKey) await refreshPiProviderModels(providerId);
+  if (apiKey) await refreshPiProviderModels(providerId).catch(() => undefined);
   return { providerId, hasApiKey: !!apiKey };
 }
 

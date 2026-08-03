@@ -427,6 +427,46 @@ describe('provider credential resolver', () => {
     }
   });
 
+  test('saving an API key succeeds when dynamic catalog warming fails', async () => {
+    const providerId = 'dynamic-catalog-test';
+    let refreshCount = 0;
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Offline Dynamic Catalog Test',
+      auth: {
+        apiKey: {
+          name: 'Offline dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [],
+      fetchModels: async () => {
+        refreshCount += 1;
+        throw new Error('catalog endpoint is offline');
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    try {
+      await expect(setProviderApiKey(providerId, 'persisted-key')).resolves.toEqual({
+        providerId,
+        hasApiKey: true,
+      });
+      expect(refreshCount).toBe(1);
+      await expect(getStoredProviderApiKey(providerId)).resolves.toEqual({
+        providerId,
+        apiKey: 'persisted-key',
+      });
+    } finally {
+      piModels().deleteProvider(providerId);
+    }
+  });
+
   test('refreshing one dynamic provider does not fan out to its peers', async () => {
     const counts = new Map<string, number>();
     const dynamicProvider = (providerId: string) => createProvider({
