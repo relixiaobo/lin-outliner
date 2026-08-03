@@ -27,6 +27,16 @@ The outline is the substrate, not the point. Two consequences drive this plan:
 2. **Actions are the product surface**, so they need one catalog. A verb that
    exists only in a right-click menu is invisible to the keyboard and to search.
 
+**What this delivers, stated honestly.** The registry's payoff is mostly
+*optionality*, not present-day speed: once it exists, every action added later gets
+a keyboard path, search, and a reviewed bilingual name for free. Only three things
+here are immediately felt — retrieval convergence (the context menu's *Move to* can
+currently fail to show a target at all), capture confirmation, and asking the agent
+about a page from outside the app. Everything else is reachability at the margin
+and groundwork whose value arrives later. The daily writing loop does not get
+faster; that belongs to `performance-optimization.md`. Judge the result against
+that claim, not a broader one.
+
 ### Reference source and its boundary (Lazy)
 
 This surface started as "build a Lazy-like command window, and merge it with the
@@ -119,12 +129,32 @@ orders today. That divergence — not the number of surfaces — is the defect.
 
 ## Design
 
-### D1 — The registry lives in `src/core/`, not the renderer
+### D1 — The registry is shared code, evaluated where the document is
 
 This is the load-bearing decision. The command surface's out-of-app view runs in
 the **locked-down launcher renderer, which has no document** (`spec/launcher.md`:
 it resolves search hits over IPC precisely because it cannot read the projection).
-So a registry that lives in renderer state cannot serve both views.
+So a registry that lives in renderer state cannot serve both views directly.
+
+Note what does *not* move: **actions already execute in main.** The renderer's
+context menu calls `api.moveNode(...)` over IPC and Core applies it. Only
+*applicability* is renderer-bound today, because the predicates are typed against
+the renderer's `DocumentIndex`. Main holds the document (`documentService.ts`), so
+main can evaluate them once they are shared code.
+
+**Placement A (preferred).** Registry and predicates in `src/core/`, evaluated in
+main against `DocumentProjection`; both views render what they are given.
+
+**Placement B (named fallback, if A's migration proves expensive).** Registry stays
+in the renderer; the panel receives an **evaluated action list** over IPC, exactly
+the pattern already shipped for search — `launcher:searchNodes` resolves hits into
+`LauncherNodeMatch` views in main *because* the launcher cannot read the document.
+Cost: the main renderer must be alive, so out-of-app actions on a node target
+degrade to unavailable. Capture, search, jump, and send-to-agent are unaffected.
+
+Both placements keep **one** registry and one implementation; they differ only in
+where it is evaluated. Open question 1 decides between them, and it is answered by
+a spike **before** stage 2 — not discovered during it.
 
 Registry entry shape:
 
@@ -158,10 +188,14 @@ node. Anchoring is the reason it survives: **position carries the operand.** You
 can never mistake which node a right-click menu acts on, whereas a centred
 overlay must state its operand in words.
 
-**Equivalence is the acceptance criterion:** for every node state the current menu
-distinguishes (single/multi selection, in-Trash, descendant constraints, field
-rows), the registry-driven menu must render the *same action set in the same
-order*. This is a behaviour-preserving refactor and is proven mechanically.
+**Equivalence is the acceptance criterion**, and it is proven by **differential
+test against the old code, not by a hand-written state table.** Enumerating "every
+state the current menu distinguishes" (selection size, in-Trash, descendant
+constraints, node type, field rows, panel mode) is itself a design task; miss one
+dimension and the proof passes while behaviour changed. Instead the old menu path
+stays in the tree for the duration of the PR as the **oracle**: both paths render
+over a corpus of real document states and their outputs are asserted equal. The
+old path is deleted in the PR's final stage.
 
 ### D3 — The command surface is the registry's searchable view, and the only hotkey
 
@@ -169,10 +203,14 @@ order*. This is a behaviour-preserving refactor and is proven mechanically.
   `global.command_palette` (`shortcutRegistry.ts:139`) and the `Cmd+K` hint on the
   `/` menu's palette row (`slashCommands.ts:71`).
 - **One rendered surface: the existing launcher panel.** `CommandPalette.tsx` is
-  deleted. The launcher is already a superset of it (node search + open in the
-  main window + "new node in Today"); the only thing it lacks is the five static
-  navigation rows, which the sidebar shows permanently anyway (`workspace-layout.md`:
-  Today / Library / Recents / Schema / pinned nodes).
+  deleted. The launcher is already a superset of it (node search + open in the main
+  window + "new node in Today").
+- **Navigation destinations become registry entries** (`target: 'app'`): Go to
+  Today / Library / Schema / Saved searches / Trash. They are already implemented,
+  so they cost nothing — and a surface that claims to be the universal entry point
+  cannot be missing the app's own destinations. ("The sidebar shows them anyway" is
+  not a reason to omit them: by that logic the context menu would justify omitting
+  every node action.)
 - **In-app summon must not read external context.** Today the hotkey classifies
   Tenon itself as `unknown-app`; when the main window is frontmost, skip the
   external capture and attach in-app context instead (D4).
@@ -210,11 +248,23 @@ Rationale: a user who types-and-blindly-Enters always exists. Putting a
 document-mutating action under a blind Enter buys one saved arrow key and costs
 the habit of blind-Enter entirely the first time it surprises them.
 
-### D7 — Applicable-only, never disabled
+### D7 — Hidden without an operand; shown with a reason when a predicate fails
 
-An action that does not apply to the current context **does not appear** (the
-VS Code `when`-clause model). A searchable list that surfaces inapplicable rows
-teaches users to distrust it.
+Pure `when`-clause hiding (the VS Code model) has a dead end in a *searchable*
+list: you type "move", get nothing, and cannot tell whether the action does not
+exist or merely does not apply right now. VS Code survives that because its command
+names come from documentation; this action set is learned by exploration. So two
+tiers:
+
+- **No operand at all** (empty query, no chip, no selection) → node/selection
+  actions are **hidden**. Opening the surface must not present a screen of things
+  that cannot run.
+- **An operand exists but a predicate rejects it** → the action is **shown with its
+  reason** ("Move to — unavailable in Trash"), not silently dropped. A reason
+  teaches the rule; a disappearance teaches distrust.
+
+The context-menu view keeps its current behaviour under the same rule, since it
+always has an operand.
 
 ### D8 — Action naming is part of the contract
 
@@ -222,7 +272,13 @@ In a menu, position and icon carry meaning; in a searchable list only the name
 does. Every registry entry gets a reviewed, searchable name in **both** locales
 (`spec/i18n.md`). Names are reviewed as a set, not one at a time.
 
-### D9 — Capture closes its loop
+### D9 — Every panel-fired action reports its result; capture closes its loop
+
+**The general rule first:** the panel does not activate the main window and
+dismisses itself when an action runs, so **any** action fired from it must return a
+visible result signal. "Move X into Y" from the panel has exactly the same problem
+as a capture — the surface vanishes and the user may not be looking at the window
+where it landed. One rule, not a capture special case.
 
 - **Destination is Today.** No picker, no Inbox.
 - **Success is visible.** Capture currently resets and hides with no confirmation
@@ -247,30 +303,45 @@ path degrades; it never throws on the user's action.
 ## Shape and build order
 
 **Shape (a): one complete feature in one PR.** The stages below are build order
-*within* that PR (A7: settle the mechanism before its consumers), not releases.
+*within* that PR, not releases.
 
-1. Move the applicability predicates to core, re-based on `DocumentProjection`.
-2. Define the registry and populate it from the node context menu's action set.
-3. Re-render the context menu as a registry view — **behaviour identical**.
-4. Converge node retrieval onto the shared service (three implementations → one).
-5. Render the registry as the command surface's searchable view; add the in-app
-   context path and focus return.
+0. **Spike:** cost of moving the predicates to core (D1 placement A vs B). Decides
+   stage 2's shape before it is built.
+1. **Converge node retrieval** onto the shared service (three implementations →
+   one). *Highest user-visible payoff and independent of everything below* — it is
+   not a dependency of the registry, so it goes first rather than fourth. If the PR
+   is ever cut short under pressure, the part that mattered has landed.
+2. Registry + predicates per the stage-0 verdict.
+3. Populate the registry from the node context menu's action set plus the
+   navigation destinations (D3).
+4. Re-render the context menu as a registry view, **differentially proven against
+   the old path** (D2), which stays in the tree as the oracle.
+5. Render the registry as the command surface's searchable view; in-app context
+   path, focus return, action result signal (D9).
 6. Capture loop: confirmation, optional tag, send-to-agent action.
-7. Delete `CommandPalette.tsx`, the `Cmd+K` binding, and the stale `/`-menu hint.
+7. Delete the old menu path, `CommandPalette.tsx`, the `Cmd+K` binding, and the
+   stale `/`-menu hint.
 
-Stages 1-3 change no user-visible behaviour, which is what makes a PR this size
+Stages 2-4 change no user-visible behaviour, which is what makes a PR this size
 reviewable: they are provable mechanically.
+
+**Where the split line is, if one is ever forced.** Stage 1 is independently
+complete. Stages 6's confirmation and tag work touch neither the registry nor
+retrieval — they ride in this PR for review-bandwidth reasons, not architectural
+ones. ("Send to the agent panel" is genuinely a registry action and belongs here.)
 
 ## Verification
 
-- **Menu equivalence (stages 1-3).** A generated table of (node state → action set,
-  in order) captured on `main` before the refactor must match the registry-driven
-  menu exactly. Same technique that carried #451's 4,700-line move to zero review
-  findings: freeze the observable surface, prove it unchanged, then build on it.
-- **Retrieval convergence (stage 4).** One ranking chokepoint; a test asserts the
+- **Menu equivalence (stage 4).** Differential: the old menu path is the oracle and
+  both paths render over a corpus of real document states; outputs must be equal.
+  Cousin of #445's golden Item-stream parity — compare against the real thing, do
+  not hand-enumerate the states that matter.
+- **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
   same query returns the same ordering from every entry point.
-- **Applicability (D7).** Property test: no rendered action is inapplicable to the
-  context it was rendered for.
+- **Applicability (D7).** Property test: every rendered action either applies, or
+  is rendered with its rejection reason. Nothing silently inapplicable.
+- **Action result signal (D9).** E2E: fire a mutating action from the panel with
+  the main window in the background; assert the user gets a result signal.
 - **Capture (D9).** E2E: capture with a tag from a background app, assert the node,
   the tag, and the confirmation.
 - Light + dark visual verification (UI diff); `typecheck`, `test:core`,
@@ -278,12 +349,13 @@ reviewable: they are provable mechanically.
 
 ## Open questions
 
-1. How much of `renderer/ui/interactions/` can move to core without churning
-   unrelated call sites? The predicates are pure, but they are typed against
-   `DocumentIndex`; the adapter cost is the main unknown in stage 1.
-2. Which panel/app-scoped actions belong in the registry's first population —
-   only what the node context menu already offers, or also menu-bar items with no
-   keyboard path?
+1. **Placement A or B (D1)** — how much of `renderer/ui/interactions/` moves to
+   core without churning unrelated call sites? The predicates are pure but typed
+   against `DocumentIndex`. **Answered by the stage-0 spike, before stage 2 is
+   built**; B is the named fallback, so this cannot block the PR.
+2. Beyond the node context menu's action set and the navigation destinations (both
+   settled), do menu-bar items with no keyboard path join the first population, or
+   wait for a second pass?
 3. Does the in-app context chip carry the focused node, the selection, or both
    when they disagree?
 4. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
