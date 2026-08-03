@@ -135,9 +135,9 @@ Outcome on 2026-08-03:
 - `bun run typecheck`, `bun run test:core` (1716 pass, 6 skip),
   `bun run test:renderer`, and `bun run app:build` passed.
 - Focused provider/OAuth E2E passed 37/37.
-- Full E2E passed 549/551. The two failures were unrelated concurrency-sensitive
-  Thread-scroll and trailing-input tests; both passed three consecutive focused
-  reruns with one worker (6/6).
+- On the final head after syncing `origin/main`, full E2E passed 551/552. The
+  single failure was an unrelated concurrency-sensitive trailing-input test; it
+  passed three consecutive focused reruns with one worker (3/3).
 
 ## Checklist
 
