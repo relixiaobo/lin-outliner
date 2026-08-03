@@ -62,8 +62,16 @@ fail every single CI macOS sample and have never failed locally
 (`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
 baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
 broke them — there was no signal, so nobody knew.
-`agent-browser-control` implementation is **shelved** pending upstream
-Browser Pilot stabilization (PM ruling 2026-07-31).
+`agent-browser-control` implementation is **shelved** (PM ruling 2026-07-31) — and this
+line used to say "pending upstream Browser Pilot stabilization", which is **not** what was
+ruled. Corrected 2026-08-03: most of the plan was **superseded**, not paused. #406's
+managed-Skill channel already ships catalog recommendation, install from any public
+repository, and pinned-commit updates with preview and rollback, so Browser Pilot
+integrates through that path with **no Tenon code and no release**; the plan's distribution
+half would have coupled Tenon's release cadence to another project's for no security gain.
+What survives is narrower and real — turning browser artifacts (screenshots, PDFs,
+downloads) into durable Thread resources — and needs a re-scope plus a fresh PM go-ahead
+before anyone claims it. See the full entry under *Agent capabilities*.
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
 PR 2) after a **high** review gate — thirty candidates, ten verified findings, every
 one real and all ten answered in one hardening commit; the gate's own verify pass
