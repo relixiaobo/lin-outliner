@@ -54,10 +54,17 @@ operation; it does not make malformed model-tool calls valid.
 
 Browser Pilot does not have a Tenon-native runtime or host-injected client key.
 It already reaches users as a managed Skill and drives `bp` through ordinary
-`bash` command text. Secret-like values can therefore be model-authored
-arguments inside a successful call. Canonical history must preserve the
-successful call/result relationship while redacting those values; dropping the
-whole call would create a second retry loop.
+`bash` command text, so the incident remains a generic `bash` history defect.
+Its `--client-key` spelling does not itself match Tenon's current secret-like
+redaction rules and is not the secret-replay test case.
+
+Independently, ordinary Full Access commands often contain strings that do match
+those rules: `Authorization: Bearer ...`, `api_key=...`, `sk-...`, GitHub token
+forms, and password-bearing connection strings. The current Item path persists
+the `command` with bounding only, so it leaks such model-authored values into
+durable history. Canonical capture must close that leak without dropping the
+successful call/result relationship and causing the model to repeat a
+side-effecting command.
 
 ### Causal chain
 
@@ -398,10 +405,12 @@ Main owns board/changelog updates at merge.
 - **AC-12:** For both admitted and rejected `bash` calls, the Item and UI `cwd`
   equal the host-resolved Thread execution directory and never a model-supplied
   `cwd` value.
-- **AC-13:** A managed `browser-pilot` `bash` call containing a secret-like
-  client value executes once; the next provider context contains its marked
-  redacted call and success result, not an erased call or an admission-rejection
-  retry signal.
+- **AC-13:** A successful `bash` fixture call containing a synthetic value that
+  matches the real redaction policy, such as `Authorization: Bearer ...`,
+  executes exactly once; the next provider context contains its marked redacted
+  call and success result, not the synthetic secret, an erased call, or an
+  admission-rejection retry signal. Browser Pilot `--client-key` is explicitly
+  not used as this fixture because that spelling does not match the policy.
 
 ### Risks and mitigations
 
