@@ -12,11 +12,7 @@ import {
 } from '../../../core/localGatewayProviders';
 import { providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
 import { formatProviderName } from './providerNames';
-import { preferredProviderIndex } from './modelChoices';
-
-// Provider ordering lives in `modelChoices` so the model surfaces can use it
-// without pulling this module's icon-bearing `providerCatalog` import.
-export { PREFERRED_PROVIDER_ORDER, preferredProviderIndex } from './modelChoices';
+import { preferredProviderIndex } from './providerOrder';
 
 export interface ProviderChoice {
   providerId: string;

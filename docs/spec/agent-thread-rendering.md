@@ -527,28 +527,37 @@ viewport clamping are retained. A selection submits one atomic
 while a request is pending, and for non-root Threads; it never edits another
 agent entity or exposes host-private capability configuration.
 
-Model selection is model-first. The list is flat across every usable provider:
-the model name leads each row, and the provider appears only as a secondary
-origin label, only when more than one provider is usable, and never as a group
-heading or a raw provider ID. The Thread's own provider is listed first,
-remaining providers follow the preferred provider order, and models keep the
+Model selection is model-first. The list is flat: the model name leads each row,
+and the provider appears only as a secondary origin label, only when more than
+one provider is listed, and never as a group heading or a raw provider ID. The
+listed providers are the usable ones plus, when the Thread is pinned to a
+provider that is no longer usable, that provider. The Thread's own provider is
+listed first, the rest follow the preferred provider order, and models keep the
 catalog order, which main has already ranked newest-first. Providers survive as
-a truncation unit — each keeps its own "show all" budget, and a pinned model
-outside that window stays visible.
+a truncation unit — each keeps its own "show all" budget, that expander names
+its provider whenever origin labels are shown, and a pinned model outside the
+window stays visible.
 
 The list leads with a floating selection that follows the connection's newest
 model. Choosing it writes only the model field, as the `inherit` sentinel; the
 Thread's provider is never rewritten, so the selection cannot move a Thread to a
-different connection. Because main validates the sentinel by resolving it, the
-submitted reasoning effort is clamped to what the resolved model supports.
+different connection. It is offered only when that connection resolves a model,
+since the sentinel is otherwise unsatisfiable. Because main validates the
+sentinel by resolving it, the submitted reasoning effort is clamped against the
+model the sentinel resolves to — the connection's head, not the model being
+un-pinned, which is a different model whenever the Thread is pinned at all.
 
-The chip and the parent menu row always name the model that will actually run,
-floating or pinned, since both resolve through the same ranked head that the
-runtime uses. Only the check mark distinguishes the two states, and it is placed
-from the stored value rather than the resolved one — a floating selection
-resolves to the same model an explicit pin to the newest model resolves to, so
-inferring the state after resolution would make the two indistinguishable and
-strand a Thread on a model it never chose to pin.
+A pinned selection is reported verbatim, including a model id stored without a
+`providerId/` qualifier; it is never replaced by the connection's head, which
+would name one model while the runtime ran another. Only a floating selection
+resolves to the head.
+
+The chip and the parent menu row name the model that will actually run in either
+state. Only the check mark distinguishes the two, and it is placed from the
+stored value rather than the resolved one — a floating selection resolves to the
+same model an explicit pin to the newest model resolves to, so inferring the
+state after resolution would make the two indistinguishable and strand a Thread
+on a model it never chose to pin.
 
 Reopening the Agent rail restores focus to the composer of an editable Thread.
 An active `request_user_input` keeps focus in its current step instead; opening

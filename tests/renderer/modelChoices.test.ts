@@ -123,6 +123,40 @@ describe('buildModelChoices', () => {
     ]);
   });
 
+  // `inherit` resolves against `thread.modelProvider`, so the head must be keyed
+  // there. Clamping the effort or labelling the row against the model being
+  // un-pinned instead lets main reject the commit, which strands the Thread.
+  test('the connection head is the sentinel target, not the model being un-pinned', () => {
+    const choices = buildModelChoices(twoProviders, { modelProvider: 'openai', model: 'openai/gpt-4' });
+    expect(choices.resolvedModelId).toBe('gpt-4');
+    expect(choices.connectionHead?.id).toBe('gpt-5');
+  });
+
+  test('the head follows the Thread connection even when the pin points elsewhere', () => {
+    const choices = buildModelChoices(twoProviders, { modelProvider: 'openai', model: 'anthropic/claude-4' });
+    expect(choices.resolvedProviderId).toBe('anthropic');
+    expect(choices.connectionHead?.id).toBe('gpt-5');
+  });
+
+  // Without this the row still renders off the aggregate count and commits a
+  // sentinel main cannot satisfy.
+  test('a connection listing no models offers no head to float to', () => {
+    const empty = settings([
+      { id: 'anthropic', models: ['claude-5'] },
+      { id: 'openai', models: [] },
+    ]);
+    const choices = buildModelChoices(empty, { modelProvider: 'openai', model: 'inherit' });
+    expect(choices.connectionHead).toBeUndefined();
+    expect(choices.modelCount).toBeGreaterThan(0);
+  });
+
+  test('an unqualified stored id is reported verbatim, not replaced by the head', () => {
+    const choices = buildModelChoices(twoProviders, { modelProvider: 'openai', model: 'gpt-4o-mini' });
+    expect(choices.resolvedModelId).toBe('gpt-4o-mini');
+    expect(choices.resolvedOption?.id).toBe('gpt-4o-mini');
+    expect(choices.connectionHead?.id).toBe('gpt-5');
+  });
+
   test('no settings yet still reports the stored selection without inventing models', () => {
     const choices = buildModelChoices(null, { modelProvider: 'openai', model: 'openai/gpt-5' });
     expect(choices.groups).toEqual([]);

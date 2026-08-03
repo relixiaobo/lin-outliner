@@ -5,11 +5,8 @@ import type {
 } from '../../api/types';
 import type { Messages } from '../../../core/i18n';
 import { providerIconSvg } from './providerIcon';
-import { PROVIDER_DISPLAY_NAMES, formatProviderName, providerInitial } from './providerNames';
-import {
-  LOCAL_GATEWAY_PROVIDER_REGISTRY,
-  localGatewayProviderDefinition,
-} from '../../../core/localGatewayProviders';
+import { providerInitial } from './providerNames';
+import { localGatewayProviderDefinition } from '../../../core/localGatewayProviders';
 
 export { PROVIDER_DISPLAY_NAMES, formatProviderName, providerInitial } from './providerNames';
 

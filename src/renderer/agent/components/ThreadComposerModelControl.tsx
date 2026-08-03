@@ -61,6 +61,7 @@ function ThreadComposerModelControlImpl({
     [configuration, settings],
   );
   const {
+    connectionHead,
     floating,
     groups,
     modelCount,
@@ -185,15 +186,18 @@ function ThreadComposerModelControlImpl({
    * `modelProvider` is left alone, so selecting this never moves a Thread to a
    * different connection.
    *
-   * The effort still has to be clamped against the model this resolves to right
-   * now: main validates the sentinel by resolving it and rejects an unsupported
-   * effort (`validateAgentModelSelection`), so an unclamped commit would throw.
+   * The effort is clamped against `connectionHead`, the model the sentinel will
+   * resolve to — NOT against the model being un-pinned. Main validates the
+   * sentinel by resolving it and rejects an unsupported effort
+   * (`validateAgentModelSelection`); clamping against the outgoing model lets a
+   * level through that the head does not support, main throws, `commit` swallows
+   * it, and the Thread can never be un-pinned at all.
    */
   function selectFloatingModel() {
     void commit({
       ...configuration,
       model: 'inherit',
-      reasoningEffort: effortFor(effectiveModelOption),
+      reasoningEffort: effortFor(connectionHead),
     });
   }
 
@@ -331,18 +335,26 @@ function ThreadComposerModelControlImpl({
           style={submenuStyle}
         >
           <div className="thread-composer-model-section-label" role="presentation">{composer.modelHeading}</div>
-          <ButtonControl
-            aria-checked={floating}
-            className={`thread-composer-model-item${floating ? ' is-selected' : ''}`}
-            disabled={saving}
-            onClick={selectFloatingModel}
-            role="menuitemradio"
-          >
-            <span className="thread-composer-model-item-label">{composer.modelAlwaysNewest}</span>
-            <span className="thread-composer-model-item-origin">{modelName}</span>
-            <span className="thread-composer-model-spacer" />
-            <span className="thread-composer-model-check">{floating ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-          </ButtonControl>
+          {/* Only offered when this connection actually resolves a model. Without
+              the guard the row still renders off the aggregate model count, and
+              committing the sentinel against a connection that lists none makes
+              main throw from a row that looked applicable. */}
+          {connectionHead ? (
+            <ButtonControl
+              aria-checked={floating}
+              className={`thread-composer-model-item${floating ? ' is-selected' : ''}`}
+              disabled={saving}
+              onClick={selectFloatingModel}
+              role="menuitemradio"
+            >
+              <span className="thread-composer-model-item-label">{composer.modelAlwaysNewest}</span>
+              {/* The head, not the pinned model: this names what selecting the row
+                  would switch TO. */}
+              <span className="thread-composer-model-item-origin">{connectionHead.name || connectionHead.id}</span>
+              <span className="thread-composer-model-spacer" />
+              <span className="thread-composer-model-check">{floating ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
+            </ButtonControl>
+          ) : null}
           {/* Providers stay a truncation unit but not a visual one: no heading, so
               the models read as one flat list with provider shown per row. */}
           {groups.map((group) => {
@@ -359,6 +371,11 @@ function ThreadComposerModelControlImpl({
                     <span className="thread-composer-model-item-label">
                       {composer.showAllModels({ count: group.models.length })}
                     </span>
+                    {/* Truncation is still per provider, so with the group heading
+                        gone the expander has to say whose models it expands. */}
+                    {showProviderLabel ? (
+                      <span className="thread-composer-model-item-origin">{formatProviderName(group.providerId)}</span>
+                    ) : null}
                     <span className="thread-composer-model-spacer" />
                     <ChevronDownIcon className="thread-composer-model-item-caret" size={ICON_SIZE.menu} />
                   </ButtonControl>
@@ -373,6 +390,9 @@ function ThreadComposerModelControlImpl({
                     })}
                   >
                     <span className="thread-composer-model-item-label">{composer.showFewerModels}</span>
+                    {showProviderLabel ? (
+                      <span className="thread-composer-model-item-origin">{formatProviderName(group.providerId)}</span>
+                    ) : null}
                   </ButtonControl>
                 ) : null}
               </div>

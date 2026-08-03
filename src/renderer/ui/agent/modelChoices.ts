@@ -1,6 +1,6 @@
 import type { AgentModelOption, AgentProviderSettingsView } from '../../api/types';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
-import { LOCAL_GATEWAY_PROVIDER_REGISTRY } from '../../../core/localGatewayProviders';
+import { preferredProviderIndex } from './providerOrder';
 import { isProviderUsable } from './providerUsability';
 
 // Model selection, shared by the composer quick-switcher and the Automation
@@ -8,19 +8,6 @@ import { isProviderUsable } from './providerUsability';
 // import (no `import.meta.glob`) — the same constraint `providerUsability`
 // documents — so it loads in a plain `bun test`. It therefore returns provider
 // IDs and leaves display-name formatting to the rendering component.
-
-export const PREFERRED_PROVIDER_ORDER = [
-  'anthropic',
-  'openai',
-  ...LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => provider.providerId),
-  'google',
-  'openrouter',
-];
-
-export function preferredProviderIndex(providerId: string): number {
-  const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
-  return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
-}
 
 /** The stored model field of a Thread configuration or an Automation override. */
 export interface ModelSelectionInput {
@@ -48,13 +35,29 @@ export interface ModelChoiceGroup {
 export interface ModelChoices {
   readonly groups: readonly ModelChoiceGroup[];
   readonly modelCount: number;
-  /** True when more than one provider is usable, so a model needs its origin shown. */
+  /**
+   * True when more than one provider is LISTED, so a row needs its origin shown.
+   * Listed, not usable: a Thread pinned to a no-longer-usable provider still
+   * contributes a group, and those rows do come from a different connection.
+   */
   readonly showProviderLabel: boolean;
   /** True when the selection follows the connection's newest model instead of pinning one. */
   readonly floating: boolean;
   readonly resolvedProviderId: string;
   readonly resolvedModelId: string;
   readonly resolvedOption: AgentModelOption | undefined;
+  /**
+   * What `inherit` resolves to on THIS Thread's connection, or undefined when
+   * that connection lists no models.
+   *
+   * Keyed on `selection.modelProvider`, not on the resolved provider: the
+   * runtime resolves an unpinned model against `thread.modelProvider`
+   * (`resolveDefaultRuntime`), and a cross-provider pin makes the two differ.
+   * Un-pinning must be offered, clamped, and labelled against this model —
+   * never against the model being un-pinned, which is a different one whenever
+   * the Thread is pinned at all.
+   */
+  readonly connectionHead: AgentModelOption | undefined;
 }
 
 /**
@@ -86,6 +89,7 @@ export function buildModelChoices(
       resolvedProviderId: selection.modelProvider,
       resolvedModelId: floating ? '' : lastModelSegment(selection.model) ?? '',
       resolvedOption: undefined,
+      connectionHead: undefined,
     };
   }
 
@@ -101,7 +105,14 @@ export function buildModelChoices(
   // The ranked head is main's answer to "newest": `providerModelOptions` already
   // sorted these with `compareProviderRankables`, and the runtime resolves an
   // unpinned model through the same head (`resolveProviderCatalogModel`).
-  const resolvedModelId = parsed?.modelId || modelsFor(resolvedProviderId)[0]?.id || '';
+  const connectionHead = modelsFor(selection.modelProvider)[0];
+  // A pinned value is reported verbatim. An id stored without a `providerId/`
+  // qualifier does not parse, and falling back to the head there would name the
+  // head while main runs the bare id under this provider — the same show-one-
+  // run-another confusion the floating/pinned split exists to remove.
+  const resolvedModelId = floating
+    ? connectionHead?.id ?? ''
+    : parsed?.modelId || selection.model.trim();
   let resolvedOption = modelsFor(resolvedProviderId).find((option) => option.id === resolvedModelId);
 
   const usableProviderIds = settings.providers
@@ -146,6 +157,7 @@ export function buildModelChoices(
     resolvedProviderId,
     resolvedModelId,
     resolvedOption,
+    connectionHead,
   };
 }
 

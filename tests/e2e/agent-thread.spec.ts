@@ -1775,8 +1775,15 @@ test.describe('canonical agent Thread surface', () => {
 
     const alwaysNewest = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });
     await expect(alwaysNewest).toHaveAttribute('aria-checked', 'false');
+    // The row names what selecting it switches TO — the head — not the model
+    // currently pinned, which is what it would advertise if it read the resolved
+    // option while pinned.
+    await expect(alwaysNewest).not.toContainText('Mini');
     await alwaysNewest.click();
     // The pill keeps naming the model that will run — now the ranked head again.
+    // Asserted as an exclusion too: 'GPT-5.4' is a substring of 'GPT-5.4 Mini',
+    // so containment alone would pass without the pill ever updating.
+    await expect(control).not.toContainText('Mini');
     await expect(control).toContainText('GPT-5.4');
 
     const restored = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });

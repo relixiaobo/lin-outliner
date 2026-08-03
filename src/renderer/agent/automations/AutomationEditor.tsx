@@ -11,7 +11,7 @@ import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, TrashIcon } from '../../ui/icons';
 import { formatProviderName } from '../../ui/agent/providerNames';
-import { buildModelChoices, flattenModelChoices, type ModelChoice } from '../../ui/agent/modelChoices';
+import { buildModelChoices, flattenModelChoices, type ModelChoiceGroup } from '../../ui/agent/modelChoices';
 import { Button } from '../../ui/primitives/Button';
 import { Field } from '../../ui/primitives/Field';
 import { IconButton } from '../../ui/primitives/IconButton';
@@ -88,7 +88,13 @@ export function AutomationEditor(props: AutomationEditorProps) {
   // A native select cannot truncate, so the provider grouping collapses fully.
   const modelChoices = useMemo(() => flattenModelChoices(choices), [choices]);
   const showProviderLabel = choices.showProviderLabel;
-  const selectedModel = automationModelValue(state.modelProvider, state.model, modelChoices);
+  // Memoized and keyed on the groups, not the flattened models: this only needs
+  // the handful of provider ids, and an unmemoized Set over an OpenRouter-sized
+  // catalog would be rebuilt on every keystroke in the name/prompt fields.
+  const selectedModel = useMemo(
+    () => automationModelValue(state.modelProvider, state.model, choices.groups),
+    [choices.groups, state.model, state.modelProvider],
+  );
   const knownModelValues = useMemo(
     () => new Set(modelChoices.map((choice) => choice.value)),
     [modelChoices],
@@ -416,10 +422,10 @@ interface EditorState {
 function automationModelValue(
   providerId: string,
   model: string,
-  choices: readonly ModelChoice[],
+  groups: readonly ModelChoiceGroup[],
 ): string {
   if (!model.trim()) return '';
-  const knownProviderIds = new Set(choices.map((choice) => choice.providerId));
+  const knownProviderIds = new Set(groups.map((group) => group.providerId));
   const parsed = parseProviderQualifiedModel(model, (candidate) => knownProviderIds.has(candidate));
   return composeProviderQualifiedModel(parsed?.providerId ?? providerId, parsed?.modelId ?? model);
 }
