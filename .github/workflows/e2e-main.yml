@@ -87,7 +87,14 @@ jobs:
         run: mv report.json "sample-${{ matrix.sample }}.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: e2e-sample-${{ matrix.sample }}
+          # The platform is IN THE NAME so a baseline can never pool two of
+          # them. The first pull request to use the baseline pooled a leftover
+          # ubuntu run with a macOS one and reported a test as 5/10 — five red
+          # on one OS, five green on the other — which is precisely the
+          # cross-environment comparison this whole design refuses. Change the
+          # runner and the old artifacts stop matching, so the baseline goes
+          # empty and says so, instead of silently mixing.
+          name: e2e-sample-macos-${{ matrix.sample }}
           path: sample-${{ matrix.sample }}.json
           if-no-files-found: error
 
@@ -104,7 +111,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: samples
-          pattern: e2e-sample-*
+          pattern: e2e-sample-macos-*
           merge-multiple: true
       - name: Classify
         id: classify
@@ -142,7 +149,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: branch
-          pattern: e2e-sample-*
+          pattern: e2e-sample-macos-*
           merge-multiple: true
       - name: Fetch main's baseline samples
         id: baseline
@@ -174,7 +181,7 @@ jobs:
             mkdir -p "baseline/run-$id"
             # A baseline we cannot fetch must not silently become a smaller one, so
             # this is not tolerated per-run: `set -e` fails the step.
-            gh run download "$id" --pattern 'e2e-sample-*' --dir "baseline/run-$id"
+            gh run download "$id" --pattern 'e2e-sample-macos-*' --dir "baseline/run-$id"
           done
           echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Compare
