@@ -27,15 +27,20 @@ The outline is the substrate, not the point. Two consequences drive this plan:
 2. **Actions are the product surface**, so they need one catalog. A verb that
    exists only in a right-click menu is invisible to the keyboard and to search.
 
-**What this delivers, stated honestly.** The registry's payoff is mostly
-*optionality*, not present-day speed: once it exists, every action added later gets
-a keyboard path, search, and a reviewed bilingual name for free. Only three things
-here are immediately felt — retrieval convergence (the context menu's *Move to* can
-currently fail to show a target at all), capture confirmation, and asking the agent
-about a page from outside the app. Everything else is reachability at the margin
-and groundwork whose value arrives later. The daily writing loop does not get
-faster; that belongs to `performance-optimization.md`. Judge the result against
-that claim, not a broader one.
+**What this delivers, stated honestly.** Only three things here are immediately
+felt — retrieval convergence (the context menu's *Move to* can currently fail to
+show a target at all), capture confirmation, and asking the agent about a page from
+outside the app. Everything else is reachability at the margin. The daily writing
+loop does not get faster; that belongs to `performance-optimization.md`. Judge the
+result against that claim, not a broader one.
+
+**Where the registry's real value is.** Not merely that future actions get a
+keyboard path for free. Because `effect` is a serializable instruction, the registry
+lives in core, and *handoff* is already one of the effect kinds (D9), this is the
+seam where **an agent capability becomes a user-callable command** — the same
+catalog, the same names, the same operand resolution, whether a person picks it or
+a Skill exposes it. For a product aimed at directing local agents, that is not debt
+repayment; it is the floor the product surface stands on.
 
 The evidence behind both, and the boundary against the product this surface was
 modelled on, are in the appendix — they are provenance, not design, and a builder
@@ -81,15 +86,35 @@ So a registry that lives in renderer state cannot serve both views directly.
 
 Note what does *not* move: **actions already execute in main.** The renderer's
 context menu calls `api.moveNode(...)` over IPC and Core applies it. Only
-*applicability* is renderer-bound today, because the predicates are typed against
-the renderer's `DocumentIndex`. Main holds the document (`documentService.ts`), so
-main can evaluate them once they are shared code.
+*applicability* is renderer-bound today.
 
-**So the registry and its predicates live in `src/core/`**, evaluated against
-`DocumentProjection` wherever a projection is at hand, and both views render what
-they are given. The migration cost of the predicates is measured by the stage-0
-spike (open question 1), which also names the contingency if it proves expensive —
-a cost question, not a second design.
+**And it is bound to more than the document.** The selection family's real
+signature is `{ ids, panelRootId, byId, rowMap?: ReadonlyMap<NodeId, SelectableRow> }`
+(`selectionBatchActions.ts:36-120`): `idsEnabledForSelectionAction`,
+`idsAllowedForStructuralBatch`, `idsAllowedForStructuralIndentBatch`,
+`idsAllowedForStructuralOutdentBatch`, `idsAllowedForMoveTo`,
+`idsAllowedForDuplicate`. Only `trashActions` and `nodeLocation` take a document
+index. So applicability depends on **panel scope** — which root you are under, and
+a row model derived from view config — not on the projection alone. A registry
+evaluated against `DocumentProjection` and nothing else cannot answer for that
+family.
+
+**So the registry and its predicates live in `src/core/`, and `ActionContext`
+carries panel scope explicitly:**
+
+```ts
+interface ActionContext {
+  projection: DocumentProjection;   // crosses IPC already
+  panelRootId: NodeId | null;       // null out-of-app: panel-scoped actions resolve empty
+  rowPolicy?: RowPolicyLookup;      // the SelectableRow decision, supplied or derived
+}
+```
+
+Out-of-app there is no panel, so panel-scoped actions return no operands — which is
+correct, not a degradation. The **stage-0 spike measures exactly one thing**: can
+`SelectableRow`'s action policy be derived in core from projection + view config,
+or must the renderer keep supplying it? That answer, not a vague "migration cost",
+decides stage 2 (open question 1).
 
 Registry entry shape:
 
@@ -176,18 +201,31 @@ old path is deleted in the PR's final stage.
   `global.command_palette` (`shortcutRegistry.ts:139`) and the `Cmd+K` hint on the
   `/` menu's palette row (`slashCommands.ts:71`).
 - **One rendered surface: the existing launcher panel.** `CommandPalette.tsx` is
-  deleted. The launcher is already a superset of it (node search + open in the main
-  window + "new node in Today").
-- **Navigation destinations become registry entries** (`target: 'app'`): Go to
+  deleted. The launcher already covers most of it (node search, open in the main
+  window, new node in Today) but **is not yet a superset**: the palette also carries
+  five navigation destinations and shows them as its empty-query list
+  (`CommandPalette.tsx:102-143`), which the launcher explicitly defers
+  (`core/launcher/commands.ts:83-85`). The launcher *becomes* a superset at stages
+  3 and 5 — deleting the palette before then would lose behaviour.
+- **Navigation destinations become registry entries** (`scope: 'app'`): Go to
   Today / Library / Schema / Saved searches / Trash. They are already implemented,
   so they cost nothing — and a surface that claims to be the universal entry point
   cannot be missing the app's own destinations. ("The sidebar shows them anyway" is
   not a reason to omit them: by that logic the context menu would justify omitting
   every node action.)
+- **Two navigation semantics must be carried over, not re-invented.** The palette's
+  Today row runs `ensureTodayNode` **before** navigating — it creates the day's node
+  when missing (`workspace-layout.md`: "the in-app command palette uses the same
+  ensure-first path"), so a `Go to Today` entry that only navigates is a regression.
+  And in-app navigation re-roots the *active panel in place*, while the launcher's
+  path routes through main; the registry entry must resolve to the in-place one when
+  a panel exists.
 - **In-app summon must not read external context.** Today the hotkey classifies
   Tenon itself as `unknown-app`; when the main window is frontmost, skip the
   external capture and attach in-app context instead (D4).
-- **Return focus.** After a jump or an action, focus goes back to the editor
+- **Focus lands where the action points.** A navigation action leaves focus at its
+  destination — that is what navigating means. Every other action returns focus to
+  the editor
   position it came from.
 
 ### D4 — The chip is the operand, pre-filled and removable
@@ -220,10 +258,19 @@ construction instead of by inspection.
 ### D5 — One retrieval implementation
 
 Every "find a node" path resolves through the shared retrieval service
-(`main/nodeRetrievalService.ts`): the command surface, the context menu's *Move
-to* picker, and the `@`/`#`/`/` candidate lists. Same ranking, same ordering,
-everywhere. Where a path needs renderer-local latency it consumes the same
-ranking primitives rather than re-deriving them.
+(`main/nodeRetrievalService.ts`): the command surface (already does), the context
+menu's *Move to* picker, and the `@`/`#`/`/` candidate lists.
+
+**One qualification, stated rather than papered over.** The personal-access boost
+needs stats that live in main (`nodeAccessStore`, injected at `main.ts:930-935`),
+and `personalAccess` is already an explicit opt-in on `TransientSearchOptions`
+(#307). At-caret candidates fire per keystroke inside the editor, so they may
+legitimately opt **out** of that boost for latency. The invariant is therefore
+**one ranking implementation with one set of options** — not "every surface always
+returns the identical order regardless of what it asked for". The verification
+below asserts identical ordering *for identical options*, which is the strongest
+claim that is actually true. What is being eliminated is a second ranking
+implementation, and *Move to*'s complete absence of one.
 
 ### D6 — Rows are objects; the action bar says what Enter does; `⌘K` opens the rest
 
@@ -256,9 +303,22 @@ sequence. Retrieval and the registry both feed one list.
 **Default highlight is a fixed rule, never learned:**
 
 - page context attached → the capture row;
-- an operand chip but no query → the chip's applicable actions are the rows;
-  highlight the first;
-- otherwise → the first search result, or nothing when the query is empty.
+- an operand chip but no query → the chip's applicable actions are the rows, and
+  **the first one is always non-mutating** (Open / Go to). D6's own rationale
+  demands it: this is the position a blind Enter lands on, so it must never be a
+  document change. Registry ordering, not chance, guarantees it;
+- **no chip, no query** → the rows are the `app`-scoped entries (the navigation
+  destinations) — never a blank panel. Highlight the first.
+- otherwise → the first search result.
+
+**Recents were considered and dropped.** The superseded plan carried "persist the
+last N capture/jump targets, surface as empty-query quick rows" as a must-keep
+contract. It is not carried here: with capture landing in Today (D9) there is no
+destination to remember, and the empty state now has real content (navigation
+entries) rather than needing filler. Recency already earns its keep where it
+belongs — inside search ranking (`nodeAccessStore`). Recording the drop so it is a
+decision, not an omission; re-adding it later is a registry entry, which is the
+point.
 
 Rationale for keeping it fixed: a user who types-and-blindly-Enters always exists.
 Putting a document-mutating action under a blind Enter buys one saved arrow key and
@@ -290,6 +350,13 @@ In a menu, position and icon carry meaning; in a searchable list only the name
 does. Every registry entry gets a reviewed, searchable name in **both** locales
 (`spec/i18n.md`). Names are reviewed as a set, not one at a time.
 
+**Search matches both locales at once, regardless of UI language.** This user
+thinks in English command names and runs a Chinese interface; a surface that only
+matches the active locale's string would swallow half of what they type. The
+locale-independent `id` and both display names are all matchable — the pattern
+`filterSlashCommands` already uses (English label + keywords as a locale-independent
+base, plus the localized label).
+
 ### D9 — Every panel-fired action reports its result; capture closes its loop
 
 **The general rule first:** the panel does not activate the main window and
@@ -312,17 +379,31 @@ action — reversal is `Cmd+Z` in the document, the same undo everything else us
   search, not from location. (The capture-kind tag `#article`/`#video` → `#capture`
   already exists; what is missing is *the user's own* tag.)
 - **"Send to the agent panel" is a registry action, not a new AI surface.** It
-  raises the main window, reveals the rail, and stages the page/node as a
-  reference in the composer — the user types and submits. Shape and contract come
-  from `agent/agentReveal.ts` and `agent-conversation-model.md` /
-  `agent-data-model.md` (which own `ThreadUserContent`; this plan must not
-  re-describe it).
+  raises the main window, reveals the rail, and stages the operand *and the text
+  already typed in the panel* as a composer draft — the user edits and submits.
+  Carrying the typed query is not a nicety: dropping it would mean the one entry
+  point that works from outside the app silently discards what the user wrote.
+  Content shape comes from `agent-conversation-model.md` / `agent-data-model.md`
+  (which own `ThreadUserContent`; this plan must not re-describe it).
+- **The handoff needs a new leg, and the estimate must say so.**
+  `agent/agentReveal.ts` is renderer-local pub/sub: a module-level listener set, no
+  IPC, no window raise, and its only caller today already lives in the main window.
+  Reaching it from the panel adds a cross-process hop, a window raise, and
+  queue-until-loaded for the case where the renderer is not up — the same shape as
+  the existing `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` queue that flushes on
+  `did-finish-load`. Reuse that mechanism rather than inventing a second one.
 
 ### D10 — Out-of-app fidelity chain
 
-Structured read (AX browser tab) → URL + title → clipboard → manual entry. No
+Structured read (AX browser tab) → URL + title → *clipboard* → manual entry. No
 screenshot tier. Read nothing → no chip, degrade to a plain note. Per A12 this
 path degrades; it never throws on the user's action.
+
+**The clipboard tier does not exist and this PR does not build it.** There is no
+clipboard read anywhere under `src/main/context/`, and no stage below adds one — so
+it is named here as the intended shape and marked **deferred**, not described as
+present. Today the chain is structured read → URL + title → manual entry, and it
+degrades correctly without the middle tier.
 
 ## Shape and build order
 
@@ -354,10 +435,20 @@ path degrades; it never throws on the user's action.
 Stages 2-4 change no user-visible behaviour, which is what makes a PR this size
 reviewable: they are provable mechanically.
 
-**Where the split line is, if one is ever forced.** Stage 1 is independently
-complete. Stages 6's confirmation and tag work touch neither the registry nor
-retrieval — they ride in this PR for review-bandwidth reasons, not architectural
-ones. ("Send to the agent panel" is genuinely a registry action and belongs here.)
+**Shape (a) was challenged at review and re-affirmed by the PM.** The gate's case
+for splitting is real and worth recording: stage 1 is independently complete and is
+a bug-level fix, and a single PR spanning core + renderer + launcher + main + both
+locale files, deleting two files and standing up a differential harness, costs more
+at the gate (ultra review + visual verification + e2e) than two medium PRs would.
+The PM weighed that against one ratification and one merge and chose **(a)**.
+
+**The mitigation is structural, not a promise.** Stage 1 lands as a self-contained
+first commit that touches no registry code, so the gate can read and judge it on its
+own inside the PR, and stages 2-4 are provable mechanically. Stage 6's confirmation
+and tag work touch neither the registry nor retrieval — they ride along for
+review-bandwidth reasons, not architectural ones. ("Send to the agent panel" is
+genuinely a registry action and belongs here.) If the PR does have to be cut, the
+commit boundary is already the split line.
 
 ## Verification
 
@@ -366,7 +457,8 @@ ones. ("Send to the agent panel" is genuinely a registry action and belongs here
   Cousin of #445's golden Item-stream parity — compare against the real thing, do
   not hand-enumerate the states that matter.
 - **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
-  same query returns the same ordering from every entry point.
+  same query with the **same options** returns the same ordering from every entry
+  point, and that no entry point ranks by anything of its own (D5).
 - **Scope filtering (D2).** Assert no `panel`/`app`-scoped action can reach the
   context menu — the failure mode the navigation entries introduce, and the one
   that would silently break menu equivalence.
@@ -441,16 +533,24 @@ silently re-opened; not needed to build the design above.
 The repository already contains the controlled experiment, one line right and one
 line wrong:
 
-| Action | Entry points | Implementations | Result |
+| Action | Entry points | Shared | Not shared |
 |---|---|---|---|
-| Apply a tag | `#` trigger popover, node context menu, batch selector, `TagSelector` | **one** (`ui/interactions/tagSelector.ts`) | four doors, **one habit** |
-| Find a node | context-menu *Move to*, `@`/`#`/`/` candidates, command palette, launcher | **three** | same query, **three different orderings** |
+| Apply a tag | 3 (`#` trigger popover — which is `TagSelector`'s only renderer — node context menu, batch selector) | candidate list + ranking (`ui/interactions/tagSelector.ts`) | **apply**: three implementations (`TagSelector.tsx:41-50`, `BatchTagSelector.tsx:89-93`, `NodeContextMenu.tsx:250-258`) |
+| Find a node | 4 | — | **three rankings** |
 
-`NodeContextMenu.tsx:222-230` filters the whole projection with `.includes()` and
-**no ranking at all**; `ui/interactions/candidateRanking.ts` ranks by text match;
+Read the tag row carefully, because it cuts the other way from how it was first
+written: even the *good* example converged only at the ranking layer. Three
+separate call sites still decide how a tag is applied. That is the pattern this
+plan generalises — share the decision, not just the list.
+
+The retrieval row: `NodeContextMenu.tsx:222-232` filters the whole projection with
+`.includes()`, **no ranking at all**, then slices the first ten in document order;
+`ui/interactions/candidateRanking.ts` ranks by text match;
 `main/nodeRetrievalService.ts` ranks with the personal-access boost (#111, #307).
-Searching "project" in *Move to* and in the command surface returns different
-orders today. That divergence — not the number of surfaces — is the defect.
+Note the command palette is **not** an outlier — `CommandPalette.tsx:63` already
+calls `search_nodes` through the same main-side service as the launcher, so stage
+1's real work is narrower than "four entry points" suggests: the *Move to* picker
+and the at-caret candidates are the two that diverge.
 
 ### Reference source and its boundary (Lazy)
 
@@ -475,8 +575,10 @@ delivers — but populated from **Tenon's own action set**, not Lazy's.
 **Not borrowed — Lazy's command families.** The observed table
 (`Clip article` / `Clip PDF` / `Clip email` / `Clip DM` / `Read later` /
 `Watch later` / `Summarize video` / `Generate tags`, ibid. §"Lazy command families
-observed") is entirely *bring the outside in*; **not one entry operates on the
-user's own notes.** So Lazy's window and Tenon's `Cmd+K` were never two similar
+observed") is **overwhelmingly** *bring the outside in*. The exceptions are a
+conversion family (`Turn Note into Capture`, `Turn Capture into Task`, ibid.
+422-434) that does operate on the user's own items — real, and small enough that
+the shape of the table still holds. So Lazy's window and Tenon's `Cmd+K` were never two similar
 things — they share a silhouette, not a job. Merging them therefore needed an
 abstraction spanning two non-overlapping jobs, and `Target × Verb` was invented to
 fill an intersection that does not exist. That is why the earlier revision of this

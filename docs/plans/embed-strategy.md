@@ -53,17 +53,25 @@ reference, perhaps decorated as a link via the existing `link` mark.
 Lowest cost. Loses the "card preview of external content" affordance that
 some users expect.
 
-## Recommendation
+## Decision — Option C (PM, 2026-08-03)
 
-**Option B**, deferred. The plan here exists to keep the decision visible,
-not to schedule it. Build only after `asset-subsystem.md` and
-`image-rendering.md` have landed (both shipped, PR #8).
+**Option C.** Drop `embedType` / `embedId` and the `'embed'` node type; an external
+link is text carrying a `link` mark. Removing the dead schema is its own small
+change; it is not part of any other plan.
 
-This is an open decision with **no deadline** — decide on demand (build Option B,
-or fall back to Option C and remove the dead `embedType`/`embedId` fields in a
-future data-model cleanup). The earlier self-imposed "~2026-07-25 auto-switch to
-Option C" trigger was removed by PM decision (2026-06-04); the asset subsystem
-stays useful regardless of which path we pick.
+The reasoning is positional rather than technical. Tenon "is aimed at structuring
+context, directing local agents, and keeping work inspectable" (`README.md`) —
+captured material earns its keep by being findable and agent-readable, not by
+looking rich. A metadata card is what a read-later product needs; this is not one.
+The same ruling is what lets `unified-command-surface.md` keep capture to a plain
+node in Today, and it lowers the priority of `launcher-provider-expansion.md`,
+whose breadth pays off mainly through richer presentation.
+
+The earlier recommendation was **Option B, deferred** — kept below as the
+path not taken. It was never scheduled; the asset subsystem it depended on
+(`asset-subsystem.md`, `image-rendering.md`, PR #8) stays useful regardless.
+The self-imposed "~2026-07-25 auto-switch to Option C" trigger had been removed by
+PM decision (2026-06-04); this ruling supersedes that open state.
 
 ## Non-goals
 
