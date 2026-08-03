@@ -412,13 +412,12 @@ test.describe('workspace layout resizing', () => {
       if (!(scrollport instanceof HTMLElement)) throw new Error('missing panel scrollport');
       const scrollportBox = scrollport.getBoundingClientRect();
       const innerBox = inner.getBoundingClientRect();
-      const scrollportLeft = scrollportBox.left + scrollport.clientLeft;
-      const scrollportRight = scrollportLeft + scrollport.clientWidth;
       return {
         innerWidth: innerBox.width,
-        leftGap: innerBox.left - scrollportLeft,
-        rightGap: scrollportRight - innerBox.right,
-        scrollportWidth: scrollport.clientWidth,
+        leftGap: innerBox.left - scrollportBox.left,
+        panelWidth: scrollportBox.width,
+        rightGap: scrollportBox.right - innerBox.right,
+        scrollbarGutter: getComputedStyle(scrollport).scrollbarGutter,
       };
     });
 
@@ -429,13 +428,14 @@ test.describe('workspace layout resizing', () => {
     await expect(panels).toHaveCount(1);
 
     const centeredMetrics = await readPanelMetrics();
-    expect(centeredMetrics.scrollportWidth).toBeGreaterThan(900);
+    expect(centeredMetrics.panelWidth).toBeGreaterThan(900);
     expect(centeredMetrics.innerWidth).toBeLessThanOrEqual(721);
     expect(Math.abs(centeredMetrics.leftGap - centeredMetrics.rightGap)).toBeLessThanOrEqual(2);
+    expect(centeredMetrics.scrollbarGutter).toBe('stable both-edges');
 
     await page.setViewportSize({ width: 900, height: 900 });
     const narrowMetrics = await readPanelMetrics();
-    expect(narrowMetrics.innerWidth).toBeLessThanOrEqual(narrowMetrics.scrollportWidth + 1);
+    expect(narrowMetrics.innerWidth).toBeLessThanOrEqual(narrowMetrics.panelWidth + 1);
     expect(narrowMetrics.leftGap).toBeGreaterThanOrEqual(-1);
     expect(narrowMetrics.rightGap).toBeGreaterThanOrEqual(-1);
   });

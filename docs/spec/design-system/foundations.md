@@ -394,11 +394,11 @@ scale font size with viewport width.
   `15px 4px 15px 8px`) is the shared spine. Breadcrumb, normal rows, reference
   rows, and field rows all align text-start to it.
 - **Reading column:** outliner content is a centered, bounded reading column on
-  wide panels. It centers within the scrollport's client box; a reserved native
-  scrollbar gutter sits outside that reference box. Its max width is
-  `--reading-max` (720px, ~70–80 chars at 16px), surfaced to panels as
-  `--panel-content-max`. Chrome like the breadcrumb hugs the panel's left edge
-  instead. Settings uses the distinct
+  wide panels. It centers against the panel's visible border box; symmetric
+  stable scrollbar gutters preserve that visual center when native scrollbars
+  reserve space. Its max width is `--reading-max` (720px, ~70–80 chars at 16px),
+  surfaced to panels as `--panel-content-max`. Chrome like the breadcrumb hugs
+  the panel's left edge instead. Settings uses the distinct
   `--settings-content-max-width` (920px) utility cap because grouped control grids
   need more measure than prose.
 - **Row-height tier:** `--row-h-dense` (26px) and `--row-h-comfortable` (44px) are

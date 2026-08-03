@@ -97,15 +97,6 @@ jobs:
           name: e2e-sample-macos-${{ matrix.sample }}
           path: sample-${{ matrix.sample }}.json
           if-no-files-found: error
-      # Trace artifacts stay separate from the JSON samples so the classifier and
-      # baseline glob can never mistake a diagnostic archive for sample input.
-      - name: Upload failed traces
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-traces-macos-${{ matrix.sample }}
-          path: test-results/**/trace.zip
-          if-no-files-found: ignore
 
   verdict:
     name: classify and publish

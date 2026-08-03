@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import type { CDPSession, Page } from '@playwright/test';
 
 type EmulatedVisualMedia = {
@@ -30,10 +31,37 @@ export async function emulateVisualMedia(page: Page, media: EmulatedVisualMedia)
       { name: 'prefers-reduced-transparency', value: media.reducedTransparency },
     ],
   });
-  await page.waitForFunction((expected) => (
-    matchMedia(`(prefers-color-scheme: ${expected.colorScheme})`).matches
-    && matchMedia('(prefers-contrast: no-preference)').matches
-    && matchMedia('(prefers-reduced-transparency: reduce)').matches
-      === (expected.reducedTransparency === 'reduce')
-  ), media);
+  await expect.poll(async () => page.evaluate(() => ({
+    colorScheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    forcedColors: matchMedia('(forced-colors: active)').matches ? 'active' : 'none',
+    reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'no-preference',
+    contrast: matchMedia('(prefers-contrast: more)').matches ? 'more' : 'no-preference',
+    reducedTransparency: matchMedia('(prefers-reduced-transparency: reduce)').matches
+      ? 'reduce'
+      : 'no-preference',
+  })), {
+    message: `Visual media overrides did not settle: ${JSON.stringify(media)}`,
+    timeout: 5_000,
+  }).toEqual({
+    colorScheme: media.colorScheme,
+    forcedColors: 'none',
+    reducedMotion: 'no-preference',
+    contrast: 'no-preference',
+    reducedTransparency: media.reducedTransparency,
+  });
+}
+
+/** Resolve a root color token through a non-inherited property so a missing token cannot inherit a false match. */
+export async function resolveTokenColor(page: Page, token: `--${string}`): Promise<string> {
+  return page.evaluate((tokenName) => {
+    const rawValue = getComputedStyle(document.documentElement).getPropertyValue(tokenName).trim();
+    if (!rawValue) throw new Error(`Missing root color token: ${tokenName}`);
+
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = `var(${tokenName})`;
+    document.body.append(probe);
+    const resolved = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return resolved;
+  }, token);
 }

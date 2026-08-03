@@ -156,7 +156,7 @@
   overflow: auto;
   background: var(--bg-content);
   padding: 0 0 var(--panel-content-bottom);
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
 
 /* The centred reading column inside the viewport. Owns the horizontal content inset
