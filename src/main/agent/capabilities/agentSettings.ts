@@ -54,9 +54,10 @@ import {
   piProviderHasAmbientAuth,
   piProviderModelsRefreshable,
   piProviders,
+  piFetchProviderModelsWithCredential,
   piRefreshProviderModels as refreshPiProviderModels,
-  piRefreshProviderModelsWithCredential,
   piResolveAuthApiKey,
+  piResolveProviderRefreshCredential,
   piRestoreDynamicModels,
 } from '../../piModels';
 import {
@@ -165,6 +166,7 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 
 interface AgentProviderConnectionAuth {
   apiKey?: string;
+  catalogCredential?: Credential;
   listHeaders?: Record<string, string>;
 }
 
@@ -204,6 +206,7 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
 }
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
+  await piRestoreDynamicModels();
   const file = await readProviderFile();
   const secrets = await readSecretFileSafe();
   const active = await findUsableProvider(file.providers.filter((provider) => provider.providerId === file.activeProviderId), secrets)
@@ -225,6 +228,7 @@ export async function getProviderRuntimeConfig(
   providerIdInput: string,
   modelIdInput?: string,
 ): Promise<AgentProviderRuntimeConfig | null> {
+  await piRestoreDynamicModels();
   const providerId = normalizeProviderId(providerIdInput);
   const modelId = modelIdInput?.trim();
   if (modelIdInput !== undefined && !modelId) return null;
@@ -336,11 +340,14 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
 export function rankedModels(providerId: string): Model<Api>[] {
   try {
-    const models = piModelsForProvider(providerId);
-    return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
+    return rankProviderModels(providerId, piModelsForProvider(providerId));
   } catch {
     return [];
   }
+}
+
+function rankProviderModels(providerId: string, models: readonly Model<Api>[]): Model<Api>[] {
+  return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
 }
 
 function firstRankedModel(providerId: string): Model<Api> | null {
@@ -391,6 +398,7 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
       delete secrets.credentials[providerId];
     }
   });
+  if (apiKey) await refreshPiProviderModels(providerId);
   return { providerId, hasApiKey: !!apiKey };
 }
 
@@ -587,6 +595,7 @@ async function getAvailableProviders(configuredProviders: readonly AgentProvider
       hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
       envKeyNames: [],
       defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
+      modelsRefreshable: piProviderModelsRefreshable(providerId) || undefined,
       capabilities: providerCapabilities(providerId, models),
       models,
     };
@@ -630,6 +639,7 @@ async function getCcSwitchProviderOption(
     hasEnvApiKey: false,
     envKeyNames: [],
     defaultBaseUrl: baseUrl,
+    modelsRefreshable: localGatewayProvider.refreshableModels || undefined,
     capabilities: providerCapabilities(localGatewayProvider.providerId, models),
     models,
   };
@@ -718,7 +728,7 @@ function normalizeOptionalString(value: unknown): string | undefined {
 function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {
   const capabilities: AgentProviderCapabilitySummary[] = [];
   const languageRefreshable = piProviderModelsRefreshable(providerId);
-  if (languageModels.length > 0 || languageRefreshable) {
+  if (languageModels.length > 0) {
     capabilities.push({
       kind: 'language',
       refreshable: languageRefreshable || undefined,
@@ -851,6 +861,7 @@ async function findUsableProvider(
  *    oauth rows carry a stored credential.
  */
 export async function reconcileProviderConfig(): Promise<void> {
+  await piRestoreDynamicModels();
   const { secrets, readable } = await readSecretsWithStatus();
   if (!readable) return; // rule 1: credential picture unknown → touch nothing
   const file = await readProviderFile();
@@ -1176,7 +1187,11 @@ export async function testProviderConnection(input: {
 
     const explicitApiKey = input.apiKey?.trim();
     const requestAuth = explicitApiKey
-      ? { apiKey: explicitApiKey, listHeaders: { Authorization: `Bearer ${explicitApiKey}` } }
+      ? {
+          apiKey: explicitApiKey,
+          catalogCredential: { type: 'api_key' as const, key: explicitApiKey },
+          listHeaders: { Authorization: `Bearer ${explicitApiKey}` },
+        }
       : await resolveProviderConnectionAuth(providerId, baseUrl);
     if (!requestAuth) {
       return { success: false, message: 'API Key is missing.' };
@@ -1184,9 +1199,9 @@ export async function testProviderConnection(input: {
     const authOverride = requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {};
 
     let catalogModel = firstRankedModel(providerId);
-    if (!catalogModel && requestAuth.apiKey && piProviderModelsRefreshable(providerId)) {
-      await piRefreshProviderModelsWithCredential(providerId, { type: 'api_key', key: requestAuth.apiKey });
-      catalogModel = firstRankedModel(providerId);
+    if (!catalogModel && requestAuth.catalogCredential && piProviderModelsRefreshable(providerId)) {
+      const probeModels = await piFetchProviderModelsWithCredential(providerId, requestAuth.catalogCredential);
+      catalogModel = rankProviderModels(providerId, probeModels)[0] ?? null;
     }
 
     // A custom base URL means the connection points at a proxy/gateway, which may
@@ -1301,6 +1316,9 @@ async function resolveProviderConnectionAuth(providerId: string, baseUrl?: strin
     if (!resolved) return null;
     const headers = providerHeadersForModelList(resolved.auth, resolved.source);
     return {
+      ...(!baseUrl && piProviderModelsRefreshable(providerId)
+        ? { catalogCredential: await piResolveProviderRefreshCredential(providerId) }
+        : {}),
       listHeaders: headers,
     };
   } catch {

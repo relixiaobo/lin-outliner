@@ -465,28 +465,38 @@ the provider-neutral `AuthInteraction` to the renderer event union while keeping
 credentials in main. Flow cancellation aborts the whole interaction, and a
 provider may independently abort one prompt when a callback race completes.
 After a successful login, main creates the provider connection row and refreshes
-any dynamic catalog before returning settings. OAuth providers that also accept
-a normal pasted API key expose that fallback; GitHub Copilot does not, because
-its alternate token is an ambient integration credential rather than a key-entry
-workflow.
+that provider's dynamic catalog before returning settings. OAuth providers that
+also accept a normal pasted API key expose that fallback; GitHub Copilot does
+not, because its alternate token is an ambient integration credential rather
+than a key-entry workflow. Request dispatch leaves stored OAuth credentials with
+`Models.applyAuth()` so provider-derived headers and per-credential endpoints are
+preserved; explicit `apiKey` overrides are reserved for an unsaved form key and
+the model-specific CC Switch boundary.
 
 The injected credential store persists one type-tagged credential per provider
 in `agent-secrets.json`. Its serialized `modify()` operation is the only write
 path, so concurrent OAuth resolutions share one rotated token; `list()` returns
 only provider IDs and credential types. A separate `agent-model-catalogs.json`
-store persists validated dynamic text catalogs. Settings reads restore these
-catalogs without network access, while login and the explicit provider refresh
-command may fetch and persist a current catalog. A refreshable provider retains
-that capability even while its model list is empty.
+store persists validated dynamic text catalogs. Startup restores these catalogs
+without network access before Thread and Automation initialization; settings and
+runtime-config reads await the same memoized restore as a defensive boundary.
+Saving a pasted key, login, and the explicit provider refresh command fetch and
+persist only the target provider's current catalog. Connection validation uses
+an isolated provider collection and in-memory catalog store, so testing an
+unsaved key cannot mutate live model choices or durable state. Refreshability is
+provider-level metadata even while the model list is empty; capability rows list
+only models that actually exist.
 
-Provider auth resolution is provider-scoped. Custom OpenAI-compatible providers
-capture their configured endpoint when they are registered. CC Switch remains
-the model-specific exception at the application boundary: main resolves the
-selected registry model's source key immediately before dispatch and supplies it
-as an explicit request override; neither the pi provider resolver nor renderer
-receives the registry key. Provider-specific endpoint materialization, including
-Cloudflare account and Gateway placeholders, occurs inside provider dispatch
-after auth environment values have resolved.
+Provider auth resolution is provider-scoped. Custom OpenAI-compatible local and
+remote endpoints use separate internal provider identities, so registering a
+localhost validation probe cannot leave a later remote request on the inert
+`local-endpoint` sentinel. CC Switch remains the model-specific exception at the
+application boundary: main resolves the selected registry model's source key
+immediately before dispatch and supplies it as an explicit request override;
+without that override its pi provider reports unconfigured. Neither the pi
+provider resolver nor renderer receives the registry key. Provider-specific
+endpoint materialization, including Cloudflare account and Gateway placeholders,
+occurs inside provider dispatch after auth environment values have resolved.
 
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.

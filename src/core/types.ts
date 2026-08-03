@@ -1087,6 +1087,8 @@ export interface AgentProviderOption {
   hasEnvApiKey: boolean;
   envKeyNames: string[];
   defaultBaseUrl?: string;
+  /** Provider supports an explicit network refresh even when its current catalog is empty. */
+  modelsRefreshable?: boolean;
   /**
    * Capability catalog grouped by runtime surface. `models` below remains the
    * legacy language-model list used by the composer/profile model picker.

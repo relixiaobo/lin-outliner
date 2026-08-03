@@ -17,6 +17,16 @@ test.describe('provider OAuth sign-in', () => {
     await expect(config.getByRole('button', { name: 'Sign in to GitHub Copilot' })).toBeVisible();
   });
 
+  test('opens the API-key form when an OAuth-capable provider already has a stored key', async ({ page }) => {
+    await installElectronMock(page, { oauthApiKeyProvider: true });
+    await page.goto('/?surface=provider-config&provider=openrouter&mode=configure');
+    const config = page.locator('.provider-config-window');
+
+    await expect(config.getByRole('heading', { name: /OpenRouter/ })).toBeVisible();
+    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
+    await expect(config.getByRole('button', { name: /Sign in to OpenRouter/ })).toHaveCount(0);
+  });
+
   test('device-code flow shows the code, then resolves to the connected state', async ({ page }) => {
     const config = await openOAuthConfig(page);
     await config.getByRole('button', { name: 'Sign in to GitHub Copilot' }).click();

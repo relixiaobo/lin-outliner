@@ -15,12 +15,16 @@ import path from 'node:path';
 import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
+  piCompleteSimple,
   piCredentialStore,
   piCustomProviderId,
   piModels,
   piProviders,
+  piRequestApiKeyOverride,
   piResolveAuthApiKey,
   piStreamSimple,
+  registerLocalGatewayRuntimeModels,
+  resetPiDynamicModelsRestoreForTests,
 } from '../../src/main/piModels';
 import {
   CC_SWITCH_LOCAL_PROVIDER_ID,
@@ -65,6 +69,7 @@ const {
   deleteProviderApiKey,
   getProviderApiKey,
   getProviderSettings,
+  getProviderRuntimeConfig,
   getProviderSecretStatus,
   getActiveProviderRuntimeConfig,
   getStoredProviderApiKey,
@@ -79,6 +84,8 @@ const {
 const { resolveProviderModel } = await import('../../src/main/agent/capabilities/agentModelResolution');
 
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
+const builtinRadiusProvider = piModels().getProvider('radius');
+const builtinLocalGatewayProvider = piModels().getProvider(CC_SWITCH_LOCAL_PROVIDER_ID);
 
 function restoreEnv(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -121,9 +128,15 @@ beforeEach(async () => {
 
 afterEach(async () => {
   setCcSwitchRegistryReaderForTests(null);
+  if (builtinRadiusProvider) piModels().setProvider(builtinRadiusProvider);
+  if (builtinLocalGatewayProvider) piModels().setProvider(builtinLocalGatewayProvider);
   piModels().deleteProvider(piCustomProviderId('openai'));
+  piModels().deleteProvider(piCustomProviderId('openai', 'http://localhost:1234/v1'));
   piModels().deleteProvider(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
   piModels().deleteProvider('env-api-key-test');
+  piModels().deleteProvider('startup-dynamic-test');
+  piModels().deleteProvider('dynamic-catalog-test');
+  piModels().deleteProvider('dynamic-catalog-peer-test');
   await rm(currentUserData, { recursive: true, force: true });
 });
 
@@ -136,6 +149,61 @@ function mockFetchJson(body: unknown, options: { status?: number } = {}): () => 
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function radiusGatewayConfig() {
+  return {
+    baseUrl: 'https://runtime.radius.example.test',
+    models: [{
+      id: 'radius-probe-model',
+      name: 'Radius Probe Model',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    }],
+  };
+}
+
+function installRadiusConnectionProbeProvider() {
+  let liveRefreshes = 0;
+  piModels().setProvider(createProvider({
+    id: 'radius',
+    name: 'Radius',
+    auth: {
+      apiKey: {
+        name: 'Radius key',
+        resolve: async ({ credential }) => credential?.key
+          ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+          : undefined,
+      },
+    },
+    models: [],
+    fetchModels: async () => {
+      liveRefreshes += 1;
+      throw new Error('connection validation must not refresh the live provider');
+    },
+    api: {
+      stream: () => { throw new Error('stream should not be called'); },
+      streamSimple: (model) => {
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          const message = {
+            ...fauxAssistantMessage(fauxText('Radius connection routed.')),
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+          };
+          stream.push({ type: 'start', partial: { ...message, content: [] } });
+          stream.push({ type: 'done', reason: 'stop', message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    },
+  }));
+  return () => liveRefreshes;
 }
 
 function installCcSwitchRegistry(options: {
@@ -184,6 +252,61 @@ function installCcSwitchRegistry(options: {
 }
 
 describe('provider credential resolver', () => {
+  test('restores a persisted dynamic catalog before runtime model resolution', async () => {
+    const providerId = 'startup-dynamic-test';
+    const model = {
+      id: 'startup-model',
+      name: 'Startup Model',
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://startup.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    };
+    let networkRefreshes = 0;
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Startup Dynamic Test',
+      auth: {
+        apiKey: {
+          name: 'Startup key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [],
+      fetchModels: async () => {
+        networkRefreshes += 1;
+        return [];
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+    await Promise.all([
+      writeFile(path.join(currentUserData, 'agent-providers.json'), JSON.stringify({
+        activeProviderId: providerId,
+        providers: [{ providerId, enabled: true }],
+      })),
+      writeFile(secretPath(), JSON.stringify({
+        credentials: { [providerId]: { type: 'api_key', key: 'startup-key' } },
+      })),
+      writeFile(path.join(currentUserData, 'agent-model-catalogs.json'), JSON.stringify({
+        catalogs: { [providerId]: { models: [model] } },
+      })),
+    ]);
+
+    resetPiDynamicModelsRestoreForTests();
+    await expect(getProviderRuntimeConfig(providerId, model.id)).resolves.toMatchObject({ providerId });
+    expect(piModels().getModel(providerId, model.id)).toEqual(model);
+    expect(networkRefreshes).toBe(0);
+  });
+
   // The model list the renderer receives is ordered by `providerModelOptions`;
   // an unpinned Thread runs whatever `resolveProviderModel` picks. The picker
   // presents the head of that list as "always newest", so the two heads must be
@@ -235,7 +358,7 @@ describe('provider credential resolver', () => {
     expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH', xhigh: 'XHIGH', max: 'MAX' });
   });
 
-  test('refreshes dynamic text catalogs and advertises the refresh capability', async () => {
+  test('saving an API key refreshes and persists only real dynamic capabilities', async () => {
     const providerId = 'dynamic-catalog-test';
     let refreshCount = 0;
     let refreshCredential: Credential | undefined;
@@ -276,18 +399,20 @@ describe('provider credential resolver', () => {
     piModels().setProvider(createDynamicCatalogProvider());
 
     try {
-      await setProviderApiKey(providerId, 'dynamic-key');
-      const before = await upsertProviderConfig({ providerId, enabled: true });
-      expect(before.availableProviders.find((provider) => provider.providerId === providerId)?.capabilities).toEqual([{
-        kind: 'language',
-        refreshable: true,
+      const uncredentialed = await getProviderSettings();
+      expect(uncredentialed.availableProviders.find((provider) => provider.providerId === providerId)).toMatchObject({
+        modelsRefreshable: true,
+        capabilities: [],
         models: [],
-      }]);
+      });
 
-      const refreshedView = await refreshProviderModels(providerId);
+      await setProviderApiKey(providerId, 'dynamic-key');
       expect(refreshCount).toBe(1);
-      expect(refreshCredential).toEqual({ type: 'api_key', key: 'dynamic-key', env: undefined });
-      expect(refreshedView.availableProviders.find((provider) => provider.providerId === providerId)).toMatchObject({
+      expect(refreshCredential).toEqual({ type: 'api_key', key: 'dynamic-key' });
+
+      const configured = await upsertProviderConfig({ providerId, enabled: true });
+      expect(configured.availableProviders.find((provider) => provider.providerId === providerId)).toMatchObject({
+        modelsRefreshable: true,
         capabilities: [{ kind: 'language', refreshable: true }],
         models: [{ id: 'dynamic-model', name: 'Dynamic Model' }],
       });
@@ -300,6 +425,53 @@ describe('provider credential resolver', () => {
     } finally {
       piModels().deleteProvider(providerId);
     }
+  });
+
+  test('refreshing one dynamic provider does not fan out to its peers', async () => {
+    const counts = new Map<string, number>();
+    const dynamicProvider = (providerId: string) => createProvider({
+      id: providerId,
+      name: providerId,
+      auth: {
+        apiKey: {
+          name: `${providerId} key`,
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [],
+      fetchModels: async () => {
+        counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
+        return [{
+          id: `${providerId}-model`,
+          name: `${providerId} model`,
+          api: 'openai-completions' as const,
+          provider: providerId,
+          baseUrl: `https://${providerId}.example.test/v1`,
+          reasoning: false,
+          input: ['text' as const],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 8192,
+        }];
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    });
+    const target = 'dynamic-catalog-test';
+    const peer = 'dynamic-catalog-peer-test';
+    piModels().setProvider(dynamicProvider(target));
+    piModels().setProvider(dynamicProvider(peer));
+
+    await setProviderApiKey(target, 'target-key');
+    await setProviderApiKey(peer, 'peer-key');
+    expect(Object.fromEntries(counts)).toEqual({ [target]: 1, [peer]: 1 });
+
+    await refreshProviderModels(target);
+    expect(Object.fromEntries(counts)).toEqual({ [target]: 2, [peer]: 1 });
   });
 
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {
@@ -332,6 +504,26 @@ describe('provider credential resolver', () => {
     const model = rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0];
     expect(model?.id).toBe(runtime?.modelId);
     expect(model ? await piResolveAuthApiKey(model) : undefined).toBe('registry-key');
+  });
+
+  test('reports an unconfigured local gateway as missing auth until a request override exists', async () => {
+    const model = {
+      id: 'unconfigured-gateway-model',
+      name: 'Unconfigured gateway model',
+      api: 'openai-responses' as const,
+      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
+      baseUrl: 'https://unconfigured-gateway.example.test/v1',
+      reasoning: true,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    };
+    registerLocalGatewayRuntimeModels(CC_SWITCH_LOCAL_PROVIDER_ID, [model]);
+
+    await expect(piModels().getAuth(model)).resolves.toBeUndefined();
+    await expect(piModels().checkAuth(CC_SWITCH_LOCAL_PROVIDER_ID)).resolves.toBeUndefined();
+    await expect(piRequestApiKeyOverride(model)).resolves.toBeUndefined();
   });
 
   test('passes the selected CC Switch source key to the connection probe request', async () => {
@@ -599,6 +791,76 @@ describe('provider credential resolver', () => {
     expect(seen).toEqual({ type: 'oauth', refresh: 'r1', access: 'a1', expires: 999 });
   });
 
+  test('lets provider-owned OAuth auth preserve its credential-specific base URL', async () => {
+    const model = {
+      id: 'copilot-enterprise-model',
+      name: 'Copilot Enterprise Model',
+      api: 'openai-completions' as const,
+      provider: 'github-copilot-test',
+      baseUrl: 'https://api.individual.example.test',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    };
+    const dispatched: Array<{ apiKey?: string; baseUrl: string }> = [];
+    piModels().setProvider(createProvider({
+      id: model.provider,
+      name: 'GitHub Copilot Test',
+      auth: {
+        oauth: {
+          name: 'GitHub Copilot OAuth',
+          login: async () => ({ type: 'oauth', refresh: 'r', access: 'a', expires: Date.now() + 60_000 }),
+          refresh: async (credential) => credential,
+          toAuth: async (credential) => ({
+            apiKey: credential.access,
+            baseUrl: 'https://api.enterprise.example.test',
+          }),
+        },
+      },
+      models: [model],
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: (requestModel, _context, options) => {
+          dispatched.push({ apiKey: options?.apiKey, baseUrl: requestModel.baseUrl });
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() => {
+            const message = {
+              ...fauxAssistantMessage(fauxText('Enterprise routed.')),
+              api: requestModel.api,
+              provider: requestModel.provider,
+              model: requestModel.id,
+            };
+            stream.push({ type: 'start', partial: { ...message, content: [] } });
+            stream.push({ type: 'done', reason: 'stop', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      },
+    }));
+    try {
+      await persistOAuthCredential(model.provider, {
+        refresh: 'enterprise-refresh',
+        access: 'enterprise-access',
+        expires: Date.now() + 60_000,
+      });
+
+      await expect(piResolveAuthApiKey(model)).resolves.toBe('enterprise-access');
+      await expect(piRequestApiKeyOverride(model)).resolves.toBeUndefined();
+      await piCompleteSimple(model, {
+        messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+      });
+      expect(dispatched).toEqual([{
+        apiKey: 'enterprise-access',
+        baseUrl: 'https://api.enterprise.example.test',
+      }]);
+    } finally {
+      piModels().deleteProvider(model.provider);
+    }
+  });
+
   test('concurrent oauth refreshes share the persisted post-refresh credential', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r0', access: 'a0', expires: 1 });
     let refreshCount = 0;
@@ -814,16 +1076,31 @@ describe('provider credential resolver', () => {
     expect(model.baseUrl).toBe('https://proxy.example.com/v1');
   });
 
-  test('custom OpenAI-compatible provider registration replaces stale base URLs for a model id', () => {
-    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
-    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
-    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
+  test('a local connection probe cannot leave a remote custom endpoint on the local sentinel', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      process.env.OPENAI_API_KEY = 'env-openai-key';
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
 
-    const models = piModels().getModels(piCustomProviderId('openai'));
-    expect(models.filter((model) => model.id === 'proxy-model').map((model) => model.baseUrl)).toEqual([
-      'http://localhost:1234/v1',
-    ]);
-    expect(piModels().getProvider(piCustomProviderId('openai'))?.baseUrl).toBe('http://localhost:1234/v1');
+      const remoteModel = createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'proxy-model',
+        baseUrl: 'https://proxy.example.com/v1',
+      });
+      const localModel = createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'proxy-model',
+        baseUrl: 'http://localhost:1234/v1',
+      });
+
+      expect(remoteModel.provider).toBe(piCustomProviderId('openai'));
+      expect(localModel.provider).toBe(piCustomProviderId('openai', localModel.baseUrl));
+      expect((await piModels().getAuth(remoteModel))?.auth.apiKey).toBe('env-openai-key');
+      expect((await piModels().getAuth(localModel))?.auth.apiKey).toBe('local-endpoint');
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
   });
 
   test('local endpoints use a stored key but never the ambient env key', async () => {
@@ -999,6 +1276,40 @@ describe('provider credential resolver', () => {
         parallel_tool_calls: true,
         tools: [{ type: 'function', name: 'probe' }],
       }]);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('validates an empty dynamic catalog with a previously stored API key', async () => {
+    const liveRefreshes = installRadiusConnectionProbeProvider();
+    await writeFile(secretPath(), JSON.stringify({
+      credentials: { radius: { type: 'api_key', key: 'stored-radius-key' } },
+    }));
+    const restoreFetch = mockFetchJson(radiusGatewayConfig());
+    try {
+      await expect(testProviderConnection({ providerId: 'radius' })).resolves.toMatchObject({
+        success: true,
+        message: 'Connection successful.',
+      });
+      expect(liveRefreshes()).toBe(0);
+      expect(piModels().getModels('radius')).toEqual([]);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('testing an unsaved dynamic-provider key leaves live and durable catalogs untouched', async () => {
+    const liveRefreshes = installRadiusConnectionProbeProvider();
+    const restoreFetch = mockFetchJson(radiusGatewayConfig());
+    try {
+      await expect(testProviderConnection({
+        providerId: 'radius',
+        apiKey: 'unsaved-radius-key',
+      })).resolves.toMatchObject({ success: true });
+      expect(liveRefreshes()).toBe(0);
+      expect(piModels().getModels('radius')).toEqual([]);
+      await expect(stat(path.join(currentUserData, 'agent-model-catalogs.json'))).rejects.toThrow();
     } finally {
       restoreFetch();
     }

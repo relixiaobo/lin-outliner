@@ -88,7 +88,7 @@ export function ProviderConfigWindow() {
   // Auth class comes from main (`authKind`), falling back to the configured view's
   // descriptor for a provider with no catalog row. Custom providers are always api-key.
   const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
-  const showOAuth = authKind === 'oauth' && !useApiKey;
+  const showOAuth = authKind === 'oauth' && !hasStoredKey && !useApiKey;
   const oauthInfo = oauthSignInInfo(providerId, t);
   const initialBaseUrl = existing?.baseUrl
     ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');

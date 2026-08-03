@@ -70,6 +70,7 @@ export function buildProviderChoices(
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
       canRefreshModels: provider.enabled && (
         isRefreshableLocalGatewayProviderId(provider.providerId)
+        || Boolean(providerCatalog?.modelsRefreshable)
         || Boolean(providerCatalog?.capabilities?.some((capability) => capability.refreshable))
       ),
     });

@@ -45,7 +45,7 @@ import {
   resolveProviderModel,
 } from './agent/capabilities/agentModelResolution';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
-import { piCompleteSimple, piExternalProviderId, piResolveAuthApiKey } from './piModels';
+import { piCompleteSimple, piExternalProviderId, piRequestApiKeyOverride } from './piModels';
 import type {
   PreviewTranslationCacheBlock,
   PreviewTranslationCacheScope,
@@ -408,7 +408,7 @@ async function completePageTranslationWithConfiguredModel(
   const runtimeSettings = await getAgentRuntimeSettings();
   const reasoning = lowestThinkingLevel(model);
   const apiKey = piExternalProviderId(model.provider) === providerConfig.providerId
-    ? providerConfig.apiKey ?? await piResolveAuthApiKey(model)
+    ? providerConfig.apiKey ?? await piRequestApiKeyOverride(model)
     : undefined;
   const response = await awaitWithAbort(piCompleteSimple(model, {
     systemPrompt: input.systemPrompt,

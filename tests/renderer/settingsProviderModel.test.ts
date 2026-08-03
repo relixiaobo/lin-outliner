@@ -22,13 +22,14 @@ function dynamicCatalog(): AgentProviderOption {
     authKind: 'oauth',
     hasEnvApiKey: false,
     envKeyNames: [],
-    capabilities: [{ kind: 'language', refreshable: true, models: [] }],
+    modelsRefreshable: true,
+    capabilities: [],
     models: [],
   };
 }
 
 describe('provider settings model', () => {
-  test('shows refresh for an enabled dynamic capability with an empty catalog', () => {
+  test('shows refresh for an enabled dynamic provider without inventing an empty capability row', () => {
     const catalog = dynamicCatalog();
     const choices = buildProviderChoices(settings(), '', new Map([[catalog.providerId, catalog]]));
     expect(choices[0]).toMatchObject({ providerId: 'radius', canRefreshModels: true });

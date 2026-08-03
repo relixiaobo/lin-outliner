@@ -337,9 +337,13 @@ Credential mode follows main's provider auth descriptor. OAuth-capable providers
 show the shared sign-in flow for browser URLs, device codes, progress, selection,
 and manual-code prompts; closing or cancelling the flow aborts outstanding
 prompts. When that same provider accepts a normal user API key, the sheet offers
-"Use an API key instead" and returns to the standard key form. OAuth-only
-providers omit the fallback. A completed sign-in may populate a dynamic model
-catalog without changing the sheet's connection-only ownership.
+"Use an API key instead" and returns to the standard key form. Reopening a
+provider that already has a stored API key starts on that key form rather than
+presenting it as a disconnected OAuth account. OAuth-only providers omit the
+fallback. A completed sign-in may populate a dynamic model catalog without
+changing the sheet's connection-only ownership. Capability rows render only
+non-empty model groups; provider-level refreshability remains available to the
+settings row when a dynamic catalog is empty.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.
