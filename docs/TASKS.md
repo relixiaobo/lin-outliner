@@ -50,9 +50,12 @@ ones individually would just keep producing entries.
 **You no longer have to find that out by hand.** `e2e-signal-on-main` landed the same day:
 the repository has CI for the first time, and every push to `main` runs five independent
 whole-suite samples and publishes a frequency table to one tracking issue, while **#477**
-(in review) adds the branch-minus-`main` subtraction on every PR. **Read the issue before a
-gate, and the PR comment during one** — together they answer "is this failure mine?" as a
-set difference. Neither gates anything; the verdict is the issue, not a badge.
+(merged 2026-08-03) adds the branch-minus-`main` subtraction on every PR. **Read the issue
+before a gate, and the PR comment during one** — together they answer "is this failure
+mine?" as a set difference. Neither gates anything; the verdict is the issue, not a badge.
+The first PR baselines after #477 will be **unavailable** by design: it renamed the
+artifacts to carry the platform, so runs from before that are correctly excluded and the
+comparison reports every failure as *unattributed* until three fresh `main` runs exist.
 **Its first two baselines already paid for it**, and not in the way expected: four tests
 fail every single CI macOS sample and have never failed locally
 (`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
