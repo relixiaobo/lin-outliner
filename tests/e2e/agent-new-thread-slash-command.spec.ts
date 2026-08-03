@@ -23,12 +23,14 @@ test.describe('new Thread composer slash command', () => {
     await composer.fill('/');
 
     const menu = page.getByRole('listbox', { name: 'Thread slash commands' });
+    await expect(menu.getByRole('option').first()).toContainText('/compact');
     const option = menu.getByRole('option', { name: /^\/new Start a new Thread$/ });
     await expect(option).toContainText('Start a new Thread');
     await option.click();
 
     await expect(composer).toHaveText('/new');
     await expect(composer).toBeFocused();
+    await expect(menu).toHaveCount(0);
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
 
     await composer.press('Enter');
@@ -69,19 +71,36 @@ test.describe('new Thread composer slash command', () => {
     expect(await callCount(page, 'turn/start')).toBe(0);
   });
 
-  test('keeps casing variants and additional text on the ordinary Turn path', async ({ page }) => {
+  test('uses menu completion for casing variants and keeps additional text on the ordinary Turn path', async ({ page }) => {
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     const initialThreadStarts = await callCount(page, 'thread/start');
 
     await composer.fill('/New');
+    const menu = page.getByRole('listbox', { name: 'Thread slash commands' });
+    await expect(menu.getByRole('option').first()).toContainText('/new');
     await composer.press('Enter');
-    await expect.poll(() => callCount(page, 'turn/start')).toBe(1);
+    await expect(composer).toHaveText('/new');
+    await expect(menu).toHaveCount(0);
+    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
 
     await composer.fill('/new project');
     await composer.press('Enter');
-    await expect.poll(() => callCount(page, 'turn/start')).toBe(2);
+    await expect.poll(() => callCount(page, 'turn/start')).toBe(1);
 
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
+  });
+
+  test('submits an exact no-argument runtime command on the first Enter', async ({ page }) => {
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('/clear');
+
+    await expect(page.getByRole('listbox', { name: 'Thread slash commands' })).toHaveCount(0);
+    await composer.press('Enter');
+
+    await expect.poll(() => callCount(page, 'turn/start')).toBe(1);
+    const turnStart = (await commandCalls(page)).find((call) => call.cmd === 'turn/start');
+    expect(turnStart?.args.input).toEqual([{ type: 'text', text: '/clear' }]);
   });
 
   test('uses any usable provider for /new instead of the selected Thread send gate', async ({ page }) => {
@@ -103,7 +122,9 @@ test.describe('new Thread composer slash command', () => {
 
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Current Thread cannot send this.');
-    await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+    const send = page.getByRole('button', { name: 'Send' });
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAttribute('title', 'Configure an AI provider before starting a Thread.');
     await composer.fill('/new');
     const action = page.getByRole('button', { name: 'New Thread' });
     await expect(action).toBeEnabled();
@@ -133,6 +154,9 @@ test.describe('new Thread composer slash command', () => {
     await composer.press('Enter');
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
     await expect(composer).toHaveText('/new');
+    await expect(page.locator('.thread-composer-main .thread-inline-error')).toContainText(
+      'Configure an AI provider before starting a Thread.',
+    );
   });
 
   test('keeps /new and the selected Thread when creation fails', async ({ page }) => {
@@ -188,4 +212,33 @@ test('leaves an active prior Turn running and marks its root as background work'
   expect(calls.filter((call) => call.cmd === 'turn/start')).toHaveLength(1);
   expect(calls.filter((call) => call.cmd === 'turn/steer')).toHaveLength(0);
   expect(calls.filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
+});
+
+test('does not label a prior Thread waiting on the user as background work', async ({ page }) => {
+  await openMockedApp(page, { agentTurnStaysActive: true });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Wait for my input.');
+  await composer.press('Enter');
+  await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'thread/status/changed',
+      threadId,
+      status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+    });
+  });
+
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('button', { name: 'New Thread' }).click();
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+
+  const priorThread = page.locator('.thread-list-row').filter({ hasText: 'Wait for my input.' });
+  await expect(priorThread).toHaveCount(1);
+  await expect(priorThread.getByRole('img', { name: 'Background work running' })).toHaveCount(0);
 });

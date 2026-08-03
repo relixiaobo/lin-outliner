@@ -3,10 +3,19 @@ import type {
   ThreadComposerDraft,
   ThreadComposerFileReference,
 } from '../../src/renderer/agent/components/ThreadComposerEditor';
+import type { SkillDefinition } from '../../src/renderer/api/types';
 import {
   classifyNewThreadCommand,
-  isCompleteNewThreadMenuQuery,
+  isExactSlashCommandMenuQuery,
+  runtimeSlashCommands,
+  slashCommandsFromSkills,
 } from '../../src/renderer/agent/threadComposerCommands';
+
+const COMMAND_LABELS = {
+  compactDescription: 'Compact context',
+  clearDescription: 'Clear context',
+  newThreadDescription: 'Start a new Thread',
+};
 
 function textDraft(text: string): ThreadComposerDraft {
   return {
@@ -14,6 +23,25 @@ function textDraft(text: string): ThreadComposerDraft {
     empty: text.length === 0,
     fileRefs: [],
     text,
+  };
+}
+
+function skillDefinition(name: string, userInvocable = true): SkillDefinition {
+  return {
+    name,
+    source: 'project',
+    rootDir: `/skills/${name}`,
+    skillFile: `/skills/${name}/SKILL.md`,
+    description: `${name} description`,
+    hasUserSpecifiedDescription: true,
+    userInvocable,
+    modelInvocable: true,
+    ratified: true,
+    allowedTools: [],
+    argumentNames: [],
+    execution: 'inline',
+    contentLength: 1,
+    body: name,
   };
 }
 
@@ -59,11 +87,38 @@ describe('new Thread composer command', () => {
     expect(classifyNewThreadCommand(draft)).toBe('ordinary');
   });
 
-  test('submits complete menu queries without rewriting casing variants', () => {
-    const commands = [{ id: 'runtime:new', label: '/new' }];
+  test('closes the menu only for exact command tokens that need no insertion rewrite', () => {
+    const commands = runtimeSlashCommands(COMMAND_LABELS);
 
-    expect(isCompleteNewThreadMenuQuery('new', commands)).toBe(true);
-    expect(isCompleteNewThreadMenuQuery('New', commands)).toBe(true);
-    expect(isCompleteNewThreadMenuQuery('ne', commands)).toBe(false);
+    expect(isExactSlashCommandMenuQuery('new', commands)).toBe(true);
+    expect(isExactSlashCommandMenuQuery('clear', commands)).toBe(true);
+    expect(isExactSlashCommandMenuQuery('compact', commands)).toBe(false);
+    expect(isExactSlashCommandMenuQuery('New', commands)).toBe(false);
+    expect(isExactSlashCommandMenuQuery('ne', commands)).toBe(false);
+  });
+
+  test('keeps compact as the default command and appends new after existing runtime commands', () => {
+    expect(runtimeSlashCommands(COMMAND_LABELS).map((command) => command.label)).toEqual([
+      '/compact',
+      '/clear',
+      '/new',
+    ]);
+  });
+
+  test('reserves runtime command names from user-invocable Skills', () => {
+    const commands = slashCommandsFromSkills([
+      skillDefinition('new'),
+      skillDefinition('NEW'),
+      skillDefinition('clear'),
+      skillDefinition('workspace-review'),
+      skillDefinition('hidden', false),
+    ], COMMAND_LABELS);
+
+    expect(commands.map((command) => command.label)).toEqual([
+      '/compact',
+      '/clear',
+      '/new',
+      '/workspace-review',
+    ]);
   });
 });

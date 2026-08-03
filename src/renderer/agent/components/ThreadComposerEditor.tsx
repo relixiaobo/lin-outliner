@@ -50,7 +50,7 @@ import {
   threadNodeReferenceOpenOptionsFromClick,
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
-import { isCompleteNewThreadMenuQuery } from '../threadComposerCommands';
+import { isExactSlashCommandMenuQuery } from '../threadComposerCommands';
 
 export interface ThreadComposerNodeReference {
   nodeId: NodeId;
@@ -637,18 +637,6 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
               return true;
             }
             if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
-              // A fully typed token submits on the first Enter. Menu navigation
-              // still inserts without executing, and casing variants keep their
-              // original text so the submit classifier can treat them normally.
-              if (event.key === 'Enter'
-                && openTrigger.mode === 'slash'
-                && isCompleteNewThreadMenuQuery(openTrigger.query, propsRef.current.slashCommands)) {
-                event.preventDefault();
-                triggerRef.current = null;
-                setTrigger(null);
-                propsRef.current.onSubmit();
-                return true;
-              }
               const button = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]')
                 ?.[clampMenuIndex(selectedIndexRef.current, itemCountRef.current)];
               if (button) {
@@ -815,7 +803,10 @@ function filterComposerTrigger(
   props: ThreadComposerEditorProps,
 ): ComposerTrigger | null {
   if (!trigger) return null;
-  if (trigger.mode === 'slash' && props.allowSlashCommands === false) return null;
+  if (trigger.mode === 'slash') {
+    if (props.allowSlashCommands === false) return null;
+    if (isExactSlashCommandMenuQuery(trigger.query, props.slashCommands)) return null;
+  }
   if (
     trigger.mode === 'mention'
     && props.allowNodeReferences === false
@@ -1109,12 +1100,14 @@ function isComposerAtom(node: PMNode | null | undefined): node is PMNode {
 
 function filterSlashCommands(commands: readonly AgentSlashCommandView[], query: string): AgentSlashCommandView[] {
   const normalized = query.trim().toLowerCase();
-  const items = normalized
-    ? commands.filter((command) => (
-        command.label.toLowerCase().includes(normalized)
-        || command.description?.toLowerCase().includes(normalized)
-      ))
-    : [...commands];
+  if (!normalized) return commands.slice(0, 12);
+  const labelMatches = commands.filter((command) => command.label.toLowerCase().includes(normalized));
+  const labelMatchIds = new Set(labelMatches.map((command) => command.id));
+  const descriptionMatches = commands.filter((command) => (
+    !labelMatchIds.has(command.id)
+    && command.description?.toLowerCase().includes(normalized)
+  ));
+  const items = [...labelMatches, ...descriptionMatches];
   return items.slice(0, 12);
 }
 

@@ -1,4 +1,12 @@
+import type { AgentSlashCommandView, SkillDefinition } from '../api/types';
+
 export const NEW_THREAD_SLASH_COMMAND_ID = 'runtime:new';
+
+export interface RuntimeSlashCommandLabels {
+  readonly compactDescription: string;
+  readonly clearDescription: string;
+  readonly newThreadDescription: string;
+}
 
 interface NewThreadCommandDraft {
   readonly content: readonly { readonly type: string }[];
@@ -18,10 +26,64 @@ export function classifyNewThreadCommand(draft: NewThreadCommandDraft): NewThrea
     : 'ready';
 }
 
-export function isCompleteNewThreadMenuQuery(
+export function isExactSlashCommandMenuQuery(
   query: string,
-  commands: readonly { readonly id: string; readonly label: string }[],
+  commands: readonly Pick<AgentSlashCommandView, 'insertText' | 'label'>[],
 ): boolean {
-  const command = commands.find((candidate) => candidate.id === NEW_THREAD_SLASH_COMMAND_ID);
-  return Boolean(command && query.toLowerCase() === command.label.slice(1).toLowerCase());
+  const token = `/${query}`;
+  return commands.some((command) => command.label === token && command.insertText === token);
+}
+
+export function runtimeSlashCommands(labels: RuntimeSlashCommandLabels): AgentSlashCommandView[] {
+  return [
+    {
+      id: 'runtime:compact',
+      kind: 'runtime',
+      label: '/compact',
+      description: labels.compactDescription,
+      insertText: '/compact ',
+    },
+    {
+      id: 'runtime:clear',
+      kind: 'runtime',
+      label: '/clear',
+      description: labels.clearDescription,
+      insertText: '/clear',
+    },
+    {
+      id: NEW_THREAD_SLASH_COMMAND_ID,
+      kind: 'runtime',
+      label: '/new',
+      description: labels.newThreadDescription,
+      insertText: '/new',
+    },
+  ];
+}
+
+export function slashCommandsFromSkills(
+  skills: readonly SkillDefinition[],
+  labels: RuntimeSlashCommandLabels,
+): AgentSlashCommandView[] {
+  const runtimeCommands = runtimeSlashCommands(labels);
+  const reservedLabels = new Set(runtimeCommands.map((command) => command.label.toLowerCase()));
+  const skillCommands = skills
+    .filter((skill) => (
+      skill.userInvocable
+      && !reservedLabels.has(`/${skill.name}`.toLowerCase())
+    ))
+    .map((skill) => ({
+      id: `skill:${skill.name}`,
+      kind: 'skill' as const,
+      label: `/${skill.name}`,
+      description: slashCommandDescription(skill),
+      insertText: `/${skill.name} `,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  return [...runtimeCommands, ...skillCommands];
+}
+
+function slashCommandDescription(skill: SkillDefinition): string {
+  const detail = skill.description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+  if (!skill.displayName || skill.displayName === detail) return detail;
+  return detail ? `${skill.displayName} - ${detail}` : skill.displayName;
 }

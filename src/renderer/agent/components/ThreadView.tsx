@@ -171,6 +171,8 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   text: '',
 };
 
+type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
+
 interface ThreadScrollSnapshot {
   readonly follow: boolean;
   readonly top: number;
@@ -359,7 +361,8 @@ export function ThreadView({
   const [sending, setSending] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newThreadValidationVisible, setNewThreadValidationVisible] = useState(false);
+  const [newThreadValidation, setNewThreadValidation] = useState<NewThreadValidation>(null);
+  const [failedThreadCreationFocusToken, setFailedThreadCreationFocusToken] = useState(0);
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
   const [recentLocalFiles, setRecentLocalFiles] = useState<ThreadComposerLocalFileCandidate[]>([]);
   const [follow, setFollow] = useState(initialScrollSnapshot?.follow ?? true);
@@ -395,6 +398,7 @@ export function ThreadView({
   const attachmentSourceKeysRef = useRef(new Map<string, string>());
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const handledFocusTokenRef = useRef(0);
+  const handledFailedThreadCreationFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
   const measuredTurnHeights = useMemo(() => cachedTurnHeights(threadId), [threadId]);
   const [measureVersion, setMeasureVersion] = useState(0);
@@ -442,9 +446,15 @@ export function ThreadView({
   const composerActionLabel = newThreadAction
     ? t.agent.thread.new
     : activeTurn ? t.agent.thread.steer : t.agent.thread.send;
-  const composerActionTitle = newThreadCommandState === 'ready' && threadCreationBlocked
-    ? t.agent.thread.providerRequired
-    : composerActionLabel;
+  const composerActionTitle = (
+    (newThreadCommandState === 'ready' && threadCreationBlocked)
+    || (newThreadCommandState === 'ordinary' && providerBlocksSend)
+  ) ? t.agent.thread.providerRequired : composerActionLabel;
+  const newThreadValidationMessage = newThreadValidation === 'structuredContent'
+    ? t.agent.composer.newThreadStructuredContentError
+    : newThreadValidation === 'providerRequired'
+      ? t.agent.thread.providerRequired
+      : null;
   const virtualLayout = useMemo(
     () => buildVirtualTurnLayout(turns, measuredTurnHeights),
     [measureVersion, measuredTurnHeights, turns],
@@ -938,6 +948,21 @@ export function ThreadView({
     return () => window.cancelAnimationFrame(frame);
   }, [composerFocusToken, waitingForInput]);
 
+  useEffect(() => {
+    if (failedThreadCreationFocusToken <= 0
+      || handledFailedThreadCreationFocusTokenRef.current >= failedThreadCreationFocusToken
+      || threadCreationPending
+      || waitingForInput) return undefined;
+    handledFailedThreadCreationFocusTokenRef.current = failedThreadCreationFocusToken;
+    const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [failedThreadCreationFocusToken, threadCreationPending, waitingForInput]);
+
+  useEffect(() => {
+    if (threadCreationBlocked) return;
+    setNewThreadValidation((current) => current === 'providerRequired' ? null : current);
+  }, [threadCreationBlocked]);
+
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
     if (!composerEnabled) return;
     composerRef.current?.insertNodeReference({ nodeId: request.nodeId, title: request.title });
@@ -966,17 +991,20 @@ export function ThreadView({
       || waitingForInput) return;
     const commandState = classifyNewThreadCommand(currentDraft);
     if (commandState === 'blockedByStructuredContent') {
-      setNewThreadValidationVisible(true);
+      setNewThreadValidation('structuredContent');
       return;
     }
     if (commandState === 'ready') {
-      setNewThreadValidationVisible(false);
-      if (!threadCreationBlocked) {
-        const created = await onCreateThread();
-        if (!created) window.requestAnimationFrame(() => composerRef.current?.focus());
+      if (threadCreationBlocked) {
+        setNewThreadValidation('providerRequired');
+        return;
       }
+      setNewThreadValidation(null);
+      const created = await onCreateThread();
+      if (!created) setFailedThreadCreationFocusToken((token) => token + 1);
       return;
     }
+    setNewThreadValidation(null);
     if (providerBlocksSend) return;
     const submittedContent = threadContentFromDraft(currentDraft, attachmentsRef.current);
     const submittedAttachments = submittedContent.filter(
@@ -1294,9 +1322,12 @@ export function ThreadView({
   function handleDraftChange(next: ThreadComposerDraft) {
     draftRef.current = next;
     setDraft(next);
-    setNewThreadValidationVisible((visible) => (
-      visible && classifyNewThreadCommand(next) === 'blockedByStructuredContent'
-    ));
+    const nextCommandState = classifyNewThreadCommand(next);
+    setNewThreadValidation((current) => {
+      if (current === 'structuredContent' && nextCommandState === 'blockedByStructuredContent') return current;
+      if (current === 'providerRequired' && nextCommandState === 'ready' && threadCreationBlocked) return current;
+      return null;
+    });
     if (sendingRef.current) return;
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
     const current = attachmentsRef.current;
@@ -1463,9 +1494,9 @@ export function ThreadView({
           <div className="thread-composer-main" hidden={waitingForInput}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}
               {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
-              {newThreadValidationVisible ? (
+              {newThreadValidationMessage ? (
                 <p className="thread-inline-error" role="status">
-                  {t.agent.composer.newThreadStructuredContentError}
+                  {newThreadValidationMessage}
                 </p>
               ) : null}
               <ThreadComposerEditor

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
-import type { AgentProviderSettingsView, AgentSlashCommandView, SkillDefinition } from '../../api/types';
+import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -26,7 +26,7 @@ import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
-import { NEW_THREAD_SLASH_COMMAND_ID } from '../threadComposerCommands';
+import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -112,7 +112,10 @@ export function ThreadDock({
     const parentById = new Map(snapshot.threads.map((candidate) => [candidate.id, candidate.parentThreadId]));
     const roots = new Set<string>();
     for (const candidate of snapshot.threads) {
-      if (candidate.status.type !== 'active') continue;
+      if (
+        candidate.status.type !== 'active'
+        || candidate.status.activeFlags.includes('waitingOnUserInput')
+      ) continue;
       if (candidate.parentThreadId === null) {
         if (candidate.id !== snapshot.selectedThreadId) roots.add(candidate.id);
         continue;
@@ -566,59 +569,4 @@ function lineageRoot(thread: Thread, threadsById: ReadonlyMap<string, Thread>): 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-interface RuntimeSlashCommandLabels {
-  readonly compactDescription: string;
-  readonly clearDescription: string;
-  readonly newThreadDescription: string;
-}
-
-function runtimeSlashCommands(labels: RuntimeSlashCommandLabels): AgentSlashCommandView[] {
-  return [
-    {
-      id: NEW_THREAD_SLASH_COMMAND_ID,
-      kind: 'runtime',
-      label: '/new',
-      description: labels.newThreadDescription,
-      insertText: '/new',
-    },
-    {
-      id: 'runtime:compact',
-      kind: 'runtime',
-      label: '/compact',
-      description: labels.compactDescription,
-      insertText: '/compact ',
-    },
-    {
-      id: 'runtime:clear',
-      kind: 'runtime',
-      label: '/clear',
-      description: labels.clearDescription,
-      insertText: '/clear',
-    },
-  ];
-}
-
-function slashCommandsFromSkills(
-  skills: readonly SkillDefinition[],
-  labels: RuntimeSlashCommandLabels,
-): AgentSlashCommandView[] {
-  const skillCommands = skills
-    .filter((skill) => skill.userInvocable)
-    .map((skill) => ({
-      id: `skill:${skill.name}`,
-      kind: 'skill' as const,
-      label: `/${skill.name}`,
-      description: slashCommandDescription(skill),
-      insertText: `/${skill.name} `,
-    }))
-    .sort((left, right) => left.label.localeCompare(right.label));
-  return [...runtimeSlashCommands(labels), ...skillCommands];
-}
-
-function slashCommandDescription(skill: SkillDefinition): string {
-  const detail = skill.description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
-  if (!skill.displayName || skill.displayName === detail) return detail;
-  return detail ? `${skill.displayName} - ${detail}` : skill.displayName;
 }

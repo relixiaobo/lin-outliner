@@ -63,6 +63,14 @@ Selection does not execute immediately: it follows the existing command-menu
 contract by returning focus to the composer, where Enter submits the visible
 command.
 
+Preserve `/compact` as the catalog's default entry, then `/clear`, then `/new`.
+Label matches rank before description-only matches, and the runtime names are
+reserved case-insensitively so a same-named user Skill is omitted instead of
+rendering an unreachable duplicate. When the exact-cased text of a command whose
+insertion needs no trailing arguments is complete, close the menu; the next
+Enter uses the normal submit path. This general rule applies to both `/new` and
+`/clear` rather than special-casing one command in the key handler.
+
 `/new` is case-sensitive and reserved when the submitted composer text trims to
 exactly `/new`. It executes only when the composer otherwise contains no
 attachments, Node references, file references, or other structured content. If
@@ -72,10 +80,13 @@ message "Remove attachments and references before starting a new Thread." The
 user can remove the structured content and retry without reconstructing the
 draft.
 
-Additional text such as `/new project`, casing variants such as `/New`, and
-unknown slash text remain ordinary Turn input. This preserves the current Skill
-and prompt fallback without letting a first-class reserved command silently
-change meaning when structured content is present.
+Additional text such as `/new project`, casing variants submitted without
+accepting the canonical menu completion, and unknown slash text remain ordinary
+Turn input. While a casing variant such as `/New` still has an active menu,
+Enter accepts the canonical `/new` suggestion and waits for another explicit
+submission instead of sending the variant to the provider. This preserves the
+current Skill and prompt fallback without letting a first-class reserved command
+silently change meaning when structured content is present.
 
 ### DEC-2: Renderer-owned routing through the existing creation action
 
@@ -113,12 +124,15 @@ Use the same provider-loading and usable-provider decision as the existing New
 Thread button. If the selected Thread's provider cannot send but another usable
 provider still permits Thread creation, `/new` remains executable; it is an
 escape from the unusable Thread rather than an attempted Turn on it. If Thread
-creation itself is unavailable, `/new` must not bypass the provider gate.
+creation itself is unavailable, `/new` must not bypass the provider gate; a
+keyboard submit surfaces the existing provider-required copy inline.
 
 An active Turn does not block `/new`. Creating the new Thread does not steer or
 interrupt that Turn; the prior Thread continues in the background and retains
 the existing background-work presentation. The current duplicate-submission
 guard applies so repeated Enter presses cannot create multiple Threads.
+`waitingOnUserInput` is blocked time, not running work, so switching away from
+such a Thread does not give it the background-work indicator.
 
 An active `request_user_input` continues to replace the composer, so `/new` is
 not reachable from that blocked surface. The Thread list remains the escape path
@@ -143,8 +157,8 @@ focus behavior remain unchanged.
   path.
 
 - **AC-1:** When an editable root Thread opens the slash menu, the menu shall
-  include `/new` with a localized New Thread description alongside `/compact`,
-  `/clear`, and user-invocable Skills.
+  include `/new` with a localized New Thread description after `/compact` and
+  `/clear`, alongside non-conflicting user-invocable Skills.
 - **AC-2:** When the user selects `/new`, the composer shall contain exactly
   `/new`, keep focus, and wait for explicit submission.
 - **AC-3:** When the user submits sole-text `/new`, Tenon shall issue exactly one
@@ -159,10 +173,11 @@ focus behavior remain unchanged.
 - **AC-6:** If the selected Thread cannot send but Thread creation remains
   eligible through another usable provider, `/new` shall still create a Thread.
   If creation is ineligible, it shall remain subject to the existing provider
-  gate.
+  gate and a keyboard submission shall show the provider-required copy inline.
 - **AC-7:** If `thread/start` fails, Tenon shall keep the prior Thread selected,
   restore the `/new` draft, show the existing action error, and create no partial
-  Thread in renderer state.
+  Thread in renderer state; composer focus returns after its pending disabled
+  state clears.
 - **AC-8:** Repeated submission while creation is pending shall create at most
   one Thread.
 
