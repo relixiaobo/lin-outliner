@@ -380,11 +380,35 @@ action — reversal is `Cmd+Z` in the document, the same undo everything else us
   already exists; what is missing is *the user's own* tag.)
 - **"Send to the agent panel" is a registry action, not a new AI surface.** It
   raises the main window, reveals the rail, and stages the operand *and the text
-  already typed in the panel* as a composer draft — the user edits and submits.
-  Carrying the typed query is not a nicety: dropping it would mean the one entry
-  point that works from outside the app silently discards what the user wrote.
-  Content shape comes from `agent-conversation-model.md` / `agent-data-model.md`
-  (which own `ThreadUserContent`; this plan must not re-describe it).
+  already typed in the panel* — the user edits and submits. Carrying the typed
+  query is not a nicety: dropping it would mean the one entry point that works from
+  outside the app silently discards what the user wrote.
+
+  **A foreground page is context, not a user message** (PM, 2026-08-03). A node
+  operand is already expressible as a `nodeReference`, but an external page is not
+  one of `ThreadUserContent`'s three kinds (`text` / `attachment` / `nodeReference`)
+  — and it should not become one. It enters through the channel the runtime already
+  has for exactly this: a renderer-supplied **`additionalContext` entry**, rendered
+  inside `<system-reminder><context-evidence>` by `ContextProjector.ts:742-749`,
+  under the `additionalContext` evidence kind.
+
+  Three properties make this the right channel rather than a workaround:
+
+  - **No protocol change.** `RendererTurnStartRequest.additionalContext` already
+    exists (`protocol.ts:1271`), so this plan stays a *consumer* of
+    `agent-data-model`'s contract and does not edit an authority file.
+  - **Untrusted by construction.** That field's type forces every renderer-supplied
+    entry to `kind: 'untrusted'`. Web page text can therefore never arrive with
+    application authority, which is precisely the injection risk a page-as-user-text
+    design would have created. The stable prompt already states the rule: authority
+    comes from host metadata, never from tag spelling.
+  - **Precedent.** `AutomationDispatcher.ts:128` already injects non-user-authored
+    context this way.
+
+  So: the page becomes an untrusted `additionalContext` entry (URL + title, plus
+  reader text later if the static reader lands), the user's typed text is the actual
+  user message, and the agent can tell the two apart. Capture-into-a-node-first was
+  considered and rejected — asking a question should not silently create a node.
 - **The handoff needs a new leg, and the estimate must say so.**
   `agent/agentReveal.ts` is renderer-local pub/sub: a module-level listener set, no
   IPC, no window raise, and its only caller today already lives in the main window.
