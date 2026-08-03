@@ -67,16 +67,19 @@ do not move when the sidebar collapses (only the rail slides away).
 Center — per-pane breadcrumb headers:
 
 - Each open pane contributes its own breadcrumb header (`avatar / path /
-  current`) with a `×` close at its right; the last remaining pane shows no `×`.
+  current`) with any pane-specific actions followed by a `×` close at its
+  right; the last remaining pane shows no `×`.
 - The breadcrumb is the pane's header and its drag region. A per-pane back
   control lives in the breadcrumb row; global page-history back/forward are on
   `Cmd+[` / `Cmd+]` with no chrome buttons.
 - With more than one pane open, the breadcrumb's crumb content — sized to the
   crumbs, not the header's full middle column — is additionally the pane's
   drag-to-reorder handle and opts out of the window drag region (`no-drag`
-  carve-out, like the breadcrumb's buttons); the empty header space right of
-  the crumbs, the top strip, and the gaps stay window-drag. Single-pane
-  canvases keep the full drag region.
+  carve-out, like the breadcrumb's buttons). The trailing action/Close group
+  remains a right-aligned `no-drag` surface outside that reorder handle; the
+  empty header space between the crumbs and trailing group, the top strip, and
+  the surrounding gaps stay window-drag. Single-pane canvases keep the full
+  drag region.
 
 Right corner — agent chrome:
 

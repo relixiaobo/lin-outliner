@@ -1228,21 +1228,24 @@ test.describe('file attachments', () => {
     const headerActionPositions = await readerPane.locator('.panel-sticky-breadcrumb').evaluate((header) => {
       const actions = [...header.querySelectorAll<HTMLElement>('.file-preview-reader-actions')];
       const close = header.querySelector<HTMLElement>('.panel-breadcrumb-close');
-      if (actions.length !== 2 || !close) throw new Error('Missing reader header actions');
+      const trailing = header.querySelector<HTMLElement>('.panel-breadcrumb-trailing');
+      if (actions.length !== 2 || !close || !trailing) throw new Error('Missing reader header actions');
       const translationRect = actions[0].getBoundingClientRect();
       const moreRect = actions[1].getBoundingClientRect();
       const closeRect = close.getBoundingClientRect();
       return {
         translationLeft: translationRect.left,
         moreLeft: moreRect.left,
-        moreRight: moreRect.right,
         closeLeft: closeRect.left,
+        actualGap: closeRect.left - moreRect.right,
+        expectedGap: Number.parseFloat(getComputedStyle(trailing).columnGap),
+        trailingAppRegion: getComputedStyle(trailing).getPropertyValue('-webkit-app-region').trim(),
       };
     });
     expect(headerActionPositions.translationLeft).toBeLessThan(headerActionPositions.moreLeft);
     expect(headerActionPositions.moreLeft).toBeLessThan(headerActionPositions.closeLeft);
-    expect(headerActionPositions.closeLeft - headerActionPositions.moreRight).toBeGreaterThanOrEqual(0);
-    expect(headerActionPositions.closeLeft - headerActionPositions.moreRight).toBeLessThanOrEqual(12);
+    expect(headerActionPositions.actualGap).toBeCloseTo(headerActionPositions.expectedGap, 1);
+    expect(headerActionPositions.trailingAppRegion).toBe('no-drag');
     await page.waitForTimeout(200);
     expect((await commandCalls(page)).filter((call) => call.cmd === 'url_page_translate_blocks')).toHaveLength(0);
 

@@ -53,6 +53,7 @@
 .panel-breadcrumb-origin,
 .panel-breadcrumb-button,
 .panel-breadcrumb-ellipsis,
+.panel-breadcrumb-trailing,
 .panel-breadcrumb-close,
 .outline-panel-close {
   -webkit-app-region: no-drag;
@@ -94,7 +95,6 @@
   height: var(--control-size-md);
   align-items: center;
   justify-content: center;
-  justify-self: end;
   border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--text-primary) 42%, transparent);
 }
