@@ -20,14 +20,15 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped tool-row-status-visuals #461, process-state-truthfulness #463, plan-progress-pill #467, plan-visibility #468 — `agent-run-presentation-consistency` complete; agent-subagent-navigation #471 — `agent-subagent-interaction` PR 2) |
+| Claude Code 2 | `lin-outliner-cc-2/` | (see note) | **building `agent-model-first-picker`** — one-pager reviewed 2026-08-03, no Draft PR yet (shipped #461, #463, #467, #468, #471, #472 — `agent-run-presentation-consistency` and `agent-subagent-interaction` both complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
 | Anti | `lin-outliner-anti/` | — | idle |
+| *(unidentified)* | ? | ? | **building `unified-command-surface`** — the PM assigned it 2026-08-03; which clone is doing it was never recorded, and no Draft PR exists, so nobody can tell whether a second claimant would collide. Whoever it is: open the Draft PR. |
 
-*(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
+*(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
 
@@ -592,7 +593,8 @@ see *Recently completed*.
   merged, so nothing to archive; loose end resolved.)
 - **memory** (academic model + theory realignment **shipped**; authorities =
   `agent-memory-foundations` (`meta`) + `agent-data-model` § *Canonical memory vocabulary* +
-  `agent-architecture.md` § *The memory system*) — the subsystem is canonically framed in academic
+  `docs/spec/agent-memory.md`, which replaced the cited `agent-architecture.md § The memory
+  system` — that file no longer exists) — the subsystem is canonically framed in academic
   vocabulary (episodic/semantic/procedural × encoding/consolidation/retrieval/forgetting +
   transactive). Render projection, Dream consolidation (`agent-dream-memory`), principal-keyed
   memory, two-strength forgetting, and the hybrid retrieval engine all shipped
@@ -719,23 +721,11 @@ Standalone agent items (not part of the program):
   (e.g. skip/redact obvious secret patterns / high-entropy strings before
   add/update), accepting it is heuristic and imperfect. Memory store is plaintext at
   rest like the secrets store — see `[[agent-secrets-plaintext-decision]]`.
-- **agent-dream-followups** (P3, *no plan file*) — polish deferred from #163 (Dream thin assembly,
-  now landed): (a) **per-agent schedule UI** — Dream uses a built-in daily cadence; expose a Settings
-  field / the shared `date` routine surface. (b) **large-backlog chunking** — a single Dream pass is
-  bounded by the ~60k-char transcript budget; iterate a big historical backlog across multiple passes.
-  (c) **precise cross-conversation provenance** — an `add` currently tags a new fact with *all* processed
-  conversations' sources (the model doesn't say which one a fact came from); attribute per-conversation.
-  (d) **running-Dream read-only test** — the read-only guard is covered for a completed Dream row only;
-  add a running-Dream case. (e) **un-transacted `dream.completed`/run-meta status** — a failed second
-  write leaves the task row labeled `failed` though memory + watermark committed (cosmetic).
-  (f) **reminder-cache non-Dream invalidation** (from #164 review) — `run.memoryReminderCache` is cleared
-  on Dream completion but NOT on an out-of-band Settings memory edit during a still-active subagent run, so
-  that run can serve a stale `<agent-memory>` reminder until it ends (bounded by run lifetime); key the cache
-  on a memory seq/version. (g) **checkpoint shape-version hygiene** (from #164 `b3deae02` review) — bump
-  `CHECKPOINT_VERSION` on every replay-state shape change instead of relying on per-field structural guards
-  in `normalizeCheckpoint`, and extend `agentEventStore.test.ts` to replay a `dream.finished` tail over a
-  shape-stale checkpoint (the current +30 test only exercises the full-fallback path, not the incremental
-  tail-application path).
+- **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
+  that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
+  #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
+  backlog item to the code it polishes — the retirement PRs had no reason to look here.
+
 - **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
   carrying BOTH an OAuth login (Claude Pro/Max) and an API key on one pi-ai id
   (`OAUTH_API_KEY_FALLBACK = {'anthropic'}` in `providerCatalog.tsx`), shown
@@ -901,11 +891,6 @@ anything.
   **F11** agent `backlinks()` rebuilds the full reference summary per call (main-process, not hot — cache
   only if it shows up); **caseFold/`isMentionWord` dedup** — share one normalizer/word-boundary helper
   with the search engine's `normalizeSearchText` / `WORD_RE` instead of two copies.
-- **flaky-skills-integration-test** (P3, *fast-track, no plan file*) — `agentRuntimeSkillsIntegration.test.ts`
-  › *"clears pending permission notices when the run stops"* times out on its 1000 ms `waitFor` under
-  full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
-  test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
-  setup).
 - **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
   #464 gate) — `agent-thread.spec.ts:1247` *"streams a pathless image in bounded chunks and records
   only a managed reference"* fails under full-suite parallel load but passes in isolation (1 fail

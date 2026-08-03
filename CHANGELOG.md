@@ -12,7 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
-- **The repository has CI (main-agent)** — `main` had no automated test signal at
+- **Collaboration tool handlers live in their own domain (PR #456, codex-2)** —
+  `ToolRuntime` carried the implementation of the collaboration tools as well as
+  the dispatch for every tool; the handlers moved verbatim into
+  `thread/SubagentCollaboration.ts` through the extension contribution seam,
+  leaving `ToolRuntime` as dispatch and assembly only (572 → 488 lines) and
+  retiring the subagent-budget plan's spawn-handler carve-out. A catalog
+  byte-stability judge landed before the move rather than after, so the tool
+  catalog is provably byte-unchanged across it and every future contribution
+  migration is guarded the same way.
+  *(Recorded 2026-08-03: this shipped 2026-07-30 with no changelog entry, found
+  by auditing merged pull requests against this file.)*
+
+- **The repository has CI (PR #477 + direct commits, main-agent)** — `main` had no automated test signal at
   all, so a red baseline was only ever discovered when a PR gate happened to run
   the full e2e suite; that had happened three rounds running, each time costing
   the gating PR the work of proving the failures were not its own. Every push to
