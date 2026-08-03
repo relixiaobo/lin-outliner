@@ -71,8 +71,17 @@ normalization, and `create_capture` do not become browser-control APIs.
 When the user explicitly captures an already-visible URL Preview, the capture
 pipeline may ask the read-only Preview reader for bounded body or selection
 content. If no eligible Preview is selected, capture continues through its
-existing URL/title, clipboard, screenshot, or manual fallbacks. It does not open
-a Preview or external browser invisibly.
+existing fallbacks. It does not open a Preview or external browser invisibly.
+
+**This reader is the deferred SECOND rich-extraction source**, behind the
+main-process static URL reader (`file-preview.md`) that `unified-command-surface.md`
+approved as the primary backend. It earns its cost only for pages a static fetch
+cannot read — JS-rendered, or signed in inside Tenon's own Preview partition.
+
+The fallback chain is **structured read → URL + title → clipboard → manual entry**
+(`unified-command-surface.md` D10). Only the first two exist today; there is no
+screenshot tier, and none is planned — it would require a Screen Recording (TCC)
+grant for a fallback-of-a-fallback.
 
 ### Safety And Data
 

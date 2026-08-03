@@ -9,14 +9,18 @@
 // CAPTURE IS BASIC-INFO ONLY today: it reads URL + title (via the Accessibility
 // API and the AppleScript front-tab read) and classifies the provider from the URL.
 // In-page DOM extraction (the old AppleScript page scripts) was REMOVED — the
-// toggle friction + wrong-window fragility weren't worth investing in when the
-// planned browser extension / CDP backend replaces that layer wholesale. Rich page
+// toggle friction + wrong-window fragility weren't worth investing in. Rich page
 // metadata (`raw`: OG/canonical/author/etc.) arrives only through a
-// `PageContentExtractor` (the seam below) that the extension will implement; the
-// normalizer + per-provider enrichers already fold `raw` into the saved SourceDraft,
-// so plugging it in needs no change here. There is no in-app body/transcript/media
-// extraction — that is deferred to the unified backend.
-// See docs/plans/browser-extension-integration.md.
+// `PageContentExtractor` (the seam below). The approved backend is a MAIN-PROCESS
+// STATIC URL READER — fetch + parse, no browser extension, no CDP, no injected JS
+// (see the static URL reader in docs/plans/file-preview.md). The normalizer +
+// per-provider enrichers already fold `raw` into the saved SourceDraft, so plugging
+// it in needs no change here.
+//
+// A static fetch cannot read JS-rendered or signed-in pages; reading an already
+// visible Tenon URL Preview is a deferred SECOND source for those
+// (docs/plans/browser-extension-integration.md — that plan builds no extension
+// either; its name is historical).
 
 import type {
   ContextProviderId,
@@ -63,7 +67,7 @@ export interface WebpageContextInputs {
   family: BrowserFamily | null;
   tab: ActiveTab | null;
   /**
-   * Rich page data from a `PageContentExtractor` (the future extension/CDP backend),
+   * Rich page data from a `PageContentExtractor` (the future static URL reader),
    * or null in today's basic-info capture. The normalizer + enrichers consume
    * `raw` when present and otherwise produce URL+title-only output.
    */
@@ -135,9 +139,9 @@ function unknownAppContext(inputs: WebpageContextInputs): ExternalContext {
  * degrades to the unknown-app fallback.
  *
  * `page.raw` (rich page data) is present only when a `PageContentExtractor` supplied
- * it (the future extension backend); today it is always absent, so this produces
+ * it (the future static URL reader); today it is always absent, so this produces
  * basic-info output — URL + title. The raw-consumption paths below are kept as the
- * backend-neutral contract the extension will feed.
+ * backend-neutral contract that reader will feed.
  */
 export function normalizeWebpageContext(inputs: WebpageContextInputs): ExternalContext {
   const { frontmost, family, tab, page } = inputs;
@@ -478,14 +482,15 @@ export function enrichSubstackContext(ctx: ExternalContext): ExternalContext {
 }
 
 /**
- * SEAM for the future browser backend. Capture today reads only basic info (URL +
+ * SEAM for the rich-extraction backend. Capture today reads only basic info (URL +
  * title via AX / the AppleScript front-tab read); rich page data (`raw` →
- * OG/body/tweet/etc.) is supplied by an implementation of this interface. There is
+ * OG/body/author/etc.) is supplied by an implementation of this interface. There is
  * intentionally NO implementation yet: the AppleScript in-page path was removed
- * (toggle friction + wrong-window fragility) in favor of the planned extension / CDP
- * backend, which will implement `extract()`. Its output is fed straight into the
- * existing normalizer + per-provider enrichers (they already consume `raw`) — that
- * is the entire plug-in point. See docs/plans/browser-extension-integration.md.
+ * (toggle friction + wrong-window fragility), and the approved replacement is a
+ * main-process static URL reader (fetch + parse; no extension, no CDP, no injected
+ * JS) that will implement `extract()`. Its output is fed straight into the existing
+ * normalizer + per-provider enrichers (they already consume `raw`) — that is the
+ * entire plug-in point. See the static URL reader in docs/plans/file-preview.md.
  */
 export interface PageContentExtractor {
   extract(input: {
@@ -506,7 +511,7 @@ export interface PageContentExtractor {
  * to skip the query; the tab read targets the browser by name and is safe to run
  * after focus moved. Omit `frontmost` (headless/manual refresh) and it is queried here.
  *
- * Pass an `extractor` (the future extension/CDP backend) to enrich with rich page
+ * Pass an `extractor` (the future static URL reader) to enrich with rich page
  * data; omit it (today) for basic-info capture.
  */
 export async function captureExternalContext(args: {
