@@ -24,13 +24,39 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465, pi-ai-0.83-upgrade #487) |
 | Anti | `lin-outliner-anti/` | — | idle |
 | *(unidentified)* | ? | ? | **building `unified-command-surface`** — the PM assigned it 2026-08-03; which clone is doing it was never recorded, and no Draft PR exists, so nobody can tell whether a second claimant would collide. Whoever it is: open the Draft PR. |
 
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`pi-ai-0.83-upgrade` shipped (#487, codex-4, 2026-08-03)** and is archived `done`
+(`docs/plans/archive/pi-ai-0.83-upgrade.md`). `@earendil-works/pi-ai` `0.80.6 → 0.83.0`: the removed
+global OAuth registry is replaced by `Models.login()`/`logout()` through the `piModels` composition
+root, custom and CC Switch providers migrate to the provider-scoped auth callback, and pi's dynamic
+text-model refresh is wired into the existing provider refresh command. **Gate: `/code-review high`
+(multi-agent), 33 candidates → 11 refuted → 10 reported; all 10 answered on the branch in `8b87291c`,
+plus `b5375337` for a follow-up the re-review raised.** The carry-forward is a single shape that
+produced four of the ten: **the upgrade traded per-request inputs for registration-time closures and
+collection-wide calls, and every place that lost a discriminator became a bug.** Dropping the
+per-request `model` from custom-provider `resolve` meant the `local-endpoint` sentinel keyed off
+whatever base URL last registered that id, so a Test against `localhost` could poison the saved
+remote connection — fixed not by re-threading `model` but by making locality part of the id
+(`tenon-custom-local:` vs `tenon-custom:`), so the closure can no longer disagree with itself.
+Reaching for the collection-wide `Models.refresh({force:true})` to refresh *one* provider force-fetched
+every dynamic provider, stalled the spinner on the slowest, and swallowed their errors — inside every
+OAuth sign-in too. And feeding a resolved OAuth access token back in as an `apiKey` override made pi
+short-circuit to its api-key branch, skipping `toAuth()` and the per-credential `baseUrl` that
+enterprise GitHub Copilot needs; the fix (`piRequestApiKeyOverride`) narrows the override to the one
+case pi genuinely cannot resolve itself. Two more were blast radius rather than logic: a validation
+probe was persisting a catalog fetched with an unsaved key (now probed on a throwaway collection with
+an in-memory store), and `piRestoreDynamicModels()` hung off `getProviderSettings()`, so a Thread or
+Automation resolving a saved dynamic model before anyone opened Settings got "model not found" —
+restore belongs at startup, not in a read helper for one UI surface. **When an upgrade removes an
+input, ask what that input was discriminating; a closure or a whole-collection call that "reads the
+same" is where the discriminator silently goes missing.**
 
 **`agent-new-thread-slash-command` shipped (#486, codex-2, 2026-08-03)** and is archived `done`
 (`docs/plans/archive/agent-new-thread-slash-command.md`). `/new` in the Thread composer now creates

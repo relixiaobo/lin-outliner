@@ -142,6 +142,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Connections keep up with their providers (PR #487, codex-4)** — the model
+  runtime moved to pi-ai 0.83, which brings the current model catalog and the
+  provider-owned sign-in flow. Signing in is now the provider's own flow rather
+  than one shared script, so device codes, pasted codes, and account pickers all
+  behave the way that provider actually works — and a connection you configured
+  with an API key still opens on its key, not on a sign-in sheet that hides it.
+  Providers whose model list is only known after you connect (Radius, and any
+  future one like it) now fill in: their models load at launch from what was
+  saved last time, refresh when you add a key or sign in, and can be refreshed
+  on demand from the connection's ⋯ menu. Refreshing one connection refreshes
+  only that one. Testing a connection no longer writes anything down — a key you
+  typed but never saved leaves no trace in your model list. Enterprise GitHub
+  Copilot reaches its own host again, on Threads and on page translation.
+
 - **Pick a model, not a provider (PR #478, cc-2)** — the Thread's model control
   is now one flat list of models across your connections. The model name leads
   each row; the connection it comes from appears only as a small secondary
