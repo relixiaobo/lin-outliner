@@ -183,10 +183,21 @@ panel actions (View as table/outline), and app actions.
 
 ### D2 — The context menu is an anchored view of the registry
 
-The menu renders `registry.filter(applicable(clicked node))`, anchored beside the
-node. Anchoring is the reason it survives: **position carries the operand.** You
-can never mistake which node a right-click menu acts on, whereas a centred
-overlay must state its operand in words.
+The menu is anchored beside the node. Anchoring is the reason it survives:
+**position carries the operand.** You can never mistake which node a right-click
+menu acts on, whereas a centred overlay must state its operand in words.
+
+**Filtering is two-layered, and both layers are required.** A view first declares
+which `target` kinds it accepts, then applicability runs:
+
+```
+menu.render(registry.byTarget('node','selection').filter(applicable(clicked node)))
+```
+
+Without the first layer, the app-scoped navigation entries D3 adds (Go to Today,
+Library, …) would apply to every context and surface inside the right-click menu,
+breaking the equivalence criterion below. The command surface accepts every
+`target`; the context menu accepts only node and selection.
 
 **Equivalence is the acceptance criterion**, and it is proven by **differential
 test against the old code, not by a hand-written state table.** Enumerating "every
@@ -224,6 +235,11 @@ in-app the focused/selected node (pushed from the main renderer over IPC),
 out-of-app the foreground page. Removing every chip falls back to global search.
 Nothing is ever attached silently.
 
+**A multi-node selection is one aggregate chip** ("5 nodes"), expandable to remove
+individually — not five chips. Five chips overflow a 760px panel and make "remove
+everything → global search" ambiguous, and the actions that accept a selection take
+the set, not its members.
+
 The chip is the **operand the surface carries**, which is what lets it reach a
 target that is not on screen — the one thing direct manipulation cannot do, and
 the reason the context menu itself grew a search box inside *Move to*.
@@ -236,17 +252,44 @@ to* picker, and the `@`/`#`/`/` candidate lists. Same ranking, same ordering,
 everywhere. Where a path needs renderer-local latency it consumes the same
 ranking primitives rather than re-deriving them.
 
-### D6 — Enter contract and default highlight
+### D6 — Rows are objects; the action bar says what Enter does; `⌘K` opens the rest
 
-Enter fires the highlighted row's action, and every row shows that action inline.
-The default highlight is a **fixed rule**, never learned:
+The Raycast model, and **half of it already ships**. A row is a pickable *thing* —
+a node, the captured page, a command, a registry action — rendered as
+`glyph · title · subtitle · right-aligned type label` in one flat list with no
+section headers. Rows are never rewritten into verb phrases ("Open · Project A");
+what Enter will do lives in the **action bar**, not in the row.
+
+| Element | Rule | State |
+|---|---|---|
+| Row | the object, uniform shape, type label right-aligned | ships (`rowView`) |
+| Action bar, left | the highlighted row's primary action + `↵` | ships (`LauncherApp.tsx:243`, `primaryActionLabel`) |
+| Action bar, right | `Actions ⌘K` | **new** |
+| `Enter` | run the primary action | ships |
+| `⌘K` / click | open the highlighted row's full action list | **new** |
+
+`LauncherItem.actions[]` has been an array since #103 precisely so secondary
+actions could return additively (`spec/launcher.md`). This is connecting a seam
+that was left open, not inventing one.
+
+**`Cmd+K` is not retired, it is relocated** — from "open the command surface" to
+"show this row's actions", inside the surface. Same instinct (*give me more
+options*), reused rather than destroyed, and identical to Raycast's binding.
+
+**Ordering** extends the shipped rule in `buildLauncherItems` (capture row → node
+matches → commands) rather than replacing it; registry actions slot into that
+sequence. Retrieval and the registry both feed one list.
+
+**Default highlight is a fixed rule, never learned:**
 
 - page context attached → the capture row;
+- an operand chip but no query → the chip's applicable actions are the rows;
+  highlight the first;
 - otherwise → the first search result, or nothing when the query is empty.
 
-Rationale: a user who types-and-blindly-Enters always exists. Putting a
-document-mutating action under a blind Enter buys one saved arrow key and costs
-the habit of blind-Enter entirely the first time it surprises them.
+Rationale for keeping it fixed: a user who types-and-blindly-Enters always exists.
+Putting a document-mutating action under a blind Enter buys one saved arrow key and
+costs the habit of blind-Enter entirely the first time it surprises them.
 
 ### D7 — Hidden without an operand; shown with a reason when a predicate fails
 
@@ -264,7 +307,9 @@ tiers:
   teaches the rule; a disappearance teaches distrust.
 
 The context-menu view keeps its current behaviour under the same rule, since it
-always has an operand.
+always has an operand. Inside the command surface the tiers apply to the `⌘K`
+action list for the highlighted row; the flat result list itself is never padded
+with rejected actions.
 
 ### D8 — Action naming is part of the contract
 
@@ -279,6 +324,12 @@ dismisses itself when an action runs, so **any** action fired from it must retur
 visible result signal. "Move X into Y" from the panel has exactly the same problem
 as a capture — the surface vanishes and the user may not be looking at the window
 where it landed. One rule, not a capture special case.
+
+**Ordering, so the signal never fights focus return (D3):** an action is
+**committed the moment it fires** and cannot be cancelled from the panel; focus
+returns immediately; the result signal is a notification that never takes focus and
+never blocks dismissal. Esc during the signal dismisses the signal, never the
+action — reversal is `Cmd+Z` in the document, the same undo everything else uses.
 
 - **Destination is Today.** No picker, no Inbox.
 - **Success is visible.** Capture currently resets and hides with no confirmation
@@ -316,11 +367,14 @@ path degrades; it never throws on the user's action.
    navigation destinations (D3).
 4. Re-render the context menu as a registry view, **differentially proven against
    the old path** (D2), which stays in the tree as the oracle.
-5. Render the registry as the command surface's searchable view; in-app context
-   path, focus return, action result signal (D9).
+5. Render the registry as the command surface's searchable view: rows into the
+   existing ordering, `Actions ⌘K` into the existing action bar and the action
+   list behind it (D6), in-app context path and aggregate chip (D4), focus return
+   and result signal (D9).
 6. Capture loop: confirmation, optional tag, send-to-agent action.
-7. Delete the old menu path, `CommandPalette.tsx`, the `Cmd+K` binding, and the
-   stale `/`-menu hint.
+7. Delete the old menu path, `CommandPalette.tsx`, the global `Cmd+K` binding
+   (`shortcutRegistry.ts:139` — the keystroke lives on inside the panel as
+   *Actions*), and the stale `/`-menu hint.
 
 Stages 2-4 change no user-visible behaviour, which is what makes a PR this size
 reviewable: they are provable mechanically.
@@ -338,6 +392,9 @@ ones. ("Send to the agent panel" is genuinely a registry action and belongs here
   not hand-enumerate the states that matter.
 - **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
   same query returns the same ordering from every entry point.
+- **Target filtering (D2).** Assert no `panel`/`app`-target action can reach the
+  context menu — the failure mode the navigation entries introduce, and the one
+  that would silently break menu equivalence.
 - **Applicability (D7).** Property test: every rendered action either applies, or
   is rendered with its rejection reason. Nothing silently inapplicable.
 - **Action result signal (D9).** E2E: fire a mutating action from the panel with
@@ -361,8 +418,10 @@ ones. ("Send to the agent panel" is genuinely a registry action and belongs here
 4. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
    outside the renderer's `icons.ts` so the launcher bundle stays small), or do
    registry entries carry icon ids resolved per view? See `icon-semantics.md`.
-5. Confirmation UX for capture: in-panel dwell before dismiss, or a main-window
-   surface the user may not be looking at?
+5. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
+   dwell before dismissal, an OS notification, or a main-window surface? The
+   ordering is settled; the presentation is not, and it must work with Tenon in
+   the background.
 
 ## Related plans
 
