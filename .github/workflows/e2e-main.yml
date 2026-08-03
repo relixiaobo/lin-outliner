@@ -177,13 +177,28 @@ jobs:
           fi
           # Per-run directories: artifact names repeat across runs and would
           # otherwise overwrite each other, silently shrinking the baseline.
+          #
+          # A run with no matching artifacts is SKIPPED, not fatal. It means that
+          # run predates the current artifact naming or used another runner, and
+          # excluding it is the correct answer — that is the whole point of putting
+          # the platform in the name. The first version let `gh run download`'s
+          # exit code reach `set -e`, so the naming change failed the job instead of
+          # reporting an unavailable baseline: the guard was right, the fallback it
+          # promised was simply never written.
+          found=0
           for id in $ids; do
             mkdir -p "baseline/run-$id"
-            # A baseline we cannot fetch must not silently become a smaller one, so
-            # this is not tolerated per-run: `set -e` fails the step.
-            gh run download "$id" --pattern 'e2e-sample-macos-*' --dir "baseline/run-$id"
+            if gh run download "$id" --pattern 'e2e-sample-macos-*' --dir "baseline/run-$id"; then
+              found=$((found + 1))
+            else
+              rmdir "baseline/run-$id" 2>/dev/null || true
+            fi
           done
-          echo "available=true" >> "$GITHUB_OUTPUT"
+          if [ "$found" -eq 0 ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Compare
         run: |
           set -euo pipefail
