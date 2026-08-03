@@ -527,6 +527,29 @@ viewport clamping are retained. A selection submits one atomic
 while a request is pending, and for non-root Threads; it never edits another
 agent entity or exposes host-private capability configuration.
 
+Model selection is model-first. The list is flat across every usable provider:
+the model name leads each row, and the provider appears only as a secondary
+origin label, only when more than one provider is usable, and never as a group
+heading or a raw provider ID. The Thread's own provider is listed first,
+remaining providers follow the preferred provider order, and models keep the
+catalog order, which main has already ranked newest-first. Providers survive as
+a truncation unit — each keeps its own "show all" budget, and a pinned model
+outside that window stays visible.
+
+The list leads with a floating selection that follows the connection's newest
+model. Choosing it writes only the model field, as the `inherit` sentinel; the
+Thread's provider is never rewritten, so the selection cannot move a Thread to a
+different connection. Because main validates the sentinel by resolving it, the
+submitted reasoning effort is clamped to what the resolved model supports.
+
+The chip and the parent menu row always name the model that will actually run,
+floating or pinned, since both resolve through the same ranked head that the
+runtime uses. Only the check mark distinguishes the two states, and it is placed
+from the stored value rather than the resolved one — a floating selection
+resolves to the same model an explicit pin to the newest model resolves to, so
+inferring the state after resolution would make the two indistinguishable and
+strand a Thread on a model it never chose to pin.
+
 Reopening the Agent rail restores focus to the composer of an editable Thread.
 An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.

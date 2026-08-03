@@ -1756,6 +1756,46 @@ test.describe('canonical agent Thread surface', () => {
     await expect(control).toBeFocused();
   });
 
+  test('returns a pinned Thread to the connection\'s newest model without changing provider', async ({ page }) => {
+    await createNewThread(page);
+
+    const control = page.getByRole('button', { name: 'Model and reasoning' });
+    const openModelList = async () => {
+      await control.click();
+      await page.getByRole('menu', { name: 'Model and reasoning' })
+        .getByRole('menuitem', { name: /GPT-5\.4/ })
+        .click();
+      return page.getByRole('menu', { name: 'Model', exact: true });
+    };
+
+    // Pinning is what used to be a one-way door: the menu offered only concrete
+    // models, so a Thread could never be handed back to "whatever is newest".
+    await (await openModelList()).getByRole('menuitemradio', { name: 'GPT-5.4 Mini' }).click();
+    await expect(control).toContainText('GPT-5.4 Mini');
+
+    const alwaysNewest = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });
+    await expect(alwaysNewest).toHaveAttribute('aria-checked', 'false');
+    await alwaysNewest.click();
+    // The pill keeps naming the model that will run — now the ranked head again.
+    await expect(control).toContainText('GPT-5.4');
+
+    const restored = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });
+    await expect(restored).toHaveAttribute('aria-checked', 'true');
+    // Floating must not read as a pin to the model it happens to resolve to.
+    await expect(
+      page.getByRole('menu', { name: 'Model', exact: true })
+        .getByRole('menuitemradio', { name: 'GPT-5.4', exact: true }),
+    ).toHaveAttribute('aria-checked', 'false');
+    await page.keyboard.press('Escape');
+
+    const updates = (await commandCalls(page)).filter((call) => call.cmd === 'thread/configuration/set');
+    expect(updates.map((call) => call.args)).toEqual([
+      expect.objectContaining({ modelProvider: 'openai', model: 'openai/gpt-5.4-mini' }),
+      // Only the model field moves; the connection is left exactly as it was.
+      expect.objectContaining({ modelProvider: 'openai', model: 'inherit' }),
+    ]);
+  });
+
   test('retains the anchored Thread list dismissal and row-action interactions', async ({ page }) => {
     await createNewThread(page);
     const listButton = page.getByRole('button', { name: 'Show Threads' });

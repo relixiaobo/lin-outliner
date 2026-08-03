@@ -6,20 +6,17 @@ import type {
 import type { Messages } from '../../../core/i18n';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
-  LOCAL_GATEWAY_PROVIDER_REGISTRY,
   isLocalGatewayProviderId,
   isQuickEnableProviderId,
   isRefreshableLocalGatewayProviderId,
 } from '../../../core/localGatewayProviders';
-import { formatProviderName, providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
+import { providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
+import { formatProviderName } from './providerNames';
+import { preferredProviderIndex } from './modelChoices';
 
-export const PREFERRED_PROVIDER_ORDER = [
-  'anthropic',
-  'openai',
-  ...LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => provider.providerId),
-  'google',
-  'openrouter',
-];
+// Provider ordering lives in `modelChoices` so the model surfaces can use it
+// without pulling this module's icon-bearing `providerCatalog` import.
+export { PREFERRED_PROVIDER_ORDER, preferredProviderIndex } from './modelChoices';
 
 export interface ProviderChoice {
   providerId: string;
@@ -182,7 +179,3 @@ export function providerStatusLabel(provider: ProviderChoice, t: Messages): stri
   return provider.active ? s.active : s.ready;
 }
 
-export function preferredProviderIndex(providerId: string): number {
-  const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
-  return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
-}
