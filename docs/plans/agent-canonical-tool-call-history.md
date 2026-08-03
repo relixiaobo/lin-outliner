@@ -4,9 +4,10 @@
 
 Ship one complete Agent Core feature in one implementation PR: make the exact
 admitted, model-visible tool call the sole authority for tool history. Every
-later provider request must either replay that schema-valid call or emit typed,
-redacted evidence explaining why it cannot be replayed. Presentation Items and
-host execution metadata must never be used to invent model arguments.
+later provider request must project its persisted disposition: exact replay,
+marked redacted replay, or typed evidence when no tool-call replay is valid.
+Presentation Items and host execution metadata must never be used to invent
+model arguments.
 
 This fixes the repeated tool failures observed during a packaged Tenon browser
 task without weakening tool schemas or changing the Full Access permission
