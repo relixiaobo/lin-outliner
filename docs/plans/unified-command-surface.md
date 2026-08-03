@@ -7,8 +7,10 @@
 - The node context menu becomes a *filtered, anchored view* of the registry.
 - The command surface becomes the registry's *searchable view* — and the only
   one summoned by a hotkey, in-app and out-of-app alike.
-- Everything the context menu can do, the command surface can do. The context
-  menu is a **subset**, never a second implementation.
+- The context menu is a **subset**, never a second implementation. In-app the
+  command surface covers all of it; **out of app, two entries resolve `absent`** —
+  *Pin/Unpin* and the *toolbar toggle*, both of which need main-renderer workspace
+  state that no other renderer can see (D1). Stated here rather than promised away.
 
 The user-visible promise: **one action, one habit.** Multiple entry points are
 fine; multiple implementations are not.
@@ -240,24 +242,41 @@ and Trash exclusion, `mutable`, row policy). The `workspace` part is different i
 kind, and the previous revision got it wrong by treating "renderer-owned" as one
 category:
 
-- **Pin state lives in the *main renderer's* React state and localStorage**
-  (`useWorkspacePinnedNodes.ts`). The launcher is a **different renderer** and has
-  no access to it. So `workspace` is present only when the main renderer is the
-  invoking surface, and **Pin / Unpin / Open in split pane resolve `absent` from the
-  out-of-app surface.** This is a deliberate, stated narrowing of parity — the same
-  shape as *Outdent* without a panel: the action is defined relative to a workspace
-  that is not there. Promising otherwise would require moving workspace chrome into
-  main, which is a different change with its own plan.
-- **Toolbar visibility is not one fact, and conflating them broke D1b.** The menu
-  computes `view.toolbarVisible && props.viewToolbarVisibleInRow`
-  (`NodeContextMenu.tsx:123-126`) — a **persisted** bit from the projection AND a
-  **renderer-local** row-expansion bit. The persisted bit is main-owned and is what
-  the `set_view_toolbar_visible` command resolves from; `rowExpanded` is renderer-
-  owned and only ever drives the *reveal* step. Using the combined value to pick a
-  command would violate "commands resolve entirely from main-owned state"; using
-  only the persisted bit for presentation would change the menu when a visible
-  toolbar's row is collapsed. They are separate fields because they have separate
-  authorities.
+**Dependencies are declared per action, not per category.** Each entry names the
+`workspace` fields it needs; the envelope is not an all-or-nothing gate. Bundling
+them was an unnecessary parity loss:
+
+- **Pin / Unpin need `isPinned`**, which lives in the *main renderer's* React state
+  and localStorage (`useWorkspacePinnedNodes.ts`). The launcher is a **different
+  renderer** with no access to it, so those two resolve **`absent` out of app** —
+  the same shape as *Outdent* without a panel: the action is defined relative to a
+  workspace that is not there.
+- **Open in split pane needs nothing from `workspace`.** It carries a node id and
+  routes to `mainRenderer` like any other step, so it **stays available out of
+  app**. An earlier draft gated it on the whole bundle and lost parity for no
+  reason.
+
+**The toolbar toggle is the one place a renderer fact must reach a command, and it
+gets a named exception rather than a bent rule.** The menu computes
+`viewToolbarVisibleInRow = view.toolbarVisible && props.viewToolbarVisibleInRow`
+and writes **its negation** into the command
+(`NodeContextMenu.tsx:123-126`, `:407-413`). Enumerate it and `rowExpanded` is
+load-bearing, not cosmetic:
+
+| persisted | rowExpanded | writes | effect |
+|---|---|---|---|
+| true | true | `false` | hides |
+| true | **false** | `true` | **no-op**, reveal only |
+| false | either | `true` | shows |
+
+Rows 1 and 2 differ *only* by the renderer bit, so deriving the argument from
+main-owned state alone changes behaviour — the differential proof cannot hold under
+"commands resolve entirely from main-owned state" as previously written.
+
+So D1b gains **one exception, admitted by name and bounded by three conditions**
+(see D1b). `rowExpanded` for `set_view_toolbar_visible` is the only entry that
+qualifies today, and out of app the action resolves `absent` anyway, since there is
+no main renderer to supply the bit.
 
 **One opening produces one `InvocationRef` and one ordered `ActionPresentation[]`**,
 so a menu never assembles itself from several refs.
@@ -299,11 +318,15 @@ command.
   `focus.nodeId`, and only then builds `apply_tag` / `batch_apply_tag`
   (`NodeContextMenu.tsx:260-269`). Steps therefore name their result (`bindAs`) and
   later steps reference it (`{ fromStep, field }`) — a constrained reference, not a
-  general expression language. **This qualifies an earlier claim:** if a compound
-  `create_and_apply_tag` command turns out cleaner than a bound reference, it is a
-  `src/core/commands.ts` change, which is infrastructure-owned and would land
-  isolated. PR 1 decides that with the compiler in hand; the collision note below
-  says so rather than promising no protocol change.
+  general expression language.
+
+  **Decided now, not during implementation: bound references are the contract, and
+  the compound-command alternative is closed.** A `create_and_apply_tag` command
+  would add a mutation-protocol entry to serve exactly one action, while the binding
+  already expresses it and is reusable by any future create-then-use pair. So
+  **`src/core/commands.ts` is untouched** by both PRs, and no interface-first PR is
+  needed. Leaving this to "PR 1 with the compiler in hand" was wrong: the protocol
+  surface is exactly what the flow requires settled at approval time (A4, A7).
 - **A renderer target.** For a launcher invocation, `navigate` / `workspace` /
   `composerHandoff` must run in the **main renderer**, not the calling launcher
   renderer — the composer handoff is in-process pub/sub and the pin hook lives in
@@ -342,13 +365,28 @@ before it reaches durable storage. The registry follows it exactly:
 So `ActionEffect` only ever travels **main → renderer**, which is the trusted
 direction. A stale or forged request fails re-evaluation instead of mutating.
 
-**One narrow exception, stated as a rule rather than an oversight.** Some
-invocation fields are renderer-owned facts main cannot know — `isPinned` is
-localStorage workspace chrome (`useWorkspacePinnedNodes.ts`), as is toolbar
-visibility. They may be renderer-supplied **only where the resulting effect is also
-renderer-side** (`workspace`, `reveal`, `clipboard`). Any action whose effect is a
-`command` must resolve entirely from main-owned state. Pin cannot corrupt the
-document because pinning never touches it.
+**Two admissions for renderer-owned facts, both bounded.**
+
+**(a) Renderer-side effects.** Facts main cannot know — `isPinned` is localStorage
+workspace chrome (`useWorkspacePinnedNodes.ts`) — may be renderer-supplied when the
+resulting steps are also renderer-side (`workspace`, `reveal`, `clipboard`). Pin
+cannot corrupt the document because pinning never touches it.
+
+**(b) One named parameter to one command.** The toolbar toggle genuinely needs
+`rowExpanded` to decide *whether the document changes at all* (see D1's table), so
+"a command resolves entirely from main-owned state" cannot hold universally without
+changing behaviour. Rather than bend the rule silently, it is **listed by name and
+fenced by three conditions, all of which must hold**:
+
+1. the invoking surface is the **main renderer** (out of app the action is `absent`);
+2. the parameter selects among **view preferences the user can immediately
+   re-toggle** — never node identity, never operand membership, never destructive;
+3. it is **enumerated in the registry**, not admitted by category.
+
+`rowExpanded` → `set_view_toolbar_visible` is the **only** entry that qualifies
+today. The rule this protects is "a compromised locked-down renderer must not
+author arbitrary mutations", and a main-renderer-only toggle of one view preference
+is not that. Any future entrant is a plan-level decision, not an implementation one.
 
 **Confirmation is structural, not conventional.** An action carrying `confirm`
 produces no effect on a request without `confirmed`; main returns a
@@ -502,19 +540,36 @@ interface MoveToCandidatePolicy {
 }
 ```
 
-**It stays renderer-local, using the shared kernel — it does not become IPC.** The
-renderer already holds `byId`, so admission and ranking run locally with no
-round-trip, no debounce, no request identity, and no stale-response window. That
-choice is deliberate: PR 1 fixes a broken picker without also taking on the async
-burden the shipped launcher needs for its own IPC search
-(`LauncherApp.tsx:74-96`). The cost is that the personal-access boost — whose stats
-live in main (`nodeAccessStore`) and which is already an explicit opt-in on
-`TransientSearchOptions` (#307) — does not apply here. Text-match ranking plus
-correct admission already turns "the target may not appear at all" into "the target
-ranks first"; the boost can follow later if it earns the IPC.
+**It goes through main over IPC.** An earlier revision kept it renderer-local
+because "the renderer already holds `byId`" — which is true and irrelevant.
+`NodeRetrievalService.searchText` always supplies the live `TextSearchIndex`
+(`nodeRetrievalService.ts:46-58`), and **without that index `searchEngine`
+deliberately falls back to a different whole-phrase scorer**
+(`searchEngine.ts:1297-1330`). The renderer's `DocumentIndex` is
+`{ projection, byId, renderRev?, dayNoteCounts }` — **no text index**
+(`state/document.ts:38-61`). So renderer-local would have given the *fallback*
+ranker, and the difference is observable, not theoretical: the indexed path matches
+`launch design` against a node titled `Design review` with description `Launch
+notes`, which whole-phrase scoring cannot. Choosing local was optimising PR size
+over the fix actually working.
+
+The async burden that avoided is real but **already solved next door** — the
+launcher's shipped 120 ms debounce plus stale-response suppression
+(`LauncherApp.tsx:74-96`) is the pattern to reuse, not reinvent. PR 1 therefore
+carries, for this path:
+
+- **debounce** on keystrokes;
+- **request identity**, with out-of-order responses dropped;
+- **cancellation** when the menu closes or the mode changes;
+- an A9 measurement, since this is a new per-keystroke IPC consumer.
+
+**Admission runs in main, before the limit** — main holds both the projection and
+the index, so `MoveToCandidatePolicy` filters and *then* the result is limited.
+This is the whole point: filtering after the limit lets invalid descendants consume
+it and hide a valid ranked destination.
 
 So the invariant is **identical ordering for identical options and the same policy**
-— not "every surface returns the same order regardless of what it asked for".
+— and `Move to` now genuinely has the same kernel to be identical *to*.
 
 ### D6 — Rows are objects; the action bar says what Enter does; `⌘K` opens the rest
 
@@ -641,6 +696,19 @@ entire purpose is to move you somewhere.
 - `stayAtDestination` — navigation and composer handoff. Tenon keeps focus at the
   destination, and **the result signal is not needed** (arrival is its own
   confirmation), so the dwell is skipped and the panel dismisses at once.
+
+**`completion` applies only to `{ status: 'completed' }`. Failure has its own
+lifecycle** — without this, a `stayAtDestination` action whose main-renderer ack
+comes back failed would dismiss instantly, show nothing, and leave the user in
+neither focus state, contradicting D9's own rule that every panel-fired action
+reports its outcome. On `{ status: 'failed' }`, regardless of `completion`:
+
+- the panel **stays** for the dwell and shows the failure reason from
+  `ActionExecutionResult`;
+- focus goes to the **invoker**, because no destination was reached — a failed
+  navigation must not strand the user somewhere neither surface promised;
+- E2E covers a **failed renderer acknowledgement** for navigation and for composer
+  handoff, alongside the three success shapes.
 
 E2E covers all three shapes: a background mutation (dwell visible for its duration,
 prior app refocused, in that order), `Go to node` from another app (Tenon focused at
@@ -817,8 +885,12 @@ and a differential test can judge them instead.
 
 ## Open questions
 
-None open. Both former questions were settled before approval, because each one
-changes a contract or a user-visible behaviour rather than a private helper:
+None open. Four were settled before approval rather than deferred, because each
+changes a contract or a user-visible behaviour rather than a private helper — the
+`commands.ts` shape (D1a: bound references, compound command closed, no
+interface-first PR) and the `Move to` retrieval path (D5: IPC through main, with
+debounce, request identity, cancellation and an A9 measurement) joined the two
+below:
 
 - **Icons: registry entries carry an `iconId`; each view resolves it.** The
   launcher keeps `launcherIcons.tsx` as its own resolver so the locked-down bundle
@@ -868,22 +940,27 @@ out of `src/renderer/ui/interactions/`, `src/renderer/ui/outliner/NodeContextMen
 and the main-side admission handler. **No agent, composer, launcher or locale
 file**, which is what keeps it clear of #486.
 
-**PR 2 — the collision has cleared.**
-[#486](https://github.com/relixiaobo/lin-outliner/pull/486)
-(`codex-2/agent-new-thread-slash-command`) changed `ThreadView.tsx`,
-`ThreadDock.tsx`, `ThreadComposerEditor.tsx` and both locale message files —
-exactly the surface D9's `PendingComposerContext` needs — and has **merged**. PR 2
-rebases onto current `main` when it starts rather than sequencing behind an open
-branch. It additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
+**PR 2 — three overlaps, all handled by ordering.** Re-derived from `gh pr list`
+2026-08-03:
+
+| PR | Overlaps | Handling |
+|---|---|---|
+| [#486](https://github.com/relixiaobo/lin-outliner/pull/486) *(merged)* | `ThreadView` · `ThreadDock` · `ThreadComposerEditor` · both locales | already in `main`; PR 2 rebases onto it |
+| [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`** — the file `PendingComposerContext` threads through | PR 2 lands **after** it; rebase, do not run in parallel |
+| [#487](https://github.com/relixiaobo/lin-outliner/pull/487) *(open)* | **both locale catalogs** and **`src/main/main.ts`**, which this branch also edits | PR 2 lands **after** it; this branch's `main.ts` edit is comment-only, so a rebase conflict is textual at worst |
+
+[#480](https://github.com/relixiaobo/lin-outliner/pull/480) (release pipeline) has
+no file overlap.
+
+PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
 `src/renderer/launcher/*`, `src/main/launcher/*`,
 `src/main/context/contextCapture.ts`, and the locale files.
 
-`src/core/types.ts` is untouched. **`src/core/commands.ts` is an open question for
-PR 1**: if a compound `create_and_apply_tag` proves cleaner than a bound step
-reference (D1a), that is an infrastructure-owned change and lands isolated. The
-plan no longer promises no protocol change; it names the one place a change might
-be needed. (Two earlier drafts of this section were stale — first naming #477 as
-the only open PR, then calling #486 open after it merged — which is why this check
+**Neither `src/core/commands.ts` nor `src/core/types.ts` is touched**, and no
+interface-first PR is required — settled in D1a rather than left to implementation.
+(Three earlier drafts of this section were stale: naming #477 as the only open PR,
+then calling #486 open after it merged, then recording only #486 while #483 and
+#487 were already open — which is why this check
 is re-derived from `gh pr list` at the start of each PR, never from memory.)
 
 ## Appendix — provenance
