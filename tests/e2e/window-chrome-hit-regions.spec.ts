@@ -33,4 +33,22 @@ test.describe('window chrome hit regions', () => {
     await page.getByRole('button', { name: 'Expand agent' }).click();
     await expect(dock).toHaveAttribute('data-rail-state', 'open');
   });
+
+  test('makes the root Thread list affordance explicit without a redundant agent glyph', async ({ page }) => {
+    const listButton = page.getByRole('button', { name: 'Show Threads' });
+    const presentation = await listButton.evaluate((button) => {
+      const chevron = button.querySelector('.thread-title-chevron');
+      if (!(chevron instanceof SVGElement)) throw new Error('missing Thread list chevron');
+      return {
+        chevronOpacity: Number.parseFloat(getComputedStyle(chevron).opacity),
+        chevronTransform: getComputedStyle(chevron).transform,
+        leadingIconCount: button.querySelectorAll('.thread-dock-title-leading').length,
+      };
+    });
+
+    expect(presentation.leadingIconCount).toBe(0);
+    expect(presentation.chevronOpacity).toBeGreaterThan(0);
+    expect(presentation.chevronTransform).toBe('none');
+    await expect(listButton).toHaveAttribute('aria-expanded', 'false');
+  });
 });

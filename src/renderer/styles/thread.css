@@ -132,14 +132,8 @@
 
 .thread-title-chevron {
   flex: 0 0 auto;
-  opacity: 0;
-  transition: opacity var(--motion-fast), transform var(--motion-fast);
-}
-
-.thread-dock-title-button:hover .thread-title-chevron,
-.thread-dock-title-button:focus-visible .thread-title-chevron,
-.thread-dock-title-button[aria-expanded='true'] .thread-title-chevron {
   opacity: 0.72;
+  transition: transform var(--motion-fast);
 }
 
 .thread-title-chevron.is-open {

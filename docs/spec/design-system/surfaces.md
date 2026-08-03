@@ -232,10 +232,12 @@ The agent dock is a right glass rail subordinate to the outliner workspace. It i
 toggled by the fixed top-right control; open squeezes the layout, closed hides the
 rail. Motion follows [foundations.md → Motion](./foundations.md#motion).
 
-**Header and Thread list.** The header shows the selected Thread title and compact
-actions. It carries no provider line, decorative status dot, or member chrome.
-The Thread list is scan-first and single-line. Child Threads are visibly nested;
-ordinary rows expose a compact actions menu for fork, rename, and delete.
+**Header and Thread list.** The header shows the selected Thread title followed
+by an always-visible downward chevron that rotates when the Thread list opens.
+It carries no redundant agent glyph, provider line, decorative status dot, or
+member chrome. The Thread list is scan-first and single-line. Child Threads are
+visibly nested; ordinary rows expose a compact actions menu for fork, rename,
+and delete.
 
 Creating a Thread is immediate and focuses the composer. Rename uses the shared
 dialog and delete uses the shared confirmation surface. The selected row is a
