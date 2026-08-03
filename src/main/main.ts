@@ -2219,9 +2219,10 @@ function registerIpc() {
       });
       const captureId = `cap:${randomUUID()}`;
       // Basic-info capture: the node carries title + URL + author only. Rich page
-      // content (body/selection/transcript) is not extracted today — it returns
-      // with the unified browser extension/CDP backend
-      // (docs/plans/browser-extension-integration.md).
+      // content (body/selection/transcript) is not extracted today, and no browser
+      // extension or CDP backend is planned; when it lands it will be an explicit
+      // reader invoked after the user picks an action, never on the ambient hotkey
+      // path (docs/plans/unified-command-surface.md).
       const input = buildContextCaptureInput({
         context,
         destinationParentId: documentService.todayId(),

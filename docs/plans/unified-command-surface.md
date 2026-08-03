@@ -166,10 +166,13 @@ the compiler decides whether they hold.
 //    A COMPOSITE ENVELOPE, not a union: one menu opening carries several of these
 //    at once, and D2 renders node + selection + panel actions from that one opening.
 interface ActionInvocation {
-  anchor?:    { nodeId: NodeId; targetId: NodeId; visualRowId: NodeId; isPinned: boolean };
+  anchor?:    { nodeId: NodeId; targetId: NodeId };
   selection?: { nodeIds: readonly NodeId[] };          // live multi-selection, if any
-  panel?:     { panelId: string; panelRootId: NodeId; toolbarVisible: boolean };
+  panel?:     { panelId: string; panelRootId: NodeId };
   page?:      { contextId: ExternalContextId };        // main holds the ExternalContext
+  // Present ONLY when the invoking surface is the main renderer. Its absence is
+  // what makes workspace-scoped actions resolve `absent` out of app (see below).
+  workspace?: { visualRowId: NodeId; isPinned: boolean; rowExpanded: boolean };
 }
 
 // 2. EVALUATION — three states, never a bare list. D7 needs to tell them apart.
@@ -196,15 +199,27 @@ interface ActionRequest {
 //    because real actions cross executors: `Filter / Sort / Group / Display` runs
 //    setViewToolbarVisible and only THEN reveals the section.
 interface ActionEffectPlan {
-  steps: readonly EffectStep[];   // executed in order; a failed step stops the plan
+  steps: readonly EffectStep[];       // in order; a failed step stops the plan
+  completion: 'restoreInvoker' | 'stayAtDestination';   // D9 focus policy, per action
 }
-type EffectStep =
-  | { on: 'main';     kind: 'command'; /* main executes; never crosses inbound */ }
-  | { on: 'renderer'; kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
-  | { on: 'renderer'; kind: 'reveal'; surface: RevealTarget }
-  | { on: 'renderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
-  | { on: 'renderer'; kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
-  | { on: 'renderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string };
+
+interface EffectStepBase {
+  bindAs?: StepRef;                   // name this step's result…
+}
+type StepInput<T> = T | { fromStep: StepRef; field: 'focusNodeId' };  // …and read it later
+
+type EffectStep = EffectStepBase & (
+  | { on: 'main';     kind: 'command'; command: CommandName; args: CommandArgs<StepInput<NodeId>> }
+  | { on: 'mainRenderer'; kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
+  | { on: 'mainRenderer'; kind: 'reveal'; surface: RevealTarget }
+  | { on: 'mainRenderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
+  | { on: 'invoker';  kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
+  | { on: 'mainRenderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string }
+);
+
+type ActionExecutionResult =
+  | { status: 'completed' }
+  | { status: 'failed'; atStep: number; reason: ExecutionFailure };
 ```
 
 Why each exists, in the order the reviews forced them:
@@ -219,12 +234,33 @@ implementation would have to drop actions, smuggle the rest in after admission, 
 invent an undocumented multi-ref merge. The envelope carries them all; each action's
 `operands()` reads the parts it needs and ignores the rest.
 
-**Who supplies what.** Main derives everything document-shaped from the projection
-(`targetId` resolution, descendant and Trash exclusion, `mutable`, row policy).
-`isPinned`, `toolbarVisible` and `visualRowId` are renderer-owned facts main cannot
-know — admissible under the D1b rule below, which fences them to renderer-side
-effects. **One opening produces one `InvocationRef` and one ordered
-`ActionPresentation[]`**, so a menu never assembles itself from several refs.
+**Who supplies what, and where each fact stops being available.** Main derives
+everything document-shaped from the projection (`targetId` resolution, descendant
+and Trash exclusion, `mutable`, row policy). The `workspace` part is different in
+kind, and the previous revision got it wrong by treating "renderer-owned" as one
+category:
+
+- **Pin state lives in the *main renderer's* React state and localStorage**
+  (`useWorkspacePinnedNodes.ts`). The launcher is a **different renderer** and has
+  no access to it. So `workspace` is present only when the main renderer is the
+  invoking surface, and **Pin / Unpin / Open in split pane resolve `absent` from the
+  out-of-app surface.** This is a deliberate, stated narrowing of parity — the same
+  shape as *Outdent* without a panel: the action is defined relative to a workspace
+  that is not there. Promising otherwise would require moving workspace chrome into
+  main, which is a different change with its own plan.
+- **Toolbar visibility is not one fact, and conflating them broke D1b.** The menu
+  computes `view.toolbarVisible && props.viewToolbarVisibleInRow`
+  (`NodeContextMenu.tsx:123-126`) — a **persisted** bit from the projection AND a
+  **renderer-local** row-expansion bit. The persisted bit is main-owned and is what
+  the `set_view_toolbar_visible` command resolves from; `rowExpanded` is renderer-
+  owned and only ever drives the *reveal* step. Using the combined value to pick a
+  command would violate "commands resolve entirely from main-owned state"; using
+  only the persisted bit for presentation would change the menu when a visible
+  toolbar's row is collapsed. They are separate fields because they have separate
+  authorities.
+
+**One opening produces one `InvocationRef` and one ordered `ActionPresentation[]`**,
+so a menu never assembles itself from several refs.
 
 **Evaluation has three states because D2 and D7 disagree about what "empty"
 means.** D2 filters on applicability; D7 must show a rejected action *with its
@@ -256,6 +292,28 @@ and the differential proof. Hence `steps`: **renderer steps are emitted only aft
 the preceding main step succeeds**, a failed step stops the plan, and D2's
 equivalence proof compares **step order and failure behaviour**, not just the final
 command.
+
+**Ordering alone is still not enough — three more things the array had to carry:**
+
+- **Result binding.** *Add tag → Create* runs `create_tag`, reads the returned
+  `focus.nodeId`, and only then builds `apply_tag` / `batch_apply_tag`
+  (`NodeContextMenu.tsx:260-269`). Steps therefore name their result (`bindAs`) and
+  later steps reference it (`{ fromStep, field }`) — a constrained reference, not a
+  general expression language. **This qualifies an earlier claim:** if a compound
+  `create_and_apply_tag` command turns out cleaner than a bound reference, it is a
+  `src/core/commands.ts` change, which is infrastructure-owned and would land
+  isolated. PR 1 decides that with the compiler in hand; the collision note below
+  says so rather than promising no protocol change.
+- **A renderer target.** For a launcher invocation, `navigate` / `workspace` /
+  `composerHandoff` must run in the **main renderer**, not the calling launcher
+  renderer — the composer handoff is in-process pub/sub and the pin hook lives in
+  the main renderer. Only `clipboard` belongs to whoever invoked. Hence `on:` is
+  three-valued, not two.
+- **Acknowledgement.** Main routes a renderer step and **waits for its ack** before
+  emitting the next step, so a failed renderer step stops the plan and surfaces as
+  `ActionExecutionResult.failed` — which is what D9's result state displays. Without
+  it main cannot know a renderer step failed and the promised failure semantics are
+  untestable.
 
 **Parameter** is what makes half the set expressible at all: *Move to* needs a
 destination, *Add tag* a tag. Their candidates come from the one retrieval kernel
@@ -566,15 +624,28 @@ signal exists for. The lifecycle is therefore explicit:
    disabled, the action no longer cancellable from here.
 2. The result state **suppresses blur-dismiss** for a bounded dwell and shows the
    outcome. The panel is already the only surface the user is looking at.
-3. At the end of the dwell the panel dismisses **itself** and focus returns to
-   whatever held it before the summon — the editor in-app, the previous app
-   otherwise. **Focus returns at dismissal, not at commit.**
+3. At the end of the dwell the panel dismisses **itself**, and **focus goes where
+   the action's `completion` policy says** — never unconditionally back to the
+   invoker. **Focus moves at dismissal, not at commit.**
 4. Esc during the dwell ends the dwell early. It never cancels the action —
    reversal is `Cmd+Z`, the same undo as everywhere else.
 
-The E2E asserts the confirmation was actually **visible for the dwell**, that the
-prior app regained focus, and the ordering between the two — not merely that a
-result flag was set.
+**`completion` is per action, because "restore the invoker" destroys half of
+them.** A blanket restore means *Go to node* from another app raises Tenon and then
+hands focus straight back to that app, and *Send to the agent panel* reveals the
+composer only for dismissal to take the user away from it — the two actions whose
+entire purpose is to move you somewhere.
+
+- `restoreInvoker` — mutations, clipboard, capture. You stay where you were; the
+  dwell tells you it happened.
+- `stayAtDestination` — navigation and composer handoff. Tenon keeps focus at the
+  destination, and **the result signal is not needed** (arrival is its own
+  confirmation), so the dwell is skipped and the panel dismisses at once.
+
+E2E covers all three shapes: a background mutation (dwell visible for its duration,
+prior app refocused, in that order), `Go to node` from another app (Tenon focused at
+the destination, invoker **not** restored), and composer handoff from another app
+(rail revealed, focus in the composer).
 
 **"Once the effect exists" is doing real work in that sentence.** An action
 carrying `confirm` (D1) produces no effect until confirmation resolves, so
@@ -720,9 +791,15 @@ and a differential test can judge them instead.
   be equal, **including effect-step order and failure behaviour** (D1a).
   Cousin of #445's golden Item-stream parity — compare against the real thing, do
   not hand-enumerate the states that matter.
-- **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
-  same query with the **same options** returns the same ordering from every entry
-  point, and that no entry point ranks by anything of its own (D5).
+- **Retrieval convergence (PR 1, step 5) — scoped to the node-picker consumers this
+  plan ships.** The assertion covers `Move to` and the command surface, not every
+  entry point: the at-caret paths deliberately keep `candidateRanking.ts`, whose
+  label-rank tiers are not the main search-engine rank, so a global "identical
+  ordering everywhere" test could never pass and should not be written (D5).
+  Separately tested: `MoveToCandidatePolicy` **admits before limiting** (a corpus
+  where invalid descendants would otherwise consume the limit and hide a valid
+  destination), and its **empty-query ordering** returns candidates rather than
+  nothing.
 - **Scope filtering (D2).** Assert no `app`-scoped action reaches the context menu
   (the failure mode the navigation entries introduce) and that every `panel`-scoped
   menu item still does.
@@ -774,11 +851,11 @@ changes a contract or a user-visible behaviour rather than a private helper:
   question ("is the static reader still valuable beside the hardened preview?") is
   answered yes by this decision: it has a second consumer.
 - `browser-extension-integration.md` — record-only, and a **deferred second
-  extraction source** (JS-rendered / signed-in pages) behind the static reader. Two
-  corrections it needs: its filename says "extension" while its own non-goals
-  exclude one, and it asserts the same not-yet-built "clipboard, screenshot"
-  fallback chain that D10 corrects. Renaming it breaks the `docs/TASKS.md` link, so
-  coordinate with the main agent.
+  extraction source** (JS-rendered / signed-in pages) behind the static reader. Its
+  fallback-chain claim and its `PageContentExtractor` nomination were corrected in
+  this change. One correction remains outstanding: **the filename says "extension"
+  while its own non-goals exclude one**, and renaming breaks the `docs/TASKS.md`
+  link, so it needs the main agent.
 - `agent-conversation-model.md` / `agent-data-model.md` — authorities for the
   handoff content shape in D9.
 
@@ -791,20 +868,23 @@ out of `src/renderer/ui/interactions/`, `src/renderer/ui/outliner/NodeContextMen
 and the main-side admission handler. **No agent, composer, launcher or locale
 file**, which is what keeps it clear of #486.
 
-**PR 2 — one real collision, already identified.**
+**PR 2 — the collision has cleared.**
 [#486](https://github.com/relixiaobo/lin-outliner/pull/486)
-(`codex-2/agent-new-thread-slash-command`, open, not draft) changes
-`ThreadView.tsx`, `ThreadDock.tsx`, `ThreadComposerEditor.tsx` and **both locale
-message files** — exactly the surface D9's `PendingComposerContext` needs.
-**PR 2 is sequenced behind #486 and rebases onto it**; it does not attempt to land
-in parallel. PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx`
-(deleted), `src/renderer/launcher/*`, `src/main/launcher/*`,
+(`codex-2/agent-new-thread-slash-command`) changed `ThreadView.tsx`,
+`ThreadDock.tsx`, `ThreadComposerEditor.tsx` and both locale message files —
+exactly the surface D9's `PendingComposerContext` needs — and has **merged**. PR 2
+rebases onto current `main` when it starts rather than sequencing behind an open
+branch. It additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
+`src/renderer/launcher/*`, `src/main/launcher/*`,
 `src/main/context/contextCapture.ts`, and the locale files.
 
-Neither PR touches `src/core/commands.ts` or `src/core/types.ts` — the registry
-references existing commands rather than adding mutations. (An earlier draft of
-this section named #477 as the only open PR; that was stale by the time #486
-opened, which is why this check is re-run per PR rather than once per plan.)
+`src/core/types.ts` is untouched. **`src/core/commands.ts` is an open question for
+PR 1**: if a compound `create_and_apply_tag` proves cleaner than a bound step
+reference (D1a), that is an infrastructure-owned change and lands isolated. The
+plan no longer promises no protocol change; it names the one place a change might
+be needed. (Two earlier drafts of this section were stale — first naming #477 as
+the only open PR, then calling #486 open after it merged — which is why this check
+is re-derived from `gh pr list` at the start of each PR, never from memory.)
 
 ## Appendix — provenance
 
