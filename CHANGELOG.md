@@ -26,7 +26,11 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   It runs on macOS, because the suite encodes the platform the product ships on —
   the first version ran on Linux, where a different keyboard modifier and font
   stack produced ten stable failures that pass on macOS, which is the kind of
-  false red people learn to ignore. Also fixed `trace: 'on-first-retry'` sitting
+  false red people learn to ignore. A pull request gets the same five samples on
+  the same runner image and a comment subtracting `main`'s numbers from its own,
+  because headless CI turned out to disagree with a developer's machine too —
+  attribution needs both measurements taken in one environment, not two
+  environments made to agree. Also fixed `trace: 'on-first-retry'` sitting
   alongside an unset `retries`, which meant Playwright traces had never once been
   captured.
 

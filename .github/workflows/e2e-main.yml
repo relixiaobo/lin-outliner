@@ -30,6 +30,10 @@ name: e2e signal (main)
 on:
   push:
     branches: [main]
+  # A branch gets the SAME five samples on the SAME runner image, so subtracting
+  # `main`'s numbers from its own is meaningful. It still gates nothing — it turns
+  # "is this failure mine?" from a judgement call into a set difference.
+  pull_request:
   # Backstop: environment drift is invisible in a quiet week with no merges.
   schedule:
     - cron: '17 3 * * 1'
@@ -37,12 +41,15 @@ on:
 
 concurrency:
   # Only the newest commit's verdict is worth having; cancel superseded runs.
-  group: e2e-signal-main
+  group: e2e-signal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   issues: write
+  pull-requests: write
+  # `gh run download` needs this to fetch `main`'s baseline samples.
+  actions: read
 
 jobs:
   sample:
@@ -80,7 +87,14 @@ jobs:
         run: mv report.json "sample-${{ matrix.sample }}.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: e2e-sample-${{ matrix.sample }}
+          # The platform is IN THE NAME so a baseline can never pool two of
+          # them. The first pull request to use the baseline pooled a leftover
+          # ubuntu run with a macOS one and reported a test as 5/10 — five red
+          # on one OS, five green on the other — which is precisely the
+          # cross-environment comparison this whole design refuses. Change the
+          # runner and the old artifacts stop matching, so the baseline goes
+          # empty and says so, instead of silently mixing.
+          name: e2e-sample-macos-${{ matrix.sample }}
           path: sample-${{ matrix.sample }}.json
           if-no-files-found: error
 
@@ -90,14 +104,14 @@ jobs:
     # it off macOS leaves the whole macOS concurrency allowance for the samples.
     runs-on: ubuntu-latest
     needs: sample
-    if: always()
+    if: always() && github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
           path: samples
-          pattern: e2e-sample-*
+          pattern: e2e-sample-macos-*
           merge-multiple: true
       - name: Classify
         id: classify
@@ -122,4 +136,96 @@ jobs:
             gh issue create --title "$TITLE" --body-file verdict.md
           else
             gh issue edit "$number" --body-file verdict.md
+          fi
+
+  compare:
+    name: subtract main's baseline
+    runs-on: ubuntu-latest
+    needs: sample
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          path: branch
+          pattern: e2e-sample-macos-*
+          merge-multiple: true
+      - name: Fetch main's baseline samples
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The last three successful runs ON main, not the newest one. Same runner
+          # image — comparing across environments proves nothing — but ALSO enough
+          # samples for the baseline to be a rate rather than a snapshot.
+          #
+          # The first version used one run, and the first pull request it ran on
+          # showed why that is wrong: a test failing ~1/5 of the time is absent from
+          # any single five-sample baseline about two thirds of the time, so it turns
+          # up on the branch, is missing from the baseline, and gets reported as
+          # "introduced by this branch". That is the very mistake this tool exists to
+          # prevent, made one layer down — the comparison was guarding against a
+          # single sample on the branch side while relying on one for the baseline.
+          # Fifteen samples put a 1-in-5 test in the baseline ~96% of the time.
+          ids="$(gh run list --workflow=e2e-main.yml --branch main --status success \
+            --limit 3 --json databaseId --jq '.[].databaseId')"
+          if [ -z "$ids" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Per-run directories: artifact names repeat across runs and would
+          # otherwise overwrite each other, silently shrinking the baseline.
+          #
+          # A run with no matching artifacts is SKIPPED, not fatal. It means that
+          # run predates the current artifact naming or used another runner, and
+          # excluding it is the correct answer — that is the whole point of putting
+          # the platform in the name. The first version let `gh run download`'s
+          # exit code reach `set -e`, so the naming change failed the job instead of
+          # reporting an unavailable baseline: the guard was right, the fallback it
+          # promised was simply never written.
+          found=0
+          for id in $ids; do
+            mkdir -p "baseline/run-$id"
+            if gh run download "$id" --pattern 'e2e-sample-macos-*' --dir "baseline/run-$id"; then
+              found=$((found + 1))
+            else
+              rmdir "baseline/run-$id" 2>/dev/null || true
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compare
+        run: |
+          set -euo pipefail
+          bun scripts/e2e-classify.ts --json branch/*.json > branch.json
+          {
+            echo "_Commit \`${GITHUB_SHA:0:8}\` · [run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_"
+            echo
+            if [ "${{ steps.baseline.outputs.available }}" = "true" ]; then
+              find baseline -name '*.json' -print0 | xargs -0 bun scripts/e2e-classify.ts --json > baseline.json
+              bun scripts/e2e-compare.ts branch.json baseline.json
+            else
+              bun scripts/e2e-compare.ts branch.json
+            fi
+          } > comparison.md
+          cat comparison.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Updated in place: one comment per PR, not one per push.
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq 'map(select(.body | contains("<!-- e2e-compare -->"))) | .[0].id // empty')"
+          if [ -z "$id" ]; then
+            gh pr comment "$PR" --body-file comparison.md
+          else
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
+              -F body=@comparison.md >/dev/null
           fi

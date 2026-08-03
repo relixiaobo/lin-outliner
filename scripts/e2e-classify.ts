@@ -59,7 +59,13 @@ function readReport(path: string): readonly TestIdentity[] {
   return [...new Map(failures.map((failure) => [failure.id, failure])).values()];
 }
 
-const reportPaths = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const emitJson = argv.includes('--json');
+const reportPaths = argv.filter((arg) => arg !== '--json');
+if (emitJson && reportPaths.length === 0) {
+  console.log(JSON.stringify({ total: 0, tests: [] }));
+  process.exit(0);
+}
 if (reportPaths.length === 0) {
   console.log('No sample reports were produced — the signal did not run. Investigate the workflow, not `main`.');
   process.exit(0);
@@ -89,6 +95,21 @@ const ranked = [...byTest.values()].sort((a, b) => (
 ));
 const deterministic = ranked.filter((entry) => entry.count === total);
 const intermittent = ranked.filter((entry) => entry.count < total);
+
+if (emitJson) {
+  // The machine-readable form the branch↔baseline comparison reads. Frequencies,
+  // not verdicts: "deterministic" is a judgement about one environment, and the
+  // comparison's job is to hold two environments' numbers side by side.
+  console.log(JSON.stringify({
+    total,
+    tests: ranked.map((entry) => ({
+      id: entry.identity.id,
+      title: entry.identity.title,
+      count: entry.count,
+    })),
+  }));
+  process.exit(0);
+}
 
 const lines: string[] = [];
 lines.push(`**${total} full-suite samples.**`);

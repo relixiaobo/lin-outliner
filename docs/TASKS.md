@@ -43,16 +43,21 @@ a smaller reason than before. #475 merged and closed both known debts — the mo
 flake was a real timing bug in the composer hand-back rather than a test race, and the
 pill's material needed only the guard registry entry. The final gate run on it was
 **547/1**, the one failure being `file-attachments.spec.ts:178`, boarded as
-`file-attachment-inline-preview-red-e2e`. **What that item now carries is the more
+`file-attachment-inline-preview-local-flake`. **What that item now carries is the more
 important finding:** four full runs produced a different failing set each time, so the
 shape is an unstable suite rather than a list of red tests, and boarding the intermittent
 ones individually would just keep producing entries.
 **You no longer have to find that out by hand.** `e2e-signal-on-main` landed the same day:
 the repository has CI for the first time, and every push to `main` runs five independent
-whole-suite samples and publishes a frequency table to one tracking issue. **Read that
-issue before a gate** — it tells you which failures are `main`'s and how often, so a gate
-round stops being the place that discovers it. It deliberately does not gate PRs and is
-green whenever it classified; the verdict is the issue, not the badge.
+whole-suite samples and publishes a frequency table to one tracking issue, while **#477**
+(in review) adds the branch-minus-`main` subtraction on every PR. **Read the issue before a
+gate, and the PR comment during one** — together they answer "is this failure mine?" as a
+set difference. Neither gates anything; the verdict is the issue, not a badge.
+**Its first two baselines already paid for it**, and not in the way expected: four tests
+fail every single CI macOS sample and have never failed locally
+(`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
+baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
+broke them — there was no signal, so nobody knew.
 `agent-browser-control` implementation is **shelved** pending upstream
 Browser Pilot stabilization (PM ruling 2026-07-31).
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
@@ -903,10 +908,35 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **file-attachment-inline-preview-red-e2e** (P3, *fast-track, no plan file*, filed 2026-08-01
-  at the #475 gate) — `main` fails `file-attachments.spec.ts:178`
+- **ci-macos-layout-and-material-red** (P2, *fast-track, no plan file*, filed 2026-08-01 from
+  the first `e2e-signal-on-main` baselines) — four tests fail in **every** CI macOS sample
+  (5/5, then 10/10 across two runs) and have **never** failed on a developer's machine:
+  `agent-thread.spec.ts:1086` (one leading image gallery, file references in message order),
+  `outliner-bullet-parity.spec.ts:82` (top-level bullets align to the panel header content
+  start), `window-material.spec.ts:23` (rails translucent only with a material; wrappers and
+  panels stay opaque), `workspace-layout.spec.ts:409` (single panel centers bounded content).
+  **They are not new.** Nothing broke them; there was simply no signal, so nobody knew. That
+  is the first thing the signal bought.
+  They are one family — layout measurement and material/translucency — which points at a
+  single root cause rather than four: a GitHub macOS runner is headless with no real window
+  compositing or GPU, so `backdrop-filter`, window material, and anything measuring painted
+  geometry can legitimately differ. **Establish that before fixing anything**, because the
+  two possible endings need opposite work: either the product is wrong and the tests caught
+  it, or the tests assert conditions they never declared they need, in which case they
+  should declare them (skip, or assert the precondition) instead of failing silently
+  everywhere the condition does not hold. Do not "fix" them by loosening assertions to pass
+  in both places — that is the B11 trade, and it would make the signal report green about a
+  thing it stopped measuring.
+  Start from a trace: `playwright.config.ts` now sets `retain-on-failure`, so the CI run
+  artifacts carry one, which is the first time that has been true here.
+- **file-attachment-inline-preview-local-flake** (P3, *fast-track, no plan file*, filed
+  2026-08-01 at the #475 gate, **rescoped 2026-08-01 once CI existed**) —
+  `file-attachments.spec.ts:178`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
-  and whose bullet drills to the node page"* **often, but not always**.
+  and whose bullet drills to the node page"* is a **local-environment flake**, not a red
+  baseline. It fails often on a developer's machine and passes **0/10 in CI macOS**, so it is
+  the mirror image of `ci-macos-layout-and-material-red` — a reminder that "environment" cuts
+  both ways and neither machine is the authority on its own.
   **Correction, 2026-08-01:** earlier versions of this entry called it deterministic on the
   strength of four failures in a row (the #475 branch twice, a clean `origin/main` worktree,
   and the #475 re-gate). It then passed twice consecutively — once addressed alone, once as
@@ -929,11 +959,12 @@ anything.
   `date-field-picker.spec.ts:20`, and `design-system-runtime.spec.ts:807` (dark date-picker
   overlay) each failed in some runs and passed in others, including on plain `origin/main`.
   This one merely failed the most. None of them are reachable from #475's diff.
-  **Don't start from this entry's numbers — start from the signal.**
-  `e2e-signal-on-main` now publishes a five-sample frequency table per merge to the
-  tracking issue, which is the evidence this item was guessing at. Same standing lesson as
-  `red-e2e-on-main` (#464): a red baseline costs every later gate the time to re-prove which
-  failures are not its own.
+  **Don't start from this entry's numbers — start from the signal.** Every number written
+  above was gathered by hand before CI existed, and CI has already contradicted the headline
+  one. `e2e-signal-on-main` publishes a frequency table per merge to the tracking issue and a
+  branch-minus-`main` subtraction on every PR; that is the evidence this item was guessing
+  at. Same standing lesson as `red-e2e-on-main` (#464): a red baseline costs every later gate
+  the time to re-prove which failures are not its own.
   So the shape to fix is not one red test but a suite whose failing set is
   run-dependent — treat the unstable specs as one problem, and expect boarding them
   individually to keep producing entries.
@@ -985,6 +1016,28 @@ anything.
   precisely what people learn to ignore. Fixed the same day; the classifier job stays on
   Linux since it only reads JSON, which leaves the whole macOS concurrency allowance for
   the samples.
+  **Then the macOS baseline showed why `main` alone was not enough.** CI macOS reported
+  four deterministic failures that pass on a developer's machine, and
+  `file-attachments.spec.ts:178` — the test this board had called `main`'s red baseline —
+  passed 5/5 there. Headless CI is a third environment, so a gate running locally cannot
+  subtract a baseline measured remotely. The fix is not to make the environments match,
+  which headless compositing may not allow, but to take **both** measurements in the same
+  one: a pull request now gets the same five samples on the same runner image, and
+  `scripts/e2e-compare.ts` subtracts `main`'s numbers from the branch's, so "is this
+  failure mine?" is a set difference. It still gates nothing. A missing baseline reports
+  every failure as *unattributed* rather than as the branch's — blaming the wrong party is
+  the one way this could do real damage, so that case is unit-tested
+  (`tests/core/e2eCompare.test.ts`).
+  **The baseline pools three `main` runs, not one, and the first version got that wrong
+  too.** Its first pull request reported two failures as "introduced by this branch" that
+  the branch could not have caused — it touched only CI and scripts — and both were 1/5
+  intermittents absent from that day's single five-sample baseline. A test failing ~1/5 of
+  the time is missing from any given five samples about two thirds of the time, so the
+  comparison was guarding against a single sample on the branch side while relying on one
+  for the baseline: the same mistake this whole tool exists to prevent, one layer down.
+  Fifteen samples carry a 1-in-5 test ~96% of the time. The two sides keep their own
+  denominators (`2/5` vs `1/15`) rather than being normalised into a comparison the sample
+  sizes do not support.
 
 - **e2e-gate-hygiene** (`cc-2/e2e-gate-hygiene`, PR #475, cc-2, merged 2026-08-01,
   *fast-track, no plan file*) — closed two boarded items,
@@ -1012,7 +1065,7 @@ anything.
   546/2, and the author re-measured and rewrote the body — *"one green run generalised into
   a standing claim"*. That correction is the durable part. Four full runs across gate and
   author produced a **different failing set each time**, so what the board carries forward
-  is not one red test but an unstable suite; see `file-attachment-inline-preview-red-e2e`,
+  is not one red test but an unstable suite; see `file-attachment-inline-preview-local-flake`,
   the one failure that reproduced in every run.
 
 - **tenon-import-skill-name** (`codex/tenon-import-skill-name`, PR #474, codex, merged
