@@ -104,5 +104,12 @@ PM decision (2026-06-04); this ruling supersedes that open state.
 
 1. Remove `embedType`, `embedId` from `Node` in `src/core/types.ts`.
 2. Remove `'embed'` from `NodeType`.
-3. Migration: any existing `type: 'embed'` node becomes a plain text node
-   with the URL as content + `link` mark applied.
+
+**No migration.** Pre-release, a format change wipes `~/.lin-outliner-*` dev
+userData and deletes the old reader rather than shipping a migration or a
+compatibility branch (`AGENTS.md`). No `type: 'embed'` node has ever been
+creatable — there is no renderer and no command that produces one — so there is
+nothing to convert in the first place.
+
+`src/core/types.ts` is an infrastructure-ownership file, so this lands as its own
+small isolated change, not folded into a feature PR.

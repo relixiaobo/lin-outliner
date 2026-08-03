@@ -36,7 +36,7 @@ result against that claim, not a broader one.
 
 **Where the registry's real value is.** Not merely that future actions get a
 keyboard path for free. Because `effect` is a serializable instruction, the registry
-lives in core, and *handoff* is already one of the effect kinds (D9), this is the
+lives in core, and *composer handoff* is already one of the effect ops (D9), this is the
 seam where **an agent capability becomes a user-callable command** — the same
 catalog, the same names, the same operand resolution, whether a person picks it or
 a Skill exposes it. For a product aimed at directing local agents, that is not debt
@@ -58,12 +58,22 @@ does not need them to build.
   this product's line, and would pull in a Screen Recording (TCC) grant plus a
   dependency on the unapproved `agent-computer-control.md`.
 - **No rich page extraction here, and no provider-breadth work.** Rich extraction
-  lands as a main-process static URL reader (`file-preview.md`) plugged into the
-  existing `PageContentExtractor` seam; this plan neither builds nor blocks it, and
+  is a main-process static URL reader; this plan neither builds nor blocks it, and
   the capture loop (D9) works with or without it. Provider breadth stays in
   `launcher-provider-expansion.md`. **No browser extension is built by anyone** —
   `browser-extension-integration.md` is a historical filename for a plan whose own
   non-goals exclude extensions.
+
+  **It is not a drop-in for the existing seam, and whoever builds it must know
+  why.** `captureExternalContext` runs on *every* hotkey press (`main.ts:1618-1634`),
+  so hanging a network fetcher off `PageContentExtractor` would request whatever
+  page is in front of the user before they have chosen anything — a silent outbound
+  request per summon. Ambient metadata discovery and explicit content reading must
+  stay separate: **network access begins only after an explicit action**, with
+  cancellation, SSRF/local-address restrictions, and persistence semantics defined
+  there. The contracts also differ (`GenericWebpageRaw` is metadata with no body;
+  the capture sidecar stores provenance, not content), so it is an adapter, not a
+  plug-in.
 - **No embed rendering.** The `embedType`/`embedId` schema removal is its own
   change (`embed-strategy.md`).
 - **No positional-trigger rewrite.** `/`, `@`, `#` are *at-caret* insertion and
@@ -88,33 +98,40 @@ Note what does *not* move: **actions already execute in main.** The renderer's
 context menu calls `api.moveNode(...)` over IPC and Core applies it. Only
 *applicability* is renderer-bound today.
 
-**And it is bound to more than the document.** The selection family's real
-signature is `{ ids, panelRootId, byId, rowMap?: ReadonlyMap<NodeId, SelectableRow> }`
-(`selectionBatchActions.ts:36-120`): `idsEnabledForSelectionAction`,
-`idsAllowedForStructuralBatch`, `idsAllowedForStructuralIndentBatch`,
-`idsAllowedForStructuralOutdentBatch`, `idsAllowedForMoveTo`,
-`idsAllowedForDuplicate`. Only `trashActions` and `nodeLocation` take a document
-index. So applicability depends on **panel scope** — which root you are under, and
-a row model derived from view config — not on the projection alone. A registry
-evaluated against `DocumentProjection` and nothing else cannot answer for that
-family.
+**Stage-0 spike: done, and the answer is clean.** The selection family's signature
+is `{ ids, panelRootId, byId, rowMap?: ReadonlyMap<NodeId, SelectableRow> }`
+(`selectionBatchActions.ts:26-125`), which reads like three renderer dependencies.
+Traced to the bottom, it is one:
 
-**So the registry and its predicates live in `src/core/`, and `ActionContext`
-carries panel scope explicitly:**
+- **`rowMap` is a cache, not a dependency.** `resolveSelectableRow` is
+  `rowMap?.get(id) ?? selectableRowForId(id, panelRootId, byId)` — the derivation
+  path already exists and already runs whenever no cache is passed.
+- **`actionPolicy` derives from the projection alone.**
+  `selectableRowFor` computes `kind` from `(id, node, parent)`, `stored` from
+  node presence and a synthetic-id test, `mutable` from `stored && !node.locked`,
+  and `actionPolicy = actionPolicyFor(kind, mutable)`
+  (`state/selectableRows.ts:252-292`). No view config, no expansion state, no UI
+  state. `SelectableRowsOptions.expanded` is needed to *list visible rows*, never to
+  decide what one row permits.
+- **`panelRootId` is consumed by exactly one predicate**:
+  `idsAllowedForStructuralOutdentBatch` returns `row.parentId !== panelRootId` —
+  you cannot outdent out of the panel's own root. Everywhere else it is threaded
+  through and never read.
+
+**So the registry and its predicates live in `src/core/`, with a two-field context:**
 
 ```ts
 interface ActionContext {
   projection: DocumentProjection;   // crosses IPC already
-  panelRootId: NodeId | null;       // null out-of-app: panel-scoped actions resolve empty
-  rowPolicy?: RowPolicyLookup;      // the SelectableRow decision, supplied or derived
+  panelRootId: NodeId | null;       // only Outdent reads it
 }
 ```
 
-Out-of-app there is no panel, so panel-scoped actions return no operands — which is
-correct, not a degradation. The **stage-0 spike measures exactly one thing**: can
-`SelectableRow`'s action policy be derived in core from projection + view config,
-or must the renderer keep supplying it? That answer, not a vague "migration cost",
-decides stage 2 (open question 1).
+**There is no degrading contingency, and the parity promise holds.** Out-of-app,
+`panelRootId` is null and *Outdent* resolves to no operands — not because the
+surface is a lesser build, but because outdent is defined relative to a panel and
+there is no panel. That is D7 doing its job, not a compromise. Every other node
+action resolves identically in both views.
 
 Registry entry shape:
 
@@ -124,11 +141,19 @@ interface ActionDefinition {
   scope: 'node' | 'selection' | 'panel' | 'app';    // which views may show it (D2, layer 1)
   operands(ctx: ActionContext): readonly NodeId[];  // what it would act on; empty = N/A
   parameter?: ParameterSpec;                        // a second step, when one is needed
+  confirm?: ConfirmationSpec;                       // required before any effect exists
   effect(operands, parameter): Effect;              // a serializable instruction
 }
+
+type Effect =
+  | { kind: 'command'; ... }        // main performs it (A4)
+  | { kind: 'renderer'; op: RendererOp; ... };
+
+type RendererOp =
+  | 'navigate' | 'reveal' | 'workspace' | 'clipboard' | 'composerHandoff';
 ```
 
-Three deliberate choices, each of which the obvious shape gets wrong:
+Four deliberate choices, each of which the obvious shape gets wrong:
 
 **`operands()` returns a list, never a boolean.** "Not applicable" is the empty
 list. The existing predicates already return id lists — `idsAllowedForMoveTo`,
@@ -147,15 +172,26 @@ candidates come from the one retrieval service (D5) or the one tag selector, so
 someone remembering to fix it. The plan's most visible defect and its central
 abstraction close each other.
 
-**`effect` is data, not a closure.** Actions do three different things: mutate
-(a core command, A4), navigate (`navigateRoot` + `focusNode`), and hand off (the
-`agentReveal` composer staging). A `command: CoreCommandRef` field can only
-express the first, and a callback cannot cross a process boundary. As a
-serializable instruction, the effect is produced wherever applicability is
-evaluated and performed by whoever owns it — main runs commands, the main renderer
-runs navigation and the handoff, and the panel performs nothing itself; it returns
-the chosen effect. This also drains most of the risk out of the placement question
-above: **where applicability is evaluated stops determining where the effect runs.**
+**`effect` is data, not a closure — and it splits by *executor*, not by verb.** An
+inventory of the node context menu's ~22 actions shows the naive
+`mutate | navigate | handoff` union under-counts badly: *Pin* writes renderer
+workspace chrome (localStorage, not document state), *Open in split pane* creates a
+panel, *Copy text* / *Copy node id* write the clipboard, *Add description* and the
+*Filter / Sort / Group / Display* rows reveal a UI surface, and *Send to composer*
+is the handoff. Only about half are core commands. So the axis is **who performs
+it** — main for commands, the main renderer for everything else — with the renderer
+side enumerated honestly. A `command: CoreCommandRef` field expresses one of these,
+and a callback cannot cross a process boundary. As serializable data the effect is
+produced wherever applicability is evaluated and performed by whoever owns it; the
+panel performs nothing itself, it returns the chosen effect.
+
+**`confirm` is a first-class field because deletion already demands one.**
+*Delete forever* and *Empty Trash* route through `ConfirmDialog` today
+(`NodeContextMenu.tsx:280-296`) and `spec/commands.md` requires it. D9's
+fire-to-commit rule cannot silently swallow that, so the contract is: **an action
+carrying `confirm` produces no effect until confirmation resolves**, and D2's
+equivalence proof compares the *interaction* — did a confirmation appear — not only
+the command that eventually ran.
 
 `ActionContext` is built from the shared `DocumentProjection`, never the
 renderer-only `DocumentIndex`. The `scope` union is **read out of the existing
@@ -172,13 +208,16 @@ menu acts on, whereas a centred overlay must state its operand in words.
 which `scope`s it accepts, then operands are resolved:
 
 ```
-menu.render(registry.byScope('node', 'selection').filter(a => a.operands(ctx).length > 0))
+menu.render(registry.byScope('node', 'selection', 'panel').filter(a => a.operands(ctx).length > 0))
 ```
 
-Without the first layer, the app-scoped navigation entries D3 adds (Go to Today,
-Library, …) resolve operands in every context and surface inside the right-click
-menu, breaking the equivalence criterion below. The command surface accepts every
-scope; the context menu accepts only `node` and `selection`.
+The context menu accepts `node`, `selection`, **and `panel`** — it is rendered
+*inside* a panel, and it already carries panel-scoped items (*View as*,
+*Filter / Sort / Group / Display*, *Show view toolbar*). An earlier draft of this
+rule accepted only node and selection, which would have silently dropped those
+from the menu and failed the equivalence criterion below. It does **not** accept
+`app`: Go to Today does not belong on a right-click. The command surface accepts
+every scope.
 
 **One registry, two projections — and that is the whole seam.** Anchored
 (browsable, operand carried by *position*) and searchable (typed, operand carried
@@ -261,16 +300,31 @@ Every "find a node" path resolves through the shared retrieval service
 (`main/nodeRetrievalService.ts`): the command surface (already does), the context
 menu's *Move to* picker, and the `@`/`#`/`/` candidate lists.
 
-**One qualification, stated rather than papered over.** The personal-access boost
-needs stats that live in main (`nodeAccessStore`, injected at `main.ts:930-935`),
-and `personalAccess` is already an explicit opt-in on `TransientSearchOptions`
-(#307). At-caret candidates fire per keystroke inside the editor, so they may
-legitimately opt **out** of that boost for latency. The invariant is therefore
-**one ranking implementation with one set of options** — not "every surface always
-returns the identical order regardless of what it asked for". The verification
-below asserts identical ordering *for identical options*, which is the strongest
-claim that is actually true. What is being eliminated is a second ranking
-implementation, and *Move to*'s complete absence of one.
+**What converges is the matching kernel, not the candidate policy.** The at-caret
+paths are not naive duplicates of node search — they carry domain rules that must
+survive: `@` candidates admit synthetic `date` and `create` rows, reject
+tree-references, and boost siblings/ancestors (`referenceCandidates.ts`); `#`
+candidates admit tags only, exclude tags already applied, and penalise hex-looking
+strings (`tagSelector.ts`). `nodeRetrievalService` exposes generic options (limit,
+search node, personal-access) and knows none of that. Replacing those paths with it
+wholesale would be a regression dressed as convergence.
+
+So the rule is narrower and truer: **one text-matching and ranking kernel; typed
+candidate policies stay with their domain.** What is eliminated is a *second
+implementation of matching* — and *Move to*'s complete absence of one.
+
+**Stage 1 therefore fixes `Move to` only.** It is the surface with no ranking at
+all, it is a bug-level defect, and it needs no policy decisions. Folding the
+at-caret paths onto the shared kernel is a later, separately-judged change: if it
+ever becomes IPC-per-keystroke it owes measured latency plus cancellation and
+out-of-order-response tests under A9, which is a different piece of work from
+fixing a broken picker.
+
+**One qualification on ordering.** The personal-access boost needs stats that live
+in main (`nodeAccessStore`, `main.ts:930-935`) and is already an explicit opt-in on
+`TransientSearchOptions` (#307). Per-keystroke callers may legitimately opt out. The
+invariant is therefore **identical ordering for identical options**, not "every
+surface always returns the same order regardless of what it asked for".
 
 ### D6 — Rows are objects; the action bar says what Enter does; `⌘K` opens the rest
 
@@ -365,11 +419,17 @@ visible result signal. "Move X into Y" from the panel has exactly the same probl
 as a capture — the surface vanishes and the user may not be looking at the window
 where it landed. One rule, not a capture special case.
 
-**Ordering, so the signal never fights focus return (D3):** an action is
-**committed the moment it fires** and cannot be cancelled from the panel; focus
-returns immediately; the result signal is a notification that never takes focus and
-never blocks dismissal. Esc during the signal dismisses the signal, never the
-action — reversal is `Cmd+Z` in the document, the same undo everything else uses.
+**Ordering, so the signal never fights focus return (D3):** once an action's effect
+exists it is **committed** and cannot be cancelled from the panel; focus returns
+immediately; the result signal is a notification that never takes focus and never
+blocks dismissal. Esc during the signal dismisses the signal, never the action —
+reversal is `Cmd+Z`, the same undo everything else uses.
+
+**"Once the effect exists" is doing real work in that sentence.** An action
+carrying `confirm` (D1) produces no effect until confirmation resolves, so
+fire-to-commit applies *after* the confirmation, not instead of it. *Delete
+forever* and *Empty Trash* keep their dialog in both views — they are outside
+`Cmd+Z`'s reach, which is exactly why they were given one.
 
 - **Destination is Today.** No picker, no Inbox.
 - **Success is visible.** Capture currently resets and hides with no confirmation
@@ -434,11 +494,15 @@ degrades correctly without the middle tier.
 **Shape (a): one complete feature in one PR.** The stages below are build order
 *within* that PR, not releases.
 
-0. **Spike:** the migration cost of the predicates into core (D1, open question 1).
-   Confirms stage 2's shape, or triggers the named contingency, before it is built.
-1. **Converge node retrieval** onto the shared service (three implementations →
-   one). *Highest user-visible payoff and independent of everything below* — it is
-   not a dependency of the registry, so it goes first rather than fourth. If the PR
+0. ~~Spike~~ — **done before approval**; the result is folded into D1. The
+   predicates carry no renderer dependency that survives tracing: `rowMap` is a
+   cache with an existing derivation fallback, `actionPolicy` derives from the
+   projection, and `panelRootId` is read by one predicate. Stage 2 has no fork.
+1. **Fix the `Move to` picker** — route it through the shared retrieval kernel
+   (D5). *Highest user-visible payoff and independent of everything below* — it is
+   not a dependency of the registry, so it goes first rather than fourth. The
+   at-caret paths are deliberately **not** touched here (D5: typed candidate
+   policies stay with their domain). If the PR
    is ever cut short under pressure, the part that mattered has landed.
 2. Registry + predicates in core (D1), per the stage-0 verdict.
 3. Populate the registry. **First population is exactly** the node context menu's
@@ -483,9 +547,12 @@ commit boundary is already the split line.
 - **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
   same query with the **same options** returns the same ordering from every entry
   point, and that no entry point ranks by anything of its own (D5).
-- **Scope filtering (D2).** Assert no `panel`/`app`-scoped action can reach the
-  context menu — the failure mode the navigation entries introduce, and the one
-  that would silently break menu equivalence.
+- **Scope filtering (D2).** Assert no `app`-scoped action reaches the context menu
+  (the failure mode the navigation entries introduce) and that every `panel`-scoped
+  menu item still does.
+- **Confirmation parity (D1 `confirm`).** Assert *Delete forever* and *Empty Trash*
+  still raise a confirmation from **both** views, and that no effect exists before
+  it resolves.
 - **Applicability (D7).** Property test: every rendered action either applies, or
   is rendered with its rejection reason. Nothing silently inapplicable.
 - **Action result signal (D9).** E2E: fire a mutating action from the panel with
@@ -497,17 +564,10 @@ commit boundary is already the split line.
 
 ## Open questions
 
-1. **Migration cost of the predicates into core (D1)** — they are pure but typed
-   against `DocumentIndex`; the adapter cost onto `DocumentProjection` is the one
-   real unknown, and the stage-0 spike measures it before stage 2 is built. If it
-   proves expensive, the contingency is to keep the definitions in the renderer and
-   hand the panel an evaluated list over IPC — the pattern `launcher:searchNodes`
-   already ships. That costs out-of-app actions on a node operand and nothing else,
-   so this question cannot block the PR.
-2. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
+1. Does the launcher keep its own icon table (`launcherIcons.tsx`, deliberately
    outside the renderer's `icons.ts` so the launcher bundle stays small), or do
    registry entries carry icon ids resolved per view? See `icon-semantics.md`.
-3. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
+2. What the non-focus-stealing result signal (D9) actually is: a brief in-panel
    dwell before dismissal, an OS notification, or a main-window surface? The
    ordering is settled; the presentation is not, and it must work with Tenon in
    the background.
