@@ -6,20 +6,13 @@ import type {
 import type { Messages } from '../../../core/i18n';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
-  LOCAL_GATEWAY_PROVIDER_REGISTRY,
   isLocalGatewayProviderId,
   isQuickEnableProviderId,
   isRefreshableLocalGatewayProviderId,
 } from '../../../core/localGatewayProviders';
-import { formatProviderName, providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
-
-export const PREFERRED_PROVIDER_ORDER = [
-  'anthropic',
-  'openai',
-  ...LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => provider.providerId),
-  'google',
-  'openrouter',
-];
+import { providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
+import { formatProviderName } from './providerNames';
+import { preferredProviderIndex } from './providerOrder';
 
 export interface ProviderChoice {
   providerId: string;
@@ -182,7 +175,3 @@ export function providerStatusLabel(provider: ProviderChoice, t: Messages): stri
   return provider.active ? s.active : s.ready;
 }
 
-export function preferredProviderIndex(providerId: string): number {
-  const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
-  return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
-}

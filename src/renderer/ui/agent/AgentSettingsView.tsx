@@ -22,7 +22,7 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { resolveUsableActiveProvider } from './providerCatalog';
-import { PREFERRED_PROVIDER_ORDER } from './settingsProviderModel';
+import { PREFERRED_PROVIDER_ORDER } from './providerOrder';
 import { SettingsGeneralSection } from './SettingsGeneralSection';
 import { SettingsProvidersSection } from './SettingsProvidersSection';
 import { SettingsSecuritySection } from './SettingsSecuritySection';

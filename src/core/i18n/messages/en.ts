@@ -1508,6 +1508,10 @@ commandPalette: {
       reasoningHint: 'Higher effort means more thorough responses, but takes longer.',
       effortDefault: 'Default',
       modelHeading: 'Model',
+      // Deliberately not "best available": the selection follows the newest model
+      // of THIS connection and never switches provider, so this stays true whether
+      // one or several providers are connected.
+      modelAlwaysNewest: 'Always newest',
       showAllModels: ({ count }: { count: number }) => `Show all (${count})`,
       showFewerModels: 'Show less',
       reasoningLevels: {

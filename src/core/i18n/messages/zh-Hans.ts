@@ -1420,6 +1420,7 @@ commandPalette: {
       reasoningHint: '更高的强度意味着更周全的回答，但耗时更长。',
       effortDefault: '默认',
       modelHeading: '模型',
+      modelAlwaysNewest: '跟随最新',
       showAllModels: ({ count }) => `显示全部 (${count})`,
       showFewerModels: '收起',
       reasoningLevels: {

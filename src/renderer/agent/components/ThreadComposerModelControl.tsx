@@ -9,7 +9,6 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ThreadConfigurationSummary } from '../../../core/agent/protocol';
@@ -19,7 +18,13 @@ import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../../u
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
-import { isProviderUsable } from '../../ui/agent/providerUsability';
+import { formatProviderName } from '../../ui/agent/providerNames';
+import {
+  buildModelChoices,
+  lastModelSegment,
+  type ModelChoice,
+  type ModelChoiceGroup,
+} from '../../ui/agent/modelChoices';
 
 interface ThreadComposerModelControlProps {
   readonly configuration: ThreadConfigurationSummary;
@@ -52,10 +57,22 @@ function ThreadComposerModelControlImpl({
   submenuStateRef.current = submenu;
 
   const menu = useMemo(
-    () => deriveModelMenu(settings, configuration),
+    () => buildModelChoices(settings, configuration),
     [configuration, settings],
   );
-  const { effectiveModelId, effectiveModelOption, effectiveProviderId, groups, modelCount } = menu;
+  const {
+    connectionHead,
+    floating,
+    groups,
+    modelCount,
+    resolvedModelId,
+    resolvedOption: effectiveModelOption,
+    resolvedProviderId: effectiveProviderId,
+    showProviderLabel,
+  } = menu;
+  const effectiveModelId = resolvedModelId;
+  // The pill and the parent row always name the model that will actually run,
+  // floating or pinned. Only the check mark distinguishes the two.
   const modelName = effectiveModelOption?.name
     ?? lastModelSegment(effectiveModelId)
     ?? composer.modelDefault;
@@ -146,17 +163,41 @@ function ThreadComposerModelControlImpl({
     }
   }
 
-  function selectModel(providerId: string, option: AgentModelOption) {
-    const supported = option.supportedThinkingLevels.length
+  /** Keep the current effort when the target model supports it, else fall back to its default. */
+  function effortFor(option: AgentModelOption | undefined): ReasoningEffort {
+    const supported = option?.supportedThinkingLevels.length
       ? option.supportedThinkingLevels
       : REASONING_EFFORTS;
-    const reasoningEffort = supported.includes(configuration.reasoningEffort)
+    return supported.includes(configuration.reasoningEffort)
       ? configuration.reasoningEffort
       : defaultThinkingLevelFor(supported);
+  }
+
+  function selectModel(choice: ModelChoice) {
     void commit({
-      modelProvider: providerId,
-      model: composeProviderQualifiedModel(providerId, option.id),
-      reasoningEffort,
+      modelProvider: choice.providerId,
+      model: choice.value,
+      reasoningEffort: effortFor(choice.option),
+    });
+  }
+
+  /**
+   * Follow this connection's newest model. Only the model field is written —
+   * `modelProvider` is left alone, so selecting this never moves a Thread to a
+   * different connection.
+   *
+   * The effort is clamped against `connectionHead`, the model the sentinel will
+   * resolve to — NOT against the model being un-pinned. Main validates the
+   * sentinel by resolving it and rejects an unsupported effort
+   * (`validateAgentModelSelection`); clamping against the outgoing model lets a
+   * level through that the head does not support, main throws, `commit` swallows
+   * it, and the Thread can never be un-pinned at all.
+   */
+  function selectFloatingModel() {
+    void commit({
+      ...configuration,
+      model: 'inherit',
+      reasoningEffort: effortFor(connectionHead),
     });
   }
 
@@ -164,18 +205,24 @@ function ThreadComposerModelControlImpl({
     void commit({ ...configuration, reasoningEffort });
   }
 
-  function renderModelItem(providerId: string, option: AgentModelOption) {
-    const selected = providerId === effectiveProviderId && option.id === effectiveModelId;
+  function renderModelItem(choice: ModelChoice) {
+    const { option, providerId } = choice;
+    // A floating selection resolves to the ranked head, so without this guard the
+    // check mark would land on that model and read as an explicit pin to it.
+    const selected = !floating && providerId === effectiveProviderId && option.id === effectiveModelId;
     return (
       <ButtonControl
         aria-checked={selected}
         className={`thread-composer-model-item${selected ? ' is-selected' : ''}`}
         disabled={saving}
-        key={`${providerId}/${option.id}`}
-        onClick={() => selectModel(providerId, option)}
+        key={choice.value}
+        onClick={() => selectModel(choice)}
         role="menuitemradio"
       >
         <span className="thread-composer-model-item-label">{option.name || option.id}</span>
+        {showProviderLabel ? (
+          <span className="thread-composer-model-item-origin">{formatProviderName(providerId)}</span>
+        ) : null}
         <span className="thread-composer-model-spacer" />
         <span className="thread-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
       </ButtonControl>
@@ -288,15 +335,34 @@ function ThreadComposerModelControlImpl({
           style={submenuStyle}
         >
           <div className="thread-composer-model-section-label" role="presentation">{composer.modelHeading}</div>
+          {/* Only offered when this connection actually resolves a model. Without
+              the guard the row still renders off the aggregate model count, and
+              committing the sentinel against a connection that lists none makes
+              main throw from a row that looked applicable. */}
+          {connectionHead ? (
+            <ButtonControl
+              aria-checked={floating}
+              className={`thread-composer-model-item${floating ? ' is-selected' : ''}`}
+              disabled={saving}
+              onClick={selectFloatingModel}
+              role="menuitemradio"
+            >
+              <span className="thread-composer-model-item-label">{composer.modelAlwaysNewest}</span>
+              {/* The head, not the pinned model: this names what selecting the row
+                  would switch TO. */}
+              <span className="thread-composer-model-item-origin">{connectionHead.name || connectionHead.id}</span>
+              <span className="thread-composer-model-spacer" />
+              <span className="thread-composer-model-check">{floating ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
+            </ButtonControl>
+          ) : null}
+          {/* Providers stay a truncation unit but not a visual one: no heading, so
+              the models read as one flat list with provider shown per row. */}
           {groups.map((group) => {
             const expanded = expandedProviders.has(group.providerId);
-            const visible = visibleModels(group, expanded, effectiveProviderId, effectiveModelId);
+            const visible = visibleModels(group, expanded, floating ? '' : effectiveProviderId, effectiveModelId);
             return (
               <div className="thread-composer-model-group" key={group.providerId} role="presentation">
-                {groups.length > 1 ? (
-                  <div className="thread-composer-model-group-label" role="presentation">{group.providerId}</div>
-                ) : null}
-                {visible.map((option) => renderModelItem(group.providerId, option))}
+                {visible.map((choice) => renderModelItem(choice))}
                 {group.models.length > visible.length ? (
                   <ButtonControl
                     className="thread-composer-model-item thread-composer-model-expander"
@@ -305,6 +371,11 @@ function ThreadComposerModelControlImpl({
                     <span className="thread-composer-model-item-label">
                       {composer.showAllModels({ count: group.models.length })}
                     </span>
+                    {/* Truncation is still per provider, so with the group heading
+                        gone the expander has to say whose models it expands. */}
+                    {showProviderLabel ? (
+                      <span className="thread-composer-model-item-origin">{formatProviderName(group.providerId)}</span>
+                    ) : null}
                     <span className="thread-composer-model-spacer" />
                     <ChevronDownIcon className="thread-composer-model-item-caret" size={ICON_SIZE.menu} />
                   </ButtonControl>
@@ -319,6 +390,9 @@ function ThreadComposerModelControlImpl({
                     })}
                   >
                     <span className="thread-composer-model-item-label">{composer.showFewerModels}</span>
+                    {showProviderLabel ? (
+                      <span className="thread-composer-model-item-origin">{formatProviderName(group.providerId)}</span>
+                    ) : null}
                   </ButtonControl>
                 ) : null}
               </div>
@@ -333,86 +407,24 @@ function ThreadComposerModelControlImpl({
 
 export const ThreadComposerModelControl = memo(ThreadComposerModelControlImpl);
 
-interface ModelGroup {
-  readonly providerId: string;
-  models: AgentModelOption[];
-}
-
-interface ModelMenu {
-  readonly effectiveProviderId: string;
-  readonly effectiveModelId: string;
-  readonly effectiveModelOption: AgentModelOption | undefined;
-  readonly groups: ModelGroup[];
-  readonly modelCount: number;
-}
-
-function deriveModelMenu(
-  settings: AgentProviderSettingsView | null,
-  configuration: ThreadConfigurationSummary,
-): ModelMenu {
-  if (!settings) {
-    return {
-      effectiveProviderId: configuration.modelProvider,
-      effectiveModelId: lastModelSegment(configuration.model) ?? '',
-      effectiveModelOption: undefined,
-      groups: [],
-      modelCount: 0,
-    };
-  }
-  const knownProviderIds = new Set([
-    ...settings.providers.map((provider) => provider.providerId),
-    ...settings.availableProviders.map((provider) => provider.providerId),
-  ]);
-  const parsed = parseProviderQualifiedModel(configuration.model, (id) => knownProviderIds.has(id));
-  const effectiveProviderId = parsed?.providerId || configuration.modelProvider;
-  const modelsFor = (providerId: string) => (
-    settings.availableProviders.find((provider) => provider.providerId === providerId)?.models ?? []
-  );
-  const effectiveModelId = parsed?.modelId || modelsFor(effectiveProviderId)[0]?.id || '';
-  let effectiveModelOption = modelsFor(effectiveProviderId).find((option) => option.id === effectiveModelId);
-  const usableProviderIds = settings.providers
-    .filter((provider) => isProviderUsable(settings, provider))
-    .map((provider) => provider.providerId);
-  const providerIds = dedupe([effectiveProviderId, ...usableProviderIds].filter(Boolean));
-  const groups = providerIds
-    .map((providerId) => ({ providerId, models: [...modelsFor(providerId)] }))
-    .filter((group) => group.models.length > 0);
-
-  if (effectiveModelId && !effectiveModelOption) {
-    effectiveModelOption = {
-      id: effectiveModelId,
-      name: lastModelSegment(effectiveModelId) ?? effectiveModelId,
-      reasoning: false,
-      supportedThinkingLevels: [],
-      contextWindow: 0,
-      maxTokens: 0,
-    };
-    const group = groups.find((candidate) => candidate.providerId === effectiveProviderId);
-    if (group) group.models.unshift(effectiveModelOption);
-    else groups.unshift({ providerId: effectiveProviderId, models: [effectiveModelOption] });
-  }
-
-  return {
-    effectiveProviderId,
-    effectiveModelId,
-    effectiveModelOption,
-    groups,
-    modelCount: groups.reduce((total, group) => total + group.models.length, 0),
-  };
-}
-
+/**
+ * The first `RECENT_MODEL_COUNT` of a provider, plus the pinned model when it
+ * falls outside that window — a selection must never be invisible in the menu
+ * that owns it. `effectiveProviderId` is passed empty while floating, since
+ * then no row is pinned and nothing needs rescuing.
+ */
 function visibleModels(
-  group: ModelGroup,
+  group: ModelChoiceGroup,
   expanded: boolean,
   effectiveProviderId: string,
   effectiveModelId: string,
-): AgentModelOption[] {
+): readonly ModelChoice[] {
   if (expanded) return group.models;
   const recent = group.models.slice(0, RECENT_MODEL_COUNT);
-  if (group.providerId !== effectiveProviderId || recent.some((option) => option.id === effectiveModelId)) {
+  if (group.providerId !== effectiveProviderId || recent.some((choice) => choice.option.id === effectiveModelId)) {
     return recent;
   }
-  const selected = group.models.find((option) => option.id === effectiveModelId);
+  const selected = group.models.find((choice) => choice.option.id === effectiveModelId);
   return selected ? [...recent, selected] : recent;
 }
 
@@ -427,17 +439,6 @@ function reasoningLabel(
   if (normalized === 'xhigh') return 'XHigh';
   if (normalized === 'max') return 'Max';
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-}
-
-function lastModelSegment(model: string): string | null {
-  const trimmed = model.trim();
-  if (!trimmed || trimmed === 'inherit') return null;
-  const slash = trimmed.lastIndexOf('/');
-  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
-}
-
-function dedupe(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }
 
 function useFlyoutStyle(
