@@ -464,6 +464,27 @@ before any directional/security-sensitive build.
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
   loading. Depends on `skill-path-ownership`.
+- **agent-canonical-tool-call-history** (P1, `draft` — plan PR **#482** merged 2026-08-03,
+  codex-3) — make the exact admitted tool call the sole authority for tool history.
+  `ContextProjector.historyToolArguments()` currently reverse-engineers a model call from the
+  presentation Item: `commandExecution` becomes `{ command, cwd }` — inventing a `cwd` the
+  strict `bash` schema rejects (`additionalProperties: false`) while dropping the valid
+  `description` — and `fileChange` becomes a fabricated `{ changes }` no file schema accepts.
+  Compounding it, `startedToolItem` gives raw `input.cwd` precedence over `context.thread.cwd`
+  and `tool_execution_start` fires *before* `prepareToolCall` validates, so the model's own
+  rejected value is persisted as the audit record and replayed as a few-shot example — a
+  self-reinforcing loop that cost the packaged-task incident 64 pre-execution rejections and
+  ~$2.17. Fix: one immutable `modelCall` envelope per tool Item with three dispositions
+  (`replayable` / `redactedReplay` / `evidenceOnly`), a kernel admission event ahead of
+  execution-start, current-registry validation before every submission, and a pair-level
+  preflight that degrades to typed evidence rather than throwing on the user path (A12).
+  Secret-bearing model arguments (`Authorization: Bearer …`, `sk-…`) replay redacted with an
+  atomic marker instead of vanishing, closing an existing leak without teaching the model that
+  a command it ran never happened. `historyToolArguments`/`historyToolIdentity` are deleted and
+  AC-10 makes the empty `rg` the completion test (A11). **Shape (a): ONE complete feature in
+  ONE PR** — the PM ruled against splitting the large-argument payload store into its own PR.
+  **Gate at implementation:** `/code-review ultra` (protocol surface).
+  See `docs/plans/agent-canonical-tool-call-history.md`.
 - **agent-context-integrity** (P1, `done` 2026-07-29; PRs #440, #441, #444) —
   restored the complete canonical model-context contract. PR 1 (#440): strict
   evidence Items and codecs, Thread-owned verified context payloads, typed

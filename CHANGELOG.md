@@ -12,6 +12,30 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Canonical tool-call history plan (PR #482, codex-3, plan-only)** — boards the
+  fix for a defect that made the agent teach itself to fail. Tool history is
+  currently reverse-engineered from the presentation Item rather than recorded:
+  `ContextProjector.historyToolArguments()` turns a `commandExecution` into
+  `{ command, cwd }`, inventing a `cwd` the strict `bash` schema rejects and
+  dropping the valid `description`, and turns a `fileChange` into a fabricated
+  `{ changes }` no file schema accepts. Because `tool_execution_start` fires
+  before `prepareToolCall` validates, and `startedToolItem` lets a raw
+  `input.cwd` outrank the Thread's own working directory, the model's rejected
+  argument was persisted as the audit record and replayed to it as a worked
+  example — one packaged-task run spent 64 pre-execution rejections and ~$2.17
+  going around that loop. The plan makes the admitted call the sole authority:
+  an immutable `modelCall` envelope per tool Item with three dispositions
+  (`replayable` / `redactedReplay` / `evidenceOnly`), a kernel admission event
+  ahead of execution-start, validation against the live registry before every
+  submission, and pair-level preflight that degrades to typed evidence instead
+  of throwing on the user path. Secret-bearing arguments replay redacted behind
+  an atomic marker, which closes an existing leak — commands are persisted with
+  bounding only today — without the model concluding that a command it actually
+  ran never happened. Gate review ran three rounds: the causal chain, the
+  `cwd` precedence, a projector that degraded arguments while still throwing on
+  result payloads, and a compaction rule that could strip a redaction marker off
+  the call it qualified. Implementation ships as one complete PR.
+
 - **Collaboration tool handlers live in their own domain (PR #456, codex-2)** —
   `ToolRuntime` carried the implementation of the collaboration tools as well as
   the dispatch for every tool; the handlers moved verbatim into
