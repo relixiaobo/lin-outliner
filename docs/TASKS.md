@@ -335,9 +335,11 @@ unassigned — future dev is not pre-committed to any clone.
 **Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
-1. **`unified-command-surface`** (P2, *needs a dev one-pager first*) — the largest remaining product
-   item; design ratified (D1–D8), retrieval dep shipped (#111). Next step is a dev-drafted build
-   one-pager (phases / file-scope / tests) → PM ratify → build. Start here for impact.
+1. **`unified-command-surface`** (P2, **CLAIMED — a dev started it 2026-08-03 at the PM's
+   direction**; no Draft PR yet, so it is invisible on the radar until one is opened) — the
+   largest remaining product item; design ratified (D1–D8), retrieval dep shipped (#111). It is
+   at the dev-drafted build one-pager step (phases / file-scope / tests) → PM ratify → build.
+   **Do not pick this up.**
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
@@ -396,8 +398,8 @@ the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-a
 into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
-  build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
+- **unified-command-surface** (P2, **in-progress — claimed by a dev 2026-08-03; at the
+  dev-drafted build one-pager step**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
   attachment, `Target × Verb`). The full ratified design (D1–D8: Enter contract,
   context-forward + habit-adaptive default-highlight, reversibility tier B, chip
