@@ -99,7 +99,10 @@ grant for a fallback-of-a-fallback.
 
 ### Relationship To Current Modules
 
-- `src/main/context/contextCapture.ts` keeps the `PageContentExtractor` seam.
+- `src/main/context/contextCapture.ts` keeps `PageContentExtractor` as an **ambient
+  metadata** seam. Explicit reading — including this plan's Preview reader — goes
+  through `ExplicitPageReader`, invoked only after the user picks an action; the
+  ambient seam runs on every hotkey press and must never touch the network.
 - `src/core/preview.ts` remains URL Preview target and navigation authority.
 - `docs/spec/workspace-layout.md` remains the authority for the shipped URL
   Preview session and sandbox.
@@ -121,6 +124,7 @@ grant for a fallback-of-a-fallback.
 
 - Define Preview guest identity and destruction handling in Electron main.
 - Define the minimal read-only `PreviewContentReader` contract.
-- Ratify the explicit rich-capture UX before adapting `PageContentExtractor`.
+- Ratify the explicit rich-capture UX before implementing `ExplicitPageReader`'s
+  Preview-backed variant.
 - Add security tests proving the reader cannot mutate a page, address an
   external browser, or expose raw session credentials.

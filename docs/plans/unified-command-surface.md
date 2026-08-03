@@ -133,17 +133,22 @@ Traced to the bottom, it is one:
   you cannot outdent out of the panel's own root. Everywhere else it is threaded
   through and never read.
 
-**So the registry and its predicates live in `src/core/`, with a two-field context:**
+**So the registry and its predicates live in `src/core/`.** Evaluation reads
+exactly two things — the document, and what the user is acting from:
 
 ```ts
 interface ActionContext {
   projection: DocumentProjection;   // crosses IPC already
-  panelRootId: NodeId | null;       // only Outdent reads it
+  invocation: ActionInvocation;     // the composite envelope in D1a
 }
 ```
 
+`panelRootId` lives inside `invocation.panel` rather than beside the projection,
+because it is a fact about *where the user is acting*, not about the document.
+There is one shape, not two.
+
 **There is no degrading contingency, and the parity promise holds.** Out-of-app,
-`panelRootId` is null and *Outdent* resolves to no operands — not because the
+there is no `invocation.panel` and *Outdent* resolves to no operands — not because the
 surface is a lesser build, but because outdent is defined relative to a panel and
 there is no panel. That is D7 doing its job, not a compromise. Every other node
 action resolves identically in both views.
@@ -158,12 +163,14 @@ the compiler decides whether they hold.
 
 ```ts
 // 1. INVOCATION — what the user is acting from. Main-owned; crosses the seam as an id.
-type ActionInvocation =
-  | { kind: 'node';      nodeId: NodeId; targetId: NodeId; panelRootId: NodeId; isPinned: boolean }
-  | { kind: 'selection'; nodeIds: readonly NodeId[]; panelRootId: NodeId }
-  | { kind: 'panel';     panelId: string; panelRootId: NodeId; toolbarVisible: boolean }
-  | { kind: 'app' }
-  | { kind: 'page';      contextId: ExternalContextId };   // main holds the ExternalContext
+//    A COMPOSITE ENVELOPE, not a union: one menu opening carries several of these
+//    at once, and D2 renders node + selection + panel actions from that one opening.
+interface ActionInvocation {
+  anchor?:    { nodeId: NodeId; targetId: NodeId; visualRowId: NodeId; isPinned: boolean };
+  selection?: { nodeIds: readonly NodeId[] };          // live multi-selection, if any
+  panel?:     { panelId: string; panelRootId: NodeId; toolbarVisible: boolean };
+  page?:      { contextId: ExternalContextId };        // main holds the ExternalContext
+}
 
 // 2. EVALUATION — three states, never a bare list. D7 needs to tell them apart.
 type ActionEvaluation =
@@ -185,22 +192,39 @@ interface ActionRequest {
   parameter?: ActionParameterValue; confirmed?: true;
 }
 
-// 5. EFFECT — produced by main, never accepted from a renderer. Discriminated.
-type ActionEffect =
-  | { kind: 'command'; /* main executes; never crosses inbound */ }
-  | { kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
-  | { kind: 'reveal'; surface: RevealTarget }
-  | { kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
-  | { kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
-  | { kind: 'composerHandoff'; operand: ComposerOperand; draftText: string };
+// 5. EFFECT — produced by main, never accepted from a renderer. An ORDERED PLAN,
+//    because real actions cross executors: `Filter / Sort / Group / Display` runs
+//    setViewToolbarVisible and only THEN reveals the section.
+interface ActionEffectPlan {
+  steps: readonly EffectStep[];   // executed in order; a failed step stops the plan
+}
+type EffectStep =
+  | { on: 'main';     kind: 'command'; /* main executes; never crosses inbound */ }
+  | { on: 'renderer'; kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
+  | { on: 'renderer'; kind: 'reveal'; surface: RevealTarget }
+  | { on: 'renderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
+  | { on: 'renderer'; kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
+  | { on: 'renderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string };
 ```
 
 Why each exists, in the order the reviews forced them:
 
-**Invocation is a discriminated union because `NodeId[]` cannot describe the
-operand.** The current menu needs `targetId`, `visualRowId`, `selectedIds`,
-`isPinned`, and toolbar visibility (`NodeContextMenu.tsx:63-81`); a foreground page
-is not a node at all. Flattening all of that into a node list was the mistake.
+**Invocation is a composite envelope, not a union, because one opening is
+composite.** A single right-click carries the anchored node *and* the live
+multi-selection *and* panel/toolbar state *and* pin state simultaneously
+(`NodeContextMenu.tsx:63-81`), and derives batch operands from the anchor and the
+selection **together** (`:135-203`). D2 then renders node, selection and panel
+actions from that one opening. A union admits exactly one of those, so a literal
+implementation would have to drop actions, smuggle the rest in after admission, or
+invent an undocumented multi-ref merge. The envelope carries them all; each action's
+`operands()` reads the parts it needs and ignores the rest.
+
+**Who supplies what.** Main derives everything document-shaped from the projection
+(`targetId` resolution, descendant and Trash exclusion, `mutable`, row policy).
+`isPinned`, `toolbarVisible` and `visualRowId` are renderer-owned facts main cannot
+know — admissible under the D1b rule below, which fences them to renderer-side
+effects. **One opening produces one `InvocationRef` and one ordered
+`ActionPresentation[]`**, so a menu never assembles itself from several refs.
 
 **Evaluation has three states because D2 and D7 disagree about what "empty"
 means.** D2 filters on applicability; D7 must show a rejected action *with its
@@ -214,12 +238,24 @@ projections with different affordances, and because icon ids resolve per view
 **Request is the admission contract** — see D1b. It is deliberately the smallest
 thing that can name an action.
 
-**Effect is discriminated and outbound-only.** The action inventory (~22 items)
-shows `mutate | navigate | handoff` under-counts badly: *Pin* writes renderer
-workspace chrome (localStorage, not document state), *Open in split pane* creates a
-panel, *Copy text* / *Copy node id* write the clipboard, *Add description* and the
-*Filter / Sort / Group / Display* rows reveal UI. Only about half are core commands.
-`op + ...` is not an executable contract, so each carries its own payload.
+**Effect is an ordered plan, discriminated and outbound-only.** The action
+inventory (~22 items) shows `mutate | navigate | handoff` under-counts badly: *Pin*
+writes renderer workspace chrome (localStorage, not document state), *Open in split
+pane* creates a panel, *Copy text* / *Copy node id* write the clipboard, *Add
+description* and the *Filter / Sort / Group / Display* rows reveal UI. Only about
+half are core commands, and each carries its own payload — `op + ...` is not an
+executable contract.
+
+**And some actions are not single-executor at all.** *Filter / Sort / Group /
+Display* runs `setViewToolbarVisible` through the core command path and only **after
+it succeeds** expands the visual row and reveals the requested section
+(`NodeContextMenu.tsx:273-277`); *Show view toolbar* has the same command-then-reveal
+shape (`:407-420`). A single effect would have to drop one half or let the action
+escape back into an ad-hoc renderer callback — which would defeat both the registry
+and the differential proof. Hence `steps`: **renderer steps are emitted only after
+the preceding main step succeeds**, a failed step stops the plan, and D2's
+equivalence proof compares **step order and failure behaviour**, not just the final
+command.
 
 **Parameter** is what makes half the set expressible at all: *Move to* needs a
 destination, *Add tag* a tag. Their candidates come from the one retrieval kernel
@@ -372,11 +408,7 @@ when the focused node is *part of* a multi-selection (collapsed to roots by
 to their target. Reusing it is what makes the two projections (D2) agree by
 construction instead of by inspection.
 
-### D5 — One retrieval implementation
-
-Every "find a node" path resolves through the shared retrieval service
-(`main/nodeRetrievalService.ts`): the command surface (already does), the context
-menu's *Move to* picker, and the `@`/`#`/`/` candidate lists.
+### D5 — One matching kernel; typed candidate policies stay with their domain
 
 **What converges is the matching kernel, not the candidate policy.** The at-caret
 paths are not naive duplicates of node search — they carry domain rules that must
@@ -387,22 +419,44 @@ strings (`tagSelector.ts`). `nodeRetrievalService` exposes generic options (limi
 search node, personal-access) and knows none of that. Replacing those paths with it
 wholesale would be a regression dressed as convergence.
 
-So the rule is narrower and truer: **one text-matching and ranking kernel; typed
-candidate policies stay with their domain.** What is eliminated is a *second
-implementation of matching* — and *Move to*'s complete absence of one.
+So: **one text-matching and ranking kernel; typed candidate policies stay with
+their domain.** What is eliminated is a *second implementation of matching* — and
+*Move to*'s complete absence of one. **The at-caret paths are not migrated by this
+plan at all**; doing so later owes measured latency plus cancellation and
+out-of-order-response tests under A9, which is different work from fixing a broken
+picker.
 
-**Stage 1 therefore fixes `Move to` only.** It is the surface with no ranking at
-all, it is a bug-level defect, and it needs no policy decisions. Folding the
-at-caret paths onto the shared kernel is a later, separately-judged change: if it
-ever becomes IPC-per-keystroke it owes measured latency plus cancellation and
-out-of-order-response tests under A9, which is a different piece of work from
-fixing a broken picker.
+**`Move to` needs a typed candidate policy, applied before limiting.** Its picker
+is not generic search with a filter bolted on: it excludes the moving nodes, field
+entries, descendants of the moving nodes, and Trash — **and it lists valid
+candidates on an empty query**, which `searchText('')` does not
+(`nodeRetrievalService.ts:14-58`). Two consequences the naive migration gets wrong:
 
-**One qualification on ordering.** The personal-access boost needs stats that live
-in main (`nodeAccessStore`, `main.ts:930-935`) and is already an explicit opt-in on
-`TransientSearchOptions` (#307). Per-keystroke callers may legitimately opt out. The
-invariant is therefore **identical ordering for identical options**, not "every
-surface always returns the same order regardless of what it asked for".
+- **Admission runs before the limit, never after.** Filtering a limited generic
+  result would let invalid descendants consume the limit and hide a valid ranked
+  destination — preserving the exact defect this fixes.
+- **Empty query has its own ordering**, not "no results".
+
+```ts
+interface MoveToCandidatePolicy {
+  admits(candidate: NodeProjection, moving: readonly NodeId[]): boolean;
+  emptyQueryOrder(ctx: ActionContext): readonly NodeId[];
+}
+```
+
+**It stays renderer-local, using the shared kernel — it does not become IPC.** The
+renderer already holds `byId`, so admission and ranking run locally with no
+round-trip, no debounce, no request identity, and no stale-response window. That
+choice is deliberate: PR 1 fixes a broken picker without also taking on the async
+burden the shipped launcher needs for its own IPC search
+(`LauncherApp.tsx:74-96`). The cost is that the personal-access boost — whose stats
+live in main (`nodeAccessStore`) and which is already an explicit opt-in on
+`TransientSearchOptions` (#307) — does not apply here. Text-match ranking plus
+correct admission already turns "the target may not appear at all" into "the target
+ranks first"; the boost can follow later if it earns the IPC.
+
+So the invariant is **identical ordering for identical options and the same policy**
+— not "every surface returns the same order regardless of what it asked for".
 
 ### D6 — Rows are objects; the action bar says what Enter does; `⌘K` opens the rest
 
@@ -501,11 +555,26 @@ visible result signal. "Move X into Y" from the panel has exactly the same probl
 as a capture — the surface vanishes and the user may not be looking at the window
 where it landed. One rule, not a capture special case.
 
-**Ordering, so the signal never fights focus return (D3):** once an action's effect
-exists it is **committed** and cannot be cancelled from the panel; focus returns
-immediately; the result signal is a notification that never takes focus and never
-blocks dismissal. Esc during the signal dismisses the signal, never the action —
-reversal is `Cmd+Z`, the same undo everything else uses.
+**One window lifecycle, because two earlier decisions contradicted each other.**
+"Focus returns immediately" plus "confirm inside the panel" cannot both hold: the
+launcher routes `blur` straight to `dismissLauncher()`
+(`launcherWindow.ts:108-114`), so returning focus at commit destroys the very
+surface meant to show the confirmation — precisely in the background case the
+signal exists for. The lifecycle is therefore explicit:
+
+1. The plan's first step commits. The panel enters a **result state**: input
+   disabled, the action no longer cancellable from here.
+2. The result state **suppresses blur-dismiss** for a bounded dwell and shows the
+   outcome. The panel is already the only surface the user is looking at.
+3. At the end of the dwell the panel dismisses **itself** and focus returns to
+   whatever held it before the summon — the editor in-app, the previous app
+   otherwise. **Focus returns at dismissal, not at commit.**
+4. Esc during the dwell ends the dwell early. It never cancels the action —
+   reversal is `Cmd+Z`, the same undo as everywhere else.
+
+The E2E asserts the confirmation was actually **visible for the dwell**, that the
+prior app regained focus, and the ordering between the two — not merely that a
+result flag was set.
 
 **"Once the effect exists" is doing real work in that sentence.** An action
 carrying `confirm` (D1) produces no effect until confirmation resolves, so
@@ -627,9 +696,10 @@ which carried a 4,700-line move to zero review findings.
    result signal (D9).
 7. Capture loop: confirmation, optional tag, send-to-agent action with its
    `PendingComposerContext` (D9).
-8. Delete the old menu path, `CommandPalette.tsx`, the global `Cmd+K` binding
-   (`shortcutRegistry.ts:139` — the keystroke lives on inside the panel as
-   *Actions*), and the stale `/`-menu hint.
+8. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
+   — the keystroke lives on inside the panel as *Actions*), and the stale `/`-menu
+   hint. **The old menu oracle is not deleted here — PR 1's final step already
+   removed it** once equivalence was proven.
 
 **Sequenced after #486 merges**, since step 7 touches `ThreadView` / `ThreadDock` /
 both locale files.
@@ -645,8 +715,9 @@ and a differential test can judge them instead.
 
 ## Verification
 
-- **Menu equivalence (stage 4).** Differential: the old menu path is the oracle and
-  both paths render over a corpus of real document states; outputs must be equal.
+- **Menu equivalence (PR 1, step 4).** Differential: the old menu path is the
+  oracle and both paths render over a corpus of real document states; outputs must
+  be equal, **including effect-step order and failure behaviour** (D1a).
   Cousin of #445's golden Item-stream parity — compare against the real thing, do
   not hand-enumerate the states that matter.
 - **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
@@ -678,11 +749,13 @@ changes a contract or a user-visible behaviour rather than a private helper:
   (`icon-semantics.md` records it as the one sanctioned lucide import outside the
   renderer). Ids are locale- and bundle-independent, so a view that lacks a glyph
   falls back rather than failing.
-- **Result signal: a brief in-panel confirmation before dismissal.** Chosen by
-  elimination. An OS notification needs a permission grant and is easy to miss; a
-  main-window surface is invisible exactly when it is needed, since the case that
-  motivates the signal is Tenon sitting in the background. The panel is the one
-  thing the user is looking at, it needs no permission, and it steals no focus.
+- **Result signal: a brief in-panel confirmation before dismissal**, delivered
+  through the result state in D9 (which suppresses blur-dismiss for the dwell —
+  without that, focus return would dismiss the panel and take the confirmation with
+  it). Chosen by elimination: an OS notification needs a permission grant and is
+  easy to miss; a main-window surface is invisible exactly when it is needed, since
+  the motivating case is Tenon sitting in the background. The panel is the one
+  thing the user is looking at and needs no permission.
 
 ## Related plans
 
@@ -696,9 +769,10 @@ changes a contract or a user-visible behaviour rather than a private helper:
   it. (Breadth becomes worth more once the static reader lands, since a recognised
   provider then yields real content rather than a better-labelled link.)
 - `file-preview.md` — its **static URL reader** is the approved rich-extraction
-  backend; capture consumes it through `PageContentExtractor` once it exists. That
-  plan's open question ("is the static reader still valuable beside the hardened
-  preview?") is answered yes by this decision: it has a second consumer.
+  backend, reached through the explicit `ExplicitPageReader` entry point, **never**
+  through the ambient `PageContentExtractor` seam (see Non-goals). That plan's open
+  question ("is the static reader still valuable beside the hardened preview?") is
+  answered yes by this decision: it has a second consumer.
 - `browser-extension-integration.md` — record-only, and a **deferred second
   extraction source** (JS-rendered / signed-in pages) behind the static reader. Two
   corrections it needs: its filename says "extension" while its own non-goals
@@ -801,10 +875,11 @@ threads, anything signed-in) requires injecting JS into the *user's own browser*
 an extension or CDP. **Tenon builds no extension** (PM, iteration change). The
 approved rich-extraction backend is a **main-process static URL reader** — fetch +
 parse, no injected JS, no new OS permission — which covers public articles, blogs,
-videos, and repos: what capture actually meets most of the time. The seam is
-already in the code (`PageContentExtractor`, `contextCapture.ts`); only the
-implementer changed. Reading an already-visible Tenon URL Preview stays a deferred
-*second* source for JS-rendered or signed-in pages.
+videos, and repos: what capture actually meets most of the time. It is reached
+through an explicit reader invoked after the user picks an action — never through
+the ambient capture seam, which runs on every hotkey press. Reading an
+already-visible Tenon URL Preview stays a deferred *second* source for JS-rendered
+or signed-in pages.
 
 **Direction check.** Lazy is a read-later/collection product; Tenon is a context +
 agent workbench. Deleting the `embedType`/`embedId` schema (`embed-strategy.md`,
