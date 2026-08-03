@@ -37,66 +37,9 @@ and groundwork whose value arrives later. The daily writing loop does not get
 faster; that belongs to `performance-optimization.md`. Judge the result against
 that claim, not a broader one.
 
-### Reference source and its boundary (Lazy)
-
-This surface started as "build a Lazy-like command window, and merge it with the
-in-app `Cmd+K` that looks similar." The reverse-engineering record is
-`archive/lazy-like-global-launcher.md` (Lazy v2.0.10, analysed 2026-06-02); its
-first slice shipped as #103 and is now `spec/launcher.md`. Record what is borrowed
-and what is not, so this boundary is not silently re-opened:
-
-**Borrowed — the feel.** One global hotkey, no modes, one always-focused input
-that is simultaneously filter / search / draft, fuzzy match, Enter runs the
-highlighted row, a non-activating panel that never makes you leave what you were
-doing. This shipped and this plan preserves it.
-
-**Borrowed — the command surface as *the* entry point.** Lazy's launcher is a
-command runner, not a search box. That ambition is what the action registry (D1)
-delivers — but populated from **Tenon's own action set**, not Lazy's.
-
-**Not borrowed — Lazy's command families.** The observed table
-(`Clip article` / `Clip PDF` / `Clip email` / `Clip DM` / `Read later` /
-`Watch later` / `Summarize video` / `Generate tags`, ibid. §"Lazy command families
-observed") is entirely *bring the outside in*; **not one entry operates on the
-user's own notes.** So Lazy's window and Tenon's `Cmd+K` were never two similar
-things — they share a silhouette, not a job. Merging them therefore needed an
-abstraction spanning two non-overlapping jobs, and `Target × Verb` was invented to
-fill an intersection that does not exist. That is why the earlier revision of this
-plan grew a verb matrix, a chip-arity model, habit learning, and a reversibility
-tier. **The merge still happens here** — one hotkey, one surface,
-`CommandPalette.tsx` deleted — but because the launcher is already a superset of
-the palette, not because two similar things were fused.
-
-**Structurally out of reach.** Half of Lazy's table (DMs, email, LinkedIn/X
-threads, anything signed-in) requires injecting JS into the *user's own browser* —
-an extension or CDP. **Tenon builds no extension** (PM, iteration change). The
-approved rich-extraction backend is a **main-process static URL reader** — fetch +
-parse, no injected JS, no new OS permission — which covers public articles, blogs,
-videos, and repos: what capture actually meets most of the time. The seam is
-already in the code (`PageContentExtractor`, `contextCapture.ts`); only the
-implementer changed. Reading an already-visible Tenon URL Preview stays a deferred
-*second* source for JS-rendered or signed-in pages.
-
-**Direction check.** Lazy is a read-later/collection product; Tenon is a context +
-agent workbench. Deleting the `embedType`/`embedId` schema (`embed-strategy.md`,
-option C) is a deliberate step *away* from read-later. Capture here earns its keep
-by being findable and agent-readable (D9), not by looking rich.
-
-### The evidence this plan is built on
-
-The repository already contains the controlled experiment, one line right and one
-line wrong:
-
-| Action | Entry points | Implementations | Result |
-|---|---|---|---|
-| Apply a tag | `#` trigger popover, node context menu, batch selector, `TagSelector` | **one** (`ui/interactions/tagSelector.ts`) | four doors, **one habit** |
-| Find a node | context-menu *Move to*, `@`/`#`/`/` candidates, command palette, launcher | **three** | same query, **three different orderings** |
-
-`NodeContextMenu.tsx:222-230` filters the whole projection with `.includes()` and
-**no ranking at all**; `ui/interactions/candidateRanking.ts` ranks by text match;
-`main/nodeRetrievalService.ts` ranks with the personal-access boost (#111, #307).
-Searching "project" in *Move to* and in the command surface returns different
-orders today. That divergence — not the number of surfaces — is the defect.
+The evidence behind both, and the boundary against the product this surface was
+modelled on, are in the appendix — they are provenance, not design, and a builder
+does not need them to build.
 
 ## Non-goals
 
@@ -160,26 +103,47 @@ Registry entry shape:
 
 ```ts
 interface ActionDefinition {
-  id: ActionId;                      // stable, i18n-independent
-  target: 'node' | 'selection' | 'panel' | 'app';
-  applicable(ctx: ActionContext): readonly NodeId[] | boolean;
-  command: CoreCommandRef;           // A4: mutation goes through core commands
+  id: ActionId;                                     // stable, i18n-independent
+  scope: 'node' | 'selection' | 'panel' | 'app';    // which views may show it (D2, layer 1)
+  operands(ctx: ActionContext): readonly NodeId[];  // what it would act on; empty = N/A
+  parameter?: ParameterSpec;                        // a second step, when one is needed
+  effect(operands, parameter): Effect;              // a serializable instruction
 }
 ```
 
-`ActionContext` is built from the shared `DocumentProjection` (already crosses
-IPC), never from the renderer-only `DocumentIndex`. The predicates that decide
-applicability **already exist as pure functions** — `idsAllowedForMoveTo`,
+Three deliberate choices, each of which the obvious shape gets wrong:
+
+**`operands()` returns a list, never a boolean.** "Not applicable" is the empty
+list. The existing predicates already return id lists — `idsAllowedForMoveTo`,
 `idsAllowedForDuplicate`, `idsEnabledForSelectionAction`,
 `idsAllowedForStructuralBatch/IndentBatch/OutdentBatch`, `planSelectionDelete`,
-`trashActions.ts`, `nodeLocation.isNodeInTrash`,
-`contextMenuSelection.resolveActiveNodeSelection`. The work is moving them from
-`renderer/ui/interactions/` to core and re-basing them on `DocumentProjection`,
-not writing new logic.
+plus `trashActions.ts`, `nodeLocation.isNodeInTrash`, and
+`contextMenuSelection.resolveActiveNodeSelection` — because an action often
+applies to *part* of a selection. A `boolean | NodeId[]` union would throw that
+away and force every caller to re-derive the subset.
 
-The `target` union is **read out of the existing action set**, not designed up
-front: the node context menu already mixes node actions (Move to, Add tag),
-panel actions (View as table/outline), and app actions.
+**`parameter` is what makes half the action set expressible at all.** *Move to*
+needs a destination, *Add tag* needs a tag: they are two-step actions, and a
+registry that only carries "what to run" cannot describe them. A parameter's
+candidates come from the one retrieval service (D5) or the one tag selector, so
+**the *Move to* picker converges onto shared ranking by construction** — not by
+someone remembering to fix it. The plan's most visible defect and its central
+abstraction close each other.
+
+**`effect` is data, not a closure.** Actions do three different things: mutate
+(a core command, A4), navigate (`navigateRoot` + `focusNode`), and hand off (the
+`agentReveal` composer staging). A `command: CoreCommandRef` field can only
+express the first, and a callback cannot cross a process boundary. As a
+serializable instruction, the effect is produced wherever applicability is
+evaluated and performed by whoever owns it — main runs commands, the main renderer
+runs navigation and the handoff, and the panel performs nothing itself; it returns
+the chosen effect. This also drains most of the risk out of the placement question
+above: **where applicability is evaluated stops determining where the effect runs.**
+
+`ActionContext` is built from the shared `DocumentProjection`, never the
+renderer-only `DocumentIndex`. The `scope` union is **read out of the existing
+action set**, not designed up front: the node context menu already mixes node
+actions (Move to, Add tag), panel actions (View as table/outline), and app actions.
 
 ### D2 — The context menu is an anchored view of the registry
 
@@ -188,16 +152,22 @@ The menu is anchored beside the node. Anchoring is the reason it survives:
 menu acts on, whereas a centred overlay must state its operand in words.
 
 **Filtering is two-layered, and both layers are required.** A view first declares
-which `target` kinds it accepts, then applicability runs:
+which `scope`s it accepts, then operands are resolved:
 
 ```
-menu.render(registry.byTarget('node','selection').filter(applicable(clicked node)))
+menu.render(registry.byScope('node', 'selection').filter(a => a.operands(ctx).length > 0))
 ```
 
 Without the first layer, the app-scoped navigation entries D3 adds (Go to Today,
-Library, …) would apply to every context and surface inside the right-click menu,
-breaking the equivalence criterion below. The command surface accepts every
-`target`; the context menu accepts only node and selection.
+Library, …) resolve operands in every context and surface inside the right-click
+menu, breaking the equivalence criterion below. The command surface accepts every
+scope; the context menu accepts only `node` and `selection`.
+
+**One registry, two projections — and that is the whole seam.** Anchored
+(browsable, operand carried by *position*) and searchable (typed, operand carried
+by the chip). They are not two implementations and not two habits: the same entry
+renders in both, with the same name and the same effect. What differs is only how
+the operand gets there.
 
 **Equivalence is the acceptance criterion**, and it is proven by **differential
 test against the old code, not by a hand-written state table.** Enumerating "every
@@ -228,21 +198,25 @@ old path is deleted in the PR's final stage.
 - **Return focus.** After a jump or an action, focus goes back to the editor
   position it came from.
 
-### D4 — Context is attached and removable
+### D4 — The chip is the operand, pre-filled and removable
 
-Ambient context attaches on summon and renders as a visible, removable chip:
-in-app the focused/selected node (pushed from the main renderer over IPC),
-out-of-app the foreground page. Removing every chip falls back to global search.
-Nothing is ever attached silently.
+There is **one** concept here, not two. The chip is not "attached context" that
+separately happens to be actionable — it **is the operand**, the thing actions in
+this surface apply to. Ambient context only decides its *default value*: in-app the
+focused or selected node (pushed from the main renderer over IPC), out-of-app the
+foreground page. Naming it "context" was what made it look like two things.
+
+- Pre-filled on summon, **always visible** — nothing is ever attached silently.
+- **Removable**, because a default is a guess: remove it and the surface falls back
+  to global search with no operand.
+- Carried, not merely displayed — which is what lets this surface reach a target
+  that is not on screen. That is the one thing direct manipulation cannot do, and
+  the reason the context menu itself grew a search box inside *Move to*.
 
 **A multi-node selection is one aggregate chip** ("5 nodes"), expandable to remove
 individually — not five chips. Five chips overflow a 760px panel and make "remove
 everything → global search" ambiguous, and the actions that accept a selection take
 the set, not its members.
-
-The chip is the **operand the surface carries**, which is what lets it reach a
-target that is not on screen — the one thing direct manipulation cannot do, and
-the reason the context menu itself grew a search box inside *Move to*.
 
 ### D5 — One retrieval implementation
 
@@ -392,7 +366,7 @@ ones. ("Send to the agent panel" is genuinely a registry action and belongs here
   not hand-enumerate the states that matter.
 - **Retrieval convergence (stage 1).** One ranking chokepoint; a test asserts the
   same query returns the same ordering from every entry point.
-- **Target filtering (D2).** Assert no `panel`/`app`-target action can reach the
+- **Scope filtering (D2).** Assert no `panel`/`app`-scoped action can reach the
   context menu — the failure mode the navigation entries introduce, and the one
   that would silently break menu equivalence.
 - **Applicability (D7).** Property test: every rendered action either applies, or
@@ -457,3 +431,72 @@ To re-run at build time. At drafting: the only open PR is #477
 and both locale message files. It does **not** touch `src/core/commands.ts` or
 `src/core/types.ts` — the registry references existing commands rather than adding
 mutations.
+
+## Appendix — provenance
+
+Why this shape rather than another. Kept so the settled boundaries are not
+silently re-opened; not needed to build the design above.
+
+### The evidence
+
+The repository already contains the controlled experiment, one line right and one
+line wrong:
+
+| Action | Entry points | Implementations | Result |
+|---|---|---|---|
+| Apply a tag | `#` trigger popover, node context menu, batch selector, `TagSelector` | **one** (`ui/interactions/tagSelector.ts`) | four doors, **one habit** |
+| Find a node | context-menu *Move to*, `@`/`#`/`/` candidates, command palette, launcher | **three** | same query, **three different orderings** |
+
+`NodeContextMenu.tsx:222-230` filters the whole projection with `.includes()` and
+**no ranking at all**; `ui/interactions/candidateRanking.ts` ranks by text match;
+`main/nodeRetrievalService.ts` ranks with the personal-access boost (#111, #307).
+Searching "project" in *Move to* and in the command surface returns different
+orders today. That divergence — not the number of surfaces — is the defect.
+
+### Reference source and its boundary (Lazy)
+
+This surface started as "build a Lazy-like command window, and merge it with the
+in-app `Cmd+K` that looks similar." The reverse-engineering record is
+`archive/lazy-like-global-launcher.md` (Lazy v2.0.10, analysed 2026-06-02); its
+first slice shipped as #103 and is now `spec/launcher.md`.
+
+**Borrowed — the feel.** One global hotkey, no modes, one always-focused input
+that is simultaneously filter / search / draft, fuzzy match, Enter runs the
+highlighted row, a non-activating panel that never makes you leave what you were
+doing. This shipped and this plan preserves it.
+
+**Borrowed — the row / action-bar split.** Rows are objects with a right-aligned
+type label; the primary action lives in the bottom bar with `↵`, and the rest
+behind `Actions ⌘K` (D6). Tenon already ships the left half.
+
+**Borrowed — the command surface as *the* entry point.** Lazy's launcher is a
+command runner, not a search box. That ambition is what the action registry (D1)
+delivers — but populated from **Tenon's own action set**, not Lazy's.
+
+**Not borrowed — Lazy's command families.** The observed table
+(`Clip article` / `Clip PDF` / `Clip email` / `Clip DM` / `Read later` /
+`Watch later` / `Summarize video` / `Generate tags`, ibid. §"Lazy command families
+observed") is entirely *bring the outside in*; **not one entry operates on the
+user's own notes.** So Lazy's window and Tenon's `Cmd+K` were never two similar
+things — they share a silhouette, not a job. Merging them therefore needed an
+abstraction spanning two non-overlapping jobs, and `Target × Verb` was invented to
+fill an intersection that does not exist. That is why the earlier revision of this
+plan grew a verb matrix, a chip-arity model, habit learning, and a reversibility
+tier. **The merge still happens here** — one hotkey, one surface,
+`CommandPalette.tsx` deleted — but because the launcher is already a superset of
+the palette, not because two similar things were fused.
+
+**Structurally out of reach.** Half of Lazy's table (DMs, email, LinkedIn/X
+threads, anything signed-in) requires injecting JS into the *user's own browser* —
+an extension or CDP. **Tenon builds no extension** (PM, iteration change). The
+approved rich-extraction backend is a **main-process static URL reader** — fetch +
+parse, no injected JS, no new OS permission — which covers public articles, blogs,
+videos, and repos: what capture actually meets most of the time. The seam is
+already in the code (`PageContentExtractor`, `contextCapture.ts`); only the
+implementer changed. Reading an already-visible Tenon URL Preview stays a deferred
+*second* source for JS-rendered or signed-in pages.
+
+**Direction check.** Lazy is a read-later/collection product; Tenon is a context +
+agent workbench. Deleting the `embedType`/`embedId` schema (`embed-strategy.md`,
+option C) is a deliberate step *away* from read-later. Capture here earns its keep
+by being findable and agent-readable (D9), not by looking rich.
