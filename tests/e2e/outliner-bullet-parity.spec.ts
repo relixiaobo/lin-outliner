@@ -84,7 +84,8 @@ test.describe('outliner bullet parity', () => {
       const titleRect = document.querySelector('.panel-title-editor')?.getBoundingClientRect();
       const tagRect = document.querySelector('.panel-title-toolbar-row .tag-bar')?.getBoundingClientRect();
       const rootStyle = getComputedStyle(document.documentElement);
-      const panelRect = document.querySelector('.main-panel')?.getBoundingClientRect();
+      const panelElement = document.querySelector('.main-panel');
+      const panelRect = panelElement?.getBoundingClientRect();
       const moreRect = document.querySelector('.panel-title-more-button')?.getBoundingClientRect();
       const rowElement = document.querySelector(`[data-node-id="${ids.alpha}"] > .row`);
       const rowBulletRect = rowElement?.querySelector('.row-bullet-button')?.getBoundingClientRect();
@@ -92,13 +93,21 @@ test.describe('outliner bullet parity', () => {
       const trailingBulletRect = document
         .querySelector(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`)
         ?.getBoundingClientRect();
-      if (!titleRect || !tagRect || !panelRect || !moreRect || !rowBulletRect || !rowChevronRect || !trailingBulletRect) {
+      if (!(panelElement instanceof HTMLElement)
+        || !titleRect
+        || !tagRect
+        || !panelRect
+        || !moreRect
+        || !rowBulletRect
+        || !rowChevronRect
+        || !trailingBulletRect) {
         throw new Error('missing panel alignment target');
       }
+      const scrollportLeft = panelRect.left + panelElement.clientLeft;
       return {
         panelContentX: Number.parseFloat(rootStyle.getPropertyValue('--panel-content-x')),
-        panelLeft: panelRect.left,
-        panelRight: panelRect.right,
+        scrollportLeft,
+        scrollportRight: scrollportLeft + panelElement.clientWidth,
         titleLeft: titleRect.left,
         tagLeft: tagRect.left,
         moreRight: moreRect.right,
@@ -111,9 +120,9 @@ test.describe('outliner bullet parity', () => {
     expectClose(metrics.tagLeft, metrics.titleLeft);
     expectClose(metrics.rowBulletLeft, metrics.titleLeft);
     expectClose(metrics.trailingBulletLeft, metrics.titleLeft);
-    expect(metrics.rowChevronLeft).toBeGreaterThanOrEqual(metrics.panelLeft + 8);
+    expect(metrics.rowChevronLeft).toBeGreaterThanOrEqual(metrics.scrollportLeft + 8);
     expect(metrics.rowChevronLeft).toBeLessThan(metrics.titleLeft);
-    expectClose(metrics.panelRight - metrics.moreRight, metrics.panelContentX);
+    expectClose(metrics.scrollportRight - metrics.moreRight, metrics.panelContentX);
   });
 
   test('tag definition bullet uses nodex hash glyph', async ({ page }) => {
