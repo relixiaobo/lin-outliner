@@ -73,6 +73,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **The reading column is centered again when scrollbars take space (PR #479,
+  codex)** — the outliner panel reserved its scrollbar gutter with
+  `scrollbar-gutter: stable`, which reserves the inline-end edge only. With
+  overlay scrollbars (the macOS default) that costs nothing, but with
+  Appearance → "Show scroll bars: Always", on Windows, or on a CI runner, the
+  gutter is permanently reserved and the 720px reading column sat ~5–6px left of
+  the pane's visual center in every wide single-pane window. It is now
+  `stable both-edges`, so the gutters are symmetric and the column centers against
+  the panel's visible border box. The four e2e guards that had failed every CI
+  macOS sample while never failing locally are fixed with it: three of them
+  measured material and HUD colors while GitHub's macOS images forced
+  `prefers-reduced-transparency: reduce`, flipping the `a11y.css` override block
+  underneath them, so the suite gained `tests/e2e/emulatedMedia.ts` — Playwright's
+  own `emulateMedia` cannot set that preference, so the helper pins all five
+  visual preferences over CDP and verifies they applied. The guards now assert
+  against the visible border box and pin the computed `scrollbar-gutter`, and the
+  token probe throws when a token is missing instead of silently inheriting a
+  false match.
+
 - **Preview header actions stay beside Close in split layouts (PR #484, codex)** —
   with more than one pane open, an EPUB or URL preview pulled its Translate and
   More controls up next to the filename while the `×` sat alone at the far right.
