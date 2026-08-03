@@ -232,6 +232,37 @@ and lifecycle are specified in
 instructions may call other tools only when those tools survive the current
 Thread catalog and explicit blocks.
 
+## Canonical Call History
+
+Every raw provider call crosses one ordered admission boundary: resolve canonical
+identity, apply model-argument normalization, validate the exposed schema, persist the
+canonical history envelope, evaluate argument-dependent capability blocks, bind host
+execution context, then execute. Host context such as Thread `cwd`, workspace and
+scratch roots, environment, credentials, and private handles is never added to the
+model arguments. `bash` history therefore records its exact admitted `command` and
+optional model fields while `commandExecution.cwd` remains host-owned audit metadata.
+
+The immutable envelope has three dispositions:
+
+- `replayable` stores canonical identity, exact arguments, and schema digest.
+- `redactedReplay` stores structure-preserving redacted arguments, RFC 6901 redaction
+  paths, and schema digest; execution receives the transient validated source value.
+- `evidenceOnly` stores no replayable call, only identity when resolved, a bounded
+  secret-redacted provider name and argument summary, a stable reason, and correction.
+
+Exact JSON up to 32 KiB stays inline. Larger values use a content-addressed,
+Thread-owned `toolCallArguments` payload and participate in fork, child inheritance,
+rollback, deletion, and startup reconciliation. Truncation is never presented as an
+exact call. Projection revalidates against the active registry and degrades the whole
+call/result pair to typed evidence when the tool, schema, argument payload, complete
+output, or image dependency is unavailable. Item-specific fields are presentation and
+audit projections only; no reverse mapper may recreate model arguments from them.
+
+Provider call IDs are canonicalized before admission. The first non-empty unused ID is
+preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID
+is the only ID used by execution, Item causation, result pairing, and replay. The original
+provider ID is retained only transiently to correlate the provider response part.
+
 ## Result Contract
 
 Capability tools return native model-tool results with human-readable content
@@ -264,11 +295,12 @@ The runtime may shorten presentation without changing the recorded result.
 
 ## Execution And Audit
 
-Tool availability is computed before provider execution from the canonical
-catalog, effective configuration, Thread scope, and capability evaluation. A
-tool absent from that result is not advertised.
+Tool exposure is computed before provider execution from the canonical catalog,
+effective configuration, and Thread scope. Static blocks may remove a tool; a block
+that depends on validated arguments returns a structured unavailable result after
+admission. Schema failure is an admission error, not a capability or host denial.
 
-Every tool call creates one canonical Item. Document mutations additionally
+Every admitted or rejected tool call creates one canonical Item. Document mutations additionally
 record exact Thread/Turn/Item causation in the document operation journal. File,
 command, MCP, and dynamic-tool effects are auditable from their Items.
 
@@ -279,7 +311,10 @@ forked Thread and creates new Item identities.
 
 Tool schemas reject unknown fields and invalid bounds. Paths, URLs, shell input,
 Node scope, and structured query expressions are normalized before execution.
-Sensitive values are redacted from diagnostic output.
+Secret-like model values are structurally redacted before Item, payload, transcript,
+renderer, or diagnostics persistence. Host-injected secrets remain outside the
+canonical call. Redaction keeps the successful outcome visible through marked replay
+or executed evidence, so secrecy does not erase a side effect and induce a retry.
 
 The security model is Full Access plus explicit unavailability, as specified in
 [`agent-tool-permissions.md`](agent-tool-permissions.md). Tools do not implement

@@ -211,6 +211,10 @@ The kernel emits a dedicated admission event for every raw call after preparing
 the durable envelope. Execution-start follows only for admitted calls. A
 rejected admission is completed directly from its evidence record, so no
 consumer can mistake raw, unvalidated provider arguments for an admitted call.
+Before admission, the kernel preserves the first non-empty, unused provider call
+ID and remaps an empty or repeated ID to a fresh Turn-local UUIDv7. The canonical
+ID drives admission, execution, Item causation, result pairing, and later
+history; the original provider ID remains transient correlation data only.
 Capability evaluation receives the validated arguments and therefore remains a
 separate later gate:
 

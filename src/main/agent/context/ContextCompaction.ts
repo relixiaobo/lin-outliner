@@ -12,6 +12,7 @@ import type {
   ThreadItemOutputReference,
   Turn,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { reduceSkillContext } from './SkillContextReducer';
 import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
@@ -212,7 +213,7 @@ async function reduceActiveObservations(
         replaceEntries(active, restored.activeObservations, (entry) => entry.key);
         continue;
       }
-      const invalidation = observationInvalidation(item);
+      const invalidation = await observationInvalidation(item, readContext);
       for (const invalidated of invalidation.keys) active.delete(invalidated);
       if (invalidation.clearNodeObservations) {
         for (const key of active.keys()) {
@@ -222,7 +223,7 @@ async function reduceActiveObservations(
       if (!isHistoryTool(item) || !item.outputRef) continue;
       const projectionRef = projections.get(outputReferenceKey(item.outputRef));
       if (!projectionRef) continue;
-      for (const identity of observationIdentities(item)) {
+      for (const identity of await observationIdentities(item, readContext)) {
         active.set(identity.key, {
           key: identity.key,
           tool: identity.tool,
@@ -374,21 +375,26 @@ function replaceEntries<K, V>(
   for (const value of source) target.set(keyOf(value), value);
 }
 
-function observationIdentities(item: HistoryToolItem): Array<{ key: string; tool: string; subject: string }> {
-  if (item.type !== 'dynamicToolCall' || item.namespace !== null || item.status !== 'completed') return [];
-  const args = isRecord(item.arguments) ? item.arguments : {};
-  if (item.tool === 'file_read') {
+async function observationIdentities(
+  item: HistoryToolItem,
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<Array<{ key: string; tool: string; subject: string }>> {
+  if (item.status !== 'completed' || item.modelCall.identity?.namespace !== null) return [];
+  const args = await canonicalToolArguments(item, readContext);
+  if (!args) return [];
+  const tool = item.modelCall.identity.name;
+  if (tool === 'file_read') {
     const path = stringArgument(args, ['file_path', 'path']);
-    return path ? [{ key: `file:${path}`, tool: item.tool, subject: path }] : [];
+    return path ? [{ key: `file:${path}`, tool, subject: path }] : [];
   }
-  if (item.tool === 'node_read') {
+  if (tool === 'node_read') {
     const nodeIds = uniqueStrings([
       ...stringArguments(args, ['node_ids', 'nodeIds']),
       ...singleStringArguments(args, ['node_id', 'nodeId', 'id']),
     ]);
     return nodeIds.map((nodeId) => ({
       key: `node:${nodeId}`,
-      tool: item.tool,
+      tool,
       subject: nodeId,
     }));
   }
@@ -400,7 +406,10 @@ interface ObservationInvalidation {
   readonly clearNodeObservations: boolean;
 }
 
-function observationInvalidation(item: ThreadItem): ObservationInvalidation {
+async function observationInvalidation(
+  item: ThreadItem,
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<ObservationInvalidation> {
   if (item.type === 'fileChange') {
     return {
       keys: item.status === 'completed'
@@ -412,20 +421,40 @@ function observationInvalidation(item: ThreadItem): ObservationInvalidation {
       clearNodeObservations: false,
     };
   }
-  if (item.type !== 'dynamicToolCall' || item.namespace !== null) return noObservationInvalidation();
-  const args = isRecord(item.arguments) ? item.arguments : {};
+  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) {
+    return noObservationInvalidation();
+  }
+  const args = await canonicalToolArguments(item, readContext);
+  if (!args) return noObservationInvalidation();
   if (item.status !== 'completed' || item.success !== true) return noObservationInvalidation();
-  if (isFileMutation(item.tool)) {
+  const tool = item.modelCall.identity.name;
+  if (isFileMutation(tool)) {
     const path = stringArgument(args, ['file_path', 'path']);
     return { keys: path ? [`file:${path}`] : [], clearNodeObservations: false };
   }
-  if (isNodeMutation(item.tool) && args.preview_only !== true) {
+  if (isNodeMutation(tool) && args.preview_only !== true) {
     return { keys: [], clearNodeObservations: true };
   }
-  if (item.tool === 'outline_undo_stack' && (args.action === 'undo' || args.action === 'redo')) {
+  if (tool === 'outline_undo_stack' && (args.action === 'undo' || args.action === 'redo')) {
     return { keys: [], clearNodeObservations: true };
   }
   return noObservationInvalidation();
+}
+
+async function canonicalToolArguments(
+  item: HistoryToolItem,
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<Record<string, unknown> | null> {
+  if (item.modelCall.disposition === 'evidenceOnly') return null;
+  const source = modelCallArgumentSource(item.modelCall);
+  let value: import('../../../core/agent/protocol').JsonValue | null;
+  if (source.storage === 'inline') {
+    value = source.value;
+  } else {
+    const payload = await readContext(source.ref).catch(() => null);
+    value = payload?.kind === 'toolCallArguments' ? payload.value : null;
+  }
+  return isRecord(value) ? value : null;
 }
 
 async function deterministicSummary(

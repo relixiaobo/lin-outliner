@@ -13,6 +13,7 @@ import type {
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   JsonValue,
+  ModelToolCallHistory,
   ThreadItem,
   TurnDiagnosticsPayload,
   TurnDiagnosticsActivity,
@@ -21,6 +22,7 @@ import type {
   TurnDiagnosticsProviderRequest,
   TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
+import { redactSecretLikeJson } from '../capabilities/agentSecretRedaction';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
@@ -68,6 +70,9 @@ type MutableToolExecution = {
   callId: string;
   toolName: string;
   itemId: string | null;
+  admissionDisposition: ModelToolCallHistory['disposition'];
+  canonicalIdentity: ModelToolCallHistory['identity'];
+  schemaDigest: string | null;
   startedAt: number;
   completedAt: number | null;
   status: Extract<TurnDiagnosticsActivity, { type: 'toolExecutionBatch' }>['executions'][number]['status'];
@@ -167,6 +172,7 @@ export class TurnDiagnosticsCollector {
     callId: string,
     toolName: string,
     itemId: string | null,
+    modelCall: ModelToolCallHistory,
     startedAt = Date.now(),
   ): void {
     const sourceCall = this.providerCalls.at(-1);
@@ -188,6 +194,9 @@ export class TurnDiagnosticsCollector {
       callId,
       toolName,
       itemId,
+      admissionDisposition: modelCall.disposition,
+      canonicalIdentity: modelCall.identity,
+      schemaDigest: modelCall.disposition === 'evidenceOnly' ? null : modelCall.schemaDigest,
       startedAt,
       completedAt: null,
       status: 'inProgress',
@@ -294,7 +303,7 @@ export class TurnDiagnosticsCollector {
         totalTokens: event.message.usage.totalTokens,
         cost: { ...event.message.usage.cost },
       },
-      value: jsonValue(event.message, true),
+      value: redactSecretLikeJson(jsonValue(event.message, true)).value,
     };
   }
 

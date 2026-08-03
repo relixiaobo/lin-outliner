@@ -25,6 +25,7 @@ import type {
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
+  ModelToolCallHistory,
   SkillInvocationContextPayload,
   SubagentExecutionState,
   ThreadItem,
@@ -84,6 +85,7 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './types';
+import { persistToolCallAdmission } from './toolCallHistory';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -157,7 +159,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
       const projectionContext = withTurnScopedContextReads(context);
-      const projector = new CanonicalContextProjector(runtime.model, projectionContext);
+      const projector = new CanonicalContextProjector(runtime.model, projectionContext, tools);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
       const initialPrompt = currentMessages.at(-1);
@@ -193,6 +195,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           execution.callId,
           execution.toolName,
           execution.itemId,
+          execution.modelCall,
           execution.startedAt,
         ),
         completed: (execution) => diagnostics.captureToolExecutionCompleted(
@@ -287,6 +290,10 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               return compacted ? await transformContext() : null;
             }
           : undefined,
+        admitToolCall: (request) => persistToolCallAdmission(
+          request,
+          (value) => context.persistToolCallArguments(value),
+        ),
         getApiKey: runtime.getApiKey,
         transformContext,
         sessionId: cacheAffinity,
@@ -390,7 +397,7 @@ async function projectCanonicalProviderContext(
         ],
       },
     ];
-    const projector = new CanonicalContextProjector(model, context);
+    const projector = new CanonicalContextProjector(model, context, tools);
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
     const initialUser = context.turn.items.find((item) => (
@@ -731,6 +738,7 @@ export class PiEventNormalizer {
         readonly callId: string;
         readonly toolName: string;
         readonly itemId: string | null;
+        readonly modelCall: ModelToolCallHistory;
         readonly startedAt: number;
       }) => void;
       readonly completed?: (execution: {
@@ -773,8 +781,15 @@ export class PiEventNormalizer {
       case 'message_end':
         if (event.message.role === 'assistant') await this.completeAssistant(event.message);
         return;
+      case 'tool_call_admission':
+        await this.startTool(
+          event.toolCallId,
+          event.toolName,
+          event.decision.modelCall,
+          event.decision.displayArguments,
+        );
+        return;
       case 'tool_execution_start':
-        await this.startTool(event.toolCallId, event.toolName, event.args);
         return;
       case 'tool_execution_end':
         await this.completeTool(event.toolCallId, event.result, event.isError);
@@ -852,13 +867,27 @@ export class PiEventNormalizer {
     this.activeReasoningItem = null;
   }
 
-  private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
-    const identity = canonicalIdentity(providerName);
+  private async startTool(
+    callId: string,
+    rawProviderName: string,
+    modelCall: ModelToolCallHistory,
+    args: unknown,
+  ): Promise<void> {
+    const providerName = modelCall.disposition === 'evidenceOnly'
+      ? modelCall.providerName
+      : rawProviderName;
+    const identity = modelCall.identity ?? canonicalIdentity(providerName);
     const startedAt = Date.now();
-    const item = startedToolItem(this.context, callId, identity, args);
+    const item = startedToolItem(this.context, callId, identity, modelCall, args);
     const started = await this.context.recorder.started(item);
     this.toolItems.set(callId, { item: started, startedAt });
-    this.executionObserver?.started?.({ callId, toolName: providerName, itemId: started.id, startedAt });
+    this.executionObserver?.started?.({
+      callId,
+      toolName: providerName,
+      itemId: started.id,
+      modelCall,
+      startedAt,
+    });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
@@ -909,12 +938,14 @@ function startedToolItem(
   context: TurnExecutionContext,
   itemId: string,
   identity: { namespace: string | null; name: string },
+  modelCall: ModelToolCallHistory,
   args: unknown,
 ): ThreadItem {
   const base = {
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
     outputRef: null,
+    modelCall,
   };
   if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
@@ -948,7 +979,7 @@ function startedToolItem(
       description: typeof input.description === 'string' && input.description.trim()
         ? boundedText(input.description.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
         : null,
-      cwd: boundedText(typeof input.cwd === 'string' ? input.cwd : context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
+      cwd: boundedText(context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
       processId: null,
       status: 'inProgress',
       commandActions: [],

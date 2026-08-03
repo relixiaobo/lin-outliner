@@ -18,6 +18,7 @@ import {
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import type { SubagentPresentation } from '../../src/renderer/agent/subagentPresentation';
 import { buildIndex } from '../../src/renderer/state/document';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const mounted: Array<() => void> = [];
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'window'] as const;
@@ -185,6 +186,11 @@ describe('ThreadItemView tool row status presentation', () => {
       status: 'failed',
       outputRef: null,
       changes: [{ path: '/workspace/a.ts', kind: 'update' }],
+      modelCall: replayableModelCall('file_edit', {
+        file_path: '/workspace/a.ts',
+        old_string: 'before',
+        new_string: 'after',
+      }),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();
@@ -205,6 +211,7 @@ describe('ThreadItemView tool row status presentation', () => {
       contentItems: [{ type: 'text', text: 'ENOENT: no such file' }],
       success: false,
       durationMs: 4,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/missing.ts' }),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();
@@ -317,6 +324,11 @@ describe('ThreadItemView Subagent status presentation', () => {
           role: 'worker',
         },
       },
+      modelCall: replayableModelCall('collaboration__spawn_agent', {
+        task_name: 'research',
+        message: 'Research the issue',
+        fork_turns: 'all',
+      }),
     };
     const rendered = renderItem(item, {
       expanded: true,
@@ -380,11 +392,15 @@ function dynamic(overrides: {
     contentItems: null,
     success: overrides.status === 'failed' ? false : true,
     durationMs: 1,
+    modelCall: replayableModelCall(
+      overrides.namespace ? `${overrides.namespace}__${overrides.tool}` : overrides.tool,
+      overrides.args as never,
+    ),
   };
 }
 
 function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandExecutionThreadItem {
-  return {
+  const item = {
     ...base('command-1'),
     type: 'commandExecution',
     status: 'completed',
@@ -398,6 +414,13 @@ function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandEx
     exitCode: 0,
     durationMs: 12,
     ...overrides,
+  };
+  return {
+    ...item,
+    modelCall: overrides.modelCall ?? replayableModelCall('bash', {
+      command: item.command,
+      ...(item.description ? { description: item.description } : {}),
+    }),
   };
 }
 
@@ -565,6 +588,7 @@ function commandItem(): CommandExecutionThreadItem {
     aggregatedOutput: 'Loading output',
     exitCode: null,
     durationMs: null,
+    modelCall: replayableModelCall('bash', { command: 'printf test' }),
   };
 }
 

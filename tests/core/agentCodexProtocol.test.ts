@@ -24,6 +24,10 @@ import {
 } from '../../src/core/agent/codec';
 import {
   AGENT_CORE_METHODS,
+  MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES,
+  MAX_MODEL_TOOL_CORRECTION_BYTES,
+  MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
+  MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
   THREAD_ITEM_TYPES,
   THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
   THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
@@ -35,6 +39,10 @@ import {
   type Turn,
   type TurnDiagnosticsPayload,
 } from '../../src/core/agent/protocol';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+} from '../fixtures/agentToolCallHistory';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
@@ -140,6 +148,10 @@ const allItems: readonly ThreadItem[] = [
     exitCode: 0,
     durationMs: 10,
     outputRef: { id: OUTPUT_ID, mimeType: 'text/plain', byteLength: 2, summary: 'Command output' },
+    modelCall: replayableModelCall('bash', {
+      command: 'bun run typecheck',
+      description: 'Typecheck the project',
+    }),
   },
   {
     type: 'fileChange',
@@ -148,6 +160,10 @@ const allItems: readonly ThreadItem[] = [
     changes: [{ path: 'src/a.ts', kind: 'update', diff: '+export {}' }],
     status: 'completed',
     outputRef: null,
+    modelCall: replayableModelCall('file_write', {
+      file_path: 'src/a.ts',
+      content: 'export {}',
+    }),
   },
   {
     type: 'mcpToolCall',
@@ -162,6 +178,7 @@ const allItems: readonly ThreadItem[] = [
     error: null,
     durationMs: 20,
     outputRef: null,
+    modelCall: replayableModelCall('github__read_pr', { number: 1 }),
   },
   {
     type: 'dynamicToolCall',
@@ -178,6 +195,7 @@ const allItems: readonly ThreadItem[] = [
     success: true,
     durationMs: 3,
     outputRef: null,
+    modelCall: replayableModelCall('node_read', { node_id: 'node-1' }),
   },
   {
     type: 'collabAgentToolCall',
@@ -199,6 +217,11 @@ const allItems: readonly ThreadItem[] = [
       },
     },
     outputRef: null,
+    modelCall: replayableModelCall('collaboration__spawn_agent', {
+      task_name: 'inspect_tests',
+      message: 'Inspect tests',
+      fork_turns: 'all',
+    }),
   },
   {
     type: 'subAgentActivity',
@@ -218,6 +241,7 @@ const allItems: readonly ThreadItem[] = [
     results: [{ title: 'Result', url: 'https://example.com', snippet: 'Summary' }],
     error: null,
     outputRef: null,
+    modelCall: replayableModelCall('web_search', { query: 'Codex protocol' }),
   },
   {
     type: 'imageView',
@@ -429,6 +453,70 @@ describe('Codex Agent Core protocol codec', () => {
     const decoded = decodeThreadItemJson(JSON.stringify(legacy));
     expect(decoded.type).toBe('commandExecution');
     expect((decoded as Extract<typeof decoded, { type: 'commandExecution' }>).description).toBeNull();
+  });
+
+  test('rejects tool Items without canonical model-call history', () => {
+    const legacy = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'commandExecution')!,
+    )) as Record<string, unknown>;
+    delete legacy.modelCall;
+
+    expect(() => decodeThreadItem(legacy)).toThrow('item.modelCall');
+  });
+
+  test('enforces canonical model-call storage, evidence, and JSON-pointer bounds', () => {
+    const command = allItems.find((item) => item.type === 'commandExecution')!;
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: {
+        ...replayableModelCall('bash', {}),
+        arguments: {
+          storage: 'inline',
+          value: 'x'.repeat(MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES),
+        },
+      },
+    })).toThrow('inline model-tool argument budget');
+
+    const evidenceOnly = {
+      disposition: 'evidenceOnly' as const,
+      identity: null,
+      providerName: 'bash',
+      redactedArgumentsSummary: { command: 'pwd', cwd: '/invalid' },
+      reason: 'invalidArguments' as const,
+      correction: 'Use the active schema.',
+    };
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: { ...evidenceOnly, providerName: '界'.repeat(MAX_MODEL_TOOL_PROVIDER_NAME_BYTES) },
+    })).toThrow('providerName');
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: { ...evidenceOnly, correction: '界'.repeat(MAX_MODEL_TOOL_CORRECTION_BYTES) },
+    })).toThrow('correction');
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: {
+        ...evidenceOnly,
+        redactedArgumentsSummary: '界'.repeat(MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES),
+      },
+    })).toThrow('evidence summary budget');
+
+    const redactedReplay = {
+      disposition: 'redactedReplay' as const,
+      identity: { namespace: null, name: 'bash' },
+      redactedArguments: { storage: 'inline' as const, value: { command: '[redacted]' } },
+      redactedPaths: ['/command', '/nested/a~0b~1c'],
+      schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+    };
+    expect(decodeThreadItem({ ...command, modelCall: redactedReplay })).toMatchObject({
+      modelCall: { disposition: 'redactedReplay', redactedPaths: redactedReplay.redactedPaths },
+    });
+    for (const redactedPaths of [[], ['command'], ['/bad~escape'], ['/bad~2escape']]) {
+      expect(() => decodeThreadItem({
+        ...command,
+        modelCall: { ...redactedReplay, redactedPaths },
+      })).toThrow('redactedPaths');
+    }
   });
 
   test('keeps context evidence references, cursors, and acceptance time strict', () => {
@@ -662,6 +750,14 @@ describe('Codex Agent Core protocol codec', () => {
         kind: 'toolOutputProjection',
         outputRef: { id: OUTPUT_ID, mimeType: 'text/plain', byteLength: 12, summary: 'Output' },
         projection: { type: 'observation', text: 'Full output: observation://output' },
+      },
+      {
+        schemaVersion: 1,
+        kind: 'toolCallArguments',
+        value: {
+          command: 'bun run typecheck',
+          description: 'Typecheck the project',
+        },
       },
       {
         schemaVersion: 1,
@@ -1462,6 +1558,9 @@ describe('Codex Agent Core protocol codec', () => {
             callId: 'tool-call-1',
             toolName: 'bash',
             itemId: null,
+            admissionDisposition: 'replayable',
+            canonicalIdentity: { namespace: null, name: 'bash' },
+            schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
             startedAt: 101,
             completedAt: 102,
             status: 'completed',
@@ -1483,6 +1582,9 @@ describe('Codex Agent Core protocol codec', () => {
               callId: 'tool-call-1',
               toolName: 'bash',
               itemId: 'tool-item-1',
+              admissionDisposition: 'replayable',
+              canonicalIdentity: { namespace: null, name: 'bash' },
+              schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
               startedAt: 101,
               completedAt: 102,
               status: 'completed',
@@ -1491,6 +1593,9 @@ describe('Codex Agent Core protocol codec', () => {
               callId: 'tool-call-2',
               toolName: 'bash',
               itemId: 'tool-item-1',
+              admissionDisposition: 'replayable',
+              canonicalIdentity: { namespace: null, name: 'bash' },
+              schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
               startedAt: 101,
               completedAt: 102,
               status: 'completed',
@@ -1586,6 +1691,9 @@ describe('Codex Agent Core protocol codec', () => {
                 callId: 'missing-tool-call',
                 toolName: 'bash',
                 itemId: 'missing-tool-item',
+                admissionDisposition: 'replayable',
+                canonicalIdentity: { namespace: null, name: 'bash' },
+                schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
                 startedAt: 110,
                 completedAt: 120,
                 status: 'completed',

@@ -11,6 +11,7 @@ import type {
 } from '../../src/core/agent/protocol';
 import { planContextCompaction } from '../../src/main/agent/context/ContextCompaction';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 describe('context compaction reducer', () => {
   test('invalidates Node observations after successful document mutations and undo', async () => {
@@ -561,6 +562,7 @@ function toolItem(
     contentItems: [{ type: 'text', text: `${tool} result` }],
     success: options.success ?? true,
     durationMs: 1,
+    modelCall: replayableModelCall(tool, argumentsValue),
   };
 }
 

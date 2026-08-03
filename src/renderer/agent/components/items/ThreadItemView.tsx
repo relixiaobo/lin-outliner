@@ -68,6 +68,7 @@ import {
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
 import { basenameForPath } from '../../../../core/referenceMarkup';
+import { modelCallDisplayArguments } from '../../../../core/agent/modelCallHistory';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
 import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
@@ -840,8 +841,8 @@ function toolDetail(
     case 'commandExecution':
       return {
         ...empty,
-        input: item.command,
-        inputLanguage: 'bash',
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        inputLanguage: 'json',
         output: item.aggregatedOutput,
         // A real non-zero code is the useful explanation; a failure that never
         // produced one says so plainly instead of borrowing "exit code 1".
@@ -854,6 +855,8 @@ function toolDetail(
     case 'fileChange':
       return {
         ...empty,
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
+        inputLanguage: 'json',
         error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
           <ul className="thread-file-changes">
@@ -871,7 +874,7 @@ function toolDetail(
     case 'mcpToolCall':
       return {
         ...empty,
-        input: jsonText(item.arguments),
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
         inputLanguage: 'json',
         output: item.result === null ? null : jsonText(item.result),
         outputLanguage: 'json',
@@ -888,7 +891,7 @@ function toolDetail(
       const failed = item.success === false;
       return {
         ...empty,
-        input: jsonText(item.arguments),
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
@@ -909,13 +912,7 @@ function toolDetail(
       return {
         ...empty,
         error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
-        input: jsonText({
-          tool: item.tool,
-          receiverThreadIds: item.receiverThreadIds,
-          prompt: item.prompt,
-          model: item.model,
-          reasoningEffort: item.reasoningEffort,
-        }),
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
         inputLanguage: 'json',
         output: jsonText(collaborationResultSnapshot(item)),
         outputLanguage: 'json',
@@ -936,7 +933,7 @@ function toolDetail(
     case 'webSearch':
       return {
         ...empty,
-        input: jsonText({ query: item.query }),
+        input: jsonText(modelCallDisplayArguments(item.modelCall)),
         inputLanguage: 'json',
         output: item.results.length > 0 ? jsonText(item.results) : null,
         outputLanguage: 'json',
@@ -1594,6 +1591,8 @@ function dynamicToolArgument(
   item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
   key: string,
 ): unknown {
+  // Activity subjects are presentation-only. Runtime admission already bounds
+  // and redacts this display projection; provider history never reads it.
   if (typeof item.arguments !== 'object' || item.arguments === null || Array.isArray(item.arguments)) return undefined;
   return (item.arguments as { readonly [argument: string]: unknown })[key];
 }

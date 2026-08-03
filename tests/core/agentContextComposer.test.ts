@@ -5,6 +5,7 @@ import { encodeThreadContextPayload } from '../../src/core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import type {
   ContextEvidenceThreadItem,
+  JsonValue,
   Thread,
   ThreadContextPayload,
   ThreadContextPayloadReference,
@@ -21,6 +22,9 @@ import {
   composeStablePrompt,
 } from '../../src/main/agent/context/stablePrompt';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
+import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const model = {
   id: 'test-model',
@@ -45,6 +49,27 @@ const configuration: EffectiveThreadConfiguration = {
   plugins: [],
   mcpServers: [],
 };
+
+const projectionTools = [
+  projectionTool('skill'),
+  projectionTool('file_read'),
+  projectionTool('bash', {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      command: { type: 'string' },
+      description: { type: 'string' },
+    },
+    required: ['command'],
+  }),
+  projectionTool('secret_exact', {
+    type: 'object',
+    additionalProperties: false,
+    properties: { command: { type: 'string', pattern: '^Authorization: Bearer [A-Z]{16}$' } },
+    required: ['command'],
+  }),
+  projectionTool('visual__render'),
+] as const;
 
 describe('stable agent prompt composition', () => {
   test('restores the exact Neva persona and selects modules from canonical tool keys', () => {
@@ -189,9 +214,9 @@ describe('canonical context projection', () => {
     const secondTurn = turn(2, secondItems, false);
     const resources = projectionResources(payloads);
 
-    const firstMessages = await new CanonicalContextProjector(model, resources).projectTurns([firstTurn]);
-    const combined = await new CanonicalContextProjector(model, resources).projectTurns([firstTurn, secondTurn]);
-    const diagnosed = await new CanonicalContextProjector(model, resources)
+    const firstMessages = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([firstTurn]);
+    const combined = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([firstTurn, secondTurn]);
+    const diagnosed = await new CanonicalContextProjector(model, resources, projectionTools)
       .projectTurnsWithBoundaries([firstTurn, secondTurn]);
     expect(combined.slice(0, firstMessages.length)).toEqual(firstMessages);
     expect(diagnosed.messages).toEqual(combined);
@@ -256,9 +281,9 @@ describe('canonical context projection', () => {
     expect(secondText).not.toContain('panel=panel-1');
     expect((combined.at(-1) as { timestamp: number }).timestamp).toBe(1_720_000_010_123);
 
-    const replayed = await new CanonicalContextProjector(model, resources).projectTurns([firstTurn, secondTurn]);
+    const replayed = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([firstTurn, secondTurn]);
     expect(replayed).toEqual(combined);
-    const terminalizedLater = await new CanonicalContextProjector(model, resources).projectTurns([{
+    const terminalizedLater = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([{
       ...firstTurn,
       completedAt: firstTurn.completedAt! + 10_000,
       durationMs: firstTurn.durationMs! + 10_000,
@@ -281,7 +306,7 @@ describe('canonical context projection', () => {
       focusSurface: null,
       truncated: true,
     };
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns([
       turn(1, [evidence(payloads, first, 'view-baseline'), userItem('user-1', 1_720_000_000_123, 'First')], true),
       turn(2, [evidence(payloads, unchanged, 'view-unchanged'), userItem('user-2', 1_720_000_010_123, 'Second')], true),
       turn(3, [evidence(payloads, cleared, 'view-cleared'), userItem('user-3', 1_720_000_020_123, 'Third')], false),
@@ -321,7 +346,7 @@ describe('canonical context projection', () => {
       }],
       threadState,
     });
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns([
       turn(1, [evidence(payloads, additional('EVENT ONE', [stateEntry]), 'context-1'), userItem('user-1', 1, 'One')], true),
       turn(2, [evidence(payloads, additional('EVENT TWO', [stateEntry]), 'context-2'), userItem('user-2', 2, 'Two')], true),
       turn(3, [evidence(payloads, additional('EVENT THREE', []), 'context-3'), userItem('user-3', 3, 'Three')], false),
@@ -359,7 +384,7 @@ describe('canonical context projection', () => {
       }],
     }, 'missing-resource-dependency');
 
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    await expect(new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns([
       turn(1, [item, userItem('user-1', 1_720_000_000_123, 'Inspect the image')], true),
     ])).rejects.toThrow('missing from Item resourceRefs');
   });
@@ -391,7 +416,7 @@ describe('canonical context projection', () => {
       ...projectionResources(payloads),
       resolveResourceObservationPath: async () => '/scratch/provider-thread/report.pdf',
     };
-    const messages = await new CanonicalContextProjector(model, resources).projectTurns([
+    const messages = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([
       turn(1, [{ ...item, resourceRefs: [resourceRef] }, userItem('user-1', 1, 'Read the report')], false),
     ]);
 
@@ -427,7 +452,7 @@ describe('canonical context projection', () => {
       ...projectionResources(payloads, new Map([[resourceRef.id, Buffer.from('image')]])),
       resolveResourceObservationPath: async () => '/scratch/provider-thread/diagram.png',
     };
-    const projection = await new CanonicalContextProjector(model, resources).projectTurnsWithBoundaries([
+    const projection = await new CanonicalContextProjector(model, resources, projectionTools).projectTurnsWithBoundaries([
       turn(1, [
         evidence(payloads, environmentPayload(1_720_000_000_100), 'environment'),
         { ...referencedImage, resourceRefs: [resourceRef] },
@@ -472,11 +497,11 @@ describe('canonical context projection', () => {
       userItem('user-2', 1_720_000_010_123, 'Steer'),
     ];
     const resources = projectionResources(payloads);
-    const turnProjector = new CanonicalContextProjector(model, resources);
+    const turnProjector = new CanonicalContextProjector(model, resources, projectionTools);
     await turnProjector.projectTurns([firstTurn]);
     const [turnMessage] = await turnProjector.projectTurns([turn(2, steeringItems, false)]);
 
-    const steeringProjector = new CanonicalContextProjector(model, resources);
+    const steeringProjector = new CanonicalContextProjector(model, resources, projectionTools);
     await steeringProjector.projectTurns([firstTurn]);
     const steeringMessage = await steeringProjector.projectUserItems(steeringItems, 0);
     expect(steeringMessage).toEqual(turnMessage);
@@ -523,7 +548,7 @@ describe('canonical context projection', () => {
       ], false),
     ];
 
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns(turns);
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns(turns);
     const inlineText = messageText(messages[0]!);
     const isolatedText = messageText(messages.at(-1)!);
     expect(inlineText).toContain('INLINE PRIVATE INSTRUCTIONS');
@@ -561,7 +586,7 @@ describe('canonical context projection', () => {
     ], false);
     const resources = projectionResources(payloads);
 
-    const projected = await new CanonicalContextProjector(model, resources).projectTurns([active]);
+    const projected = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([active]);
     expect(projected.map((message) => message.role)).toEqual([
       'user',
       'assistant',
@@ -579,7 +604,7 @@ describe('canonical context projection', () => {
       completedAt: active.startedAt + 50_000,
       durationMs: 50_000,
     };
-    expect(await new CanonicalContextProjector(model, resources).projectTurns([terminal])).toEqual(projected);
+    expect(await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([terminal])).toEqual(projected);
   });
 
   test('keeps ordered dynamic tool image identity adjacent to immutable image bytes', async () => {
@@ -623,13 +648,14 @@ describe('canonical context projection', () => {
       ],
       success: true,
       durationMs: 1,
+      modelCall: projectionModelCall('visual__render', {}),
     };
     const resources = projectionResources(payloads, new Map([
       [managedRef.id, Buffer.from('chart')],
       [localSnapshotRef.id, Buffer.from('raw')],
     ]));
 
-    const messages = await new CanonicalContextProjector(model, resources).projectTurns([
+    const messages = await new CanonicalContextProjector(model, resources, projectionTools).projectTurns([
       turn(1, [userItem('user-images', 1_720_000_000_123, 'Render both.'), tool], true),
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
@@ -639,6 +665,345 @@ describe('canonical context projection', () => {
       { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
+  });
+
+  test('replays exact canonical bash arguments without deriving fields from presentation metadata', async () => {
+    const item = {
+      ...commandToolItem('canonical-bash', null, '/workspace'),
+      command: 'DISPLAY-ONLY COMMAND',
+      description: 'Display-only description',
+      cwd: '/host/thread-cwd',
+      modelCall: projectionModelCall('bash', {
+        command: 'pwd',
+        description: 'Print the working directory',
+      }),
+    } satisfies ThreadItem;
+    const messages = await new CanonicalContextProjector(
+      model,
+      projectionResources(new Map()),
+      projectionTools,
+    ).projectTurns([turn(30, [userItem('canonical-user', 1_720_000_000_123, 'Run it.'), item], true)]);
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
+    const assistant = messages[1];
+    if (assistant?.role !== 'assistant') throw new Error('Expected assistant tool history.');
+    const call = assistant.content.find((part) => part.type === 'toolCall');
+    expect(call).toMatchObject({
+      id: 'canonical-bash',
+      name: 'bash',
+      arguments: { command: 'pwd', description: 'Print the working directory' },
+    });
+    expect(call && 'arguments' in call ? Object.keys(call.arguments) : []).toEqual(['command', 'description']);
+    expect(JSON.stringify(assistant)).not.toContain('/host/thread-cwd');
+    expect(JSON.stringify(assistant)).not.toContain('DISPLAY-ONLY COMMAND');
+  });
+
+  test('round-trips canonical arguments for every executable tool family', async () => {
+    const familyToolNames = [
+      'file_read',
+      'file_write',
+      'node_read',
+      'update_plan',
+      'collaboration__spawn_agent',
+      'web_search',
+      'skill',
+      'docs__search',
+      'plugin__render',
+    ];
+    const tools = [
+      projectionTools.find((tool) => tool.name === 'bash')!,
+      ...familyToolNames.map((name) => projectionTool(name)),
+    ];
+    const expected = [
+      ['bash', { command: 'pwd', description: 'Print the working directory' }],
+      ['file_read', { file_path: '/workspace/read.txt', line_start: 2 }],
+      ['file_write', { file_path: '/workspace/write.txt', content: 'exact content', overwrite: true }],
+      ['node_read', { node_ids: ['node-1'], include_content: true }],
+      ['update_plan', { plan: [{ step: 'Ship', status: 'in_progress' }] }],
+      ['collaboration__spawn_agent', { task_name: 'review', message: 'Inspect it', fork_turns: 'all' }],
+      ['web_search', { query: 'canonical history' }],
+      ['skill', { skill: 'code-review' }],
+      ['docs__search', { query: 'Thread protocol', limit: 5 }],
+      ['plugin__render', { format: 'png', scale: 2 }],
+    ] as const;
+    const modelCallFor = (providerName: string, args: JsonValue) => ({
+      ...replayableModelCall(providerName, args),
+      schemaDigest: modelToolSchemaDigest(tools.find((tool) => tool.name === providerName)!.parameters),
+    });
+    const provenance = (id: string) => ({
+      originThreadId: rootThread(1).id,
+      originTurnId: uuidV7(1_720_000_100_001),
+      originItemId: id,
+    });
+    const dynamic = (
+      id: string,
+      providerName: string,
+      args: JsonValue,
+      namespace: string | null = null,
+      tool = providerName,
+    ): ThreadItem => ({
+      type: 'dynamicToolCall',
+      id,
+      provenance: provenance(id),
+      namespace,
+      tool,
+      arguments: { presentation: 'not canonical' },
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'text', text: `${providerName} completed` }],
+      success: true,
+      durationMs: 1,
+      modelCall: modelCallFor(providerName, args),
+    });
+    const items: ThreadItem[] = [
+      {
+        ...commandToolItem('family-bash', null, 'bash completed'),
+        cwd: '/host-only',
+        modelCall: modelCallFor(expected[0][0], expected[0][1]),
+      },
+      dynamic('family-read', expected[1][0], expected[1][1]),
+      {
+        type: 'fileChange',
+        id: 'family-write',
+        provenance: provenance('family-write'),
+        changes: [{ path: '/presentation-only', kind: 'add' }],
+        status: 'completed',
+        outputRef: null,
+        modelCall: modelCallFor(expected[2][0], expected[2][1]),
+      },
+      dynamic('family-outline', expected[3][0], expected[3][1]),
+      dynamic('family-control', expected[4][0], expected[4][1]),
+      {
+        type: 'collabAgentToolCall',
+        id: 'family-collaboration',
+        provenance: provenance('family-collaboration'),
+        tool: 'spawn_agent',
+        status: 'completed',
+        outputRef: null,
+        senderThreadId: rootThread(1).id,
+        receiverThreadIds: [],
+        prompt: 'presentation only',
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {},
+        modelCall: modelCallFor(expected[5][0], expected[5][1]),
+      },
+      {
+        type: 'webSearch',
+        id: 'family-web',
+        provenance: provenance('family-web'),
+        query: 'presentation only',
+        status: 'completed',
+        outputRef: null,
+        results: [],
+        error: null,
+        modelCall: modelCallFor(expected[6][0], expected[6][1]),
+      },
+      dynamic('family-skill', expected[7][0], expected[7][1]),
+      {
+        type: 'mcpToolCall',
+        id: 'family-mcp',
+        provenance: provenance('family-mcp'),
+        server: 'docs',
+        tool: 'search',
+        status: 'completed',
+        outputRef: null,
+        arguments: { presentation: 'not canonical' },
+        pluginId: null,
+        result: { matches: 1 },
+        error: null,
+        durationMs: 1,
+        modelCall: modelCallFor(expected[8][0], expected[8][1]),
+      },
+      dynamic('family-plugin', expected[9][0], expected[9][1], 'plugin', 'render'),
+    ];
+    const messages = await new CanonicalContextProjector(
+      model,
+      projectionResources(new Map()),
+      tools,
+    ).projectTurns([turn(35, [userItem('family-user', 1_720_000_000_123, 'Run all.'), ...items], true)]);
+    const projectedCalls = messages.flatMap((message) => (
+      typeof message.content === 'string'
+        ? []
+        : message.content.filter((part) => part.type === 'toolCall')
+    ));
+
+    expect(projectedCalls.map((call) => [call.name, call.arguments])).toEqual(expected);
+    expect(JSON.stringify(projectedCalls)).not.toContain('presentation only');
+    expect(JSON.stringify(projectedCalls)).not.toContain('"changes"');
+    expect(JSON.stringify(projectedCalls)).not.toContain('"cwd"');
+  });
+
+  test('degrades missing tools, schema drift, and missing argument/result payloads as whole-pair evidence', async () => {
+    const missingArgumentRef: ThreadContextPayloadReference = {
+      id: '7'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 40_000,
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    };
+    const missingOutputRef = {
+      id: '6'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 80_000,
+      summary: 'Missing full output',
+    };
+    const missingImageRef: ThreadResourceReference = {
+      id: '5'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 10,
+      fileName: 'missing.png',
+    };
+    const payloads = new Map<string, ThreadContextPayload>();
+    const cases: Array<{ reason: string; items: ThreadItem[] }> = [
+      {
+        reason: 'toolUnavailable',
+        items: [{
+          ...commandToolItem('missing-tool', null, 'none'),
+          modelCall: {
+            ...projectionModelCall('bash', { command: 'pwd' }),
+            identity: { namespace: null, name: 'removed_tool' },
+          },
+        }],
+      },
+      {
+        reason: 'schemaIncompatible',
+        items: [{
+          ...commandToolItem('schema-drift', null, 'none'),
+          modelCall: projectionModelCall('bash', { command: 'pwd', cwd: '/invalid' }),
+        }],
+      },
+      {
+        reason: 'argumentPayloadUnavailable',
+        items: [{
+          ...commandToolItem('missing-arguments', null, 'none'),
+          modelCall: {
+            ...projectionModelCall('bash', { command: 'pwd' }),
+            arguments: { storage: 'payload', ref: missingArgumentRef },
+          },
+        }],
+      },
+      {
+        reason: 'resultPayloadUnavailable',
+        items: [
+          commandToolItem('missing-output', missingOutputRef, 'bounded fallback'),
+          evidence(payloads, {
+            schemaVersion: 1,
+            kind: 'toolOutputProjection',
+            outputRef: missingOutputRef,
+            projection: { type: 'full' },
+          }, 'missing-output-projection'),
+        ],
+      },
+      {
+        reason: 'resultPayloadUnavailable',
+        items: [{
+          type: 'dynamicToolCall',
+          id: 'missing-image',
+          provenance: {
+            originThreadId: rootThread(1).id,
+            originTurnId: uuidV7(1_720_000_100_001),
+            originItemId: 'missing-image',
+          },
+          namespace: 'visual',
+          tool: 'render',
+          arguments: {},
+          status: 'completed',
+          outputRef: null,
+          contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: missingImageRef } }],
+          success: true,
+          durationMs: 1,
+          modelCall: projectionModelCall('visual__render', {}),
+        }],
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const messages = await new CanonicalContextProjector(
+        model,
+        projectionResources(payloads),
+        projectionTools,
+      ).projectTurns([turn(40 + index, [
+        userItem(`degrade-user-${index}`, 1_720_000_000_123 + index, 'Inspect history.'),
+        ...testCase.items,
+      ], true)]);
+      const projectedText = messages.map(messageText).join('\n');
+      expect(projectedText).toContain(`"reason":"${testCase.reason}"`);
+      expect(messages.some((message) => message.role === 'toolResult')).toBe(false);
+      expect(messages.flatMap((message) => (
+        typeof message.content === 'string' ? [] : message.content.filter((part) => part.type === 'toolCall')
+      ))).toEqual([]);
+    }
+  });
+
+  test('keeps a redaction marker atomic with replay or degrades it to executed evidence', async () => {
+    const redactedCall = {
+      ...commandToolItem('redacted-valid', null, 'request completed'),
+      modelCall: {
+        disposition: 'redactedReplay' as const,
+        identity: { namespace: null, name: 'bash' },
+        redactedArguments: {
+          storage: 'inline' as const,
+          value: { command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test' },
+        },
+        redactedPaths: ['/command'],
+        schemaDigest: modelToolSchemaDigest(projectionTools.find((tool) => tool.name === 'bash')!.parameters),
+      },
+    } satisfies ThreadItem;
+    const evidenceOnly = {
+      ...commandToolItem('rejected-middle', null, 'not executed'),
+      modelCall: {
+        disposition: 'evidenceOnly' as const,
+        identity: { namespace: null, name: 'bash' },
+        providerName: 'bash',
+        redactedArgumentsSummary: { command: 'pwd', cwd: '/invalid' },
+        reason: 'invalidArguments' as const,
+        correction: 'Use the active schema.',
+      },
+    } satisfies ThreadItem;
+    const exactCall = commandToolItem('exact-first', null, 'pwd output');
+    const mixed = await new CanonicalContextProjector(
+      model,
+      projectionResources(new Map()),
+      projectionTools,
+    ).projectTurns([turn(50, [
+      userItem('mixed-user', 1_720_000_000_123, 'Run the batch.'),
+      exactCall,
+      evidenceOnly,
+      redactedCall,
+    ], true)]);
+
+    expect(mixed.map((message) => message.role)).toEqual([
+      'user', 'assistant', 'toolResult', 'user', 'assistant', 'toolResult',
+    ]);
+    const replayAssistant = mixed[4];
+    if (replayAssistant?.role !== 'assistant') throw new Error('Expected redacted replay assistant message.');
+    expect(replayAssistant.content.map((part) => part.type)).toEqual(['text', 'toolCall']);
+    expect(messageText(replayAssistant)).toContain('visible placeholders were not executed values');
+
+    const schemaInvalidRedaction = {
+      ...redactedCall,
+      id: 'redacted-schema-invalid',
+      modelCall: {
+        ...redactedCall.modelCall,
+        identity: { namespace: null, name: 'secret_exact' },
+        redactedArguments: { storage: 'inline' as const, value: { command: '[redacted secret-like content]' } },
+        schemaDigest: modelToolSchemaDigest(
+          projectionTools.find((tool) => tool.name === 'secret_exact')!.parameters,
+        ),
+      },
+    } satisfies ThreadItem;
+    const degraded = await new CanonicalContextProjector(
+      model,
+      projectionResources(new Map()),
+      projectionTools,
+    ).projectTurns([turn(51, [
+      userItem('redacted-invalid-user', 1_720_000_000_124, 'Inspect it.'),
+      schemaInvalidRedaction,
+    ], true)]);
+    expect(degraded.map(messageText).join('\n')).toContain('"reason":"schemaIncompatible"');
+    expect(degraded.map(messageText).join('\n')).toContain('"status":"completed"');
+    expect(degraded.some((message) => message.role === 'toolResult')).toBe(false);
   });
 
   test('uses frozen full and inline projections as the tool result without emitting evidence prose', async () => {
@@ -673,7 +1038,7 @@ describe('canonical context projection', () => {
       payloads,
       new Map(),
       new Map([[fullRef.id, 'COMPLETE FULL OUTPUT']]),
-    )).projectTurns([
+    ), projectionTools).projectTurns([
       turn(1, [
         userItem('user-output', 1_720_000_000_123, 'Run both.'),
         fullTool,
@@ -737,7 +1102,7 @@ describe('canonical context projection', () => {
       outputRefs: [],
     };
     const compacted = turn(2, [compactionItem], true);
-    const projector = new CanonicalContextProjector(model, projectionResources(payloads));
+    const projector = new CanonicalContextProjector(model, projectionResources(payloads), projectionTools);
     const projection = await projector.projectTurnsWithBoundaries([original, compacted]);
     const messages = projection.messages;
     expect(messageText(messages[0]!)).toContain('FROZEN LOSSY SUMMARY');
@@ -762,7 +1127,7 @@ describe('canonical context projection', () => {
       clearedThrough: { turnId: compacted.id, itemId: compactionItem.id },
     }], true);
     const after = turn(4, [userItem('user-after-reset', 1_720_000_200_123, 'AFTER RESET')], true);
-    const resetMessages = await new CanonicalContextProjector(model, projectionResources(payloads))
+    const resetMessages = await new CanonicalContextProjector(model, projectionResources(payloads), projectionTools)
       .projectTurns([original, compacted, reset, after]);
     expect(resetMessages).toHaveLength(1);
     expect(messageText(resetMessages[0]!)).toBe('AFTER RESET');
@@ -847,7 +1212,7 @@ describe('canonical context projection', () => {
       userItem('user-after-baseline-compact', 1_720_000_500_123, 'Continue.'),
     ], true);
 
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads))
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads), projectionTools)
       .projectTurns([original, compacted, changed]);
     const compactedText = messageText(messages[0]!);
     const changedText = messageText(messages[1]!);
@@ -933,7 +1298,7 @@ describe('canonical context projection', () => {
       resourceRefs: [],
       outputRefs: [],
     };
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    await expect(new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns([
       original,
       turn(21, [skillCompaction], true),
     ])).rejects.toThrow('Restored active Skill does not match its checkpoint: alpha');
@@ -984,7 +1349,7 @@ describe('canonical context projection', () => {
       contextRefs: [projectionRef],
       outputRefs: [checkpointOutputRef, projectedOutputRef],
     };
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    await expect(new CanonicalContextProjector(model, projectionResources(payloads), projectionTools).projectTurns([
       original,
       turn(22, [observationCompaction], true),
     ])).rejects.toThrow('Restored observation does not match its frozen projection');
@@ -1114,6 +1479,7 @@ function dynamicToolItem(id: string, tool: string, text: string): ThreadItem {
     contentItems: [{ type: 'text', text }],
     success: true,
     durationMs: 1,
+    modelCall: projectionModelCall(tool, {}),
   };
 }
 
@@ -1135,6 +1501,29 @@ function commandToolItem(
     aggregatedOutput,
     exitCode: 0,
     durationMs: 1,
+    modelCall: projectionModelCall('bash', { command: 'produce output' }),
+  };
+}
+
+function projectionTool(name: string, parameters: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: true,
+}): AgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} projection fixture`,
+    parameters,
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as AgentTool;
+}
+
+function projectionModelCall(providerName: string, args: JsonValue) {
+  const tool = projectionTools.find((candidate) => candidate.name === providerName);
+  if (!tool) throw new Error(`Missing projection tool fixture: ${providerName}`);
+  return {
+    ...replayableModelCall(providerName, args),
+    schemaDigest: modelToolSchemaDigest(tool.parameters),
   };
 }
 

@@ -7,6 +7,7 @@ import type {
   ThreadContextPayloadReference,
   Turn,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { selectEffectiveContext } from './ContextEpoch';
 import { readInheritedContextPayload } from './InheritedContext';
 
@@ -216,7 +217,10 @@ export async function planSkillCatalogEvidence(input: {
   };
 }
 
-export function observedSkillFilePaths(turns: readonly Turn[]): string[] {
+export async function observedSkillFilePaths(
+  turns: readonly Turn[],
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<string[]> {
   const paths = new Set<string>();
   for (const turn of turns) {
     for (const item of turn.items) {
@@ -228,16 +232,26 @@ export function observedSkillFilePaths(turns: readonly Turn[]): string[] {
       }
       if (
         item.type !== 'dynamicToolCall'
-        || item.namespace !== null
         || item.status !== 'completed'
         || item.success !== true
-        || !CORE_FILE_PATH_TOOLS.has(item.tool)
+        || item.modelCall.disposition === 'evidenceOnly'
+        || item.modelCall.identity.namespace !== null
+        || !CORE_FILE_PATH_TOOLS.has(item.modelCall.identity.name)
       ) continue;
-      if (!item.arguments || typeof item.arguments !== 'object' || Array.isArray(item.arguments)) continue;
-      const value = 'file_path' in item.arguments
-        ? item.arguments.file_path
-        : 'path' in item.arguments
-          ? item.arguments.path
+      const source = modelCallArgumentSource(item.modelCall);
+      const payload = source.storage === 'payload'
+        ? await readContext(source.ref).catch(() => null)
+        : null;
+      const args = source.storage === 'inline'
+        ? source.value
+        : payload?.kind === 'toolCallArguments'
+          ? payload.value
+          : null;
+      if (!args || typeof args !== 'object' || Array.isArray(args)) continue;
+      const value = 'file_path' in args
+        ? args.file_path
+        : 'path' in args
+          ? args.path
           : null;
       if (typeof value === 'string' && value.trim()) paths.add(value);
     }

@@ -36,6 +36,10 @@ import type {
   Turn,
 } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
+import {
+  modelCallDisplayArguments,
+  modelCallDisplayName,
+} from '../../../core/agent/modelCallHistory';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -2025,33 +2029,11 @@ async function buildTurnCopyText(
 }
 
 function toolCopyName(item: ThreadToolItem): string {
-  switch (item.type) {
-    case 'commandExecution': return 'bash';
-    case 'fileChange': return 'file_change';
-    case 'mcpToolCall': return `${item.server}.${item.tool}`;
-    case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.');
-    case 'collabAgentToolCall': return `collaboration.${item.tool}`;
-    case 'webSearch': return 'web_search';
-    default: return assertNever(item);
-  }
+  return modelCallDisplayName(item.modelCall);
 }
 
 function toolCopyArguments(item: ThreadToolItem): string {
-  switch (item.type) {
-    case 'commandExecution': return jsonText({ command: item.command, cwd: item.cwd });
-    case 'fileChange': return jsonText({ changes: item.changes });
-    case 'mcpToolCall':
-    case 'dynamicToolCall': return jsonText(item.arguments);
-    case 'collabAgentToolCall': return jsonText({
-      tool: item.tool,
-      prompt: item.prompt,
-      model: item.model,
-      reasoningEffort: item.reasoningEffort,
-      receiverThreadIds: item.receiverThreadIds,
-    });
-    case 'webSearch': return jsonText({ query: item.query });
-    default: return assertNever(item);
-  }
+  return jsonText(modelCallDisplayArguments(item.modelCall));
 }
 
 function projectedToolOutput(item: ThreadToolItem): string {

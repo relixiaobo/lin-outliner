@@ -9,6 +9,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from '../runtime/kernel/types';
+import { validateToolArguments } from '@earendil-works/pi-ai/compat';
 import type {
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
@@ -31,6 +32,7 @@ import type {
   TurnEnvironmentContextPayload,
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import {
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
@@ -40,9 +42,16 @@ import { selectEffectiveContext } from './ContextEpoch';
 import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
 import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
 import { assertCanonicalUserContent } from './userContentIntegrity';
+import {
+  boundedJsonSummary,
+  canonicalToolIdentity,
+  evidenceCorrection,
+  modelToolSchemaDigest,
+} from '../runtime/toolCallHistory';
+import type { AgentTool } from '../runtime/kernel/types';
 
 interface ProjectionResources {
-  readContext(ref: ContextEvidenceThreadItem['payloadRef']): Promise<ThreadContextPayload | null>;
+  readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readOutput(ref: ToolOutputProjectionContextPayload['outputRef']): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
@@ -93,6 +102,7 @@ export class CanonicalContextProjector {
   constructor(
     private readonly model: Model<Api>,
     private readonly resources: ProjectionResources,
+    private readonly tools: readonly AgentTool[],
   ) {}
 
   async projectTurns(turns: readonly Turn[]): Promise<Message[]> {
@@ -129,14 +139,16 @@ export class CanonicalContextProjector {
     for (const turn of turns) {
       for (const item of turn.items) {
         if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
-        const payload = await this.readEvidencePayload(item);
-        if (payload.kind !== 'toolOutputProjection') {
-          throw new Error(`Context evidence kind mismatch: ${item.kind}/${item.payloadRef.id}`);
+        const payload = await this.readEvidencePayload(item).catch(() => null);
+        if (!payload || payload.kind !== 'toolOutputProjection') {
+          console.warn(`[agent] Skipping unavailable tool-output projection: ${item.payloadRef.id}`);
+          continue;
         }
         const key = outputReferenceKey(payload.outputRef);
         const existing = this.toolOutputProjections.get(key);
         if (existing && JSON.stringify(existing) !== JSON.stringify(payload)) {
-          throw new Error(`Tool output has conflicting frozen projections: ${payload.outputRef.id}`);
+          console.warn(`[agent] Skipping conflicting tool-output projection: ${payload.outputRef.id}`);
+          continue;
         }
         this.toolOutputProjections.set(key, payload);
       }
@@ -253,7 +265,7 @@ export class CanonicalContextProjector {
           if (payload.kind !== 'inheritedContext') {
             throw new Error(`Inherited context kind mismatch: ${item.payloadRef.id}`);
           }
-          const inheritedProjector = new CanonicalContextProjector(this.model, this.resources);
+          const inheritedProjector = new CanonicalContextProjector(this.model, this.resources, this.tools);
           const inherited = await inheritedProjector.projectTurnsWithBoundaries(payload.turns);
           messages.push(...inherited.messages);
           messagePartProvenance.push(...inherited.messagePartProvenance.map((parts) => [...parts]));
@@ -293,8 +305,15 @@ export class CanonicalContextProjector {
         const projection = item.outputRef
           ? this.toolOutputProjections.get(outputReferenceKey(item.outputRef)) ?? null
           : null;
-        const tool = await historyTool(item, turn.startedAt, this.resources, projection);
+        const tool = await historyTool(item, turn.startedAt, this.resources, projection, this.tools);
+        if (tool.kind === 'evidence') {
+          flushAssistant();
+          messages.push({ role: 'user', content: [{ type: 'text', text: tool.text }], timestamp: turn.startedAt });
+          messagePartProvenance.push([{ source: 'unknown' }]);
+          continue;
+        }
         assistantItemIds.push(item.id);
+        if (tool.marker) assistantContent.push(tool.marker);
         assistantContent.push(tool.call);
         toolResults.push(tool.result);
         continue;
@@ -966,53 +985,110 @@ function isToolItem(item: ThreadItem): item is HistoryToolItem {
 async function historyTool(
   item: HistoryToolItem,
   timestamp: number,
-  resources: Pick<ProjectionResources, 'readOutput' | 'readResource'>,
+  resources: Pick<ProjectionResources, 'readContext' | 'readOutput' | 'readResource'>,
   projection: ToolOutputProjectionContextPayload | null,
-): Promise<{ call: ToolCall; result: ToolResultMessage }> {
-  const identity = historyToolIdentity(item);
-  const toolName = identity.namespace ? `${identity.namespace}__${identity.name}` : identity.name;
+  tools: readonly AgentTool[],
+): Promise<
+  | { readonly kind: 'exchange'; readonly marker: TextContent | null; readonly call: ToolCall; readonly result: ToolResultMessage }
+  | { readonly kind: 'evidence'; readonly text: string }
+> {
+  if (item.modelCall.disposition === 'evidenceOnly') {
+    return { kind: 'evidence', text: historicalToolEvidence(item, item.modelCall.reason) };
+  }
+  const identity = item.modelCall.identity;
+  const activeTool = tools.find((tool) => sameToolIdentity(canonicalToolIdentity(tool), identity));
+  if (!activeTool) return { kind: 'evidence', text: historicalToolEvidence(item, 'toolUnavailable') };
+  const source = modelCallArgumentSource(item.modelCall);
+  let args: import('../../../core/agent/protocol').JsonValue;
+  if (source.storage === 'inline') {
+    args = source.value;
+  } else {
+    const payload = await resources.readContext(source.ref).catch(() => null);
+    if (!payload || payload.kind !== 'toolCallArguments') {
+      return { kind: 'evidence', text: historicalToolEvidence(item, 'argumentPayloadUnavailable') };
+    }
+    args = payload.value;
+  }
+  try {
+    validateToolArguments(activeTool, {
+      type: 'toolCall',
+      id: item.id,
+      name: activeTool.name,
+      arguments: args as Record<string, any>,
+    });
+  } catch {
+    return { kind: 'evidence', text: historicalToolEvidence(item, 'schemaIncompatible') };
+  }
+  const currentDigest = modelToolSchemaDigest(activeTool.parameters);
+  if (currentDigest !== item.modelCall.schemaDigest) {
+    console.warn(`[agent] Replaying schema-compatible historical tool call after schema digest drift: ${item.id}`);
+  }
+  let resultContent: Array<TextContent | ImageContent>;
+  try {
+    resultContent = await historyToolResultContent(item, resources, projection);
+  } catch {
+    return { kind: 'evidence', text: historicalToolEvidence(item, 'resultPayloadUnavailable') };
+  }
+  const marker = item.modelCall.disposition === 'redactedReplay'
+    ? { type: 'text' as const, text: redactedHistoryMarker(item.id, item.modelCall.redactedPaths) }
+    : null;
   return {
-    call: { type: 'toolCall', id: item.id, name: toolName, arguments: historyToolArguments(item) },
+    kind: 'exchange',
+    marker,
+    call: { type: 'toolCall', id: item.id, name: activeTool.name, arguments: args as Record<string, any> },
     result: {
       role: 'toolResult',
       toolCallId: item.id,
-      toolName,
-      content: await historyToolResultContent(item, resources, projection),
+      toolName: activeTool.name,
+      content: resultContent,
       isError: item.status !== 'completed',
       timestamp,
     },
   };
 }
 
-export function historyToolIdentity(item: HistoryToolItem): { namespace: string | null; name: string } {
-  switch (item.type) {
-    case 'commandExecution': return { namespace: null, name: 'bash' };
-    case 'fileChange': {
-      const kinds = new Set(item.changes.map((change) => change.kind));
-      return { namespace: null, name: kinds.size === 1 && kinds.has('add')
-        ? 'file_write'
-        : kinds.size === 1 && kinds.has('delete') ? 'file_delete' : 'file_edit' };
-    }
-    case 'mcpToolCall': return { namespace: item.server, name: item.tool };
-    case 'dynamicToolCall': return { namespace: item.namespace, name: item.tool };
-    case 'collabAgentToolCall': return { namespace: 'collaboration', name: item.tool };
-    case 'webSearch': return { namespace: null, name: 'web_search' };
-  }
+function sameToolIdentity(
+  left: import('../../../core/agent/protocol').ModelToolIdentity,
+  right: import('../../../core/agent/protocol').ModelToolIdentity,
+): boolean {
+  return left.namespace === right.namespace && left.name === right.name;
 }
 
-export function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
-  switch (item.type) {
-    case 'commandExecution': return { command: item.command, cwd: item.cwd };
-    case 'fileChange': return { changes: item.changes };
-    case 'mcpToolCall':
-    case 'dynamicToolCall': return isRecord(item.arguments) ? item.arguments : { value: item.arguments };
-    case 'collabAgentToolCall': return {
-      ...(item.prompt === null ? {} : { message: item.prompt }),
-      ...(item.model === null ? {} : { model: item.model }),
-      ...(item.reasoningEffort === null ? {} : { reasoning_effort: item.reasoningEffort }),
-    };
-    case 'webSearch': return { query: item.query };
-  }
+function redactedHistoryMarker(callId: string, redactedPaths: readonly string[]): string {
+  return `[Historical tool call ${callId} contains post-execution redactions at ${redactedPaths.join(', ')}. `
+    + 'The visible placeholders were not executed values. Do not retry or copy them; '
+    + 're-derive any later value from an authorized source.]';
+}
+
+function historicalToolEvidence(
+  item: HistoryToolItem,
+  reason: import('../../../core/agent/protocol').ModelToolCallEvidenceReason,
+): string {
+  const stored = item.modelCall;
+  const identity = stored.identity;
+  const argumentSummary = stored.disposition === 'evidenceOnly'
+    ? stored.redactedArgumentsSummary
+    : (() => {
+        const source = modelCallArgumentSource(stored);
+        return source.storage === 'inline'
+          ? boundedJsonSummary(source.value)
+          : { unavailablePayloadRef: source.ref.id };
+      })();
+  const correction = stored.disposition === 'evidenceOnly'
+    ? stored.correction
+    : evidenceCorrection(reason);
+  return `[Historical tool-call evidence: ${JSON.stringify(boundedJsonSummary({
+    callId: item.id,
+    identity,
+    providerName: stored.disposition === 'evidenceOnly' ? stored.providerName : null,
+    reason,
+    redactedArgumentsSummary: argumentSummary,
+    outcome: {
+      status: item.status,
+      visibleOutput: boundedJsonSummary(toolItemVisibleOutputText(item)),
+    },
+    correction,
+  }))}]`;
 }
 
 async function historyToolResultContent(

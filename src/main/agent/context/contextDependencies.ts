@@ -40,14 +40,27 @@ export function itemResourceReferences(item: ThreadItem): ThreadResourceReferenc
 }
 
 export function itemContextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
+  const toolArgumentRefs = 'modelCall' in item
+    ? modelCallContextPayloadReferences(item.modelCall)
+    : [];
   if (item.type === 'contextEvidence') return [item.payloadRef, ...item.contextRefs];
-  if (item.type !== 'contextCompaction') return [];
+  if (item.type !== 'contextCompaction') return toolArgumentRefs;
   return [
     item.summaryRef,
     item.restoredStateRef,
     ...(item.instructionsRef ? [item.instructionsRef] : []),
     ...item.contextRefs,
   ];
+}
+
+function modelCallContextPayloadReferences(
+  modelCall: Extract<ThreadItem, { readonly modelCall: unknown }>['modelCall'],
+): ThreadContextPayloadReference[] {
+  if (modelCall.disposition === 'evidenceOnly') return [];
+  const source = modelCall.disposition === 'replayable'
+    ? modelCall.arguments
+    : modelCall.redactedArguments;
+  return source.storage === 'payload' ? [source.ref] : [];
 }
 
 export function itemOutputReferences(item: ThreadItem): ThreadItemOutputReference[] {
@@ -118,6 +131,7 @@ function contextPayloadDependencies(payload: ThreadContextPayload): ContextPaylo
     case 'roleCatalog':
     case 'compactionSummary':
     case 'compactionInstructions':
+    case 'toolCallArguments':
       return emptyDependencies();
   }
 }

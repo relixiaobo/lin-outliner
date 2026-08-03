@@ -11,6 +11,7 @@ import type { Thread, ThreadItem, Turn } from '../../../../core/agent/protocol';
 import { isoLocalDate } from '../../../../core/localDate';
 import { freshNodeId } from '../../../../core/nodeId';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
+import { modelCallDisplayName } from '../../../../core/agent/modelCallHistory';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -517,14 +518,18 @@ function evidenceContent(item: ThreadItem): string | null {
       return item.phase === 'final_answer' || item.phase === null ? item.text.trim() || null : null;
     case 'commandExecution':
       return item.status === 'completed'
-        ? JSON.stringify({ command: item.command, cwd: item.cwd, output: item.aggregatedOutput, exitCode: item.exitCode })
+        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), output: item.aggregatedOutput, exitCode: item.exitCode })
         : null;
     case 'fileChange':
       return item.status === 'completed' ? JSON.stringify(item.changes) : null;
     case 'mcpToolCall':
-      return item.status === 'completed' ? JSON.stringify({ arguments: item.arguments, result: item.result }) : null;
+      return item.status === 'completed'
+        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), result: item.result })
+        : null;
     case 'dynamicToolCall':
-      return item.status === 'completed' ? JSON.stringify({ arguments: item.arguments, result: item.contentItems }) : null;
+      return item.status === 'completed'
+        ? JSON.stringify({ tool: modelCallDisplayName(item.modelCall), result: item.contentItems })
+        : null;
     default:
       return null;
   }

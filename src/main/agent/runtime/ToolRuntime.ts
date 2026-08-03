@@ -21,6 +21,7 @@ import type {
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
+import { redactSecretLikeJson } from '../capabilities/agentSecretRedaction';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
@@ -259,9 +260,17 @@ export class ToolRuntime {
   ): AgentTool {
     return {
       ...tool,
+      canonicalIdentity: identity,
       execute: async (itemId, params, signal, onUpdate) => {
         const args = jsonValue(params);
-        await this.service.notifyToolStarted(context.thread.id, context.turn.id, itemId, identity, args);
+        const observableArgs = redactSecretLikeJson(args).value;
+        await this.service.notifyToolStarted(
+          context.thread.id,
+          context.turn.id,
+          itemId,
+          identity,
+          observableArgs,
+        );
         const canonicalIdentity = identity.namespace ? `${identity.namespace}.${identity.name}` : identity.name;
         const capability = evaluateAgentToolCapability({
           toolName: canonicalIdentity,
@@ -290,8 +299,8 @@ export class ToolRuntime {
             context.turn.id,
             itemId,
             identity,
-            args,
-            jsonValue(result.details),
+            observableArgs,
+            redactSecretLikeJson(jsonValue(result.details)).value,
             capability.reason,
           );
           return result;
@@ -308,19 +317,21 @@ export class ToolRuntime {
             context.turn.id,
             itemId,
             identity,
-            args,
-            jsonValue(result.details),
+            observableArgs,
+            redactSecretLikeJson(jsonValue(result.details)).value,
             null,
           );
           return result;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = redactSecretLikeJson(
+            error instanceof Error ? error.message : String(error),
+          ).value;
           await this.service.notifyToolCompleted(
             context.thread.id,
             context.turn.id,
             itemId,
             identity,
-            args,
+            observableArgs,
             null,
             message,
           );

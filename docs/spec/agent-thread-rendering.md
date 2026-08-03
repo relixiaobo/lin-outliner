@@ -73,8 +73,13 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
-  status plus direct argument/result data; structured arguments and results render
-  as their JSON rather than a second presentation model, while command output,
+  status plus direct argument/result data. Its readable act may use type-specific
+  presentation fields, but the Arguments detail and copy source only the Item's
+  `modelCall` envelope: exact inline arguments, marked redacted arguments, a payload
+  identity until main resolves it, or bounded rejection evidence. Host execution
+  metadata such as command `cwd` is labelled separately and never appears as a model
+  argument. Structured arguments and results render as their JSON rather than a second
+  presentation model, while command output,
   file interaction, copy actions, and image previews retain their native
   affordances; a successful shell exit code is redundant with the completed row
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
@@ -363,7 +368,9 @@ inside the lazy Canonical Items disclosure as well as the default Summary.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and
-the final response. A partial failed response remains the copy authority; its
+the final response. Tool arguments use the canonical envelope and never reverse-map
+command, file-change, MCP/dynamic display, collaboration, or result fields. A partial
+failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
 Copy, Continue in new chat, and Details commands.
@@ -410,6 +417,10 @@ results, not a child of either Response or Request. Parallel tools from one mode
 one batch; a transient tool with no canonical Item remains an explicit execution fact.
 Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
 provider SDK remain part of that SDK invocation.
+Each tool entry exposes its recorded admission disposition, canonical identity, and
+schema digest when present. Rejected admission is labelled argument/tool admission,
+never permission denial; a later capability-unavailable result remains a separate
+execution fact.
 The timeline expresses hierarchy with disclosure indentation and horizontal activity
 separators only; it does not draw a vertical guide-line axis through nested content.
 
@@ -473,6 +484,9 @@ schemas, provider messages, responses, and Item JSON mount
 only while their disclosure is open. Expanding an evidence Item issues one exact
 `(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
 payload; it never receives a canonical payload path or gains digest-only read authority.
+All argument-bearing views consume the canonical envelope. Diagnostics and exports show
+only structured secret-redacted values and RFC 6901 redaction paths; they never reveal a
+raw model-authored secret or host-injected credential.
 Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
 Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
 split. Opening another Turn while Turn Diagnostics is current replaces only the target,

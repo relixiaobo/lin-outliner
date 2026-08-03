@@ -37,6 +37,26 @@ Selection controls availability, not host-account authority. A tool that survive
 selection runs directly; a tool that does not survive is absent or returns its
 owner's structured unavailable result.
 
+## Admission Is Not Permission
+
+Full Access authorizes a valid operation exposed in the Thread; it does not make an
+unknown tool or malformed argument object valid. Each provider call resolves the
+canonical tool, normalizes model syntax, and passes that tool's strict schema before
+capability evaluation. Unknown fields such as a model-supplied `bash.cwd` are rejected
+once as `invalidArguments`, persisted only as bounded redacted correction evidence, and
+never replayed as another tool call. The host still runs an admitted `bash` command in
+the Thread working directory, but that directory is execution context rather than a
+model argument.
+
+The phases remain observable and separate:
+
+- unresolved, truncated, or schema-invalid calls have no capability decision and no
+  execution-start event;
+- a schema-valid call matched by an explicit block retains its admitted call plus a
+  structured `operation_unavailable` result and capability audit;
+- a schema-valid unblocked call reaches the native tool under Full Access, where shell,
+  operating-system, network, provider, and service failures remain execution results.
+
 ## Explicit Blocks
 
 Blocks operate on normalized action descriptors such as outline read/write,
@@ -73,6 +93,10 @@ Each executed or unavailable tool result records:
 Audit data is attached to structured tool details and the corresponding Item.
 Document operations also carry immutable Thread/Turn/Item causation in Core
 transaction metadata.
+
+Audit and diagnostics retain canonical identity, admission disposition, schema digest,
+and redacted observable arguments. Raw secret-like model values and host credentials do
+not enter Items, argument payloads, transcripts, renderer detail, or diagnostics.
 
 ## Shared Resource Concurrency
 

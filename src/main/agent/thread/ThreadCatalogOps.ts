@@ -386,14 +386,14 @@ export class ThreadCatalogOps {
             if (!payload) throw new Error(`Missing context payload: ${ref.id}`);
             assertContextPayloadDependencies(item, payload);
           }
-          for (const ref of itemContextPayloadReferences(item)) {
-            const payloadCopied = await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
-            if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
-          }
           for (const ref of item.outputRefs) {
             const outputCopied = await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref);
             if (!outputCopied) throw new Error(`Missing context tool output payload: ${ref.id}`);
           }
+        }
+        for (const ref of itemContextPayloadReferences(item)) {
+          const payloadCopied = await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
+          if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
         }
         if ('outputRef' in item && item.outputRef) {
           const payloadCopied = await this.core.payloads.copyTextToThread(

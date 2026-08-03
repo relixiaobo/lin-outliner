@@ -1,0 +1,145 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  MAX_MODEL_TOOL_CORRECTION_BYTES,
+  MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
+  MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  type JsonValue,
+  type ThreadContextPayloadReference,
+} from '../../src/core/agent/protocol';
+import {
+  modelToolSchemaDigest,
+  persistToolCallAdmission,
+  transientToolCallAdmission,
+  type ToolCallAdmissionRequest,
+} from '../../src/main/agent/runtime/toolCallHistory';
+
+const SCHEMA_DIGEST = modelToolSchemaDigest({
+  type: 'object',
+  additionalProperties: false,
+  properties: { command: { type: 'string' } },
+  required: ['command'],
+});
+
+describe('canonical model tool-call admission', () => {
+  test('keeps ordinary arguments exact and persists only structure-preserving secret redactions', async () => {
+    const ordinaryArguments = { command: 'pwd', description: 'Print the working directory' } as const;
+    const ordinary = await persistToolCallAdmission(
+      admittedRequest(ordinaryArguments),
+      async () => { throw new Error('Small arguments must stay inline.'); },
+    );
+    expect(ordinary).toEqual({
+      modelCall: {
+        disposition: 'replayable',
+        identity: { namespace: null, name: 'bash' },
+        arguments: { storage: 'inline', value: ordinaryArguments },
+        schemaDigest: SCHEMA_DIGEST,
+      },
+      displayArguments: ordinaryArguments,
+      execute: true,
+    });
+
+    const secret = 'abcdefghijklmnop';
+    const secretArguments = {
+      command: `curl -H "Authorization: Bearer ${secret}" https://example.test`,
+      nested: { 'secret/key~name': 'do-not-persist' },
+    } as const;
+    const redacted = await persistToolCallAdmission(
+      admittedRequest(secretArguments),
+      async () => { throw new Error('Small arguments must stay inline.'); },
+    );
+    expect(redacted.modelCall).toMatchObject({
+      disposition: 'redactedReplay',
+      redactedArguments: {
+        storage: 'inline',
+        value: {
+          command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test',
+          nested: { 'secret/key~name': '[redacted]' },
+        },
+      },
+      redactedPaths: ['/command', '/nested/secret~1key~0name'],
+    });
+    expect(JSON.stringify(redacted)).not.toContain(secret);
+    expect(JSON.stringify(redacted)).not.toContain('do-not-persist');
+    expect(secretArguments.nested['secret/key~name']).toBe('do-not-persist');
+  });
+
+  test('stores large arguments exactly in a Thread payload and refuses transient inline overflow', async () => {
+    const argumentsValue = { content: '界'.repeat(12_000), path: '/workspace/large.txt' } as const;
+    let persisted: JsonValue | null = null;
+    const payloadRef: ThreadContextPayloadReference = {
+      id: 'a'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 40_000,
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    };
+    const durable = await persistToolCallAdmission(admittedRequest(argumentsValue), async (value) => {
+      persisted = value;
+      return payloadRef;
+    });
+
+    expect(persisted).toEqual(argumentsValue);
+    expect(durable).toMatchObject({
+      execute: true,
+      modelCall: {
+        disposition: 'replayable',
+        arguments: { storage: 'payload', ref: payloadRef },
+      },
+    });
+
+    const transient = transientToolCallAdmission(admittedRequest(argumentsValue));
+    expect(transient).toMatchObject({
+      execute: false,
+      modelCall: {
+        disposition: 'evidenceOnly',
+        reason: 'argumentPersistenceUnavailable',
+      },
+    });
+    expect(utf8Bytes(JSON.stringify(transient.modelCall.disposition === 'evidenceOnly'
+      ? transient.modelCall.redactedArgumentsSummary
+      : null))).toBeLessThanOrEqual(MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES);
+  });
+
+  test('bounds untrusted evidence fields by UTF-8 bytes before persistence', () => {
+    const decision = transientToolCallAdmission({
+      toolCallId: 'rejected',
+      providerName: '工'.repeat(2_000),
+      outcome: {
+        type: 'rejected',
+        identity: null,
+        arguments: { value: '界'.repeat(20_000) },
+        reason: 'invalidArguments',
+        correction: '改'.repeat(8_000),
+      },
+    });
+    if (decision.modelCall.disposition !== 'evidenceOnly') {
+      throw new Error('Expected evidence-only admission.');
+    }
+    expect(utf8Bytes(decision.modelCall.providerName)).toBeLessThanOrEqual(
+      MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+    );
+    expect(utf8Bytes(decision.modelCall.correction)).toBeLessThanOrEqual(
+      MAX_MODEL_TOOL_CORRECTION_BYTES,
+    );
+    expect(utf8Bytes(JSON.stringify(decision.modelCall.redactedArgumentsSummary))).toBeLessThanOrEqual(
+      MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
+    );
+  });
+});
+
+function admittedRequest(argumentsValue: JsonValue): ToolCallAdmissionRequest {
+  return {
+    toolCallId: 'call-1',
+    providerName: 'bash',
+    outcome: {
+      type: 'admitted',
+      identity: { namespace: null, name: 'bash' },
+      arguments: argumentsValue,
+      schemaDigest: SCHEMA_DIGEST,
+    },
+  };
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}

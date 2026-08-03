@@ -9,6 +9,10 @@ import {
   encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
 import { TurnDiagnosticsCollector } from '../../src/main/agent/context/TurnDiagnostics';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+} from '../fixtures/agentToolCallHistory';
 
 const model = {
   id: 'test-model',
@@ -133,7 +137,13 @@ describe('Turn diagnostics', () => {
       type: 'message_end',
       message: assistantMessage('First response'),
     } as AgentEvent);
-    collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
+    collector.captureToolExecutionStarted(
+      'tool-call-1',
+      'alpha',
+      'tool-item-1',
+      replayableModelCall('alpha', {}),
+      21,
+    );
     collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 
     prepare(collector, [firstMessage, secondMessage], 1, 160, [
@@ -286,6 +296,9 @@ describe('Turn diagnostics', () => {
           callId: 'tool-call-1',
           toolName: 'alpha',
           itemId: 'tool-item-1',
+          admissionDisposition: 'replayable',
+          canonicalIdentity: { namespace: null, name: 'alpha' },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
           startedAt: 21,
           completedAt: 22,
           status: 'completed',
@@ -391,12 +404,24 @@ describe('Turn diagnostics', () => {
       type: 'message_end',
       message: assistantMessage('Planning'),
     } as AgentEvent);
-    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 21);
+    collector.captureToolExecutionStarted(
+      'plan-call',
+      'update_plan',
+      null,
+      replayableModelCall('update_plan', {}),
+      21,
+    );
     collector.captureToolExecutionCompleted('plan-call', false, 22);
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
     collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
-    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 31);
+    collector.captureToolExecutionStarted(
+      'plan-call',
+      'update_plan',
+      null,
+      replayableModelCall('update_plan', {}),
+      31,
+    );
     collector.finalizeOpenToolExecutions('completed', 32);
 
     const payload = collector.payload();

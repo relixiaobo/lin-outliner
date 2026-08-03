@@ -17,6 +17,10 @@ import {
   planSkillCatalogEvidence,
   reduceSkillContext,
 } from '../../src/main/agent/context/SkillContextReducer';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+} from '../fixtures/agentToolCallHistory';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 describe('Skill context reducer', () => {
@@ -174,7 +178,8 @@ describe('Skill context reducer', () => {
     ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
   });
 
-  test('observes paths only from successful Core file tools', () => {
+  test('observes paths only from successful Core file tools, including payload-backed calls', async () => {
+    const store = contextStore();
     const dynamicTool = (
       id: string,
       namespace: string | null,
@@ -192,15 +197,38 @@ describe('Skill context reducer', () => {
       contentItems: null,
       success,
       durationMs: 1,
+      modelCall: replayableModelCall(
+        namespace ? `${namespace}__${tool}` : tool,
+        { file_path: path },
+      ),
     });
+    const payloadRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/payload.ts', content: 'x'.repeat(40_000) },
+    });
+    const payloadBacked = dynamicTool('payload-read', null, 'file_grep', '/workspace/presentation-only.ts');
+    if (payloadBacked.type !== 'dynamicToolCall') throw new Error('Expected a dynamic tool fixture.');
     const turns = [turn([
       dynamicTool('core-read', null, 'file_read', '/workspace/core.ts'),
+      {
+        ...payloadBacked,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_grep' },
+          arguments: { storage: 'payload', ref: payloadRef },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        },
+      },
       dynamicTool('extension-read', 'example', 'file_read', '/workspace/extension.ts'),
       dynamicTool('unknown-file-tool', null, 'file_probe', '/workspace/probe.ts'),
       dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
     ])];
 
-    expect(observedSkillFilePaths(turns)).toEqual(['/workspace/core.ts']);
+    expect(await observedSkillFilePaths(turns, store.read)).toEqual([
+      '/workspace/core.ts',
+      '/workspace/payload.ts',
+    ]);
   });
 });
 
@@ -220,6 +248,7 @@ function contextStore() {
     return ref;
   };
   return {
+    put,
     read: async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? null,
     evidence(payload: Extract<ThreadContextPayload, { kind: 'skillCatalog' | 'skillInvocation' }>): ContextEvidenceThreadItem {
       const payloadRef = put(payload);

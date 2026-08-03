@@ -373,7 +373,10 @@ export class TurnLifecycle {
                 configuration: active.configuration,
                 content: admission.content,
                 acceptedAt,
-                observedFilePaths: observedSkillFilePaths(canonicalTurns),
+                observedFilePaths: await observedSkillFilePaths(
+                  canonicalTurns,
+                  (ref) => this.core.payloads.readContext(thread.id, ref),
+                ),
               });
           const skillCatalog = await planSkillCatalogEvidence({
             turns: canonicalTurns,
@@ -854,7 +857,10 @@ export class TurnLifecycle {
             configuration: record.configuration,
             content: input,
             acceptedAt: startedAt,
-            observedFilePaths: observedSkillFilePaths(canonicalTurns),
+            observedFilePaths: await observedSkillFilePaths(
+              canonicalTurns,
+              (ref) => this.core.payloads.readContext(record.thread.id, ref),
+            ),
           });
       const skillCatalog = await planSkillCatalogEvidence({
         turns: canonicalTurns,
@@ -993,6 +999,11 @@ export class TurnLifecycle {
             mimeType,
             summary,
           ),
+          persistToolCallArguments: (value) => this.core.payloads.writeContext(active.threadId, {
+            schemaVersion: 1,
+            kind: 'toolCallArguments',
+            value,
+          }),
           persistContextEvidence: (payload, summary) => this.persistExecutionContextEvidence(
             active,
             thread,

@@ -962,6 +962,7 @@ export class SubagentCollaboration {
 
   private transcriptReader(threadId: ThreadId): TranscriptPayloadReader {
       return {
+        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
         readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
         readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
       };

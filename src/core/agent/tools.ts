@@ -6,6 +6,7 @@ import {
   type RequestUserInputQuestion,
   type TurnPlanSnapshot,
   type TurnPlanStep,
+  type ModelToolIdentity,
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
 import {
@@ -23,10 +24,7 @@ export {
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
 } from './protocol';
 
-export interface ModelToolIdentity {
-  readonly namespace: string | null;
-  readonly name: string;
-}
+export type { ModelToolIdentity } from './protocol';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 export type ModelToolScope = 'rootThread' | 'anyThread';

@@ -44,6 +44,15 @@ import {
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+import {
+  persistToolCallAdmission,
+  transientToolCallAdmission,
+} from '../../src/main/agent/runtime/toolCallHistory';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+  toolAdmissionEvent,
+} from '../fixtures/agentToolCallHistory';
 
 const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
   new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
@@ -63,12 +72,7 @@ describe('PiTurnExecutor event normalization', () => {
       assistantMessageEvent: { type: 'text_delta', delta: 'Done' },
     } as AgentEvent);
     normalizer.handle({ type: 'message_end', message: assistant });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-bash-1',
-      toolName: 'bash',
-      args: { command: 'pwd' },
-    });
+    normalizer.handle(toolAdmissionEvent('call-bash-1', 'bash', { command: 'pwd' }));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-bash-1',
@@ -111,16 +115,138 @@ describe('PiTurnExecutor event normalization', () => {
     expect(normalizer.stopReason).toBe('stop');
   });
 
+  test('keeps admitted and rejected bash cwd host-owned while preserving canonical dispositions', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent(
+      'call-bash-valid',
+      'bash',
+      { command: 'pwd', description: 'Print the working directory' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-valid',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: fixture.context.thread.cwd }], details: { data: { exitCode: 0 } } },
+      isError: false,
+    });
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'call-bash-invalid',
+      providerToolCallId: 'call-bash-invalid',
+      toolName: 'bash',
+      historyArguments: null,
+      decision: {
+        execute: false,
+        displayArguments: { command: 'pwd', cwd: '/model-supplied' },
+        modelCall: {
+          disposition: 'evidenceOnly',
+          identity: { namespace: null, name: 'bash' },
+          providerName: 'bash',
+          redactedArgumentsSummary: { command: 'pwd', cwd: '/model-supplied' },
+          reason: 'invalidArguments',
+          correction: 'Use the active schema.',
+        },
+      },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-invalid',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: 'Unexpected property: cwd' }], details: {} },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()).toMatchObject([
+      {
+        type: 'commandExecution',
+        id: 'call-bash-valid',
+        command: 'pwd',
+        description: 'Print the working directory',
+        cwd: fixture.context.thread.cwd,
+        status: 'completed',
+        modelCall: {
+          disposition: 'replayable',
+          arguments: {
+            storage: 'inline',
+            value: { command: 'pwd', description: 'Print the working directory' },
+          },
+        },
+      },
+      {
+        type: 'commandExecution',
+        id: 'call-bash-invalid',
+        command: 'pwd',
+        cwd: fixture.context.thread.cwd,
+        status: 'failed',
+        modelCall: {
+          disposition: 'evidenceOnly',
+          reason: 'invalidArguments',
+          redactedArgumentsSummary: { command: 'pwd', cwd: '/model-supplied' },
+        },
+      },
+    ]);
+    expect(fixture.recorder.orderedItems().every((item) => (
+      item.type !== 'commandExecution' || item.cwd !== '/model-supplied'
+    ))).toBe(true);
+  });
+
+  test('uses bounded redacted evidence identity for an unresolved provider tool', async () => {
+    const fixture = createContext();
+    const secret = 'abcdefghijklmnop';
+    const rawProviderName = `missing_Authorization: Bearer ${secret}`;
+    let observedToolName = '';
+    const normalizer = new PiEventNormalizer(fixture.context, {
+      started: (execution) => { observedToolName = execution.toolName; },
+    });
+    const decision = transientToolCallAdmission({
+      toolCallId: 'unknown-call',
+      providerName: rawProviderName,
+      outcome: {
+        type: 'rejected',
+        identity: null,
+        arguments: { authorization: secret },
+        reason: 'unresolvedTool',
+        correction: 'Choose an exposed tool.',
+      },
+    });
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'unknown-call',
+      providerToolCallId: 'unknown-call',
+      toolName: rawProviderName,
+      historyArguments: null,
+      decision,
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'unknown-call',
+      toolName: rawProviderName,
+      result: { content: [{ type: 'text', text: 'Tool is not exposed by the active registry.' }], details: {} },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    const serialized = JSON.stringify({ items: fixture.recorder.orderedItems(), observedToolName });
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toContain('[redacted secret-like content]');
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'dynamicToolCall',
+      status: 'failed',
+      modelCall: { disposition: 'evidenceOnly', identity: null },
+    });
+  });
+
   test('uses the provider call id for collaboration control-plane identity', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-1',
-      toolName: 'collaboration__spawn_agent',
-      args: { task_name: 'worker', message: 'Inspect it' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-1',
+      'collaboration__spawn_agent',
+      { task_name: 'worker', message: 'Inspect it' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-1',
@@ -153,12 +279,7 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_100);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-wait',
-      toolName: 'collaboration__wait_agent',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-collab-wait', 'collaboration__wait_agent', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-wait',
@@ -209,12 +330,11 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_200);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-send',
-      toolName: 'collaboration__send_message',
-      args: { target: '/root/worker', message: 'Continue' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-send',
+      'collaboration__send_message',
+      { target: '/root/worker', message: 'Continue' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-send',
@@ -253,12 +373,11 @@ describe('PiTurnExecutor event normalization', () => {
       started: (execution) => observed.push({ phase: 'started', ...execution }),
       completed: (execution) => observed.push({ phase: 'completed', ...execution }),
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-plan-1',
-      toolName: 'update_plan',
-      args: { plan: [{ step: 'Implement', status: 'in_progress' }] },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-plan-1',
+      'update_plan',
+      { plan: [{ step: 'Implement', status: 'in_progress' }] },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-plan-1',
@@ -995,6 +1114,7 @@ describe('PiTurnExecutor event normalization', () => {
           outputRefs: [],
         });
       },
+      createTools: async () => [historyTestTool('bash')],
       createAgent: (options) => ({
         state: { errorMessage: undefined },
         subscribe: () => () => undefined,
@@ -1021,6 +1141,7 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('bash', { command: 'pwd' }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -1912,6 +2033,7 @@ describe('PiTurnExecutor event normalization', () => {
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [historyTestTool('file_read')],
       createAgent: (options) => ({
         state: { errorMessage: undefined },
         subscribe: (next) => {
@@ -1922,12 +2044,11 @@ describe('PiTurnExecutor event normalization', () => {
         steer: () => undefined,
         prompt: async () => {
           providerContexts.push(await options.transformContext!([]));
-          await listener!({
-            type: 'tool_execution_start',
-            toolCallId: 'call-image',
-            toolName: 'file_read',
-            args: { file_path: '/workspace/diagram.png' },
-          });
+          await listener!(toolAdmissionEvent(
+            'call-image',
+            'file_read',
+            { file_path: '/workspace/diagram.png' },
+          ));
           await listener!({
             type: 'tool_execution_end',
             toolCallId: 'call-image',
@@ -2111,6 +2232,7 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('bash', { command: 'pwd' }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -2126,6 +2248,7 @@ describe('PiTurnExecutor event normalization', () => {
             tool: 'search',
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('docs__search', { query: 'Thread' }),
             arguments: { query: 'Thread' },
             pluginId: null,
             result: { matches: 2 },
@@ -2136,7 +2259,10 @@ describe('PiTurnExecutor event normalization', () => {
       }],
     };
 
-    const messages = await new CanonicalContextProjector(testModel, context)
+    const messages = await new CanonicalContextProjector(testModel, context, [
+      historyTestTool('bash'),
+      historyTestTool('docs__search'),
+    ])
       .projectTurns(context.historyBeforeTurn);
     expect(messages.map((message) => message.role)).toEqual([
       'user', 'assistant', 'toolResult', 'assistant', 'toolResult',
@@ -2146,7 +2272,7 @@ describe('PiTurnExecutor event normalization', () => {
       stopReason: 'toolUse',
       content: [
         { type: 'text', text: 'Checking.' },
-        { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pwd', cwd: '/workspace' } },
+        { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pwd' } },
       ],
     });
     expect(messages[2]).toMatchObject({ role: 'toolResult', toolCallId: 'call-1', content: [{ text: '/workspace' }] });
@@ -2169,11 +2295,23 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     const oversized = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
     const fileImageBase64 = Buffer.from('file-image-secret').toString('base64');
+    const largeArguments = { file_path: '/workspace/large.png', echoed: oversized };
     normalizer.handle({
-      type: 'tool_execution_start',
+      type: 'tool_call_admission',
       toolCallId: 'call-file-1',
+      providerToolCallId: 'call-file-1',
       toolName: 'file_read',
-      args: { file_path: '/workspace/large.png', echoed: oversized },
+      historyArguments: largeArguments,
+      decision: await persistToolCallAdmission({
+        toolCallId: 'call-file-1',
+        providerName: 'file_read',
+        outcome: {
+          type: 'admitted',
+          identity: { namespace: null, name: 'file_read' },
+          arguments: largeArguments,
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        },
+      }, fixture.context.persistToolCallArguments),
     });
     normalizer.handle({
       type: 'tool_execution_end',
@@ -2194,12 +2332,7 @@ describe('PiTurnExecutor event normalization', () => {
       },
       isError: false,
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-bash-2',
-      toolName: 'bash',
-      args: { command: 'produce output' },
-    });
+    normalizer.handle(toolAdmissionEvent('call-bash-2', 'bash', { command: 'produce output' }));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-bash-2',
@@ -2207,12 +2340,7 @@ describe('PiTurnExecutor event normalization', () => {
       result: { content: [{ type: 'text', text: oversized }], details: { data: { exitCode: 0 } } },
       isError: false,
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-images-3',
-      toolName: 'inspect_images',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-images-3', 'inspect_images', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-images-3',
@@ -2227,12 +2355,7 @@ describe('PiTurnExecutor event normalization', () => {
       isError: false,
     });
     const nearLimitImage = 'A'.repeat(Math.floor(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-image-budget-4',
-      toolName: 'inspect_large_images',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-image-budget-4', 'inspect_large_images', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-image-budget-4',
@@ -2318,12 +2441,7 @@ describe('PiTurnExecutor event normalization', () => {
       },
     };
     const normalizer = new PiEventNormalizer(context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-quota-image',
-      toolName: 'inspect_image',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-quota-image', 'inspect_image', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-quota-image',
@@ -2765,6 +2883,102 @@ describe('PiTurnExecutor provider payload', () => {
     expect(providerCalls).toBe(2);
   });
 
+  test('persists unique canonical Items when one provider batch repeats a call id', async () => {
+    const fixture = createContext();
+    const duplicatedId = 'provider-duplicate-id';
+    const executions: Array<{ readonly callId: string; readonly args: unknown }> = [];
+    const strictTool = {
+      name: 'strict_tool',
+      label: 'Strict tool',
+      description: 'Accepts one required string value.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+      },
+      execute: async (callId: string, args: unknown) => {
+        executions.push({ callId, args });
+        return { content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
+      },
+    } as AgentTool;
+    const providerContexts: Message[][] = [];
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [strictTool],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          providerCalls += 1;
+          providerContexts.push([...providerContext.messages]);
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([
+                  {
+                    type: 'toolCall',
+                    id: duplicatedId,
+                    name: strictTool.name,
+                    arguments: { invalid: true },
+                  },
+                  {
+                    type: 'toolCall',
+                    id: duplicatedId,
+                    name: strictTool.name,
+                    arguments: { value: 'valid' },
+                  },
+                ]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(async () => {
+            await options.onPayload?.({ model: model.id, input: providerContext.messages }, model);
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    const items = fixture.recorder.orderedItems().filter((item) => (
+      item.type === 'dynamicToolCall' && item.tool === strictTool.name
+    ));
+    expect(items).toHaveLength(2);
+    expect(new Set(items.map((item) => item.id)).size).toBe(2);
+    const rejected = items.find((item) => item.modelCall.disposition === 'evidenceOnly');
+    const admitted = items.find((item) => item.modelCall.disposition === 'replayable');
+    expect(rejected).toMatchObject({ id: duplicatedId, status: 'failed', success: false });
+    expect(admitted).toMatchObject({ status: 'completed', success: true });
+    expect(admitted?.id).not.toBe(duplicatedId);
+    expect(executions).toEqual([{ callId: admitted?.id, args: { value: 'valid' } }]);
+
+    const replay = providerContexts[1] ?? [];
+    const replayCalls = replay.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    const replayResults = replay.filter((message) => message.role === 'toolResult');
+    expect(JSON.stringify(replay)).toContain('invalidArguments');
+    expect(replayCalls).toHaveLength(1);
+    expect(replayResults).toHaveLength(1);
+    expect(replayCalls[0]?.id).toBe(admitted?.id);
+    expect(replayResults[0]?.role === 'toolResult' ? replayResults[0].toolCallId : null)
+      .toBe(admitted?.id);
+
+    const executionBatch = fixture.diagnosticsPayloads[0]?.activities.find((activity) => (
+      activity.type === 'toolExecutionBatch'
+    ));
+    expect(executionBatch?.type === 'toolExecutionBatch'
+      ? executionBatch.executions.map((execution) => execution.callId)
+      : []).toEqual(items.map((item) => item.id));
+  });
+
   test('matches the native kernel Item and diagnostics golden', async () => {
     const fixture = createContext();
     let callCount = 0;
@@ -3045,6 +3259,19 @@ function createContext(): {
       outputPayloads.set(id, text);
       return { id, mimeType, byteLength: Buffer.byteLength(text, 'utf8'), summary };
     },
+    persistToolCallArguments: async (value) => {
+      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value };
+      const serialized = JSON.stringify(payload);
+      const id = createHash('sha256').update(serialized).digest('hex');
+      contextPayloads.set(id, payload);
+      return {
+        id,
+        mimeType: 'application/vnd.tenon.agent-context+json',
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1,
+        kind: 'toolCallArguments',
+      };
+    },
     persistContextEvidence: async (payload, summary) => {
       const serialized = JSON.stringify(payload);
       const payloadId = createHash('sha256').update(serialized).digest('hex');
@@ -3143,6 +3370,16 @@ function testTool(name: string, description: string): AgentTool {
       additionalProperties: false,
       properties: {},
     },
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as AgentTool;
+}
+
+function historyTestTool(name: string): AgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} history fixture`,
+    parameters: { type: 'object', additionalProperties: true },
     execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }

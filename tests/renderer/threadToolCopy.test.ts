@@ -9,6 +9,7 @@ import {
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import type { DocumentIndex } from '../../src/renderer/state/document';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 /**
  * The exhaustive tool-copy table. Every tool a run can produce appears here with
@@ -42,6 +43,10 @@ function dynamic(
     contentItems: null,
     success: status === 'failed' ? false : true,
     durationMs: 1,
+    modelCall: replayableModelCall(
+      options.namespace ? `${options.namespace}__${tool}` : tool,
+      args as never,
+    ),
   };
 }
 
@@ -65,6 +70,10 @@ function shell(
     aggregatedOutput: null,
     exitCode: status === 'failed' ? 2 : 0,
     durationMs: 1,
+    modelCall: replayableModelCall('bash', {
+      command,
+      ...(description ? { description } : {}),
+    }),
   };
 }
 
@@ -85,6 +94,7 @@ function collab(
     model: null,
     reasoningEffort: null,
     agentsStates: {},
+    modelCall: replayableModelCall(`collaboration__${tool}`, {}),
   };
 }
 
@@ -95,6 +105,11 @@ function changes(...paths: readonly string[]): ThreadToolItem {
     status: 'completed',
     outputRef: null,
     changes: paths.map((path) => ({ path, kind: 'update' as const })),
+    modelCall: replayableModelCall('file_edit', {
+      file_path: paths[0] ?? '/w/unknown',
+      old_string: 'before',
+      new_string: 'after',
+    }),
   };
 }
 
@@ -145,6 +160,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['web search item', {
       ...base('web-1'), type: 'webSearch', status: 'completed', outputRef: null,
       query: 'epub', results: [], error: null,
+      modelCall: replayableModelCall('web_search', { query: 'epub' }),
     }, 'Searched the web for "epub"'],
     ['spawn_agent', collab('spawn_agent'), 'Started an agent'],
     ['send_message', collab('send_message'), 'Messaged an agent'],
@@ -187,6 +203,7 @@ describe('a tool with no usable argument degrades to an honest generic', () => {
       ...base('mcp-1'), type: 'mcpToolCall', status: 'completed', outputRef: null,
       server: 'files', tool: 'read', arguments: {}, pluginId: null, result: null,
       error: null, durationMs: null,
+      modelCall: replayableModelCall('files__read', {}),
     }, labels)).toBe('Used files.read');
   });
 });

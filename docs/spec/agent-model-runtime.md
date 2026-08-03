@@ -72,6 +72,23 @@ not install that projection port or overflow recovery; they send a top-level
 snapshot of their raw in-memory transcript, which already preserves
 same-execution provider parts without canonical re-projection.
 
+Tool history is projected only from each Item's `modelCall` envelope. A replayable
+call resolves its canonical identity against the active registry, loads exact inline or
+Thread-owned arguments, validates them against the current schema, and preflights its
+complete result dependencies before the call/result pair is emitted. A stored schema
+digest is diagnostic evidence, not authority to bypass the current schema. Missing
+tools, incompatible schemas, corrupt/missing argument or output payloads, and missing
+image snapshots degrade the entire pair to bounded typed evidence on this runtime user
+path; they never throw the Turn, emit an orphan result, or derive replacement arguments
+from presentation fields.
+
+`redactedReplay` emits one indivisible marker/call/result unit when the redacted value
+still validates. The marker states that placeholders were not executed values and must
+not be copied or retried. If redaction makes the current call invalid, projection emits
+executed-call evidence with the visible outcome instead. `evidenceOnly` always projects
+correction evidence and never a tool call or result. Mixed batches preserve original
+call order across these units.
+
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all
 execution overrides require isolated execution through the canonical `skill` tool.
@@ -266,10 +283,21 @@ the atomic `turn/started` event. Subagent activity already queued while the Thre
 idle is admitted before that evidence and the trailing user message, so it remains prior
 assistant history without breaking the active user boundary. Later steering evidence and
 input use `items/completed`. Neither path synthesizes a streaming lifecycle.
-The recorder validates local provenance and rejects completion before start. Tool arguments and visible results use bounded
+The recorder validates local provenance and rejects completion before start. A raw
+provider call first resolves canonical identity, runs model-argument preparation, and
+passes the exposed schema. The kernel then persists one admission decision and emits
+`tool_call_admission`; only admitted calls may emit `tool_execution_start` and reach
+capability evaluation or execution. Unknown tools, malformed or provider-truncated
+arguments, and argument-persistence failure complete a failed Item from `evidenceOnly`
+without a capability decision. Presentation arguments and visible results use bounded
 projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
 lists also have a fixed maximum length.
+Before admission, the kernel preserves the first non-empty provider call ID that is
+unused in provider-visible history and the current run. An empty ID or any same-batch
+or later collision is remapped to a fresh Turn-local UUIDv7. Admission, execution,
+mutation causation, Item identity, result pairing, and subsequent history use only that
+canonical ID; the original provider ID is transient stream-correlation data.
 
 Every textual tool completion also writes its complete normalized result to the
 Thread-owned content-addressed payload store. The Item keeps only a bounded
@@ -315,10 +343,13 @@ directory.
 
 ## Tools And Causation
 
-`ToolRuntime` filters tools through the effective Thread configuration, Core
-scope, explicit capability blocks, and canonical registry identity. It emits the
-started Item before execution and always emits a terminal Item, including native
-unavailable or thrown results.
+`ToolRuntime` exposes tools through the effective Thread configuration, Core scope,
+and canonical registry identity. The kernel freezes a schema-valid canonical call
+before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
+call therefore retains its call/result pair and structured `operation_unavailable`
+audit; an invalid call never reaches capability evaluation. Admission starts the
+canonical Item, and every admission receives a terminal Item, including rejection,
+native unavailable, cancellation, or a thrown result.
 
 The current Item identity is bound through asynchronous execution context.
 Outliner transactions and bulk imports therefore receive exact
@@ -372,6 +403,12 @@ Item still `inProgress` is completed as `interrupted`; unexpected executor
 failure completes it as `failed`. The terminal Turn records the corresponding
 status and error.
 
+If cancellation arrives after a schema-valid call is prepared, the runtime preserves
+its admitted envelope and records an explicit aborted outcome while skipping the tool
+side effect. Cancellation is never relabeled as `invalidArguments`. Every raw call in
+the returned assistant batch still receives an admission decision, so the live
+no-projection kernel path cannot retain an unsanitized trailing tool call.
+
 ## Context Planning And Compaction
 
 Every provider boundary, including post-tool requests and steering, runs one global
@@ -379,7 +416,9 @@ budget plan over the stable prompt, canonical tool schemas, reduced history, cur
 evidence, images, and the active Turn. The input limit reserves provider framing plus up
 to one quarter of the model context window for output, capped by the model output limit.
 The active Turn is mandatory. Assistant tool calls and their complete result set form one
-indivisible unit; an orphan, duplicate, or incomplete exchange fails closed. If the
+indivisible unit; a `redactedReplay` marker/call/result triple is one distinct
+indivisible unit. An orphan, duplicate, incomplete exchange, or marker separated from
+its redacted call fails closed. If the
 stable prompt, tools, and active Turn alone cannot fit, the Turn fails with an explicit
 capacity error rather than dropping the current request.
 
@@ -517,6 +556,11 @@ provider/model/API/configured-base-URL/transport selection, model limits, and re
 settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragment data
 before persistence. These audit facts explain how the call was prepared; they are not a
 renderer-reconstructed request or another context authority.
+
+Each tool execution diagnostic records its admission disposition, canonical identity,
+and schema digest when one exists. Assistant responses and tool observations pass the
+same structured secret-like redaction policy before diagnostics persistence; raw
+secret-bearing model arguments and host credentials are not diagnostic history.
 
 The post-adapter provider payload is observed after compatibility, reasoning-summary,
 and cache-breakpoint policy and immediately before provider transport. Diagnostics

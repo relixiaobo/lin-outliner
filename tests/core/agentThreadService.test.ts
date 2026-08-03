@@ -46,6 +46,8 @@ import type {
   TurnExecutor,
 } from '../../src/main/agent/runtime/types';
 import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
+import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
+import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
 import { Core } from '../../src/core/core';
@@ -61,8 +63,22 @@ import {
   subagentTranscriptRoot,
 } from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
+const FORK_PAYLOAD_TOOL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    query: { type: 'string' },
+    description: { type: 'string' },
+  },
+  required: ['query'],
+} as const;
+const FORK_MODEL_ARGUMENTS = {
+  query: 'exact canonical argument '.repeat(2_000),
+  description: 'Persist, fork, restart, and replay this exact value.',
+} as const;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -199,6 +215,7 @@ class ControlledExecutor implements TurnExecutor {
 class ForkPayloadExecutor extends ControlledExecutor {
   override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     const itemId = context.recorder.createItemId();
+    const argumentRef = await context.persistToolCallArguments(FORK_MODEL_ARGUMENTS);
     const started: ThreadItem = {
       type: 'dynamicToolCall',
       id: itemId,
@@ -211,6 +228,11 @@ class ForkPayloadExecutor extends ControlledExecutor {
       contentItems: null,
       success: null,
       durationMs: null,
+      modelCall: {
+        ...replayableModelCall('test__payload', {}),
+        arguments: { storage: 'payload', ref: argumentRef },
+        schemaDigest: modelToolSchemaDigest(FORK_PAYLOAD_TOOL_SCHEMA),
+      },
     };
     await context.recorder.started(started);
     const outputRef = await context.persistOutputText(
@@ -258,6 +280,7 @@ class ForkLocalImageExecutor implements TurnExecutor {
         contentItems: null,
         success: null,
         durationMs: null,
+        modelCall: replayableModelCall('file_read', { file_path: '/workspace/local.png' }),
       };
       await context.recorder.started(started);
       await context.recorder.completed({
@@ -438,6 +461,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
         }],
         success: true,
         durationMs: 1,
+        modelCall: replayableModelCall('test__nested_image', {}),
       }],
       itemsView: 'full',
       provenance: {
@@ -2867,6 +2891,10 @@ describe('ThreadService', () => {
     const forkTurn = opened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
     const forkItem = forkTurn.items.find((item) => item.type === 'dynamicToolCall');
     if (!forkItem?.outputRef) throw new Error('Fork payload Item missing');
+    if (forkItem.modelCall.disposition !== 'replayable' || forkItem.modelCall.arguments.storage !== 'payload') {
+      throw new Error('Fork model-call argument payload missing');
+    }
+    const forkArgumentRef = forkItem.modelCall.arguments.ref;
     const forkImage = forkItem.contentItems?.find((content) => content.type === 'image');
     if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
 
@@ -2881,6 +2909,11 @@ describe('ThreadService', () => {
     if (forkImage.source.kind !== 'threadPayload') throw new Error('Fork image is not Thread-owned');
     expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
 
     await opened.service.deleteThread(source.id);
 
@@ -2893,6 +2926,11 @@ describe('ThreadService', () => {
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
     const crashLeftover = await opened.stores.payloads.writeText(
       fork.id,
       'uncommitted-output',
@@ -2912,7 +2950,29 @@ describe('ThreadService', () => {
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await reopened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await reopened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
     expect(await reopened.stores.payloads.readTextReference(fork.id, crashLeftover)).toBeNull();
+    const restartedTurns = reopened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const projected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => reopened.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => reopened.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => reopened.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }, [forkPayloadProjectionTool()]).projectTurns(restartedTurns);
+    const replayedCall = projected.flatMap((message) => (
+      typeof message.content === 'string'
+        ? []
+        : message.content.filter((part) => part.type === 'toolCall')
+    ))[0];
+    expect(replayedCall).toMatchObject({
+      id: forkItem.id,
+      name: 'test__payload',
+      arguments: FORK_MODEL_ARGUMENTS,
+    });
     await reopened.service.close();
   });
 
@@ -3800,6 +3860,7 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/missing.png' }),
     });
     expect(await fixture.stores.payloads.deleteResource(root.id, imageRef)).toBe(true);
     await recordCollaborationSpawnBoundary(context, 'copy-failure-spawn');
@@ -4257,6 +4318,7 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/inherited.png' }),
     });
     await parentContext.persistContextEvidence({
       schemaVersion: 1,
@@ -4295,6 +4357,7 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'text', text: 'MUST NOT BE INHERITED' }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/post-spawn.txt' }),
     });
     const inheritedAll = await fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
@@ -4386,7 +4449,7 @@ describe('ThreadService', () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128_000,
       maxTokens: 8_192,
-    }, childContext).projectTurns([inheritedAll.turn]);
+    }, childContext, [historyProjectionTool('file_read')]).projectTurns([inheritedAll.turn]);
     expect(projected.map((message) => message.role)).toEqual([
       'user', 'assistant', 'user', 'assistant', 'toolResult', 'user',
     ]);
@@ -7848,6 +7911,7 @@ describe('ThreadService', () => {
       contentItems: null,
       success: null,
       durationMs: null,
+      modelCall: replayableModelCall('skill', { skill: 'alpha' }),
     };
     await context.recorder.started(startedTool);
     const result = await executeTool(tools, 'skill', toolId, { skill: 'alpha' });
@@ -8205,6 +8269,16 @@ function projectionModel() {
   };
 }
 
+function forkPayloadProjectionTool(): AgentTool {
+  return {
+    name: 'test__payload',
+    label: 'payload',
+    description: 'Project the persisted argument payload.',
+    parameters: FORK_PAYLOAD_TOOL_SCHEMA as any,
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  };
+}
+
 const EXTENSION_PROBE_CONTRACT = {
   identity: { namespace: 'automation_probe', name: 'run' },
   description: 'Run the Automation extension probe.',
@@ -8267,6 +8341,7 @@ class OpenToolItemExecutor implements TurnExecutor {
       aggregatedOutput: null,
       exitCode: null,
       durationMs: null,
+      modelCall: replayableModelCall('bash', { command: 'sleep 30' }),
     });
     return completedExecutionResult();
   }
@@ -8414,6 +8489,18 @@ async function executeTool(
   return tool.execute(itemId, params);
 }
 
+function historyProjectionTool(
+  name: string,
+): import('../../src/main/agent/runtime/kernel/types').AgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} history projection fixture`,
+    parameters: { type: 'object', additionalProperties: true },
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as import('../../src/main/agent/runtime/kernel/types').AgentTool;
+}
+
 async function recordCollaborationSpawnBoundary(
   context: TurnExecutionContext,
   itemId: string,
@@ -8431,6 +8518,11 @@ async function recordCollaborationSpawnBoundary(
     reasoningEffort: null,
     agentsStates: {},
     outputRef: null,
+    modelCall: replayableModelCall('collaboration__spawn_agent', {
+      task_name: 'test_agent',
+      message: 'Test collaboration spawn',
+      fork_turns: 'all',
+    }),
   });
 }
 
@@ -8830,6 +8922,7 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
     durationMs: null,
     status: 'inProgress' as const,
     outputRef: null,
+    modelCall: replayableModelCall('file_read', { file_path: '/w/a.ts' }),
   };
   await context.recorder.started(item);
   await context.recorder.completed({
