@@ -454,6 +454,39 @@ and model-error taxonomy under `src/main/agent/runtime/kernel/`.
 `@earendil-works/pi-ai` is transport-only behind `ModelGateway`; provider
 failures cross that port as complete terminal assistant messages, while
 `ModelError` is only a derived classification used for policy decisions.
+Tenon consumes `pi-ai` directly and does not use `pi-agent-core`: the native
+kernel remains the sole owner of Turns, tools, projection, retries, and durable
+history.
+
+`piModels` owns one provider collection. Authentication capability comes from
+each provider's `auth` definition rather than a parallel OAuth registry. OAuth
+sign-in and sign-out run through `Models.login()` / `Models.logout()`; main maps
+the provider-neutral `AuthInteraction` to the renderer event union while keeping
+credentials in main. Flow cancellation aborts the whole interaction, and a
+provider may independently abort one prompt when a callback race completes.
+After a successful login, main creates the provider connection row and refreshes
+any dynamic catalog before returning settings. OAuth providers that also accept
+a normal pasted API key expose that fallback; GitHub Copilot does not, because
+its alternate token is an ambient integration credential rather than a key-entry
+workflow.
+
+The injected credential store persists one type-tagged credential per provider
+in `agent-secrets.json`. Its serialized `modify()` operation is the only write
+path, so concurrent OAuth resolutions share one rotated token; `list()` returns
+only provider IDs and credential types. A separate `agent-model-catalogs.json`
+store persists validated dynamic text catalogs. Settings reads restore these
+catalogs without network access, while login and the explicit provider refresh
+command may fetch and persist a current catalog. A refreshable provider retains
+that capability even while its model list is empty.
+
+Provider auth resolution is provider-scoped. Custom OpenAI-compatible providers
+capture their configured endpoint when they are registered. CC Switch remains
+the model-specific exception at the application boundary: main resolves the
+selected registry model's source key immediately before dispatch and supplies it
+as an explicit request override; neither the pi provider resolver nor renderer
+receives the registry key. Provider-specific endpoint materialization, including
+Cloudflare account and Gateway placeholders, occurs inside provider dispatch
+after auth environment values have resolved.
 
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.
@@ -555,6 +588,9 @@ provides no transport facts.
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.
+A `pending` stop reason is streaming-only; if one appears on an impossible
+`message_end`, diagnostics skips it rather than widening the durable terminal
+response union or failing the Turn.
 A failed or retried call may legitimately have no response. The collector also appends one
 typed ordered activity stream. Initial and steering admission, every Model Call, parallel
 tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow

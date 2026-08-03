@@ -983,8 +983,8 @@ export type AgentProviderAuthKind = 'api-key' | 'oauth' | 'managed';
 
 /**
  * The renderer-visible auth descriptor for a provider. Classification and all
- * credential reasoning live in main (sourced from pi-ai's `getOAuthProviders()`
- * plus a managed set); the renderer only renders this. Carries no secret —
+ * credential reasoning live in main (sourced from each pi-ai provider's auth
+ * capabilities plus a managed set); the renderer only renders this. Carries no secret —
  * never an API key, OAuth token, or AWS/ADC material.
  */
 export interface ProviderAuthView {
@@ -1018,8 +1018,8 @@ export interface OAuthLoginSelectOption {
 
 /**
  * One interactive step of an OAuth sign-in, pushed main→renderer. Folds pi-ai's
- * login callbacks into a single union so loopback (Anthropic) and device-code
- * (Copilot/Codex) share one renderer state machine. `prompt` / `select` /
+ * provider-neutral AuthInteraction into one union so browser, device-code, and
+ * manual-code providers share one renderer state machine. `prompt` / `select` /
  * `manual-code` carry a `requestId` the renderer answers via `agent_oauth_respond`.
  */
 export type OAuthLoginEvent =

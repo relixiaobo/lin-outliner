@@ -6,7 +6,6 @@ import { localGatewayProviderDefinition } from '../../../core/localGatewayProvid
 import { useT } from '../../i18n/I18nProvider';
 import {
   formatProviderName,
-  OAUTH_API_KEY_FALLBACK,
   oauthSignInInfo,
   providerAuthInfo,
   PROVIDER_DOCS_URL,
@@ -15,6 +14,7 @@ import {
   providerHasCredential,
   resolveUsableActiveProvider,
 } from './providerCatalog';
+import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';

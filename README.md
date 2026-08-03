@@ -18,7 +18,8 @@ directing local agents, and keeping work inspectable.
 - **Command-driven core.** Every mutation goes through a named command
   returning a `CommandOutcome { projection, focus? }`, with a scoped
   `UndoManager` so user undo and agent undo don't tangle.
-- **Local agent.** An in-app dock backed by [pi-ai/pi-agent-core], with
+- **Local agent.** An in-app dock with a Tenon-native turn runtime backed by
+  [pi-ai] for provider catalogs, authentication, and transport, plus
   file/bash/web tools, skills, subagents, an event-sourced session log, and
   Claude Code–style permission policy. See
   [`docs/spec/agent-event-log-rendering.md`](docs/spec/agent-event-log-rendering.md).
@@ -88,4 +89,4 @@ The most useful entry points:
 
 [MIT](LICENSE).
 
-[pi-ai/pi-agent-core]: https://www.npmjs.com/package/@earendil-works/pi-agent-core
+[pi-ai]: https://www.npmjs.com/package/@earendil-works/pi-ai

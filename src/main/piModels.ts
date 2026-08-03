@@ -7,8 +7,10 @@ import {
   type AuthResult,
   type Context,
   type Credential,
+  type CredentialInfo,
   type CredentialStore,
   type Model,
+  type ModelsStore,
   type MutableModels,
   type SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
@@ -32,6 +34,7 @@ type OpenAICompatibleApiId = 'openai-completions' | 'openai-responses';
 
 export interface PiCredentialStorage {
   read(providerId: string): Promise<Credential | undefined>;
+  list(): Promise<readonly CredentialInfo[]>;
   modify(providerId: string, fn: (current: Credential | undefined) => Promise<Credential | undefined>): Promise<Credential | undefined>;
   delete(providerId: string): Promise<void>;
 }
@@ -49,18 +52,25 @@ export interface PiCustomProviderConfig {
 }
 
 let credentialStorage: PiCredentialStorage | null = null;
+let modelsStorage: ModelsStore | null = null;
 let modelsInstance: MutableModels | null = null;
+let restoreDynamicModelsPromise: Promise<void> | null = null;
 const localGatewayRuntimeModels = new Map<string, Model<Api>[]>();
 
-export function configurePiCredentialStorage(storage: PiCredentialStorage): void {
+export function configurePiCredentialStorage(storage: PiCredentialStorage, catalogStorage?: ModelsStore): void {
   credentialStorage = storage;
+  modelsStorage = catalogStorage ?? null;
   modelsInstance = null;
+  restoreDynamicModelsPromise = null;
 }
 
 export function piModels(): MutableModels {
   if (!credentialStorage) throw new Error('pi credential storage is not configured');
   if (!modelsInstance) {
-    modelsInstance = builtinModels({ credentials: credentialStoreAdapter });
+    modelsInstance = builtinModels({
+      credentials: credentialStoreAdapter,
+      ...(modelsStorage ? { modelsStore: modelsStorage } : {}),
+    });
     registerLocalGatewayProviders(modelsInstance);
   }
   return modelsInstance;
@@ -68,6 +78,38 @@ export function piModels(): MutableModels {
 
 export function piCredentialStore(): CredentialStore {
   return credentialStoreAdapter;
+}
+
+export async function piRestoreDynamicModels(): Promise<void> {
+  restoreDynamicModelsPromise ??= piModels().refresh({ allowNetwork: false }).then(() => undefined);
+  await restoreDynamicModelsPromise;
+}
+
+export function piProviderModelsRefreshable(providerId: string): boolean {
+  return Boolean(piModels().getProvider(providerId)?.refreshModels);
+}
+
+export async function piRefreshProviderModels(providerId: string, signal?: AbortSignal): Promise<void> {
+  if (!piProviderModelsRefreshable(providerId)) return;
+  const result = await piModels().refresh({ force: true, signal });
+  const error = result.errors.get(providerId);
+  if (error) throw error;
+}
+
+export async function piRefreshProviderModelsWithCredential(
+  providerId: string,
+  credential: Credential,
+  signal?: AbortSignal,
+): Promise<void> {
+  const provider = piModels().getProvider(providerId);
+  if (!provider?.refreshModels) return;
+  await provider.refreshModels({
+    credential,
+    allowNetwork: true,
+    force: true,
+    signal,
+    store: providerModelsStore(providerId),
+  });
 }
 
 export function registerLocalGatewayRuntimeModels(providerId: string, models: readonly Model<Api>[]): void {
@@ -111,6 +153,14 @@ export async function piProviderHasAmbientAuth(providerId: string): Promise<bool
 }
 
 export async function piResolveAuthApiKey(model: Model<Api>): Promise<string | undefined> {
+  if (isLocalGatewayProviderId(model.provider)) {
+    const ccSwitchModel = parseCcSwitchModelOptionId(model.id);
+    if (ccSwitchModel) {
+      const sourceCredential = await readCredential(ccSwitchModel.sourceRuntimeProviderId);
+      if (sourceCredential?.type === 'api_key' && sourceCredential.key) return sourceCredential.key;
+    }
+    return isLocalBaseUrl(model.baseUrl) ? 'local-endpoint' : undefined;
+  }
   try {
     const auth = await piModels().getAuth(model);
     return auth?.auth.apiKey;
@@ -156,7 +206,7 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
     auth: {
       apiKey: {
         name: `${config.providerId} API key`,
-        resolve: async ({ credential: requestCredential, model }) => {
+        resolve: async ({ credential: requestCredential }) => {
           if (requestCredential?.key) return { auth: { apiKey: requestCredential.key }, source: 'request override' };
           // A deliberately-stored key wins everywhere (e.g. a local proxy fronted by a
           // master key). Only AFTER that does a local endpoint fall back to an inert
@@ -165,7 +215,7 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
           // endpoints get no such sentinel and must resolve a real credential or fail.
           const storedCredential = await readCredential(config.providerId);
           if (storedCredential?.type === 'api_key' && storedCredential.key) return { auth: { apiKey: storedCredential.key }, source: 'stored credential' };
-          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
+          if (isLocalBaseUrl(config.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           const externalAuth = await resolveExternalProviderRequestAuth(config.providerId);
           if (externalAuth) return externalAuth;
           return undefined;
@@ -235,17 +285,9 @@ function registerLocalGatewayProvider(models: MutableModels, provider: LocalGate
     auth: {
       apiKey: {
         name: `${provider.name} key`,
-        resolve: async ({ credential, model }) => {
+        resolve: async ({ credential }) => {
           if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
-          const ccSwitchModel = parseCcSwitchModelOptionId(model.id);
-          if (ccSwitchModel) {
-            const sourceCredential = await readCredential(ccSwitchModel.sourceRuntimeProviderId);
-            if (sourceCredential?.type === 'api_key' && sourceCredential.key) {
-              return { auth: { apiKey: sourceCredential.key }, source: 'CC Switch registry' };
-            }
-          }
-          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
-          return undefined;
+          return { auth: {}, source: `${provider.name} request override` };
         },
       },
     },
@@ -381,6 +423,9 @@ const credentialStoreAdapter: CredentialStore = {
   read(providerId) {
     return requireCredentialStorage().read(providerId);
   },
+  list() {
+    return requireCredentialStorage().list();
+  },
   modify(providerId, fn) {
     return requireCredentialStorage().modify(providerId, fn);
   },
@@ -392,4 +437,12 @@ const credentialStoreAdapter: CredentialStore = {
 function requireCredentialStorage(): PiCredentialStorage {
   if (!credentialStorage) throw new Error('pi credential storage is not configured');
   return credentialStorage;
+}
+
+function providerModelsStore(providerId: string) {
+  return {
+    read: () => modelsStorage?.read(providerId) ?? Promise.resolve(undefined),
+    write: (entry: Parameters<ModelsStore['write']>[1]) => modelsStorage?.write(providerId, entry) ?? Promise.resolve(),
+    delete: () => modelsStorage?.delete(providerId) ?? Promise.resolve(),
+  };
 }

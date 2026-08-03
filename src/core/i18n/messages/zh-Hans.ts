@@ -1571,6 +1571,18 @@ commandPalette: {
       'openai-codex': {
         hint: '使用你的 ChatGPT Plus 或 Pro 订阅登录。',
       },
+      'kimi-coding': {
+        hint: '使用你的 Kimi Code 订阅登录。',
+      },
+      openrouter: {
+        hint: '登录 OpenRouter 以连接你的账户。',
+      },
+      radius: {
+        hint: '登录 Radius 以加载你的网关模型目录。',
+      },
+      xai: {
+        hint: '使用你的 SuperGrok 或 X 订阅登录。',
+      },
     },
   },
   tags: {

@@ -314,6 +314,12 @@ the row is a direct external enable row. Vendored logos may keep identity colour
 but the tile never carries functional colour. Row separators stay inset; the
 trailing More button is icon-only and unboxed at rest.
 
+An enabled provider whose language or image capability is refreshable exposes a
+row refresh command. Capability, not provider identity, controls this affordance,
+so a dynamic provider with an empty initial catalog can still recover and then
+populate its model choices. Refresh remains an explicit network action; ordinary
+settings loading uses only the last persisted catalog.
+
 **Provider config.** Per-provider config is a native modal child window
 (`?surface=provider-config`) and owns connection only. It has no traffic lights,
 no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
@@ -326,6 +332,14 @@ main rejects the dedicated key-read IPC from all other windows. Before provider
 settings resolve, the window still paints the provider title/avatar, reserved
 credential/base-URL rows, and disabled footer actions with `aria-busy`; it never
 falls back to a whole-window loading page.
+
+Credential mode follows main's provider auth descriptor. OAuth-capable providers
+show the shared sign-in flow for browser URLs, device codes, progress, selection,
+and manual-code prompts; closing or cancelling the flow aborts outstanding
+prompts. When that same provider accepts a normal user API key, the sheet offers
+"Use an API key instead" and returns to the standard key form. OAuth-only
+providers omit the fallback. A completed sign-in may populate a dynamic model
+catalog without changing the sheet's connection-only ownership.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.

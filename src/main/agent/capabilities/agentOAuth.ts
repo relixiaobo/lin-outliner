@@ -1,7 +1,7 @@
 import type {
-  OAuthCredentials,
-  OAuthLoginCallbacks,
-  OAuthProviderInterface,
+  AuthEvent,
+  AuthInteraction,
+  AuthPrompt,
 } from '@earendil-works/pi-ai';
 import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelope } from '../../../core/types';
 
@@ -12,16 +12,6 @@ import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelop
 // module (e.g. from a unit test) drags in no native dependency.
 
 export type OAuthEventSink = (envelope: OAuthLoginEventEnvelope) => void;
-
-export interface OAuthDeviceCodeInfo {
-  userCode: string;
-  verificationUri: string;
-  expiresInSeconds?: number;
-}
-
-export type DeviceCodeOAuthLoginCallbacks = OAuthLoginCallbacks & {
-  onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
-};
 
 /** Raised when a sign-in is cancelled (flow-level cancel or a per-step undefined answer). */
 class OAuthCancelledError extends Error {
@@ -38,11 +28,12 @@ class OAuthCancelledError extends Error {
  * in `oauthLoginManager` below.
  */
 export interface OAuthLoginDeps {
-  getProvider: (providerId: string) => OAuthProviderInterface | undefined;
-  persist: (providerId: string, credentials: OAuthCredentials) => Promise<void>;
+  login: (providerId: string, interaction: AuthInteraction) => Promise<void>;
   /** Create the provider's config row if missing, so a fresh login is selectable. */
   ensureProviderConfig: (providerId: string) => Promise<void>;
-  removeCredential: (providerId: string) => Promise<void>;
+  /** Dynamic providers refresh after login; catalog failure must not undo valid auth. */
+  refreshProviderModels?: (providerId: string) => Promise<void>;
+  logout: (providerId: string) => Promise<void>;
   getSettings: () => Promise<AgentProviderSettingsView>;
 }
 
@@ -73,57 +64,99 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
   const sessions = new Map<string, ActiveSession>();
   let requestCounter = 0;
 
-  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): DeviceCodeOAuthLoginCallbacks {
-    // Emit a reply-needed event and await the renderer's answer. Rejects (not an
-    // empty string) on cancellation, so login() unwinds cleanly instead of being
-    // fed a blank code that some provider loops surface as "missing code".
-    const ask = (build: (requestId: string) => OAuthLoginEvent): Promise<string> => {
+  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): AuthInteraction {
+    // Emit a reply-needed event and await the renderer's answer. Both the whole
+    // flow signal and pi-ai's per-prompt signal reject instead of returning a
+    // blank value, so callback/manual-code races unwind without a stale prompt.
+    const ask = (prompt: AuthPrompt, build: (requestId: string) => OAuthLoginEvent): Promise<string> => {
       const requestId = `oauth:${providerId}:${++requestCounter}`;
       return new Promise<string>((resolve, reject) => {
-        session.pending.set(requestId, { resolve, reject });
+        let settled = false;
+        const cleanup = () => prompt.signal?.removeEventListener('abort', onAbort);
+        const pending: PendingReply = {
+          resolve: (value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(value);
+          },
+          reject: (error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+          },
+        };
+        const onAbort = () => {
+          if (session.pending.get(requestId) === pending) session.pending.delete(requestId);
+          pending.reject(new OAuthCancelledError());
+        };
+        if (prompt.signal?.aborted) {
+          pending.reject(new OAuthCancelledError());
+          return;
+        }
+        prompt.signal?.addEventListener('abort', onAbort, { once: true });
+        session.pending.set(requestId, pending);
         emit({ providerId, event: build(requestId) });
       });
     };
-    return {
-      onAuth: (info) => emit({ providerId, event: { kind: 'auth', url: info.url, instructions: info.instructions } }),
-      onDeviceCode: (info: OAuthDeviceCodeInfo) =>
+
+    const notify = (event: AuthEvent): void => {
+      if (event.type === 'auth_url') {
+        emit({ providerId, event: { kind: 'auth', url: event.url, instructions: event.instructions } });
+        return;
+      }
+      if (event.type === 'device_code') {
         emit({
           providerId,
           event: {
             kind: 'device-code',
-            userCode: info.userCode,
-            verificationUri: info.verificationUri,
-            expiresInSeconds: info.expiresInSeconds,
+            userCode: event.userCode,
+            verificationUri: event.verificationUri,
+            expiresInSeconds: event.expiresInSeconds,
           },
-        }),
-      onProgress: (message) => emit({ providerId, event: { kind: 'progress', message } }),
-      onPrompt: (prompt) =>
-        ask((requestId) => ({ kind: 'prompt', requestId, message: prompt.message, placeholder: prompt.placeholder })),
-      onManualCodeInput: () => ask((requestId) => ({ kind: 'manual-code', requestId })),
-      onSelect: (prompt) =>
-        ask((requestId) => ({
-          kind: 'select',
+        });
+        return;
+      }
+      emit({ providerId, event: { kind: 'progress', message: event.message } });
+    };
+
+    return {
+      signal: session.abort.signal,
+      notify,
+      prompt: (prompt) => {
+        if (prompt.type === 'select') {
+          return ask(prompt, (requestId) => ({
+            kind: 'select',
+            requestId,
+            message: prompt.message,
+            options: prompt.options.map((option) => ({ id: option.id, label: option.label })),
+          }));
+        }
+        if (prompt.type === 'manual_code') {
+          return ask(prompt, (requestId) => ({ kind: 'manual-code', requestId }));
+        }
+        return ask(prompt, (requestId) => ({
+          kind: 'prompt',
           requestId,
           message: prompt.message,
-          options: prompt.options.map((option) => ({ id: option.id, label: option.label })),
-        })),
-      signal: session.abort.signal,
+          placeholder: prompt.placeholder,
+        }));
+      },
     };
   }
 
   async function startLogin(providerId: string, emit: OAuthEventSink): Promise<AgentProviderSettingsView> {
-    const provider = deps.getProvider(providerId);
-    if (!provider) throw new Error(`unknown oauth provider: ${providerId}`);
     cancel(providerId); // a second sign-in attempt replaces any in-flight one
     const session: ActiveSession = { abort: new AbortController(), pending: new Map() };
     sessions.set(providerId, session);
     try {
-      const credentials = await provider.login(buildCallbacks(providerId, session, emit));
-      await deps.persist(providerId, credentials);
+      await deps.login(providerId, buildCallbacks(providerId, session, emit));
       // A login with no config row would be orphaned (credential on disk but no
       // selectable provider). The api-key path upserts a row; the oauth path must
       // too — do it before getSettings so the returned view shows the connection.
       await deps.ensureProviderConfig(providerId);
+      await deps.refreshProviderModels?.(providerId).catch(() => undefined);
       return await deps.getSettings();
     } finally {
       if (sessions.get(providerId) === session) sessions.delete(providerId);
@@ -161,7 +194,7 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
 
   async function logout(providerId: string): Promise<AgentProviderSettingsView> {
     cancel(providerId);
-    await deps.removeCredential(providerId);
+    await deps.logout(providerId);
     return deps.getSettings();
   }
 

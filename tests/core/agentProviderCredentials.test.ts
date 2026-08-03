@@ -7,15 +7,19 @@ import {
   type Credential,
   type OAuthCredential,
 } from '@earendil-works/pi-ai';
+import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
+import { cloudflareStreams } from '@earendil-works/pi-ai/providers/cloudflare-stream';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
+  piCredentialStore,
   piCustomProviderId,
   piModels,
   piProviders,
+  piResolveAuthApiKey,
   piStreamSimple,
 } from '../../src/main/piModels';
 import {
@@ -33,8 +37,6 @@ type StoredOAuth = { refresh: string; access: string; expires: number };
 let currentUserData = '';
 let oauthRefreshImpl: (credential: OAuthCredential) => Promise<OAuthCredential> = async (credential) => credential;
 let oauthToApiKeyImpl: (credential: OAuthCredential) => Promise<string> = async (credential) => credential.access;
-const TEST_OAUTH_PROVIDER_IDS = ['anthropic', 'github-copilot', 'openai-codex'] as const;
-const testOAuthProviders = () => TEST_OAUTH_PROVIDER_IDS.map((id) => ({ id, name: id }));
 
 mock.module('electron', () => ({
   app: {
@@ -56,12 +58,6 @@ mock.module('electron', () => ({
     encryptString: () => { throw new Error('safeStorage should not be used'); },
     decryptString: () => { throw new Error('safeStorage should not be used'); },
   },
-}));
-
-mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthProvider: (id: string) =>
-    testOAuthProviders().find((provider) => provider.id === id),
-  getOAuthProviders: testOAuthProviders,
 }));
 
 const {
@@ -239,6 +235,73 @@ describe('provider credential resolver', () => {
     expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH', xhigh: 'XHIGH', max: 'MAX' });
   });
 
+  test('refreshes dynamic text catalogs and advertises the refresh capability', async () => {
+    const providerId = 'dynamic-catalog-test';
+    let refreshCount = 0;
+    let refreshCredential: Credential | undefined;
+    const dynamicModel = {
+      id: 'dynamic-model',
+      name: 'Dynamic Model',
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://dynamic.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    };
+    const createDynamicCatalogProvider = () => createProvider({
+      id: providerId,
+      name: 'Dynamic Catalog Test',
+      auth: {
+        apiKey: {
+          name: 'Dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [],
+      fetchModels: async ({ credential }) => {
+        refreshCount += 1;
+        refreshCredential = credential;
+        return [dynamicModel];
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    });
+    piModels().setProvider(createDynamicCatalogProvider());
+
+    try {
+      await setProviderApiKey(providerId, 'dynamic-key');
+      const before = await upsertProviderConfig({ providerId, enabled: true });
+      expect(before.availableProviders.find((provider) => provider.providerId === providerId)?.capabilities).toEqual([{
+        kind: 'language',
+        refreshable: true,
+        models: [],
+      }]);
+
+      const refreshedView = await refreshProviderModels(providerId);
+      expect(refreshCount).toBe(1);
+      expect(refreshCredential).toEqual({ type: 'api_key', key: 'dynamic-key', env: undefined });
+      expect(refreshedView.availableProviders.find((provider) => provider.providerId === providerId)).toMatchObject({
+        capabilities: [{ kind: 'language', refreshable: true }],
+        models: [{ id: 'dynamic-model', name: 'Dynamic Model' }],
+      });
+
+      piModels().setProvider(createDynamicCatalogProvider());
+      expect(piModels().getModels(providerId)).toEqual([]);
+      await piModels().refresh({ allowNetwork: false });
+      expect(refreshCount).toBe(1);
+      expect(piModels().getModels(providerId)).toEqual([dynamicModel]);
+    } finally {
+      piModels().deleteProvider(providerId);
+    }
+  });
+
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {
     installCcSwitchRegistry({ apiKey: 'registry-key' });
     const view = await getProviderSettings();
@@ -268,9 +331,32 @@ describe('provider credential resolver', () => {
 
     const model = rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0];
     expect(model?.id).toBe(runtime?.modelId);
-    const resolved = model ? await piModels().getAuth(model) : undefined;
-    expect(resolved?.auth.apiKey).toBe('registry-key');
-    expect(resolved?.source).toBe('CC Switch registry');
+    expect(model ? await piResolveAuthApiKey(model) : undefined).toBe('registry-key');
+  });
+
+  test('passes the selected CC Switch source key to the connection probe request', async () => {
+    installCcSwitchRegistry({ apiKey: 'registry-key' });
+    await getProviderSettings();
+    const originalFetch = globalThis.fetch;
+    let authorization: string | null = null;
+    globalThis.fetch = (async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      authorization = request.headers.get('authorization');
+      return new Response(JSON.stringify({ error: { message: 'Probe stopped after auth capture.' } }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(testProviderConnection({ providerId: CC_SWITCH_LOCAL_PROVIDER_ID })).resolves.toMatchObject({
+        success: false,
+        statusCode: 401,
+      });
+      expect(authorization).toBe('Bearer registry-key');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('refreshes CC Switch registry models from provider model catalog without probing /models', async () => {
@@ -471,6 +557,16 @@ describe('provider credential resolver', () => {
     expect(await getStoredProviderApiKey('openai')).toEqual({ providerId: 'openai', apiKey: 'sk-test' });
   });
 
+  test('credential store lists non-secret provider metadata', async () => {
+    await setProviderApiKey('openai', 'sk-secret');
+    await persistOAuthCredential('anthropic', { refresh: 'refresh-secret', access: 'access-secret', expires: 999 });
+
+    expect([...(await piCredentialStore().list())].sort((left, right) => left.providerId.localeCompare(right.providerId))).toEqual([
+      { providerId: 'anthropic', type: 'oauth' },
+      { providerId: 'openai', type: 'api_key' },
+    ]);
+  });
+
   test('clearing the key field removes a stored key but never an oauth login', async () => {
     await setProviderApiKey('openai', 'sk-test');
     await setProviderApiKey('openai', '');
@@ -509,7 +605,7 @@ describe('provider credential resolver', () => {
     oauthRefreshImpl = async () => {
       refreshCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 10));
-      return { type: 'oauth', refresh: 'r1', access: 'a1', expires: Date.now() + 60_000 };
+      return { type: 'oauth', refresh: 'r1', access: 'a1', expires: Date.now() + 10 * 60_000 };
     };
     oauthToApiKeyImpl = async (credential) => credential.access;
 
@@ -546,15 +642,69 @@ describe('provider credential resolver', () => {
       process.env.CLOUDFLARE_ACCOUNT_ID = 'cf-account';
       process.env.CLOUDFLARE_GATEWAY_ID = 'cf-gateway';
 
-      const model = piModels().getModels('cloudflare-ai-gateway')[0];
+      const originalProvider = piModels().getProvider('cloudflare-ai-gateway');
+      const model = originalProvider?.getModels()[0];
       if (!model) throw new Error('Missing Cloudflare AI Gateway test model');
 
-      const auth = await piModels().getAuth(model);
-      expect(auth?.auth.apiKey).toBeUndefined();
-      expect(auth?.auth.headers).toMatchObject({ 'cf-aig-authorization': 'Bearer cf-key' });
-      expect(auth?.auth.baseUrl).toContain('cf-account');
-      expect(auth?.auth.baseUrl).toContain('cf-gateway');
-      expect(await getProviderApiKey('cloudflare-ai-gateway')).toBeUndefined();
+      const dispatched: Array<{
+        baseUrl: string;
+        env?: Record<string, string>;
+        headers?: Record<string, string | null>;
+      }> = [];
+      piModels().setProvider(createProvider({
+        id: 'cloudflare-ai-gateway',
+        name: 'Cloudflare AI Gateway',
+        auth: { apiKey: cloudflareAIGatewayAuth() },
+        models: [model],
+        api: cloudflareStreams({
+          stream: () => { throw new Error('stream should not be called'); },
+          streamSimple: (requestModel, _context, options) => {
+            dispatched.push({
+              baseUrl: requestModel.baseUrl,
+              env: options?.env,
+              headers: options?.headers,
+            });
+            const stream = createAssistantMessageEventStream();
+            queueMicrotask(() => {
+              const message = {
+                ...fauxAssistantMessage(fauxText('Cloudflare routed.')),
+                api: requestModel.api,
+                provider: requestModel.provider,
+                model: requestModel.id,
+              };
+              stream.push({ type: 'start', partial: { ...message, content: [] } });
+              stream.push({ type: 'done', reason: 'stop', message });
+              stream.end(message);
+            });
+            return stream;
+          },
+        }),
+      }));
+
+      try {
+        const auth = await piModels().getAuth(model);
+        expect(auth?.auth.apiKey).toBeUndefined();
+        expect(auth?.auth.headers).toMatchObject({ 'cf-aig-authorization': 'Bearer cf-key' });
+        expect(auth?.env).toEqual({
+          CLOUDFLARE_ACCOUNT_ID: 'cf-account',
+          CLOUDFLARE_GATEWAY_ID: 'cf-gateway',
+        });
+
+        await piModels().completeSimple(model, {
+          messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+        });
+        expect(dispatched).toEqual([{
+          baseUrl: expect.stringContaining('/cf-account/cf-gateway/'),
+          env: {
+            CLOUDFLARE_ACCOUNT_ID: 'cf-account',
+            CLOUDFLARE_GATEWAY_ID: 'cf-gateway',
+          },
+          headers: expect.objectContaining({ 'cf-aig-authorization': 'Bearer cf-key' }),
+        }]);
+        expect(await getProviderApiKey('cloudflare-ai-gateway')).toBeUndefined();
+      } finally {
+        if (originalProvider) piModels().setProvider(originalProvider);
+      }
     } finally {
       restoreEnv('CLOUDFLARE_API_KEY', saved.key);
       restoreEnv('CLOUDFLARE_ACCOUNT_ID', saved.account);

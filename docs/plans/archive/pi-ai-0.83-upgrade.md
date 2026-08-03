@@ -80,8 +80,8 @@ Expected implementation surface:
 - `docs/spec/agent-model-runtime.md`
 - `docs/spec/design-system/surfaces.md`
 
-`src/core/types.ts` is not expected to change: the existing OAuth event union
-and OAuth-primary `authKind` remain sufficient. `docs/TASKS.md` and
+`src/core/types.ts` needs documentation-only updates: the existing OAuth event
+union and OAuth-primary `authKind` remain sufficient. `docs/TASKS.md` and
 `CHANGELOG.md` remain main-agent-owned.
 
 ## Risks
@@ -104,12 +104,19 @@ and OAuth-primary `authKind` remain sufficient. `docs/TASKS.md` and
 ## Collision Result
 
 The task board has no in-flight pi-ai, provider-auth, OAuth, or model-catalog
-claim. The only unclaimed in-progress work is `unified-command-surface`, whose
-declared area does not overlap this plan. GitHub's PR API timed out during the
-initial check; repeat the open-PR file-scope check before moving the Draft PR to
-ready. The active `agent-canonical-tool-call-history` branch touches
-`TurnDiagnostics.ts` but is not represented on the board or by a Draft PR; this
-branch will keep its diagnostics edit minimal and must rebase before review.
+claim. The initial check found `unified-command-surface`, whose declared area
+does not overlap this plan, plus an unclaimed
+`agent-canonical-tool-call-history` branch touching `TurnDiagnostics.ts`.
+
+The final open-PR file-scope check found two shared-file overlaps. Draft PR #483
+now claims `TurnDiagnostics.ts`, its focused test, and
+`docs/spec/agent-model-runtime.md`; this branch keeps the diagnostics change to
+the new streaming-only `pending` guard. PR #486 touches the English and Chinese
+message catalogs for unrelated Thread command keys. Neither overlap shares an
+edited symbol or copy key, but the main integration agent must sequence and
+rebase whichever PR lands second. Open PRs #480 and #485 do not overlap this
+plan, and no other PR claims the dependency files, provider auth, OAuth, or model
+catalog implementation.
 
 ## Verification
 
@@ -123,13 +130,22 @@ branch will keep its diagnostics edit minimal and must rebase before review.
 - focused provider/OAuth settings E2E
 - `bun run test:e2e`, classified against the repository's current CI baseline
 
+Outcome on 2026-08-03:
+
+- `bun run typecheck`, `bun run test:core` (1716 pass, 6 skip),
+  `bun run test:renderer`, and `bun run app:build` passed.
+- Focused provider/OAuth E2E passed 37/37.
+- Full E2E passed 549/551. The two failures were unrelated concurrency-sensitive
+  Thread-scroll and trailing-input tests; both passed three consecutive focused
+  reruns with one worker (6/6).
+
 ## Checklist
 
-- [ ] Claim the scope with a Draft PR.
-- [ ] Upgrade pi-ai and pin TypeBox directly.
-- [ ] Migrate OAuth and credential storage contracts.
-- [ ] Preserve custom endpoint and CC Switch auth behavior.
-- [ ] Wire dynamic text catalogs and new OAuth-capable providers.
-- [ ] Keep `pending` out of durable terminal diagnostics.
-- [ ] Update focused tests and current specs.
-- [ ] Run and record the full verification matrix.
+- [x] Claim the scope with a Draft PR.
+- [x] Upgrade pi-ai and pin TypeBox directly.
+- [x] Migrate OAuth and credential storage contracts.
+- [x] Preserve custom endpoint and CC Switch auth behavior.
+- [x] Wire dynamic text catalogs and new OAuth-capable providers.
+- [x] Keep `pending` out of durable terminal diagnostics.
+- [x] Update focused tests and current specs.
+- [x] Run and record the full verification matrix.
