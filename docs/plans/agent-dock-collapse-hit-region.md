@@ -32,6 +32,15 @@ toggle's complete hit box and macOS consumes the pointer input as title-bar drag
 input before React receives `onClick`. Remove the declaration from
 `.thread-dock-header`; keep its dimensions and spacing unchanged.
 
+This deliberately gives up native dragging and double-click zooming across the
+rest of the dock-open header band: at the canonical 344px dock width, only the
+roughly 53px fixed right `WindowChrome` zone remains draggable and about 290px
+does not. Restoring that area would require a separate inner drag spacer bounded
+to the header's content box so it ends before the sibling toggle zone. That is a
+valid follow-up, but not part of this behavior fix: the smaller ownership model
+matches the shell contract and keeps every dock-header control on an ordinary
+pointer surface.
+
 ### Thread-list affordance
 
 The fixed agent toggle already identifies the dock, while the selected Thread
@@ -49,13 +58,15 @@ accessible name and `aria-expanded` state remain unchanged.
 
 Add a focused renderer E2E file that checks both halves of the contract:
 
-- the computed app region for `.thread-dock-header` is not `drag`;
+- no computed `drag` region outside the fixed `WindowChrome` ownership subtrees
+  geometrically intersects the agent toggle;
 - clicking the fixed toggle changes the dock from `open` to `collapsed` and back;
 - the root Thread list trigger has no redundant leading glyph and exposes its
   downward chevron in the default closed state.
 
-The computed-style assertion catches the native-only failure mechanism that a
-plain Chromium click cannot reproduce. The behavior assertion keeps the existing
+The computed-style geometry assertion catches the native-only failure mechanism
+that a plain Chromium click cannot reproduce, including a future overlapping
+sibling under a different selector. The behavior assertion keeps the existing
 React state path covered without coupling the test to animation timing.
 
 ### Specification alignment
@@ -73,9 +84,9 @@ None.
 
 ## Verification
 
-- [ ] `bun run typecheck`
-- [ ] Focused agent-toggle E2E coverage
-- [ ] Relevant renderer tests
-- [ ] `bun run docs:check`
+- [x] `bun run typecheck`
+- [x] Focused agent-toggle E2E coverage
+- [x] Relevant renderer tests
+- [x] `bun run docs:check`
 - [ ] Native macOS click verification when an isolated Electron instance is
       available

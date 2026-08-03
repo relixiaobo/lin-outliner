@@ -6,25 +6,46 @@ test.describe('window chrome hit regions', () => {
     await openMockedApp(page);
   });
 
-  test('keeps the agent toggle outside the Thread header drag region', async ({ page }) => {
+  test('keeps every sibling drag region outside the agent toggle', async ({ page }) => {
     const regions = await page.evaluate(() => {
       const appRegion = (selector: string) => {
         const element = document.querySelector(selector);
         if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
         return getComputedStyle(element).getPropertyValue('-webkit-app-region').trim();
       };
+      const toggle = document.querySelector('.agent-toggle');
+      if (!(toggle instanceof HTMLElement)) throw new Error('missing .agent-toggle');
+      const toggleBox = toggle.getBoundingClientRect();
+      const overlappingSiblingDragRegions = [...document.querySelectorAll<HTMLElement>('*')]
+        .filter((element) => (
+          element.closest('.window-chrome-zone') === null
+          && getComputedStyle(element).getPropertyValue('-webkit-app-region').trim() === 'drag'
+        ))
+        .filter((element) => {
+          const box = element.getBoundingClientRect();
+          return box.width > 0
+            && box.height > 0
+            && box.left < toggleBox.right
+            && box.right > toggleBox.left
+            && box.top < toggleBox.bottom
+            && box.bottom > toggleBox.top;
+        })
+        .map((element) => ({
+          className: element.className,
+          tagName: element.tagName,
+        }));
       return {
         rightZone: appRegion('.window-chrome-zone-right'),
         agentToggle: appRegion('.agent-toggle'),
-        threadHeader: appRegion('.thread-dock-header'),
+        overlappingSiblingDragRegions,
       };
     });
 
     expect(regions.rightZone).toBe('drag');
     expect(regions.agentToggle).toBe('no-drag');
-    // Plain Chromium does not consume native title-bar clicks, so guard the
-    // Electron failure mechanism directly as well as exercising the state path.
-    expect(regions.threadHeader).not.toBe('drag');
+    // Plain Chromium does not consume native title-bar clicks. Guard the native
+    // failure mechanism across every sibling subtree, not only today's header.
+    expect(regions.overlappingSiblingDragRegions).toEqual([]);
 
     const dock = page.locator('.agent-dock');
     await expect(dock).toHaveAttribute('data-rail-state', 'open');
