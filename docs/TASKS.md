@@ -62,16 +62,14 @@ fail every single CI macOS sample and have never failed locally
 (`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
 baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
 broke them — there was no signal, so nobody knew.
-`agent-browser-control` implementation is **shelved** (PM ruling 2026-07-31) — and this
-line used to say "pending upstream Browser Pilot stabilization", which is **not** what was
-ruled. Corrected 2026-08-03: most of the plan was **superseded**, not paused. #406's
-managed-Skill channel already ships catalog recommendation, install from any public
-repository, and pinned-commit updates with preview and rollback, so Browser Pilot
-integrates through that path with **no Tenon code and no release**; the plan's distribution
-half would have coupled Tenon's release cadence to another project's for no security gain.
-What survives is narrower and real — turning browser artifacts (screenshots, PDFs,
-downloads) into durable Thread resources — and needs a re-scope plus a fresh PM go-ahead
-before anyone claims it. See the full entry under *Agent capabilities*.
+`agent-browser-control` is **closed as `superseded`** (2026-08-03) and its plan is archived.
+The 2026-07-31 ruling predicted that #406's managed-Skill channel made it unnecessary;
+that is now observable — `catalog/managed-skills-v1.json` ships `browser-pilot` as its
+first entry, and `src/` has no browser-control code. Browser Pilot reaches users with no
+Tenon code and no Tenon release. One piece never got built and is not obsolete: turning
+tool artifacts into durable Thread resources with a per-Turn output root. It is not
+browser-specific, and being filed inside a browser plan is part of why it never started —
+board it tool-agnostically if it is wanted.
 Recently merged: #471 (`cc-2/agent-subagent-navigation`, `agent-subagent-interaction`
 PR 2) after a **high** review gate — thirty candidates, ten verified findings, every
 one real and all ten answered in one hardening commit; the gate's own verify pass
@@ -652,55 +650,25 @@ see *Recently completed*.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-browser-control** (P1 design, **implementation `shelved` by PM ruling
-  2026-07-31, and its distribution half `superseded`**; design updated #443, revised
-  #459) — the in-repo blockers cleared (#455/#460 landed, #456's catalog judge guards
-  the landing zone), but the review of *how* Browser Pilot should arrive concluded the
-  plan was solving a problem we had already solved. Its distribution design (checked-in
-  release manifest, build-time `extraResources` staging, `resourcesPath`-only executable
-  resolution, bundled upstream skill directory, and the non-goal at `:38` forbidding
-  PATH discovery / `npx` / install-during-a-task) **couples Tenon's release cadence to
-  Browser Pilot's for no security gain** — Full Access already permits arbitrary
-  commands through `bash`, so refusing to discover one binary buys reproducibility, not
-  safety. #406's managed-Skill channel already ships catalog recommendation, install
-  from any public repository, pinned-commit updates with preview and rollback; a tool's
-  own Skill owns its preflight and version pairing (see *Third-Party Tool Integration*
-  in `docs/spec/agent-skills.md`). Browser Pilot integrates through that path with **no
-  Tenon code and no release**. What survives as genuinely Tenon-side value is narrower:
-  **turning browser artifacts (screenshots, PDFs, downloads) into durable Thread
-  resources** readable by `file_read` and pruned by the resource system, plus the
-  per-Turn output root and browser-shaped capability effects. The output-flag
-  vocabulary at `:362-371` should go with the rest — parsing another project's flags to
-  guess where it writes is the same category of mistake, and it means adding a flag to
-  Browser Pilot can break Tenon admission; push containment into the tool via
-  `BROWSER_PILOT_OUTPUT_DIR` instead. Re-scope before any claim; do not claim without a
-  fresh PM go-ahead.
-
-  The shelved design: Tenon consumes pinned Browser Pilot 0.5 and its matching skill through
-  its classified `bash` path rather than reimplementing browser automation or
-  exposing a Tenon-native tool family. One complete feature PR first establishes
-  prepared execution and durable projection, then adds deterministic distribution,
-  the direct command provider, Thread identity, Turn files, conservative Browser
-  capabilities, transient stdin, lifecycle cleanup, and per-Turn Skill availability.
-  **Plan revision shipped 2026-07-30 (PR #459, codex-3)**: Prepared Tool
-  Execution is rebuilt on the kernel's runner port — four-operation
-  `ToolExecutionContract` (adding `projectUpdate` for transient/durable update
-  splitting), a durable intent/decision start-event envelope consumed by
-  `PiEventNormalizer` (which stays the sole tool-Item translator with the
-  #444 diagnostics chain intact), `ToolExecutionAdapter` replacing
-  `ToolRuntime.instrumentTool` as the sole prepared-lifecycle and
-  extension-hook owner, the host-only `ToolSafetyEffect` vocabulary with the
-  new ordered `decide(effect)` stage (non-user-configurable safety floor
-  first — PM-ruled 2026-07-30 — then explicit user blocks), and fail-closed
-  `unrecognized_output_path` admission for unclassified commands. The
-  2026-07-30/31 rulings (no catalog admission gate, worst-case unclassified
-  marker, Apple Silicon launch, Full Access sensitive-read default,
-  conversation-only authorization remediation) are folded in. The claiming
-  dev rebases on the landed #455/#460 catalog baseline and repeats the
-  open-PR scope check before claiming code. URL Preview remains wholly
-  independent. See `docs/plans/agent-browser-control.md`. **This is the single
-  largest unclaimed P1;** codex-3 authored the #459 revision and holds the most
-  context, but the claim is open.
+- **agent-browser-control** (P1 design, **`superseded` and closed 2026-08-03** — plan archived
+  at `docs/plans/archive/agent-browser-control.md`; design authored #442/#443, revised #459;
+  **no product code ever shipped, and none is needed**) — the 2026-07-31 review concluded the
+  plan was solving a problem #406's managed-Skill channel had already solved, and that is now
+  observable rather than predicted: **`catalog/managed-skills-v1.json` ships `browser-pilot`
+  as its first entry** (`relixiaobo/browser-pilot`, `plugin/skills/browser-pilot`, tracked
+  `main`, with a compatibility range), while `rg -il 'browserPilot|browser-control' src/` is
+  empty. Browser Pilot reaches users through catalog recommendation, install from a public
+  repository, and pinned-commit updates with preview and rollback — no Tenon code, no Tenon
+  release. The plan's distribution half (checked-in release manifest, build-time
+  `extraResources` staging, `resourcesPath`-only executable resolution, and the non-goal
+  forbidding PATH discovery) would have coupled Tenon's release cadence to another project's
+  for no security gain: Full Access already permits arbitrary commands through `bash`, so
+  refusing to discover one binary buys reproducibility, not safety.
+  **What did not get built, and is not obsolete:** turning tool artifacts — screenshots, PDFs,
+  downloads — into durable Thread resources readable by `file_read` and pruned by the resource
+  system, plus a per-Turn output root. That is worth having and is **not browser-specific**;
+  filing it inside a browser plan is part of why it never started. If it is wanted, board it
+  as a tool-agnostic item rather than reviving this one.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
@@ -1394,7 +1362,7 @@ anything.
 - **browser-control-plan-refresh**
   (`codex-3/agent-browser-control-plan-refresh`, PR #459, codex-3, merged
   2026-07-30, plan-track design update) — realigned
-  `docs/plans/agent-browser-control.md` with the post-#444/#445/#451/#456
+  `docs/plans/archive/agent-browser-control.md` with the post-#444/#445/#451/#456
   runtime and folded in the 2026-07-30/31 PM rulings; plan-only, no product
   code. **Gate (main):** medium review confirmed 7 findings — the plan leaned
   on a nonexistent `decide(effect)`/safety-floor mechanism, `capabilityIntent`
@@ -1537,7 +1505,7 @@ anything.
   prepared-execution and durable-projection boundary followed by the direct CLI
   provider, deterministic distribution, Thread identity, Turn files, capability
   mapping, lifecycle cleanup, and atomic Skill availability. The implementation
-  remains pending in `docs/plans/agent-browser-control.md`; no product code shipped.
+  remains pending in `docs/plans/archive/agent-browser-control.md`; no product code shipped.
   **Gate (main):** ultra review closed the external-message block bypass, missing
   non-shell stdin transport, and restricted-Thread Skill visibility findings.
   Final head `830aaa12` had no reportable findings; `docs:check` and diff check
@@ -1551,7 +1519,7 @@ anything.
   and pre-persistence input/output redaction. URL Preview rich capture is now a
   separate future read-only internal-Preview feature; launcher provider breadth
   owns classification only. The implementation plans remain active at
-  `docs/plans/agent-browser-control.md`,
+  `docs/plans/archive/agent-browser-control.md`,
   `docs/plans/browser-extension-integration.md`,
   `docs/plans/launcher-provider-expansion.md`, and
   `docs/plans/unified-command-surface.md`.
@@ -2749,7 +2717,7 @@ anything.
   directional/security-sensitive. **Gate (main):** deep document review against both reference projects
   found stale built-in-skill packaging wording, an incorrect `cu` paste method name, and missing
   `bp net --after` coverage; codex fixed all before merge. Verified on the merge: `bun run docs:check`
-  and `git diff --check`. Shape (b), active plan files: `docs/plans/agent-browser-control.md` and
+  and `git diff --check`. Shape (b), active plan files: `docs/plans/archive/agent-browser-control.md` and
   `docs/plans/agent-computer-control.md`.
 
 - **linlab-built-in-skills** (`codex-3/linlab-built-in-skills`, PR #359, codex-3,
