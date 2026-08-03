@@ -220,7 +220,11 @@ requirement, so the PM can drive several at once:
    side branch — the branch is deleted on merge and the evidence 404s with it.
 4. **Gate — main agent.** Run the review gate, integration-check against the real
    system, merge to `main`, update `docs/TASKS.md`, add a `CHANGELOG.md` entry
-   under `[Unreleased]`, and own merge ordering.
+   under `[Unreleased]`, and own merge ordering. **Append into the category
+   section that is already there** — never open a second `### Fixed`. Doing that
+   for 300+ merges produced one `[Unreleased]` block with 21 duplicate sections
+   and 445 entries, which made "what changed in this release" unanswerable until
+   it was untangled by hand on 2026-08-03.
 5. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main` on
    their active branches.
 
@@ -362,6 +366,11 @@ open an isolated PR and let the other agent rebase before continuing:
 
 - `bun.lock`, `package.json` — dependencies
 - `tsconfig.json`, `electron.vite.config.ts`, `vite.config.ts` — build
+- `.github/workflows/release.yml` — publishing. Pushing a `v*` tag builds the
+  `.dmg` and creates the GitHub Release with that version's `CHANGELOG.md`
+  section as its body; the tag and `package.json` version must agree or the job
+  fails. Builds are unsigned and Apple-silicon-only, both stated in the release
+  notes rather than left for the downloader to discover.
 - `.github/workflows/`, `playwright.config.ts` — the `main` e2e signal;
   main-agent-owned. It is deliberately not a PR gate and deliberately runs with
   `retries: 0` — turning retries on would make an unstable suite report green,

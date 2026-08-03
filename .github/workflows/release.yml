@@ -1,0 +1,82 @@
+# Publish a release when a `v*` tag is pushed.
+#
+# The project shipped ~450 changelog entries and 300+ merged pull requests without
+# ever publishing a build, so "how do I get this" had no answer. This is that
+# answer: tag, and a `.dmg` appears on the Releases page with the changelog
+# section for that version as its body.
+#
+# The notes come from CHANGELOG.md rather than being written here. Two
+# descriptions of one release drift, and the one nobody edits is the one users
+# read. `scripts/release-notes.ts` exits non-zero when the version has no
+# section, so a release with empty notes fails instead of publishing blank.
+#
+# The build is unsigned and un-notarized (`mac.identity: null`). That is a
+# standing decision, not an accident — signing needs an Apple Developer account —
+# and the generated notes say so, because without it a Gatekeeper block reads as
+# a broken download.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # Rehearsal without publishing: builds and uploads the artifact, creates no release.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to dry-run notes for, e.g. 0.1.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # macOS because the artifact is a macOS app; unlike the e2e signal, this one
+    # could not run anywhere else even in principle.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The tag and package.json must agree, or the app reports a version
+          # nobody can find on the Releases page.
+          declared="$(bun -e 'console.log(require("./package.json").version)')"
+          if [ "$declared" != "$version" ]; then
+            echo "::error::package.json is $declared but the release is $version. Bump one."
+            exit 1
+          fi
+
+      - name: Compose release notes
+        run: bun scripts/release-notes.ts "${{ steps.version.outputs.version }}" > notes.md
+
+      - name: Build the app
+        run: bun run app:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenon-${{ steps.version.outputs.version }}-dmg
+          path: release/*.dmg
+          if-no-files-found: error
+
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            release/*.dmg

@@ -8,192 +8,13 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
+Nothing yet. `main` is at `0.1.0`; add entries here and they move under the next tag.
 
-### Internal
+## [0.1.0] - 2026-08-03
 
-- **Collaboration tool handlers live in their own domain (PR #456, codex-2)** —
-  `ToolRuntime` carried the implementation of the collaboration tools as well as
-  the dispatch for every tool; the handlers moved verbatim into
-  `thread/SubagentCollaboration.ts` through the extension contribution seam,
-  leaving `ToolRuntime` as dispatch and assembly only (572 → 488 lines) and
-  retiring the subagent-budget plan's spawn-handler carve-out. A catalog
-  byte-stability judge landed before the move rather than after, so the tool
-  catalog is provably byte-unchanged across it and every future contribution
-  migration is guarded the same way.
-  *(Recorded 2026-08-03: this shipped 2026-07-30 with no changelog entry, found
-  by auditing merged pull requests against this file.)*
-
-- **The repository has CI (PR #477 + direct commits, main-agent)** — `main` had no automated test signal at
-  all, so a red baseline was only ever discovered when a PR gate happened to run
-  the full e2e suite; that had happened three rounds running, each time costing
-  the gating PR the work of proving the failures were not its own. Every push to
-  `main` now runs five independent whole-suite Playwright samples in parallel and
-  publishes a frequency table to one tracking issue. Five, because a single run
-  cannot tell a red baseline from a flake — a test was called deterministic here
-  on four consecutive failures and then passed twice. Whole-suite samples rather
-  than sharding or repeating individual tests, because the failures worth catching
-  only appear in a full run. It does not gate pull requests, and retries stay at
-  zero: making an unstable suite report green would hide the thing being measured.
-  It runs on macOS, because the suite encodes the platform the product ships on —
-  the first version ran on Linux, where a different keyboard modifier and font
-  stack produced ten stable failures that pass on macOS, which is the kind of
-  false red people learn to ignore. A pull request gets the same five samples on
-  the same runner image and a comment subtracting `main`'s numbers from its own,
-  because headless CI turned out to disagree with a developer's machine too —
-  attribution needs both measurements taken in one environment, not two
-  environments made to agree. Also fixed `trace: 'on-first-retry'` sitting
-  alongside an unset `retries`, which meant Playwright traces had never once been
-  captured.
-
-
-### Fixed
-
-- **Closing a menu in the agent panel no longer bounces your focus to the
-  composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
-  Escape put focus back on the trigger, as it should, and then a frame later the
-  composer took it away, so the next Tab started from the top of the document
-  instead of the control you had just used. The panel's click hand-back decides a
-  frame after the click whether anything claimed it, and for a control that opens
-  a popup that question has no good answer that late: the menu deliberately puts
-  focus back on its trigger, which is indistinguishable from the browser simply
-  leaving it there. A control that opens a popup now keeps focus for the whole
-  open-and-close cycle, decided at click time. One consequence: clicking a trigger
-  to close its own open menu leaves focus on the trigger, which is what native
-  menus do and what keyboard users need.
-
-### Changed
-
-- **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
-  delegating Turn now carries a live card in its process block: one line per
-  child agent with a readable name, its status, and elapsed time, so a
-  delegation is something you watch rather than something you wait out. Each
-  running line has its own Stop, a child Thread's header has one, and the
-  composer's Stop now closes the whole request — the Turn plus every piece of
-  delegated work it owns, including a child that was only holding queued work
-  and had not started yet. Stopping is scoped to the request you made, so
-  background work from an earlier request keeps running: it stays visible on
-  its own Turn's card, with its own Stop, rather than being swept up by a
-  decision you did not make. Work you stop stays stopped — queued content does
-  not resurface in a later request — and re-delegating to a stopped child is how
-  you resume it. Stop reaches only your own conversations, at any depth.
-- **One Skill library, and a way to add your own (PR #470, cc)** — Skill
-  settings were organised by where a Skill came from: a managed panel, then a
-  separate list of everything else, with catalog browse and a GitHub URL field
-  standing open as permanent page furniture. Provenance is an implementation
-  detail — you think "my Skills" — so it is now **one list over every source**,
-  sorted by the name you read, with the source as a chip on the row and
-  everything that adds a Skill collected behind a `+`. A managed Skill and a
-  local one are turned off the same way now, by one predicate rather than two
-  mechanisms, and the cap on how many Skills you could disable rose from 20 to
-  1000 — past 20 the 21st was silently dropped and the Skill stayed available
-  to the model. You can point Tenon at **a folder of your own Skills** from the
-  app for the first time; Tenon reads the Skills *inside* the folder you
-  choose, so picking a folder that is itself a Skill asks before adding its
-  container and says plainly that every other Skill in there comes along.
-  Managed update checks no longer run on every glance — at most once every six
-  hours per Skill, once shortly after launch — and when an update is waiting,
-  the Skills row in the settings sidebar says how many. A folder whose name
-  cannot be a Skill's name (a space, non-ASCII) is refused when it is read
-  rather than when it is written to, so a Skill can no longer load, list and
-  run while edits to its own definition go ungoverned.
-- **The Plan says which step the agent is on (PR #467, cc-2)** — the progress
-  pill above the composer showed a bare `Step 3 / 5`, so following along meant
-  opening the checklist to find out what step 3 was. It now carries the current
-  step's text — `2/5 · Draft the summary` — ellipsized to one line at a fixed
-  height so it never reflows the composer, and a Plan whose every step is
-  complete reads as complete rather than as its last step. The current step is
-  marked by weight and colour rather than by a spinner alone, whose cue
-  disappears entirely under reduced motion; step rows carry their status as
-  text for assistive technology, and the live announcement includes the step's
-  text rather than only a counter. The pill also appears on a Thread with **no
-  composer** — a watched child or automation Thread — where closing the
-  checklist returns focus to the pill instead of dropping it to the document
-  body.
-- **A Plan update is recorded like any other tool call (PR #468, cc-2)** — the
-  model would emit a dozen visible `Thought` rows deliberating about calling
-  `update_plan` and nothing would ever appear, because the Plan's tool-call Item
-  was deliberately excluded from the persisted Turn (PR #438). The reasoning
-  leaked the action while the action stayed hidden, so the agent read as
-  thinking about a tool it never called. `update_plan` is now an ordinary
-  recorded call: it reaches the transcript, counted activity groups, Turn
-  Diagnostics, reload history, and Turn copy through the paths every other tool
-  already uses. It is worded as the act — "Updated the plan", collapsing to
-  "Updated the plan 3 times" when consecutive — never as `Used update_plan`, and
-  carries its own glyph. The pill is unchanged and complementary: it remains the
-  ephemeral fast path for *which step* the agent is on, while the recorded call
-  is the account that it updated the Plan at all.
-- **The agent stops imitating its own thinking, and starts thinking again (PR
-  #465, codex-4)** — Tenon rebuilt canonical context before every provider call
-  and wrote reasoning Items back into the provider's own assistant channel as
-  `[Reasoning]`-prefixed text. That channel is a few-shot demonstration, so
-  after six Tenon-authored examples the model imitated the format: it emitted
-  `[Reasoning]` prose as a visible commentary message and spent zero reasoning
-  tokens on that call. Canonical reasoning now contributes no assistant prose to
-  reconstructed history, and signed native reasoning survives the tool loop
-  within a Turn, retained in memory under strict `(turnId, provider, api,
-  model)` identity. The retention can only re-attach reasoning parts to messages
-  canonical projection already produced — never a message, tool call, tool
-  result, or ordering — and an identity mismatch drops the part and continues
-  instead of failing the Turn. If a matching provider cannot prepare a payload
-  from an unrecognised signature, the gateway strips signed thinking and retries
-  preparation once; other provider, network, and service errors are unchanged.
-  No renderer filter was added, because hiding `[Reasoning]` would leave the
-  model still being taught to write it. A real OpenAI Responses run restored 134
-  native reasoning tokens across a three-call tool loop with no markers left in
-  the transcript.
-- **A subagent gets one row in the parent transcript, and that row tells the
-  truth (PR #466, codex-2)** — a delegated child used to append a fresh row for
-  every lifecycle event, so one subagent read as several and the parent's
-  transcript grew a row for work the reader had already seen finish. Each child
-  now occupies exactly one live presentation row: terminal parent Items are
-  authoritative, and the latest canonical child Turn is used only as the live
-  fallback, retained per Thread even when child history is unloaded — reload
-  omissions, rollback, and subtree deletion clear that cache rather than letting
-  it go stale. The row shows live elapsed time and distinct
-  idle/completed/interrupted/failed/unavailable states, and the process divider
-  says `Waiting on N subagents · elapsed` only when `wait_agent` is the sole
-  in-progress tool, so the parent never claims to be waiting on a child that
-  already finished. Collaboration identity (`status`, `taskPath`, `nickname`,
-  `role`) and the child's exact terminal `TurnError` are persisted as typed
-  records instead of a bare status string. Budget failures are classified only
-  by `Turn.error.code` and rendered as resource-limit copy with no token
-  quantities anywhere the reader can see, and raw collaboration output stays out
-  of user surfaces. Child Threads remain composer-less; navigation and
-  per-child interrupt are still to come. **This is a pre-release protocol clean
-  cut** — the codec rejects the old `subAgentActivity` and `agentsStates`
-  shapes, so wipe clone-local `~/.lin-outliner-*` dev userData before running.
-- **The run's status line stops claiming more than the run is doing (PR #463,
-  cc-2)** — a settled Turn is now always described in the past instead of
-  falling through to the live "Working" label, and exactly one element owns a
-  Turn's terminal status — with something always owning it, including the case
-  where a Turn was interrupted before it produced anything at all and no
-  process divider exists to state it. A Turn blocked on the user says so and
-  stops its spinner, because a spinner claims work is happening; the elapsed
-  time is deliberately left as wall-clock since the Turn started — the same
-  span the server records — so the live label and the settled one cannot
-  contradict each other, and the wait is named rather than subtracted. Counted
-  activity reports finished and in-flight work separately ("Read 5 files ·
-  reading 1") instead of one present-tense count covering work already done. A
-  reasoning disclosure that opened by default now latches open for the rest of
-  the Thread session, so an arriving Item can no longer snap it shut and shift
-  the layout under the reader — an explicit collapse still wins, and a reloaded
-  transcript rests at the settled default rather than permanently expanding
-  every reasoning Item a reader once watched live. The reconnect banner honors
-  `prefers-reduced-motion` and can no longer outlive the attempt it describes.
-- **Tool rows say what the agent did, and show status without a mystery glyph
-  (PR #461, cc-2)** — a tool row in the transcript now keeps its own icon and
-  reads as a sentence about the work: "Read \"Chapter Three\"" rather than
-  "Used node_read", with single rows and grouped rows speaking one vocabulary.
-  Status is carried by colour on that same glyph plus a word — a failed row
-  tints `--status-danger` and says so, and a collapsed group appends per-status
-  tallies where only the tally is tinted, so one failure out of six no longer
-  paints the whole line red. The generic red pill is gone. A command row
-  renders the caller's own bash `description` when there is one, while its
-  tooltip always keeps the real shell text, so a description can never mask
-  what actually ran; when there is none, the label strips heredoc bodies,
-  `cd X &&` scaffolding, and the thread's own working-directory prefix. Four
-  icons were re-picked (file delete, `web_fetch`, MCP vs unknown tool, skill).
+First tagged release. Everything below shipped to `main` before this tag and had been
+accumulating under `[Unreleased]` across 21 duplicate category sections, which made "what
+changed in this release" unanswerable; the sections are merged, no entry was edited.
 
 ### Added
 
@@ -274,641 +95,6 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   swallow it. Sizes, per-pane history, and the active pane are untouched; the
   agent-visible pane `order` renumbers to match.
 
-### Fixed
-
-- **A long conversation no longer loses the ability to delegate (PR #471,
-  cc-2)** — the descendant token pool was keyed on the parent Thread, so spend
-  accumulated across every Turn of that Thread's life against the 1.5M default.
-  Once it crossed, every later spawn was refused forever; the only reset was
-  subtree deletion, and `/clear` never touched the ledger. Because the user is
-  never shown a token number by design, this arrived as delegation silently
-  going dead with no cause and no way out. Spend is now request-scoped: a pool
-  belongs to the delegating Turn that opened it and is shared by everything
-  spawned inside that Turn's subtree, and the next Turn opens its own. A
-  fire-and-forget child keeps charging the request that asked for it until it
-  settles, and re-delegating to an idle child whose pool was already reclaimed
-  binds it to the pool of the Turn delegating now, so no descendant Turn runs
-  uncovered. Structure is deliberately not rescoped — depth 2 and the durable
-  sixteen-direct-children count stay Thread-lifetime.
-- **Expanding a transcript disclosure no longer moves the row you clicked (PR
-  #469, codex)** — opening a Thought, a tool output, or a long user message in
-  the agent transcript could shove that row up or down the screen, because
-  bottom-follow and the virtualized-row measurement compensation both
-  re-scrolled inside the same layout transaction as the toggle. An explicit
-  toggle now owns its transaction: the control's viewport position is captured
-  before the update and held while delayed measurements settle, and every
-  programmatic scroll — bottom pin, send anchoring, virtual compensation —
-  yields to it instead of competing with it. Work that arrives while the anchor
-  holds is replayed after it releases rather than dropped, so a streaming
-  response keeps following the bottom and a message sent mid-expansion still
-  lands at the top of the viewport. When the expansion needs more scroll range
-  than the transcript has, a transient renderer-only tail runway supplies
-  exactly the missing amount and is reclaimed by later content or by scrolling.
-  Sending or choosing Jump to latest supersedes a pending anchor outright, an
-  asynchronous tool-output read holds it only until the read lands (bounded at
-  three seconds, so a lost reply cannot latch scrolling), and wheel, pointer,
-  touch, or keyboard input still cancels it immediately.
-
-### Internal
-
-- **The built-in import Skill is named for what it is (PR #474, codex)** — the
-  Skill was called `data-cleanup`, after a category, while everything it
-  actually exposes — the wrapper on `PATH`, the CLI, the packaged resource
-  directory — was already `tenon-import`. It is `tenon-import` throughout now.
-  The packaged wrapper's executable bit is no longer set from a path written
-  out by hand in the packaging hook: one shared constant feeds both the runtime
-  and the hook, and a wrong path now fails the build loudly instead of skipping
-  the `chmod` in silence — the mode of failure that would otherwise ship an app
-  where the import CLI is present but cannot run.
-- **A core test no longer goes red because the machine is busy (PR #473,
-  codex-2)** — the deep shared-state export test builds a chain past the
-  snapshot-depth threshold, which costs about a second and a half on an idle
-  machine and eight times that when the CPU is contended. It inherited the
-  default five-second budget, so `test:core` failed for anyone running it
-  alongside other work. It now carries its own budget, chosen from measured
-  timings and written down next to it, and builds only as deep as the threshold
-  it is testing actually requires.
-- **The e2e suite is a clean gate signal again (PR #464, codex)** — the two
-  deterministic B5 guard failures that had been red on `main` since
-  `51d7cab8` were one real omission, not two: the "Jump to latest" pill paints
-  `--material-popover` with a backdrop filter but was never registered as a
-  chrome/overlay surface. It is registered now, by exact selector and with a
-  comment stating why it qualifies — transient level-1 navigation chrome
-  floating above the transcript viewport, which is what the Thread rendering
-  spec already calls it — rather than stripping glass off a surface the design
-  intends to have it; the guard's parsing and matching are unchanged. The
-  third spec filed as red, the `/attachment` file-name row, no longer
-  reproduces anywhere and was deliberately left alone instead of being
-  "fixed" by invention.
-
-- **Browser Control plan refresh (PR #459, codex-3, plan-only)** — the
-  `agent-browser-control` plan now matches the shipped runtime
-  (#444/#445/#451/#456) and the PM's pre-implementation rulings: prepared
-  execution rides the kernel runner port via a four-operation
-  `ToolExecutionContract`, capability intent and the allow/deny decision
-  travel in a durable start-event envelope, `ToolExecutionAdapter` supersedes
-  `ToolRuntime.instrumentTool` as the lifecycle/hook owner, and a new
-  non-user-configurable `decide(effect)` safety floor (host `ToolSafetyEffect`
-  vocabulary with `filesystem.write` first, plus fail-closed admission of
-  unrecognized output flags) backs worst-case containment for unclassified
-  commands. Gate review confirmed 7 findings; all addressed same-day.
-
-- **E2E guard debt paid down (main)** — cleared every deterministic guard
-  failure that had accumulated on `main` from merges whose gates ran unit
-  tests only: named the automation-settings and time-picker focus-ring
-  transfers plus the read-only `ProviderParameterList` tooltip component in
-  the cursor-affordances exception maps, tokenized the automation unread-dot
-  margin (`--space-3`), registered `canvas.css`'s pane-drag reduced-motion
-  rule, and rewrote the composer attachment-error probe around the Office
-  ownership-file rejection (the 10 MB limit it relied on was removed by
-  bounded large-file observations). Full e2e suite is deterministically
-  green; remaining one-off failures are parallel-load flakiness only.
-
-- **Agent thread UX plans (PR #454, cc-2, plan-only)** — three gate-reviewed
-  plans landed: `agent-subagent-interaction` (status truth for delegated work,
-  children leave the Thread list, live delegation card, cascading user Stop —
-  the task-contract Layer 1 opening), `agent-run-presentation-consistency`
-  (truthful tool-row/process states, plan-progress pill), and
-  `agent-thread-scroll-follow` (send anchoring + visible follow state). Gate
-  review contributed three corrections (bright-line-as-admission-invariant
-  ruling, collision refresh, #160 panel lineage citation); board entries carry
-  status.
-
-- **ThreadService decomposition (PR #451, codex-2)** — the 4,502-line god
-  object split into four owned modules over one shared coordination core:
-  `ThreadCore` (single `KeyedMutex` by construction, notification bus, stores,
-  canonical reads), `TurnLifecycle` (admission→acceptance→execution→steering),
-  `SubagentCollaboration` (spawn/mailbox/wait/activities),
-  `ThreadCatalogOps` (start/fork/rollback/archive/naming),
-  `ThreadResourceOps` (attachments/resources/pruning), behind a byte-compatible
-  850-line facade. Zero behavior change, proven mechanically: facade API frozen
-  (64/64 public methods), test suites entirely untouched (1554 core / 793
-  renderer, 0 fail), five-file line budget within +5% with 2 lines to spare,
-  `src/core/` and `runtime/` diff-empty, four per-stage commits, real-run
-  smoke. Zero review findings. **Gate (main):** six mechanical tripwires run
-  independently on both the original and post-#450 rebase baselines.
-
-- **Subagent token budgets, PR B: mid-Turn enforcement (PR #450, codex)** —
-  the kernel now consults a live budget view before every model call on
-  budgeted, non-user Turns (ThreadService supplies the committed ledger base;
-  the executor composes the normalizer's in-flight usage; user-triggered Turns
-  are never offered the port — the bright line holds mid-Turn). First crossing
-  of 80% delivers one canonical steering notice with actual figures
-  ("synthesize and conclude"), advisory under A12 (delivery failure logs and
-  continues). Exhaustion before outstanding model work settles the Turn
-  interrupted with ledger-total-of-budget figures; a terminal answer under
-  racing steering settles completed (overshoot accrues per PR A), undrained
-  steering is never falsely consumed, and the event cadence stays balanced.
-  Golden parity fixtures untouched (non-budgeted runs byte-identical).
-  **Gate (main):** high-effort review (7 verified defects, all fixed
-  same-day), plan tripwires, typecheck, 1554 core / 793 renderer tests.
-
-- **Subagent token budgets, PR A (PR #446, codex)** — spawn-time token budgets
-  as a host-owned circuit breaker (PM-ratified sizing policy: breaker not
-  allocation). Optional `max_total_tokens` on `spawn_agent`; global default
-  1,500,000 tokens ON by default (`subagentTokenBudget` runtime setting, null
-  disables); children of budgeted spawners default to min(default, spawner
-  remaining) and exhausted senders cannot spawn. Budgets live in a host-owned
-  `thread_budgets` ledger (`persistence/SubagentBudgetLedger.ts`, shared
-  goals.sqlite connection) — deliberately NOT a ThreadGoal, so no
-  auto-continuation enrollment, no Goal-slot collision, and the child cannot
-  lift its breaker. Exhausted children refuse non-user Turn admission with a
-  typed `SubagentBudgetExhaustedError` (goal continuation defers with the real
-  reason; automations fail with the accurate message; parents read it verbatim
-  from collaboration tools); steering an in-flight Turn is never gated; usage
-  accrues inside the completion mutex including failure paths; the mailbox is
-  snapshot-atomic across admission; `wait_agent`/`list_agents` report
-  `tokensUsed`/`tokenBudget`; user-triggered Turns are never gated. **Gate
-  (main):** three passes — two high-effort multi-agent reviews (18 verified
-  findings, all fixed; the first round overturned the plan's own Goal-reuse
-  design), tripwires, typecheck, 1544 core / 781 renderer tests, live
-  dev-userData verification incl. idle-child no-restart and bright-line
-  scenarios.
-
-- **pi-ai import containment (PR #447, codex-2, fast-track)** — routed all
-  `pi-ai` type imports in the context/policy layers through the two sanctioned
-  chokepoints (`kernel/types` for the type vocabulary; `piModels` for the few
-  runtime functions non-transport files need, e.g.
-  `getSupportedThinkingLevels`). Import-lines-only diff across 12 files; the
-  `pi-ai` importer list now equals the transport allowlist exactly, so a future
-  transport swap touches only gateway/transport files. **Gate (main):**
-  mechanical diff-shape check, completion-criterion command, typecheck,
-  1528 core / 781 renderer tests.
-
-- **Native turn kernel (PR #445, codex-2)** — replaced `@earendil-works/pi-agent-core`
-  (dependency deleted) with a Tenon-owned turn kernel under
-  `src/main/agent/runtime/kernel/`: a pure loop over four ports (`ModelGateway`
-  transport port in front of `pi-ai`, `retryPolicy` as the sole owner of retry
-  and overflow-recovery attempt hiding, `NativeAgentRuntime` behind the existing
-  `PiAgentRuntime` seam, Tenon-owned kernel types incl. the re-exported
-  transport vocabulary). Behavior is bug-for-bug pi parity per the plan's
-  22-rule behavioral contract: identical normalized Item streams (golden
-  fixture + four deliberate judge mutations), steering drain points, sequential
-  batch downgrade, truncated-tool-call rejection, provider failures as data
-  with full terminal messages, completed-tool-call salvage, overflow-failure
-  prefixes, and internal-memory raw-transcript turns. The `maxRetries: 0`
-  suppression hack and the 500-line `agentStreamAbort` wrapper are gone
-  (absorbed as `kernel/retryPolicy.ts`, rename-tracked, assertions unchanged);
-  error classification is typed and status-first with a dedicated regression
-  test. **Gate (main):** plan tripwires, typecheck, 1528 core / 781 renderer
-  tests, high-effort multi-agent review (10 verified findings — one retry
-  classification-order regression plus nine cleanups — all fixed same-day),
-  real-run smoke against cc-switch (mixed sequential/parallel tool batch,
-  mid-stream steering, diagnostics parity).
-
-- **Agent context runtime completion + Model Interactions (PR #444, codex-3)** —
-  completed and closed the `agent-context-integrity` plan (PR 3 of 3): deterministic
-  per-request context budgeting with indivisible tool exchanges; automatic
-  preflight, provider-overflow, and manual compaction plus durable `/clear`
-  epochs; recursive Skill/Role/view/observation checkpoint restoration across
-  restart, compaction, fork, and inheritance; exact Subagent parent boundaries
-  with dependency-complete child-owned copies; Turn-stable provider
-  timeout/retry/cache policy; typed, versioned, Thread-owned Turn diagnostics
-  (pre-adapter Model Context, post-adapter Provider Request, typed runtime
-  activities) behind a rebuilt disclosure-only Model Interactions inspector.
-  Includes two review-fix rounds (10 verified findings from the high-effort
-  multi-agent gate review — among them inherited-context compaction loss, an
-  unserialized prune race, stacked provider retries, and a custom-endpoint
-  prompt-cache regression) and the live-incident fixes (pending subagent
-  activities no longer poison the next user turn; 429 is retried; prompt cache
-  verified live against cc-switch), plus subagent orchestration contracts:
-  `wait_agent` is terminal-state-driven with batched terminal outcomes carrying
-  child results, isolated Skills advertise their capability contract in the
-  catalog and return `outcome`-tagged results with explicit
-  synthesize-don't-repeat guidance, and Skill children use the `agent.skill`
-  source. **Gate (main):** high-effort multi-agent review + live forensic
-  report (PR comments), typecheck, 1521 core / 781 renderer tests, docs:check,
-  real cc-switch runs with cache-hit evidence.
-
-- **Unified Agent context composer (PR #441, codex-3)** — replaced parallel
-  provider-message builders with one stable L0/L1/L2 composer, canonical replay,
-  and atomic evidence admission for environment, bounded user view, resources,
-  attachments/images, additional context, and user input. Added Skill catalog
-  and invocation integrity across same-Turn refresh, restart, and publication
-  retry while preserving provider bytes for cache reuse. This is a clean
-  pre-release replacement with no migration, compatibility reader, fallback, or
-  dual write. PRs 1–2 of the active six-PR `agent-context-integrity` plan are now
-  shipped; global budgeting and compaction is next. **Gate (main):** iterative
-  review caught missing expanded reference-target children and child counts in
-  the user view, namespaced extension tools being misclassified as Core L1
-  capabilities, and expanded table records duplicating visible column field
-  entries. All were fixed before merge. Final head `35be64c8` had no reportable
-  findings; merged-main verification covered typecheck, full `test:core` (1438
-  pass, 6 environment-dependent skips), full `test:renderer` (775 pass), docs,
-  and diff checks.
-- **Browser Control 0.5 implementation plan (PR #443, codex)** — pinned the
-  active design to Browser Pilot 0.5 and specified one complete feature PR built
-  foundation-first: prepared tool execution, independent durable projections,
-  deterministic CLI-and-Skill distribution, direct command routing, Thread
-  identity, Turn files, conservative Browser capabilities, transient stdin,
-  lifecycle cleanup, and per-Turn Skill availability. No product code shipped.
-  **Gate (main):** ultra review closed the external-message block bypass,
-  missing non-shell stdin transport, and restricted-Thread Skill visibility
-  findings. Final head `830aaa12` had no reportable findings; `docs:check` and
-  diff check passed against that exact head.
-- **Browser Control and URL Preview planning boundaries (PR #442, codex)** —
-  replaced the former Tenon-native browser-tool direction with a pinned Browser
-  Pilot CLI-and-skill consumer contract through the classified `bash` path,
-  including Thread client isolation, Turn scratch output, conservative external
-  action and sensitive-read capabilities, and redacted durable command/result
-  projections. Future URL Preview rich capture is now an independent explicit
-  read-only internal-Preview feature; launcher providers retain classification
-  ownership only. **Gate (main):** four review rounds closed seven architecture,
-  persistence, permission, and failure-semantics findings. Final head `0fa8be0c`
-  had no reportable findings; verification covered typecheck, docs, and diff
-  checks.
-- **Canonical Agent context evidence contract (PR #440, codex-3)** — added the
-  shared interface for strict context evidence, reset, and compaction Items;
-  exact cursors and payload references; verified quota-bound Thread payload
-  storage; typed resource dependencies; and restart, rollback, and fork
-  reconciliation. Managed tool images retain preview and Add-to-outline support
-  without exposing canonical or scratch paths. This is PR 1 of the active
-  six-PR `agent-context-integrity` plan; composer, Skill, context-budget,
-  Subagent-inheritance, and provider/cache consumers remain follow-up units.
-  **Gate (main):** iterative review caught payload kind confusion, persisted
-  scratch observation paths, an attachment-sized allocation ceiling, cleanup
-  errors misreporting durable rollback, source-owned inherited images, and the
-  managed-image ingest regression; all were fixed before merge. Final head
-  `b810a00a` had no reportable findings; verification covered typecheck, full
-  `test:core` (1402 pass, 6 environment-dependent skips), full `test:renderer`
-  (767 pass), focused ownership/ingest tests (57 pass), Agent Thread E2E (43
-  pass), docs, and diff checks.
-- **Office ingestion and ordered inline attachments (PR #439, codex-3)** —
-  rejects Office ownership files before attachment or reading, adds a bounded
-  in-process PPTX structural-text reader with Strict OOXML support, and renders
-  files and image galleries at their canonical message positions without
-  losing filename markers. **Gate (main):** iterative review caught incomplete
-  PPTX package identity and exact relationship-type validation, split-text
-  editing that could destroy attachment order, and galleries that omitted
-  canonical image markers; all were fixed before merge. Final head `996f096a`
-  had no reportable findings; verification covered typecheck, full `test:core`
-  (1389 pass, 6 environment-dependent skips), full `test:renderer` (765 pass),
-  focused Core/renderer tests (15 pass), relevant Agent E2E (3 pass), docs, and
-  diff checks.
-- **Unified Agent execution interactions (PR #438, codex-4)** — made Plan
-  updates transient Turn-local progress, navigates Run Details in the current
-  workspace pane with Back history, and gives ordinary tools and Skills one
-  expandable argument/result disclosure with clickable local paths. **Gate
-  (main):** review caught non-outliner root navigation replacing the wrong pane
-  and an incomplete keyboard/scroll contract for long Plan checklists; both
-  were fixed before the final rebase over #437. Final head `0f95e430` had no
-  reportable findings; verification covered typecheck, full `test:core` (1373
-  pass, 6 environment-dependent skips), full `test:renderer` (764 pass),
-  relevant E2E (166 pass, with two unchanged guard failures reproduced on
-  pre-merge `main`), docs and diff checks, and light/dark visual verification.
-- **Large local resources (PR #437, codex-3)** — replaced the shared attachment
-  source-size ceiling with reference-based path-backed and managed resources,
-  chunked pathless uploads, bounded file and image observations, immutable image
-  prompt snapshots, exact attachment authorization, and independent managed
-  payload copies for Thread forks. **Gate (main):** review caught cleanup keys
-  coupled to mutable metadata, fork copies sharing writable inodes, and model or
-  Preview / Open / Reveal paths exposing canonical managed payloads; all three
-  were fixed before merge. Final head `964fe3b2` had no reportable findings;
-  verification across the final two heads covered typecheck, full `test:core`
-  (1372 pass, 6 environment-dependent skips), focused Core tests (91 pass),
-  full `test:renderer` (758 pass), Agent Thread E2E (40 pass), docs and diff
-  checks, and light/dark visual verification.
-- **Memory retrieval and inline Node citations (PR #436, codex-3)** — replaced
-  eager Memory briefing injection with relevance-driven `node_search` /
-  `node_read` routing and records usage only when a successfully read Memory Node
-  is cited through the rendered inline Node-reference affordance. Thread history
-  keeps the canonical tool process visible without a separate Memory disclosure.
-  **Gate (main):** iterative review caught Markdown literals being attributed as
-  citations, display/accounting parser drift for escapes and entities, and
-  reference-style links losing definitions across renderer blocks; all were
-  fixed before merge. Final head `3495305` passed the merged-main verification
-  listed with PR #435 below.
-- **Codex Automations (PR #435, codex-3)** — added host-owned durable scheduled
-  Agent work with strict protocol and IPC boundaries, SQLite-backed RRULE/IANA
-  scheduling, catch-up and overlap handling, canonical Thread/Turn execution,
-  crash recovery, local-project and managed-worktree modes, structured schedule
-  editing, unread Run state, and a complete light/dark Automation surface.
-  **Gate (main):** iterative review caught cleanup paths that could discard
-  ignored or embedded-repository content, stale worktree snapshots, the bounded
-  renderer page leaking into bulk-read behavior, and stale/same-millisecond Run
-  notification races; all were fixed before merge, including a durable monotonic
-  Run event sequence. Final head `321f65c` passed merged-main typecheck, full
-  `test:core` (1342 pass, 6 environment-dependent skips), full `test:renderer`
-  (758 pass), focused Automation + Agent Thread E2E (40 pass), docs check, and
-  diff check.
-- **Codex Memory on daily timeline Nodes (PR #434, codex-3)** — added durable
-  Codex-style Memory as ordinary editable Daily Notes Nodes under deterministic
-  protected `#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and
-  `#d-guidance` tags. The feature includes immutable Memory admission snapshots,
-  private control/provenance storage, Phase 1 extraction, Phase 2 consolidation,
-  generated-node lineage, rollback invalidation, confirmed Reset, derived
-  briefings, citations, settings, Open Memory, and fail-closed foreground
-  mutation/history authorization. **Gate (main):** four review rounds caught
-  publication, visibility, rollback, Reset, and history-authorization bugs,
-  including reserved tag-name redo and branched multi-step undo bypasses; all
-  were fixed before merge. Final head `cc8220f` passed typecheck, full
-  `test:core` (1299 pass, 6 environment-dependent skips), full `test:renderer`
-  (741 pass), docs check, diff check, and focused old-bypass repros.
-- **Canonical Thread Agent Core replacement (PR #429, codex-3)** — replaced the
-  former Conversation / Channel / Run / Issue agent stack with one canonical
-  TypeScript Thread / Turn / ThreadItem implementation across persistence,
-  runtime execution, IPC/preload, renderer state, Goals, Subagent collaboration,
-  tool output, and history controls. The clean pre-release replacement provides
-  append-only audit history, same-Thread Edit rollback, explicit Continue in new
-  chat forks, host-resolved admission, bounded Thread-owned payloads, automatic
-  Thread naming, and the retained Full Access capability boundary without
-  migration or compatibility readers. **Gate (main):** two review rounds caught
-  source-owned fork payload loss, forbidden `agent-debug` residue, dropped
-  catalog metadata for unloaded Threads, and transient renderer Threads after a
-  failed fork; all four were fixed before merge. Final head `c4ff101` passed
-  typecheck, the full Core suite (1250 pass, 6 environment-dependent skips), the
-  full renderer suite (734 pass), Agent Thread E2E (36 pass), docs check, diff
-  check, and the PR-recorded light/dark visual probe (3 pass).
-- **Codex Agent Core Thread-name notification interface (PR #433, codex-3)** —
-  added the Codex-aligned `thread/name/updated` contract for the complete
-  replacement in #429, carrying `threadId` plus an optional non-empty
-  `threadName`. The codec accepts the upstream omitted or null no-name forms and
-  normalizes both to an omitted field, while rejecting empty names, legacy
-  aliases, and unknown fields. **Gate (main):** review caught that the initial
-  contract required explicit null even though Codex omits `None`; the optional
-  shape and regression coverage were fixed before merge. Verified with
-  typecheck, 17 focused protocol tests, the full Core suite (1726 pass), docs
-  check, and diff check.
-- **Codex Agent Core rollback interface (PR #432, codex-3)** — defined
-  append-only audit plus same-Thread `thread/rollback`, exact omitted-Turn
-  extension hooks, current-history projection semantics, cumulative side-effect
-  and usage accounting, and the exhaustive Copy / Continue in new chat / Details
-  response menu for the complete replacement in #429. Memory now invalidates
-  generated context synchronously at rollback prepare, filters replacement-Turn
-  briefings and implicit Node-tool reads until receipt-backed reconciliation, and
-  retries failed terminal hooks in-process through one coalesced capped-backoff
-  loop. **Gate (main):** iterative review caught the stale Retry/Regenerate shared
-  contract, a replacement Turn that could observe rolled-back generated Memory,
-  and commit-hook failure that could suppress Memory until restart; all three were
-  fixed before merge. Verified with typecheck, 20 focused protocol/extension
-  tests, the full Core suite (1725 pass), docs check, and diff check.
-- **Codex Agent Core renderer interface (PR #431, codex-3)** — defined canonical
-  Thread configuration get/set, immutable Turn execution and token/cost details,
-  content-addressed bounded tool-output reads, provider-retry notifications, and
-  native response context-menu actions for the complete replacement in #429.
-  **Gate (main):** review caught rejection of bare model IDs and incomplete cached
-  token accounting; both were fixed before merge. The runtime-only legacy-colon
-  provider ownership check remains a merge gate for #429. Verified with typecheck,
-  14 focused protocol tests, the full Core suite (1721 pass), docs check, and diff
-  check.
-- **Codex Agent Core renderer admission defaults (PR #430, codex-3)** — split
-  the renderer-facing `thread/start` request from the fully resolved privileged
-  request so the host can supply the configured model provider and working
-  directory. This interface-only addendum unblocks the complete Agent Core
-  replacement without weakening privileged admission. **Gate (main):** review
-  found no reportable issues. Verified with typecheck, 12 focused protocol
-  tests, docs check, and diff check.
-- **Codex Agent Core interfaces (PR #428, codex-3)** — defined the canonical
-  Thread / Turn / ThreadItem protocol and codecs, Goal and extension contracts,
-  parent-bounded child configuration, collision-free provider tool identities,
-  and host-only document receipts and protected system-tag definitions. This is
-  the ordered interface unit; the complete runtime, persistence, transport,
-  renderer, and old-model replacement remains next. **Gate (main):** the first
-  review found four contract gaps covering protected-tag command classification,
-  child capability ceilings, flat provider-name ambiguity, and executable Item
-  lifecycle consistency; all four were fixed before merge. Verified with
-  typecheck, the full Core suite (1719 pass), docs check, and diff check.
-- **Codex agent restructure plans (PR #423, codex)** — ratified three plan-only
-  designs for a canonical Thread / Turn / ThreadItem core, Memory published as
-  editable daily-timeline Nodes, and host-owned Automations. Core remains ordered
-  as a human-led interface PR followed by the complete replacement; Memory and
-  Automations remain draft consumers that may proceed independently only after
-  Core lands. **Gate (main):** iterative review resolved all reportable findings,
-  including the global Memory-disable privacy boundary; the final head had no
-  reportable issues. Verified with typecheck, docs check, and diff check.
-- **Legacy data import adapter removal (PR #425, codex-4)** — removed the
-  unregistered `data_import` AgentTool compatibility adapter, its dead
-  capability classification, and adapter-only negative assertions. Import
-  remains exclusively on the `tenon-import` CLI/API path, with import-service
-  coverage retained under its current name and audit identity. **Gate (main):**
-  review found no reportable issues. Verified with typecheck, the full Core
-  suite (1689 pass), docs check, current-`main` merge-tree, and diff check.
-
-### Fixed
-
-- **Agent panel focus hand-back (PR #449, cc, fast-track)** — a mouse click in
-  the thread view that nothing claims now returns focus to the composer
-  ("terminal model"), so transcript blank space and one-shot actions (copy,
-  fork, disclosure toggles, details) no longer strand focus outside the input.
-  A click keeps focus where the browser put it when it targets a typing
-  surface, a link or node reference, or a text selection kept for copying, and
-  defers to any surface that installs its own focus target within a frame of
-  the click (self-focusing popovers, dialogs, the inline message editor).
-  Keyboard-activated clicks are never intercepted, and an active
-  `request_user_input` suspends the hand-back. **Gate (main):** review verified
-  the decision module's fail-safe failure direction (unlisted focusables read
-  as claimed → no refocus, never focus theft), the rAF ordering against the
-  plan popover's self-focus, and the menu focus-restore claim; clean test-merge
-  with `main`, typecheck, and 793 renderer tests (12 new) on the merged state.
-- **Thread completion layout stability (PR #448, codex-3)** — an Agent Turn no
-  longer shifts when its response moves from streaming to completed. The
-  user-message action slot and the response footer are reserved at one height
-  for the whole Turn lifecycle, so the generating indicator swaps to the
-  terminal Copy, Continue in new chat, and Details controls without moving the
-  answer. Empty process timelines no longer render, the process divider keeps
-  the same tokenized spacing above and below with or without visible process
-  Items, every Markdown block keeps its memoized component identity as the
-  final streaming block seals, and `content-visibility` containment applies
-  from a Turn's first render instead of arriving at terminalization.
-  **Gate (main):** review independently verified the spacing arithmetic and the
-  slot/footer heights against the token ladder; three findings (indicator
-  vertical centering, live-state context-menu gating, spec line wrap) were
-  fixed in `958a3e0d` with regression assertions. Verified with typecheck, the
-  focused Thread E2E suite (46 pass) on the PR head, and light/dark visual
-  verification of the live and completed states.
-- **Tag selector active-tag index (PR #427, codex)** — active tag
-  definitions, normalized labels, hexadecimal-color penalties, exact-label
-  lookup, and empty-query ordering are now cached once per renderer projection
-  snapshot. Repeated selector opens and query changes reuse that snapshot, while
-  empty-query menus skip already-applied tags and stop at the visible limit
-  without rescanning or reranking the full tag set. **Gate (main):** review found
-  no reportable issues. Verified with typecheck, 74 focused renderer tests, the
-  full renderer suite (962 pass), docs check, diff check, and a 60,000-call
-  randomized old-versus-new differential check.
-- **Field-name reuse candidate index (PR #426, codex)** — active field
-  definitions and Trash ancestry are now indexed once per renderer projection
-  snapshot, so focused field-name queries avoid rescanning the complete document
-  on every keystroke while preserving complete prefix-first matches and localized
-  display sorting. **Gate (main):** the first review found that localized index
-  ordering could hide real ASCII prefixes and that a 24-result bound changed the
-  picker contract; Codex switched the search index to lowercase code-unit ordering
-  and restored complete results before merge. Verified with typecheck, 87 focused
-  renderer tests, the full renderer suite (961 pass), focused light/dark E2E,
-  docs check, and diff check.
-- **System reference values overlay (PR #424, codex)** — read-only References,
-  Owner, and Day field rows now layer their synthetic projections over the
-  renderer document index instead of copying the full `byId` map for every
-  visible field. The overlay preserves Map lookup and iteration semantics while
-  rejecting mutation. **Gate (main):** review found no reportable issues.
-  Verified with typecheck, 16 focused system-field tests, the full renderer suite
-  (955 pass), docs check, and diff check.
-- **Panel date navigation index (PR #422, codex)** — renderer document state now
-  maintains day-note tag membership and per-date direct-child counts from
-  projection deltas, and the panel calendar reads only its visible date window
-  instead of rescanning the full document. Fallback Day tags, renames, duplicate
-  dates, and sparse updates preserve existing behavior. **Gate (main):** the
-  first review found that ordinary incremental updates still cloned complete
-  backing maps; the second found that every tag-member set eagerly allocated
-  1,024 empty buckets. Codex replaced those paths with sparse occupied-bucket
-  maps and native sets below 64 members before merge. Verified with typecheck,
-  full renderer tests, focused light/dark date-navigation E2E, docs check, diff
-  check, and a 5,000-operation incremental-versus-rebuild differential check.
-- **Search query complexity budget (PR #421, codex)** — canonical and saved
-  search queries now pass through bounded iterative compilation before
-  evaluation, with explicit depth, node, operand, and group-child limits.
-  Agent search outlines, renderer query summaries, and reference-cycle checks
-  avoid recursive traversal; truncated summaries disclose omitted rules instead
-  of silently hiding them. **Gate (main):** the first review found four boundary
-  regressions covering pre-mutation admission, ordinary outline validation,
-  large acyclic references, and summary truncation; codex fixed all four before
-  merge. Verified with typecheck, full Core and renderer tests, focused search /
-  outline / reference tests, docs check, and diff check. The two related search
-  builder E2E cases remain blocked by the existing `main` Recents-click timeout.
-- **Renderer delta reducer surface (PR #420, codex)** — renderer projection
-  delta folding now keeps `byId` and per-node render revisions in bucketed
-  copy-on-write sparse maps, with delta `projection.nodes` exposed through a
-  lazy array-shaped view. Ordinary deltas patch only changed/removed ids,
-  preserve unchanged node object identity, and avoid materializing the previous
-  map or full node array on the hot reducer path. **Gate (main):** review found
-  no reportable issues. Verified with typecheck, full renderer tests, focused
-  sparse projection / reducer / real-Core delta integration tests, docs check,
-  and diff check.
-- **Diagnostic log coalescing (PR #419, codex)** — diagnostic errors now
-  aggregate in memory by fingerprint and flush through a bounded compact JSONL
-  writer, reducing write amplification during repeated renderer/runtime error
-  storms while preserving reveal, export, fatal-error, and before-quit durability
-  paths. Renderer global diagnostics now install once in the main world through
-  the preload IPC bridge. **Gate
-  (main):** first review found a reveal path that could report success after a
-  failed explicit flush; codex fixed it before merge. Verified with typecheck,
-  focused diagnostics / JSON file-store / renderer capture tests, docs check,
-  and diff check.
-- **Renderer formatting cache (PR #418, codex)** — renderer date/time and
-  number formatting call sites now share bounded `Intl.DateTimeFormat` and
-  `Intl.NumberFormat` caches, preserving the existing visible strings while
-  avoiding repeated formatter construction in Agent panels, file previews, and
-  calendar chrome. **Gate (main):** review found no reportable issues. Verified
-  with typecheck, full renderer tests, focused formatting/cache and migrated
-  call-site tests, docs check, and diff check.
-- **Agent definition-create read-model routing (PR #417, codex)** — definition
-  `node_create` now uses the maintained document read model for initial Schema
-  validation and a mutation-local projection view fed by command deltas for
-  create/config writes, so field/tag definition creation avoids public
-  full-projection fanout on `DocumentService` hosts. **Gate (main):** review
-  found no reportable issues. Verified with typecheck, focused DocumentService /
-  Agent node-tool tests, docs check, and diff check.
-- **Agent node_create read-model routing (PR #416, codex)** — ordinary Agent
-  `node_create` now uses the maintained document read model for initial
-  validation and a mutation-local projection view updated from command deltas
-  for target-reference and outline create paths. The collector is threaded
-  through fields, recursive nodes, search nodes, code blocks, tags, checkboxes,
-  nested fields, and visible result assembly so `DocumentService`-backed creates
-  avoid repeated public full-projection reads while fallback hosts keep
-  correctness. **Gate (main):** review found no reportable issues. Verified with
-  typecheck, full Core tests, focused DocumentService / DocumentReadModel /
-  Agent node-tool coverage, docs check, and diff check.
-- **Rich-text editor patch runtime (PR #415, codex)** — ordinary focused
-  rich-text edits now emit bounded patches from ProseMirror transactions, update
-  renderer row/title mirrors through refs instead of whole-snapshot React state,
-  and reserve full snapshots for explicit slow boundaries. Core/Loro patch
-  application reuses caller rich-text metadata for ordinary replace/mark
-  patches, keeping sparse state-cache snapshots while avoiding full rich-text
-  decode on the hot path. **Gate (main):** first review found an inline-reference
-  boundary deletion regression; codex fixed it before merge. Verified with
-  typecheck, Core tests, focused renderer rich-text/trigger/paste/shortcut
-  suites, docs check, diff check, manual inline-reference boundary repros, and
-  cache-verification tests.
-- **Document read model for Agent node tools (PR #414, codex)** — the main
-  process now keeps a `DocumentReadModel` fresh from projection deltas, letting
-  Agent `node_read` and `node_search` reuse a maintained `ProjectionIndex`
-  instead of rebuilding one from a full projection per call. `node_edit
-  replace_outline` also uses transaction-local sparse projection facts on
-  `DocumentService` hosts, avoiding repeated full projection reads while
-  preserving annotated-outline results. **Gate (main):** review found no
-  reportable issues. Verified with typecheck, full Core tests, focused
-  read-model/DocumentService/Agent node-tool coverage, docs check, diff check,
-  and cache-verification tests.
-- **Core sparse transactions (PR #413, codex)** — Core mutations now finalize
-  from explicit touched-node ids instead of whole-state materialization on the
-  hot path. Operation history stores bounded affected-id summaries, journal and
-  undo retention are capped, deep shared-state export avoids stack failures,
-  replication import uses sparse event candidates when safe, and field/tag-heavy
-  tree imports cache resolution while committing responsive chunks. **Gate
-  (main):** review found no reportable issues. Verified with typecheck, full
-  Core/renderer tests, focused sparse replication/import/cache coverage, docs
-  check, and diff check.
-- **Single-delivery projection routing (PR #412, codex)** — local renderer
-  document commands now apply their returned projection update once, while the
-  main process suppresses the duplicate `projection_changed` event back to the
-  invoking `webContents`. Main-owned mutations remain broadcastable, and live
-  search refreshes route through the command runner so sender suppression cannot
-  leave search rows stale. **Gate (main):** review found one swallowed
-  live-search refresh path; codex fixed it before merge. Verified with
-  typecheck, focused Core/renderer tests, full renderer tests, docs check, and
-  diff check.
-- **Renderer no-op command outcomes (PR #411, codex)** — blocked, empty, or
-  local-UI-only renderer command paths now return a renderer-local no-op instead
-  of fetching and reseeding the full projection. The command runner skips
-  projection application, focus commits, and `flushSync` for those no-ops, while
-  nested slash-file cleanup failures abort without clearing the user-visible
-  error. **Gate (main):** review found one nested command failure swallowing
-  issue; codex fixed it before merge. Verified with typecheck, focused renderer
-  tests, diff check, and a renderer scan proving no `api.getProjection()`
-  sentinels remain.
-- **Provider transient request retries (PR #395, codex)** — OpenAI and Azure
-  Responses requests now retry pre-stream `5xx` and bounded transport failures
-  four times with abortable jittered backoff, while retaining the independent
-  one-time replay for prematurely terminated streams before material output.
-  Retry progress is runtime-only, concurrent Runs preserve independent status,
-  and exhausted provider errors render after generated content and before reply
-  actions. **Gate (main):** ultra review found one concurrent-Run status-loss
-  issue; codex fixed it before merge. Verified with typecheck, 23 focused Core
-  tests, 751 renderer tests, focused Playwright coverage, light/dark visual QA,
-  docs check, and diff check; the full Core suite's five failures reproduce on
-  `main` and come from external Presentation skill resource drift.
-- **References as field values (PR #393, codex-4)** — removed the Tenon-only
-  `reference` field type and its dedicated picker/command. Plain fields now store
-  text, inline references, and whole-row reference children through the generic
-  reference path, while options constraints, backlinks, reference counts,
-  search, and computed system reference rows remain intact. Agent field
-  inference and definition schemas now use `plain` for reference-valued and
-  mixed fields. **Gate (main):** ultra review found no reportable issues.
-  Verified with typecheck, affected Core suites, 742 renderer tests, 55 focused
-  Playwright tests, docs check, and diff check; the full Core suite's five
-  failures come from external Presentation skill resource drift.
-- **Queued steer consumption (PR #391, codex)** — the Agent composer now removes
-  its editable queued-steer preview as soon as the runtime persists that steer as
-  the next visible user message, even while the same Run continues. Conversation
-  identity plus the prior visible-user-message baseline prevent an older matching
-  message from clearing a new queue item; append, edit, cancel, rejection, Run
-  settlement, and conversation-switch cleanup remain intact.
-- **Structured field resolution (PR #385, codex)** — semantic `Field:: value`
-  writes now reuse an existing owner field or unique field definition before
-  creating a new definition, preserve existing typed field configs, infer new
-  field types conservatively, and fail closed on duplicate active field matches.
-  Agent `node_create` / `node_edit` and paste metadata now share the resolver,
-  `Done:: true/false` writes through the synced system Done field, and core
-  guards prevent manual field creation, field-definition rename, and definition
-  reuse from creating duplicate active field names on one owner.
-- **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
-  active pane before provider settings finish loading, and the main window
-  startup path paints persistent window chrome instead of a generic centered
-  loading page. Provider, Agent, and Channel config child windows now also paint
-  their header, field structure, and footer actions before their data IPC
-  resolves, with only local busy/disabled state while loading. The empty Agent
-  panel stays blank while provider settings load instead of showing a loading card
-  or flashing no-provider onboarding.
-- **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
-  delete action beside inline rename in the conversation menu, while protected
-  General/Dream Channels keep both mutation controls hidden.
-- **Agent skill turn coalescing** — loaded skill steering no longer splits the
-  conversation transcript into a standalone assistant turn when the follow-up
-  assistant segment belongs to the same run. The skill/tool call and continuation
-  now render as one assistant reply, while hidden notifications that separate
-  different runs remain invisible turn boundaries. Verified with targeted
-  renderer coverage, full renderer tests, typecheck, docs check, and diff check.
-
-### Added
 
 - **Agent Full Access (PR #410, codex-2)** — the Main Agent, delegated Runs,
   Dream, and Skills now use one host-account filesystem model: typed file tools
@@ -1484,394 +670,6 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   `test:core` 1062 + `test:renderer` 617 + EPUB e2e (inline reader, capped bytes, wheel section-advance)
   green on `59c9afa5`. Packaged-CSP runtime smoke left as a confirmatory follow-up.
 
-### Fixed
-
-- **Outliner row-start Enter insertion (direct main, fast-track)** — pressing
-  `Enter` at the start of a non-empty row now creates and focuses a previous
-  sibling instead of splitting the row or moving the row text under an expanded
-  parent. The editor split payload carries row-start state, the row handler
-  preserves the current subtree, and E2E coverage locks the expanded-parent
-  regression. Verified with typecheck, docs check, diff check, full outliner
-  row-editing E2E coverage, and targeted renderer keymap tests.
-- **Run Details transcript turn coalescing (PR #372, codex-3)** — Run Details
-  now adapts raw `assistant(toolCall) -> toolResult -> assistant(text)`
-  transcripts into one assistant turn instead of visually splitting the final
-  answer away from its tool/skill process. Matching tool results remain process
-  data, hidden-only user notifications still split turns invisibly, and orphan
-  tool results continue to render as capped plain text. **Gate (main):** code
-  review found no reportable findings. Verified with typecheck, docs check, diff
-  check, targeted transcript/row tests, and the full renderer suite.
-- **Disclosure anchor scroll-release spec synced (PR #366, codex-4)** —
-  `docs/spec/ui-behavior.md` now explicitly records that immediate user scroll
-  input releases the temporary disclosure scroll anchor, so delayed virtual-row
-  measurement corrections must not pull the viewport back after the user has
-  moved it. This documents the #358 shipped behavior. **Gate (main):** code
-  review found no reportable findings. Verified with `docs:check`, targeted
-  disclosure-anchor renderer tests, and `git diff --check`.
-- **Agent tool rows use semantic icons and readable activity summaries (PR #363, codex-2)** —
-  agent tool-call rows now share one renderer presentation registry for lucide icons and activity
-  buckets, so local file tools, outliner node tools, child-run controls, web, memory, skill,
-  question, history, restore, and unknown tools render with neutral purpose-specific glyphs instead
-  of overloaded warning or file icons. Tool-row summaries now use localized readable copy for
-  canonical tools, and folded activity groups distinguish file/node read-search-create-edit-delete
-  and node restore buckets while keeping pending/error as the only status overrides. The event-log
-  rendering spec records the registry contract and child-run folding behavior. **Gate (main):**
-  code review found restore activity and spec-sync issues; codex-2 fixed both before merge.
-  Verified with typecheck, targeted renderer suites, i18n coverage, `docs:check`, and
-  `git diff --check`.
-- **Retired the obsolete outliner Settings root (PR #362, codex)** — the
-  document-level `Settings` system root is no longer seeded, projected, searched,
-  protected, or shown in the workspace tree; the standalone product Settings
-  window is now the only Settings surface. Empty default legacy `settings` roots
-  are removed on restore, while any retired root with user content or live
-  references is unlocked and moved into Library to avoid data loss. Specs and
-  projection fixtures were updated with the new root shape. **Gate (main):**
-  code review found one data-preservation bug; codex fixed it before merge.
-  Verified with typecheck, focused core/renderer suites, `docs:check`, and a
-  legacy Settings-child restore reproduction.
-- **Hidden Dream system prompt context no longer appears in transcript system lines (PR #360,
-  codex-2)** — Dream channel manual/scheduled anchors may carry model-only
-  `<system-reminder>` prompt context next to their human-readable summary; the renderer now filters
-  those hidden blocks from system actor lines while preserving the visible `Manual Dream` /
-  `Scheduled Dream` anchor text. The text extraction path is covered by renderer tests for mixed
-  hidden-context + visible-anchor rows and hidden-only suppression, and
-  `docs/spec/agent-event-log-rendering.md` records the intended Dream anchor behavior.
-  **Gate (main):** code review found no reportable findings. Verified with targeted renderer tests,
-  typecheck, `docs:check`, and `git diff --check`.
-- **Disclosure scroll anchoring stays stable through delayed measurements (PR #358, codex-4)** —
-  expanding or collapsing long virtualized outliner rows now keeps the clicked chevron visually
-  anchored across multiple row-measurement frames, while releasing that temporary anchor as soon as
-  the user scrolls or signals scroll intent so the helper does not pull the viewport back. The shared
-  disclosure anchor helper updates its expected scroll position after its own restorations and cleans
-  up frame/listener state when the anchor expires. `docs/spec/ui-behavior.md` records the outliner
-  behavior. **Gate (main):** code review found one P1 user-scroll override regression; codex-4 fixed
-  it with renderer coverage. Merge verified with typecheck, targeted renderer tests, targeted
-  outliner E2E, and `git diff --check`.
-- **Agent work divider timing and folding (PR #357, codex-2)** — agent turns now keep one
-  persistent `Working / Working for ...` divider timed from run start while active, then collapse
-  to `Worked for ...` after sealing without an extra top-level disclosure. Nested thinking/tool
-  rows remain available inside the divider, repeated tool calls summarize as grouped activity, and
-  answered lone-reasoning turns stay folded by default while resultless lone-reasoning turns still
-  open for readability. **Gate (main):** code review found one answered-turn disclosure regression;
-  codex-2 fixed it with E2E coverage. Merge verified with typecheck, targeted renderer tests,
-  `docs:check`, and `git diff --check`; local `agent-process` E2E could not start because this
-  sandbox denied the Vite dev-server port bind.
-- **Custom Responses stability and compaction accounting (PR #356, codex)** —
-  custom OpenAI-compatible Responses endpoints now use a compatibility request profile that promotes
-  leading system/developer input to top-level `instructions`, keeps low verbosity, and enables automatic
-  parallel tool calls when tools are present. Custom Responses prompt-cache affinity is restored so
-  cache-capable gateways can return provider usage, while auto compact now follows Codex-style
-  provider-usage-led accounting across providers: it triggers near 90% of the model context window,
-  prefers latest provider-reported total tokens plus locally-added tail, and falls back to local
-  estimation before provider usage exists. Terminated custom Responses streams are salvaged only after
-  a complete tool call reaches `toolcall_end`, avoiding execution of partial streamed arguments.
-  **Gate (main):** code review found one P1 partial-tool-call salvage bug; codex fixed it with a
-  regression. Verified with targeted stream/compat tests, typecheck, and `git diff --check`.
-- **Custom Responses gateways disable prompt-cache affinity (PR #355, codex)** —
-  custom OpenAI-compatible endpoints that preserve the `openai-responses` request shape now force
-  provider stream `cacheRetention: "none"` for non-official base URLs across normal agent turns,
-  compact summary requests, and provider connection probes. This stops Tenon from sending
-  `prompt_cache_key` / session-affinity headers to gateways whose Responses cache implementation may
-  differ, while official `https://api.openai.com/v1` Responses requests keep the configured cache
-  retention. `docs/spec/agent-pi-mono-implementation.md` records the intended custom endpoint behavior.
-  **Gate (main):** code review found no reportable findings. Verified with targeted provider/runtime
-  tests, typecheck, and `docs:check`.
-- **Custom OpenAI endpoints keep the Responses API for catalog models (PR #354, codex)** —
-  custom OpenAI-compatible provider rows now preserve the catalog model's API adapter when the selected
-  model is known, so Responses models such as `gpt-5.5` keep `openai-responses` instead of being routed
-  through the Chat Completions compatibility shape. Unknown proxy-only models still default to
-  `openai-completions`, and the connection-test `/models` discovery probe now applies the same catalog
-  lookup before sending its bounded ping. Provider stream failures render inline only when the terminal
-  assistant message has `stopReason: "error"`, preserving partial output while leaving user aborts as
-  completed aborted turns. **Gate (main):** code review found one missed connection-test path; codex fixed
-  it with a regression. Verified with typecheck, full `test:core`, `docs:check`, and `git diff --check`.
-- **Active-run tail re-anchored after compact (PR #351, codex-2)** — auto compact during an
-  in-flight provider run no longer leaves the run's in-memory tail pointing at the pre-compact
-  assistant/tool branch. Later assistant or tool-result segments from that same run now append after
-  the post-compact leaf, so the next model-context build does not re-enter the oversized
-  summarized-away path and loop through compaction again. Stale transient tool payload/call state is
-  cleared at the same boundary. `docs/spec/agent-skills.md` records the invariant. **Gate (main):**
-  deep review found no blocking findings; typecheck, `docs:check`, targeted runtime/event-log tests,
-  full `test:core` (1116 pass), and `git diff --check` green.
-- **Runs-panel title robustness + verifier double-serialization (main, direct-to-`main`, 2026-06-28)** —
-  follow-up polish on the agent-goal feature (#343): the Work/Runs row title (also used as the row's
-  `aria-label`) now collapses a free-form `objective` to a single whitespace-normalized line capped at 120
-  chars, so a long or multi-line objective no longer ships a wall of text to the screen reader; and the
-  verifier objective (which serializes node/file changes plus up to 40 tool-trace entries) is built once
-  instead of twice per verification. No behavior change to verification outcomes. Typecheck clean;
-  `agentRuntimeChildRuns` + `agentRenderProjection` 48/0.
-- **Trashed schema definitions treated as inactive + Trash permanent-delete actions (PR #338, codex)** —
-  deleting a tag/field definition moved it to Trash, but the app still let it be reused for new tags,
-  fields, and `options_from_supertag` derivation. Core commands and renderer pickers now reject trashed
-  `tagDef`/`fieldDef` nodes everywhere (apply tag, create tagged node, reuse field def, configure
-  `extends` / `childSupertag` / `sourceSupertag`, option-from-supertag selection, template/extends
-  chains, name-based lookup) while existing on-row "deleted" badges stay visible; typing the same name
-  creates a fresh active definition under Schema. Trash also gains **Delete forever** (per trashed
-  subtree) and **Empty Trash** (root) context actions, both behind the shared confirmation dialog and
-  the `permanentDeleteCandidateIds` locked/in-trash filter. Specs (`commands.md`, `ui-behavior.md`)
-  synced. **Gate (main):** two review rounds (3 findings fixed — DefinitionConfigPanel supertag picker
-  now excludes trashed, shared `isNodeInSubtree` extracted, Empty Trash shares the locked filter);
-  typecheck + `test:core` 1060 + `test:renderer` 621 + `docs:check` green; the only new visual is the
-  `--status-danger` menu-item color + the existing `ConfirmDialog` (token-level light/dark review).
-- **Packaged `userData` directory pinned to `…/Tenon` (main, infra)** — the packaged app now resolves
-  its `userData` directory **explicitly** to `<appData>/Tenon` instead of relying on Electron's
-  `app.getName()` default. Electron derives that default from the bundled package.json `name`
-  (`lin-outliner`), NOT electron-builder's `build.productName` (`Tenon`), so a rebuild whose asar
-  package.json lacked `productName` could silently move the data directory from `…/Tenon` to
-  `…/lin-outliner` and look like data loss. Extracted the resolution into a pure, unit-tested
-  `resolveUserDataDir` (`src/main/userDataPath.ts`), moved `app.setName(APP_NAME)` ahead of the first
-  `userData` read, and boot-log the resolved directory for future diagnosis. Precedence is unchanged
-  (`ELECTRON_USER_DATA_DIR` verbatim → `$HOME/.lin-outliner-dev` from source → packaged `…/Tenon`).
-  AGENTS.md "Dev environment" synced. **Gate (main):** typecheck clean, `test:core` 1060/0 (incl. 4 new
-  `resolveUserDataDir` cases). Note: a pre-existing `…/lin-outliner` (756M, from older builds) is
-  intentionally left in place pending a separate cleanup decision (PM-ratified 2026-06-25: Tenon is
-  authoritative).
-
-### Removed
-
-- **Agent self-maintenance tools `runtime_status` / `config` / `doctor` (PR #333, cc-2)** —
-  removed all three M1 self-maintenance tools (originally shipped in #153) as over-built for
-  their current value: `runtime_status` and `doctor` are self-*observation* (and `doctor`'s
-  strongest check — "provider not configured" — is unreachable, since the agent can't run a
-  tool without a configured provider), while `config`'s write whitelist was mostly network
-  tuning the agent never changes mid-task. Deleted the `agentSelfMaintenanceTools.ts` module
-  + its test, `createSelfMaintenanceRuntime` and both wiring sites in `agentRuntime.ts`, the
-  `selfMaintenance` option/mount in `agentTools.ts`, and the four
-  `agent.{runtime.status,config.read,config.write,doctor.run}` permission action kinds with
-  their descriptor / alias / tool-profile / restricted-base / control-classifier entries.
-  **Default agent tool count 26 → 23** (sub-agents never mounted these and are unchanged).
-  Self-configuration **stays a goal** — its implementation paradigm (dedicated tool vs. an
-  `file_edit` + validated config-write pipeline with last-known-good recovery) is being
-  re-evaluated and returns in a follow-up PR; runtime settings stay user-managed via
-  Settings → Agent meanwhile. Pre-release, no migration: a remembered grant keyed on a
-  removed `agent.*` kind becomes inert (acceptable per the no-back-compat rule). **Gate
-  (main):** `/code-review high` → one comment-only finding (a stale "self-maintenance"
-  mention in the tool-filter doc comment) fixed in `21ca8bf5`. Verified: typecheck clean,
-  `test:core` 1054/0, `test:renderer` 607/0, `docs:check` OK. Specs synced: `agent-tool-design`,
-  `agent-progress`, `agent-pi-mono-implementation`, `agent-event-log-rendering`; plan
-  `agent-self-modification` updated to record M1 shipped-then-removed.
-
-### Changed
-
-- **pi-ai / pi-agent-core upgraded `0.80.3 -> 0.80.6` (PR #390, codex)** —
-  adopts the refreshed upstream model catalog and exposes `max` as a distinct
-  canonical reasoning level after `xhigh` across provider projection, agent
-  profiles, skills, Settings, the composer picker, persistence, and runtime
-  dispatch. Tool calls from `stopReason: "length"` assistant messages are now
-  rejected before execution and returned as failed tool results for safe retry.
-  The upgrade also brings request-level cost tiers plus upstream context-budget,
-  retry, OAuth, transport, reasoning-replay, and provider-normalization fixes.
-  **Gate (main):** code review found no reportable findings. Verified with
-  typecheck, production build, focused core/runtime/renderer suites, full
-  renderer tests, light/dark reasoning-menu E2E, docs check, and diff check.
-
-- **Model-specific reasoning effort labels (PR #379, codex-4)** — agent model
-  options now carry optional display-only effort labels derived from each
-  provider model's thinking map while keeping persisted profile effort values
-  canonical. The composer model menu and Settings agent profile selector now
-  show only the selected model's supported reasoning levels and render labels
-  such as `XHigh`, `Max`, `LOW`, or `HIGH` without saving provider-specific
-  strings. **Gate (main):** code review found no reportable findings. Verified
-  with typecheck, core tests, renderer tests, docs check, and `git diff
-  --check`.
-
-- **Ask user question stepper polish (PR #378, codex-4)** — the
-  multi-question `ask_user_question` composer stepper now uses compact
-  `Input needed · 1/2` title-row progress, moves Back into an icon-only header
-  control from step 2 onward, and lowers `Discuss first` into a left-side escape
-  hatch while keeping primary navigation on the right. Styling stays token-based,
-  and the spec/e2e coverage now pin the compact heading and icon Back behavior.
-  **Gate (main):** code review found no reportable findings. Verified with
-  typecheck, renderer tests, targeted stepper/discuss e2e coverage, docs check,
-  and `git diff --check`.
-
-- **Tana-style view toolbar polish (PR #350, codex-2)** — node and saved-search result toolbars now use a
-  field-first interaction model: a real leading name-filter chip writes `sys:name contains` filter rules;
-  Display/Group/Sort/Filter menus open as contextual popovers; filter summary chips target the exact saved
-  rule id, including multiple filters on the same field; Sort shows priority metadata and blocks duplicate
-  pending adds; and filtered-out rows use a clearer expandable disclosure. Nested toolbars align with their
-  owner row column, portal tooltips replace duplicated native/CSS tips, and search-result summary bars route
-  into the same toolbar path. `docs/spec/ui-behavior.md` synced. **Gate (main):** review found two race bugs
-  (stale filter-chip input reuse and pending-sort duplicate creation); round-2 fix `d30c67f8` resolved both
-  with regression E2E. Verified: `definition-config` E2E 15/0, `search-query-builder` E2E 2/0,
-  `test:renderer` 633/0, `docs:check`, and `git diff --check`.
-
-- **pi-ai / pi-agent-core upgraded `0.78.0 → 0.80.2` with a clean `Models` migration (PR #348, codex-3)** —
-  the main-process agent runtime moves off the removed pi global helpers
-  (`completeSimple`/`streamSimple`/`getModels`/`getProviders`/`getProviderApiKey`/`getOAuthApiKey`) onto the
-  `Models` instance API. A new composition root (`src/main/piModels.ts`) wraps one
-  `builtinModels({ credentials })`, wires the existing `agent-secrets.json` as pi's `CredentialStore`
-  (OAuth refresh persists under the existing file lock), and routes custom OpenAI-compatible endpoints
-  through internal `tenon-custom:<id>` providers while keeping the external provider id on renderer,
-  event-log, and run-fingerprint surfaces. Provider auth — stored keys, ambient env, OAuth refresh,
-  managed credentials, provider-specific headers/env, and the Cloudflare AI Gateway baseUrl shape — now
-  resolves at request time via `Models.applyAuth()` instead of being flattened into an `apiKey` string.
-  Keyless endpoints are allowed for localhost/loopback/`*.localhost` only (shared `isLocalBaseUrl`
-  predicate in `src/core/localEndpoint.ts`); a local endpoint uses a deliberately-stored key when one
-  exists (e.g. a local proxy fronted by a master key) and otherwise an inert client key — an **ambient**
-  provider key (env / OAuth / managed) is never forwarded to localhost. Picks up upstream provider-metadata, billing-hazard, and vulnerable-dep
-  fixes. Gated by `/code-review xhigh` (10 finder angles + sweep) with a round-2 pass that preserved real
-  model context windows behind custom endpoints, kept `api_key` credential `env` across the store
-  round-trip, and stopped pruning keyless-remote provider rows at startup.
-
-- **`node_edit` is now single-node and non-pruning (plan PR #346 + impl PR #347, codex-4)** — the agent
-  `node_edit` tool can no longer delete outline content by omission. The old whole-subtree reconcile is
-  removed: `old_string:"*"` (which replaced the entire annotated outline) now returns `subtree_edit_removed`,
-  and a multi-node outline fragment can no longer trash existing children that are absent from the desired
-  outline. Outline edits are scoped to **one node** — its root line, fields, field values, and saved-search
-  config — and apply **non-pruning upsert** semantics: omitted fields and field values are **preserved**;
-  removals are an explicit by-id `node_delete`. New fields are inserted **before** a node's ordinary children
-  (so they render in the field strip, not below the children); changing a field value's *kind* (text ↔
-  reference) is rejected up front with `invalid_field_value_kind` and a `node_delete`-then-recreate
-  instruction, **before** any mutation is applied (no partial commit). `node_create`, `move`, `merge`, and
-  `replace_with_reference_to` are unchanged. **Gate (main):** `/code-review high` + round-2 fix landed all
-  three findings (dead clear-warning / mis-reported `afterOutline`, field placement, kind-change partial
-  commit), each with a regression test; `docs/spec/agent-tool-design.md` updated in the same change.
-- **Search nodes excluded from references (PR #335, codex; follow-up PR #336, main)** — saved-search
-  nodes and their query internals no longer count as reference sources in a target node's References
-  footer or the relevance reference-authority graph. Excluded: materialized search-result references,
-  direct references and plain-text mentions on `search` nodes, and query operand references/mentions
-  inside `queryCondition` subtrees (e.g. a "field is [node]" operand, which is materialized as a
-  default-role `reference` under the condition and previously polluted the operand's backlinks).
-  Real user-authored references in ordinary child content — including manual children placed under a
-  search node and their reference grandchildren — stay fully counted. Implemented via a cached
-  `searchReferenceSourcePredicate` (node is `search`-typed, a result `reference` attached directly to a
-  search node, or inside a `queryCondition` subtree) applied across the backlink, inline-ref, and
-  unlinked-mention branches. #336 closed an asymmetry from the original review: the backlink branch
-  excluded a reference via its parent while the inline-ref scan keyed off the node itself, so a result
-  ref carrying inline content could leak — both branches are now symmetric. Spec synced in
-  `ui-behavior.md` + `search-query-grammar.md`. **Gate (main):** manual review + full verification —
-  typecheck clean, `references.test` 11/0, `test:core` 1056/0, `docs:check` OK.
-
-- **Native focus rings + agent transcript polish (PR #332, codex-2)** — focus rings on text controls
-  (`input` / `textarea` / `select`) are now **keyboard-only**: a renderer-level `:root[data-input-modality]`
-  attribute (set by a capturing pointerdown/keydown tracker) gates the neutral ring so ordinary clicks no
-  longer paint web-form boxes, while keyboard navigation (Tab, arrows, number-stepper ↑↓) still shows it.
-  The agent rail slide is **sibling-stable** — opening the dock reflows only the agent rail (never resizes
-  or repaints the sidebar), and a content-triggered chat-source reveal now **defers its scroll/highlight
-  until the rail finishes opening** (transitionend or a motion-duration fallback), guarded against
-  conversation switches mid-transition. Centered transcript **time separators are removed** (timestamps
-  stay in the message Details popover). `will-change` dropped from both rails. **Gate (main):**
-  `/code-review high` (8 findings) → codex-2 fix `c6076e89`: the global keyboard ring moved to a
-  low-specificity `:where()` form so component `box-shadow: none` suppressions (`.input-bare`,
-  `.code-block-textarea`, `.inset-card .settings-sheet-row-input`) win again instead of re-exposing
-  clipped/boxed rings; `.definition-text-input` focus paint gated behind keyboard modality (with a CSS
-  guard test); deferred reveal cleared on conversation change; `clampAgentRailForPanelFloor` de-duplicated
-  onto a shared `allowSidebarRelief` mode; both-rails-change reflow no longer skips sidebar relief; dead
-  launcher modality install removed. Verified: typecheck clean, `test:renderer` 615/0. Spec synced:
-  `design-system`.
-- **Response Run Details pane reworked + shared read-only code blocks (PR #325, codex)** — the assistant
-  reply info button now opens a **run-scoped** Run Details pane (one concrete response run; an already-open
-  pane retargets when another reply's info button is clicked, and falls back to the inline details popover
-  when the workspace can't fit a pane). Run Details moves onto the **shared pane chrome** (same sticky
-  breadcrumb / close alignment / content shell as node and file panes), drops the manual refresh button
-  (still refreshes from runtime events), and reorganizes into **Summary / Model Input / Execution**. Model
-  Input splits into system prompt, tools, history, and current request from the **captured provider
-  payloads** (what was actually sent); Execution is a flat expandable call list in provider output order
-  (thinking, assistant text, tool calls, tool results). Reply and call usage hovers now share one
-  `AgentUsageBreakdown` (token rows + total cost + cached share), and a shared read-only `CodeBlockSurface`
-  backs agent markdown, tool rows, Run Details, transcript messages, and outliner code rows. **Gate
-  (main):** `/code-review high` (10 findings) → codex fix `f912835c`: disclosure no longer collapses on
-  live count change (reset keyed on run id), debug snapshot stops re-emitting per provider round (messages
-  captured once, excluded from the dedupe hash), narrow-window info button falls back to the inline
-  popover, code blocks highlight lazily on expand, the no-`user`-row model-input split now labels the
-  whole window as the current request, the `[tool_result …]` prefix contract moved to a shared
-  `agentDebugProtocol` helper, and the usage-breakdown + `DebugMetric`/`truncate`/`formatDuration`
-  duplication was removed. Verified: typecheck clean, `test:core` 1064/0, `docs:check` OK, e2e
-  `agent-debug-panel` + `outliner-code-block` + `agent-process` 26/0. Spec synced:
-  `agent-event-log-rendering`, `workspace-layout`, `commands`, `i18n`.
-- **`file_read` is now a provider-neutral runtime ingestion boundary (PR #326, codex-3)** — reverses the
-  native-PDF payload approach from PR #322 (above): `src/main/agentNativePdfPayloads.ts` and the
-  `nativePdfRead` plumbing are removed, so no provider-native PDF blocks or raw PDF bytes/base64 are sent
-  as the canonical path. The model still passes a local path; the runtime picks the representation. PDFs
-  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded to 60k chars);
-  explicit `pages` renders bounded JPEG page images with `pdftoppm`; oversized scanned PDFs return
-  metadata plus a hint to request a narrower range. Rich documents (`.docx`, `.pptx`, `.xlsx`, `.xls`,
-  `.epub`) convert to Markdown through optional **MarkItDown**, probed locally via
-  `LIN_AGENT_MARKITDOWN_COMMAND` (accepts an executable path **or** a command line like
-  `python3 -m markitdown`), then `markitdown`, then `python3 -m markitdown` — no plugins/cloud/LLM
-  backends, no self-install. Local extractors share one subprocess runner
-  (`src/main/agentToolProcess.ts`: `LIN_AGENT_EXTRA_TOOL_PATH` + common GUI/system PATH segments,
-  SIGTERM→SIGKILL escalation, bounded stdout/stderr capture). Missing Poppler or MarkItDown stays a
-  recoverable tool error — the agent installs the dependency via `bash` under the normal permission/audit
-  path and retries the same call. `.html`/`.htm` stay on the plain-text read path (no MarkItDown
-  dependency, still editable). **Gate (main):** `/code-review xhigh` (8 findings fixed + regression-tested
-  in `09939d1a`: pdftotext stderr false-positive, `pages` render-before-extract, restored `%PDF-`
-  magic-byte check, bounded pdftotext capture, cached MarkItDown probes, accurate truncation char counts,
-  env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
-  `agent-progress`.
-- **`file_read` derived-ingestion results are now cached in-process (PR #327, codex-3)** — a direct
-  follow-up to PR #326. Successful expensive runtime extractions (MarkItDown rich-document → Markdown and
-  PDF `pdfinfo`/`pdftotext` metadata+text) are memoized in a small bounded **LRU cache**
-  (`src/main/agentFileIngestionCache.ts`), so re-reading unchanged content skips the subprocess. Entries
-  key on **source SHA-256 + extractor identity + relevant options + local tool environment** (PATH /
-  extra-tool path), so a changed file, a different extractor, or a different toolchain all miss correctly.
-  Errors are **not** cached, and per-read PDF page-render output directories remain per-read scratch (not
-  cached). Ordinary text-file freshness and `file_edit` guards are unchanged. The source hash is computed
-  by **streaming** the file (`src/main/fileHashing.ts` `sha256File`), so hashing a near-limit document no
-  longer buffers it whole in memory; the bounded-LRU eviction is now a single shared helper
-  (`src/main/boundedMap.ts`), and cached values are `structuredClone`d on get/set so a caller can never
-  mutate a cached entry. **Gate (main):** `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`:
-  streaming hash (no 50 MB read-to-hash buffer), shared `setBoundedMapEntry`, `structuredClone` isolation,
-  a dedicated cache unit test, and a `beforeEach` cache reset to remove cross-test pollution. Verified:
-  typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0 (2 skip). Spec synced:
-  `agent-tool-design`.
-- **Dream channel launcher reworked into scheduled settings + a separate manual run (PR #330, codex-2)** —
-  a fast-track follow-up to `dream-channel-and-memory-retire`. The bottom-of-channel surface no longer looks
-  like a chat composer: it splits into **Scheduled Dream** (a "next run" readout + a recurrence picker reusing
-  the shared `DateValuePicker`, with a Dream-specific empty placeholder and a Save action) and a separate
-  **Manual run** popover (date-window + optional focus text). The shared date picker gains date-only,
-  bounded (`maxDate`), top-anchored (`popoverPlacement`/`popoverGap`), and recurrence end-date ("Ends" switch)
-  modes needed by Dream while preserving the command-node schedule behavior; `CalendarMonthGrid` gains an
-  `isDateDisabled` predicate with keyboard-roving fallback to the nearest enabled date, and
-  `nextDateScheduleDue` is added by refactoring the schedule math into one direction-parameterized core shared
-  with `mostRecentDateScheduleDue`. Recurrence `until` is now guarded `>= anchor` at every layer
-  (`buildScheduleString`, the picker commit path, and the calendar). **Gate (main):** `/code-review high`
-  (9 findings fixed across 2 rounds) — including a **caught-and-fixed regression** where the schedule-math
-  dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules evaluated after
-  their `UNTIL`; the `withinUntil` short-circuit was sound only for the forward search, fixed to `continue` in
-  the past direction with a covering test. Verified: typecheck clean, `test:core` 1056/0, `test:renderer`
-  606/0.
-
-### Removed
-
-- **`file_convert` tool removed — redundant with `bash` (PR #331, cc-2)** — the typed `file_convert`
-  local tool added no capability over `bash`: both spawned the same converter binaries
-  (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the **same process environment**
-  (`buildAgentLocalToolProcessEnv` PATH/env, workdir `cwd`) and under the **same permission floor** —
-  the only difference was `shell:false` vs `shell:true`. Its "highest-frequency workflow" rationale
-  (from #266) was never measured (A9), and hardcoding `sips` made it **less** portable than `bash`'s
-  fallback. Removes `createFileConvertTool` + the converters/helpers, the three `file.convert.*` action
-  kinds (`deriveFileConvertActionDescriptors` / path-descriptor copy), `'file_convert'` from
-  `LOCAL_FILE_TOOL_NAMES`, the `file_convert` tests, and the spec sections. Default agent tool count
-  **27 → 26** (local tools 9 → 8). **Kept** (shared with `file_read` PDF/document ingestion):
-  `IMAGE_MEDIA_TYPES`, `getPdfPageCount`, `POPPLER_RECOVERY_INSTRUCTIONS`, `runProcess`; the `bash`
-  description now points the agent at `soffice`/`pdftoppm`/`sips` for conversion. **Gate (main):**
-  `/code-review high` (2 dead-code findings) → cleanup commit `c242cc97` drops the orphaned
-  `selectPdfConversionPageRange` (its only caller was the removed `convertPdfToImages`; `file_read`'s
-  PDF path uses the distinct `selectPdfPageRange`) and the now-unused `copyFile`/`unlink` imports.
-  Verified at gate on the merge commit: `typecheck` clean, `test:core` 1061 ran / 0 fail (2 skip);
-  `docs:check` OK. Specs synced:
-  `agent-tool-design`, `agent-skills`. Pre-release: no migration — a remembered grant keyed on a
-  `file.convert.*` kind becomes inert (acceptable per the no-back-compat rule).
-- **Legacy believer-pool memory projection retired (PR #329, codex-2)** — the third and final PR of
-  `dream-channel-and-memory-retire`, finishing the #302 teardown now that PR #328 derives the Dream cursor
-  and `lastSuccessAt` from the channel. Deletes the per-principal believer-pool **memory projection + its
-  memory API inside `AgentEventStore`** (`recordMemoryEpisode` / `listMemoryEntries` / `updateMemoryEntry` /
-  `removeMemoryEntry` / `readDreamState` / `appendDreamCompleted`), the now-dead
-  `agentMemoryActivation` / `agentMemoryRetrieval` modules, the
-  `AgentMemoryEntry` / `AgentMemoryEvent` / `AgentDreamWatermark` / `dream.completed` types, the
-  `agent_list_memory` (+ `agent_update_memory` / `agent_forget_memory`) commands and their renderer/main
-  plumbing, and the **Settings → Memory** entry-management UI. The `AgentEventStore` **class stays** — it
-  still stores every conversation's events, run streams, payloads, run-meta, and index. Durable
-  model-readable memory is now solely the `#d-*` outline timeline nodes; Dream run history is the protected
-  Dream channel's `dream.finished` audit log. Pool-only core tests removed with the code. **Gate (main):**
-  `/code-review xhigh` (clean) + rebased-stack re-verification — no dangling references, typecheck clean,
-  `test:core` 1051/0, `test:renderer` 601/0, e2e `agent-settings` 33/33. Specs synced: `agent-architecture`,
-  `agent-delegation-runtime`, `agent-event-log-rendering`, `agent-progress`. Pre-release: no migration (wipe
-  `~/.lin-outliner-*`).
-
-### Added
 
 - **Dream date-window scheduling + derived cursor (PR #328, codex-2)** — the second PR of
   `dream-channel-and-memory-retire`. Memory Dream's scope moves from the opaque seq-watermark to
@@ -2849,1483 +1647,6 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   (`useDismissibleOverlay`, `state/persistence.ts`) replacing three duplicated
   copies. Empty-state hint copy updated (en + zh-Hans).
 
-### Changed
-
-- **Agent transcript rebuilt to 1:1 Codex desktop-client message flow (PR #312, `message-flow-rebuild`)** —
-  the agent process rendering is rebuilt as one typed-stream → render-group splitter → nested collapse model,
-  matching the OpenAI Codex desktop client. The per-turn body is a **flat timeline** (no left rail/indent) under
-  a **persistent divider** — the live "Working / Working for {t}" clock while active, "Worked for {t}" once
-  sealed — that stays put through expand and auto-collapse. The turn fold **auto-expands while working and
-  auto-collapses the moment the final answer starts** (Codex machine C), **reversing #306's default-collapsed
-  live process** (PM-ratified). Consecutive tool calls fold into one **counted activity group** ("Ran 3
-  commands · read 2 files", machine B) expandable to the individual rows; reasoning folds like a tool step with
-  a fixed "Thinking"/"Thought" label + a dim one-line gist. A user expand/collapse is **sticky and persisted per
-  conversation** (`agentDisclosureStore`, the renderer analog of Codex's `collapsedTurnsById`), surviving reload
-  and conversation switch. New `agentRenderGroups` splitter + `AgentToolActivityGroup` + `formatRunDuration`
-  with full unit/e2e coverage; supersedes the #311 4-gap design. **Gate (main):** reconciled with #314 — every
-  un-settled tool spins while the turn is live (`isToolCallRowActive`) across the standalone row, the activity
-  group (counts + member spinners), and the header summary, so a parallel batch never flashes red or miscounts
-  as failed mid-turn; the live clock no longer runs away to ~20000d when the turn-start anchor is unknown.
-  typecheck ✓ · `test:core` 1043 · `test:renderer` 587 · e2e `agent-process` 15/15 · `docs:check` ✓ ·
-  adversarial reconciliation review clean · visual verification light+dark.
-- **Stabilize disclosure scroll anchoring — live agent process + outliner collapse (PR #306, codex-3)** —
-  live agent process rows now default **collapsed** (reversing the previous auto-expand-while-working /
-  auto-collapse-on-settle): the collapsed header is the live status line — the pending tool, then the
-  latest non-empty thinking preview, then `Working...` — and updates **in place** to
-  `Worked for {duration}` once the turn seals, with no header jump. A user's expand/collapse choice is
-  now **sticky across the live→sealed transition**: the assistant-turn React key is runId-first (with a
-  same-render dedup backstop), so the row no longer remounts when the streaming placeholder id is
-  replaced by the sealed id, and the spinner moves into the timeline only while the fold is expanded.
-  On any disclosure toggle — agent process folds, and outliner chevron / indent-guide collapse on long
-  flat lists — a shared scroll-anchor helper (`disclosureScrollAnchor.ts` + `usePendingDisclosureAnchor`)
-  captures the clicked trigger's viewport top before the state change and restores it after the layout
-  commit (re-resolving a detached trigger via `data-agent-process-id` / `data-node-id`), so removing or
-  adding descendant rows never pulls the clicked row up or down; the correction is instantaneous, never
-  smooth-scrolled. Native CSS `overflow-anchor` is retained as the floor for non-disclosure layout
-  shifts, with the manual JS as the final authority for the clicked element. Spec synced:
-  `agent-event-log-rendering.md`, `ui-behavior.md`. **Gate (main):** `/code-review high` → 10 findings,
-  all addressed in `3efd82d2` and re-verified — typecheck, `test:renderer` 552/0,
-  `agent-process.spec.ts` 13/13, `outliner-trailing-expand.spec.ts` 23/23 (incl. the `<1px`
-  clicked-chevron anchor assertion).
-- **Single-agent finish collapse — the one-Neva invariant is now code-enforced (PR #300, cc-2)** —
-  removes every surface that could create, load, or delegate-to a *second* agent, completing the
-  collapse begun in #294. Gone: agent-definition authoring (the `agent_create` / `delete` /
-  `duplicate` command kinds + IPC / client / UI + the `/create-agent` skill), file-backed agent
-  loading (the `.agents/agents/` registry scan, `additionalAgentDirectories`), the `Agent` tool's
-  `agent_type` parameter (delegation is now structurally **fork-only** — a fork runs *as* Neva in an
-  isolated context, never a different agent), the skill `agent` field, the dead cross-principal
-  memory redaction, and `isMultiAgentConversation`. Neva stays editable in place; her same-agent
-  fork sub-runs (research / dream / Task) are unchanged. The scheduled-command `commandAgent`
-  selector is removed end-to-end (a command always forks the current agent), and
-  `AgentChildRunActionResult.context_mode` is narrowed to `'fork'`. Net −3791/+546 across 61 files;
-  design folded into the agent specs (A6). **Gate (main):** `/code-review high` (8 finder angles +
-  verify) → 5 findings, all addressed in a follow-up commit (commandAgent removed end-to-end,
-  `context_mode` narrowed, dead `resolveChildRunMemoryOwner` deleted); typecheck ✓, `test:core`
-  1034 / `test:renderer` 547 / `docs:check` ✓. **Shape (a)** one PR.
-- **Single-agent collapse — one customizable agent, channels only, one memory (PR #294, cc-2)** —
-  the multi-agent surface collapses to a single directly-editable assistant (Neva). Conversations
-  become inline channels: the DM primitive, member-roster surface, runtime POV assembly, dead
-  channel-turn execution machinery, the message-addressing protocol, and the multi-agent channel-org
-  tools (`channel_create` / `channel_update`, added in #289) are all removed. Memory collapses to one
-  believer-keyed first-person pool and `memoryIsolation` is dropped — the single pool is always
-  writable. Neva is directly editable (display name, persona, tools, skills, model, effort) via a
-  settings overlay keyed by `agentId`, persisting only fields that differ from the code base so an
-  unchanged persona never freezes; the stable `name` remains the memory anchor. Dream surfacing
-  relocated into Settings → Memory & activity. Net −9929/+2012 across 66 files; design folded into the
-  agent specs (A6). A prior review cycle closed 4 editable-Neva findings (`9940e1d8`).
-- **Channel activity run details — one-agent Channels unified · live process stream · popover polish
-  (PR #291, codex)** — Channel conversations now route ALL run state through the activity row + per-run
-  detail flow, including a **coordinator-only (one-agent) Channel**, which previously fell back to the
-  DM composer/streaming tail. A new `usesChannelActivitySurface(conversationId, members)` (Channel id
-  prefix OR ≥2 agent members) replaces the old `isMultiAgentConversation`-only checks across the
-  runtime, the render projection, the renderer, and the e2e mock, so "is this a Channel?" is decided by
-  one shared helper. The per-run **detail view now renders the live process stream** — thinking, tool
-  calls, and interim prose — through the same transcript UI as DM responses: each run retains its
-  structured live blocks (`assistantContent`) and the projection surfaces them as
-  `streamingContent`, while the main Channel transcript stays whole-utterance only. A coordinator-only
-  Channel keeps its DM-equivalent single-reader turn context (memory briefing + skill/agent listings);
-  only a multi-agent Channel suppresses them for the reader-neutral shared log. Activity popover
-  geometry polish: centered in-flow working row, tokenized spacing (`--channel-activity-*`), neutral
-  avatar/line layout (the semantic-color status dot removed), a compact per-run stop reusing the
-  composer-action button, and a quiet underline-on-focus "Stop all". Specs: `docs/spec/
-  agent-architecture.md`, `agent-event-log-rendering.md`, `agent-progress.md`, `commands.md`,
-  `design-system.md`. **Gate (main):** `/code-review xhigh` (10 finder angles, recall-biased) → 10
-  findings — runtime never emitted `streamingContent` (headline feature dead in production, masked by
-  test fixtures); coordinator-only Channel silently dropped its memory/skill/agent reminders;
-  cross-run tool-call-id collision in the live view; dropped child-run "View transcript" affordance;
-  renderer/core Channel-detection divergence; `lin-agent-channel-` literal duplicated 4×; dead
-  constants; duplicated label dispatch; shallow-copy isolation gap; e2e-mock suppression fidelity —
-  ALL resolved in follow-up commit `27eab8ad` (incl. two new tests exercising the **real** runtime
-  producing `streamingContent` and retaining the coordinator-only memory briefing). Re-verified:
-  typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `test:renderer` 526 pass / 0 fail ✓ ·
-  targeted channel-activity `test:e2e` 4 passed ✓ · `docs:check` ✓.
-- **`web_fetch` success rate — browser identity · cross-host redirects · transient retry · challenge
-  precision (PR #288, cc-2)** — local, user-initiated `web_fetch` retuned purely for success rate (a
-  deliberate local-only SSRF/privacy stance), **no new tool** and the result envelope unchanged. (1)
-  Requests present a real Chrome desktop identity — User-Agent + `sec-ch-ua` client hints +
-  `sec-fetch-*` — and across a redirect chain the headers track a real navigation: `Referer` follows
-  Chrome's strict-origin-when-cross-origin default (full URL same-origin, origin-only cross-origin,
-  dropped on an https→http downgrade) and `Sec-Fetch-Site` degrades monotonically once the chain
-  crosses origin; the embedded-browser fallback renders with the same UA. (2) Redirects are followed
-  transparently across hosts (shorteners/trackers/regional fronts), preserving the server's literal
-  scheme (no http→https upgrade once redirecting, which would break an http-only target); a cross-host
-  landing returns content plus a non-fatal `redirected_host` hint, and a redirect to a local/private
-  host is the one case refused — on both the HTTP path (every hop validated by `isPublicWebFetchUrl`)
-  and the browser fallback (`will-navigate`/`will-redirect` blocked + landing URL re-checked). (3) A
-  raw transient transport throw earns one short-backoff retry, gated by a **denylist** of the
-  deterministic faults (DNS/refused/TLS/unsafe-port/bad-scheme) that would fail identically — so the
-  retry works whether the platform surfaces a Chromium `net::ERR_*` code or a generic fetch rejection;
-  HTTP responses (403/429/5xx, Cloudflare) are never retried and route straight to the browser
-  fallback. (4) Cloudflare-challenge detection narrowed to the `*cf_chl*` tokens + visible
-  interstitial phrases, so a full article merely embedding a Cloudflare beacon / `challenge-platform`
-  script / Turnstile widget is returned as-is rather than discarded for a wasted browser round-trip.
-  Spec folded into `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review xhigh` over four
-  review rounds → round 1 (15 findings: embedded-browser-fallback SSRF from dropped nav guards,
-  Cloudflare beacon false-positives, 429/503 retry double-handling, dropped `application/json` Accept,
-  http→https redirect upgrade, spec drift) → round 2 (6: re-added browser nav guards, narrowed
-  markers, per-hop `Referer`/`Sec-Fetch-Site`, retry whitelist) → round 3 (3 SSRF host-classifier
-  bypasses — IPv4-mapped IPv6, the `fc00::/7` ULA regex, trailing-dot `localhost.` — plus full-path
-  cross-site `Referer` and chain-unaware `Sec-Fetch-Site`) → round 4 (IPv4-compatible `::a.b.c.d` and
-  NAT64 `64:ff9b::/96` IPv6 decode) — all resolved and unit-tested. Merged via an integration merge
-  resolving an `agentWebConstants.ts` conflict with #290 (both add a real Chrome UA; deduped onto a
-  shared `CHROME_MAJOR`). typecheck ✓ · `test:core` 1113 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
-- **`web_search` robustness — real UA · transient retry · DuckDuckGo fallback (PR #290, cc-2)** —
-  three reliability improvements to the default `kind: "web"` path, **no new tool** and the result
-  envelope unchanged. (1) The off-screen search window renders with a real Chrome desktop User-Agent
-  (`setUserAgent`) instead of Electron's default (which advertised `Electron` + the app name), so
-  engines serve the standard desktop SERP the scrapers target. (2) A transient navigation fault is
-  retried once with a short backoff on both the primary and the fallback engine — and because the
-  engines are fixed reputable hosts, `navigation_failed` (the dominant outcome of a mid-flight
-  network/DNS blip, via `did-fail-load`), `network_error`, and nav `timeout` all count as transient;
-  blocks, extraction misses, bad queries, and aborts do not. (3) When Google is blocked, fails
-  recoverably, or returns zero results, `web_search` falls back to the DuckDuckGo HTML endpoint
-  (`providerName: "duckduckgo_html"`); a parsed DuckDuckGo page is authoritative even when empty (so
-  the agent hears "no results — broaden" rather than a misleading "retry / use a browser"), and if
-  DuckDuckGo also fails to parse, the primary Google outcome (its hint/error + `google.com` finalUrl)
-  is surfaced rather than discarded. The rate-limit gate moved from per-navigation (`withSearchWindow`)
-  to **once per `web_search` call** (`execute()`), so the internal retry + fallback cascade no longer
-  self-throttles or burns the cross-call burst budget mid-call; Bing Images and the DuckDuckGo
-  fallback now share one `runServerRenderedSerp` skeleton so their block/abort/timeout handling cannot
-  drift. The fallback warning no longer asserts "Google was unavailable" (the primary may have been
-  reachable but empty/unparsed). Spec: `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review
-  xhigh` (10 finder angles + verify + sweep) → 12 findings; cc-2's fix commit resolved them all (the
-  headline being the retry that never fired because `isTransientSearchError` omitted `navigation_failed`,
-  plus the false fallback warning, the rate-limit-slot multiplication, and Google-diagnostics loss on
-  double failure); re-verified typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
-- **Unified agent transcript process UI (PR #284, codex-2)** — the assistant turn/process-fold
-  renderer is extracted into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`)
-  now used by the DM transcript, the child-run task-detail timeline, **and** the Channel live-run
-  drill-in — delivering #280's deferred "full DM-style process reuse in the drill-in". A live turn
-  shows a locked **"Working…"** row while active and default-collapses to **"Worked for …"** once it
-  settles; the final answer always renders as top-level prose (never moves in/out of the fold, so it
-  no longer remounts on seal), and live/sealed-resultless process groups auto-expand so interim
-  thinking/tool work is never buried. Tool pending state is tightened: a tool row is pending only when
-  its id is in `pendingToolCallIds` (or the single trailing in-flight tool when the runtime reports
-  none), so a stale/resultless historical tool call no longer shows a perpetual spinner. The bespoke
-  child-run transcript UI is removed — the task-detail panel adapts a raw child-run transcript into the
-  shared rows (with real `Worked for`/`Interrupted` from `childRun.status`), and the Channel drill-in
-  adapts the per-run `streamingText` into the same live assistant-turn UI while the canonical Channel
-  transcript still receives only whole sealed utterances. Spec: `docs/spec/agent-event-log-rendering.md`.
-  **Gate (main):** `/code-review max` (10 finder angles + verify + sweep) → 14 findings, all addressed
-  by codex-2 (final-prose remount removed via `Math.max(0, lastProcessIndex+1)`; inner groups made
-  live-aware `sealed={!turnActive}`; per-tool pending via a `fallbackActiveToolCall` instead of the
-  whole-turn flag; orphan tool-result `compactText` + 280px `<pre>` cap restored; hidden-only
-  `<system-reminder>` user messages dropped instead of rendering an empty bubble; dead
-  `expandState`/`liveCollapsed` reachable-again or removed; shared `processSummaryFacts` + single
-  `toolStatus` closure; live placeholder reuses `createAssistantPlaceholderFromModel` + a real
-  `modelApi`; the `getComputedStyle` test stub now restores). A scope expansion (a Channel
-  activity-area rewrite that collided head-on with the just-shipped #280 indicator) was caught at the
-  gate and **dropped on rebase** — the PR keeps #280's indicator and only swaps the drill-in body.
-  typecheck ✓ · `test:renderer` 525 ✓ · `test:core` 1081 pass / 2 skip ✓ · `docs:check` ✓ ·
-  `agent-process` e2e 12 ✓ · `agent-composer` (Channel + child-run) e2e 2 ✓; light+dark visual not
-  re-run this gate. ([#284](https://github.com/relixiaobo/lin-outliner/pull/284))
-- **Channel "working" indicator rework (PR #280, cc)** — the multi-agent Channel "who's responding"
-  surface changes from a corner-anchored floating activity pill (whose translucent list bled
-  transcript text — 穿模) to an **in-flow status row** directly above the composer that occupies its
-  own height, never overlaps the transcript, and is removed entirely when nothing is in flight.
-  Collapsed, it is a quiet `menu` trigger: an avatar stack (`+n` overflow), a generic working summary
-  (≤2 working → names, ≥3 → count), and reduced-motion-safe typing dots. Clicking it opens an
-  **opaque level-1 menu** built on the shared overlay primitives (`MenuSurface` + `useAnchoredOverlay`
-  for viewport flip/clamp + `useMenuKeyboard` for Escape / roving / focus-restore, portaled to
-  `<body>`) — so it can never get stuck open or run off-screen, and the opaque `--overlay-bg` ends
-  the bleed-through. Each row shows the per-agent state (thinking / using tools / received) with a
-  semantic status dot, a per-run **Stop**, and a header **Stop all**; clicking a row drills into that
-  run's live-text view. The producer already emits one entry per live run plus pending `received`
-  turns, so this is a renderer + CSS + i18n change with no projection/main rewrite. DM / single-agent
-  is unchanged; full DM-style process reuse in the drill-in is a tracked follow-up. Specs:
-  `docs/spec/design-system.md`, `docs/spec/agent-event-log-rendering.md`.
-  ([#280](https://github.com/relixiaobo/lin-outliner/pull/280))
-- **Default-allow agent tool permissions (plan #277 → PR #279, codex)** — the agent tool permission
-  model changes from the consequence model's COMMIT→`ask` tier to **default-allow + blocklist**.
-  `decideAgentOperationEffect` returns `allow` for every effect except a non-overridable **hard
-  redline** (`deny`): credential exfiltration, permission/provider/secret self-modification,
-  payment, and root/home/whole-workdir host destruction. A small user-overridable **soft-block**
-  tier (remote-code pipes, OS-persistence + git-internal writes, opaque/obfuscated execution,
-  unparseable shell) raises an **allow-once / always-allow / block-now** approval card that defaults
-  to block on a countdown; the auto-block now fires authoritatively in the main process. Tool
-  permission settings gain a **user blocklist** and a **soft-block-allow exception** list alongside
-  the grants ledger (`blocks` / `softBlockAllows`, persisted via
-  `agent_append_tool_permission_block` and the Settings → Security panel), and the agent debug log
-  can add a narrow `Command()` / `Action()` block after the fact. Static **heredoc redaction** stops
-  `python3 - <<'PY' … PY` artifact generation from false-blocking as `hidden_exec`. Notice-only
-  permission cards and the runtime auto skill-trust prompt are removed. **Pre-release: no
-  migration** — the permission config gains `blocks` / `softBlockAllows` arrays; wipe
-  `~/.lin-outliner-*` dev userData if needed. Spec: `docs/spec/agent-tool-permissions.md`,
-  `docs/spec/agent-skills.md`.
-  ([#279](https://github.com/relixiaobo/lin-outliner/pull/279))
-- **Perf P2: default flat outliner, streaming projection patches, structural-save coalescing (PR #275, codex-3)** —
-  three independent P2 optimizations from the performance program (`performance-optimization.md`).
-  (1) The main outliner renders through the windowed/flat row producer by default; the recursive
-  `OutlinerView → OutlinerItem → nested OutlinerView` path (which mounts every expanded node) is retained
-  only as a reload-scoped diagnostic fallback behind `localStorage('lin:recursive-outliner') === '1'`.
-  (2) Streamed direct-message turns no longer rebuild and clone the whole agent render projection per
-  coalesced tick: main keeps the last emitted projection and emits a `projection_patch` for the single
-  active assistant message (carrying a base revision; the renderer reloads the conversation if the patch
-  cannot apply cleanly), folds it preserving unchanged entity references, reuses derived
-  message/tool/pending-run objects, memoizes transcript rows, throttles the live markdown tail to an 80 ms
-  parse cadence, and moves tail auto-scroll into one `requestAnimationFrame` without a per-revision forced
-  `scrollHeight` read. Channel turns stay result-first/transcript-atomic and use the full-projection
-  fallback. (3) Structural document mutations coalesce their `saveCore` into the existing 700 ms text-edit
-  window instead of writing a whole workspace snapshot per edit, flushed before text materialization,
-  transactions, undo/redo, and app `before-quit`. Gate: `/code-review xhigh` — every finding addressed and
-  re-verified; merged result passes typecheck + `test:core` + `test:renderer` + `docs:check`. Specs:
-  `docs/spec/architecture.md`, `docs/spec/ui-behavior.md`.
-  ([#275](https://github.com/relixiaobo/lin-outliner/pull/275))
-- **Run-grounded agent debug surface (PR #264, cc-2)** — the agent debug panel is rebuilt as a
-  read-only **view of the execution tree** (conversation → runs per agent → rounds → request-window
-  / response / tool-exchange), derived directly from the run ledgers the system already writes —
-  no parallel snapshot representation, no provider-wire re-parsing, no cross-stream seq-matching.
-  Each round is one provider call, bounded by `assistant_message.started`. The agent's outbound
-  system prompt + tool schemas are captured once per run (hash-deduped) into the run's own stream;
-  the triggering user message and any cross-run tool-result slimming are spliced into a run's
-  derivation from a single `latestSeq`-cached read of the conversation segment (slimming matched
-  to its producing run by globally-unique `toolCallId`). Every on-screen string passes one
-  secret-redaction gate — key-name + value-pattern (`sk-`/`ghp_`/`github_pat`/JWT/`Bearer`/
-  `password`/`api_key`…) + large-blob elision, consolidated in `agentSecretRedaction.ts`.
-  Replaces the four `agent_debug_*` commands with `agent_debug_view` / `agent_debug_run`, and
-  deletes the old snapshot/projection surface (`agentDebug.ts` + `agentDebugProjection.ts`,
-  ~800 lines) with its IPC, types, and the `debug.snapshot.created` event (now
-  `debug.run_snapshot.created`, run-stream-scoped and replay-neutral). Pre-release: no migration —
-  old debug payloads are simply gone. Spec: `docs/spec/agent-event-log-rendering.md`.
-- **Providers own the connection, the agent profile owns model + effort (PR #267, cc)** — a provider
-  config is now a **connection record only** (`{ providerId; baseUrl?; enabled }`); `modelId` /
-  `reasoningLevel` are dropped from the stored config and from the `AgentProviderConfigView` /
-  `AgentProviderConfigInput` protocol surface. Which model/effort actually runs is owned by the agent
-  that runs: user/project agents keep `AgentDefinition.model` / `effort`, and the read-only built-in
-  assistant gets a **settings-owned overlay** keyed by `agentId` (`builtInAgentProfiles`, via
-  `getBuiltInAgentProfile` / `setBuiltInAgentProfile`). The provider-config window becomes
-  connection-only (credential/auth, optional Base URL, `Test connection`, Save/remove — no model or
-  thinking-level picker), and `Test connection` validates **reachability** with an internally chosen
-  probe (first-ranked catalog model → `GET {baseUrl}/models` discovery for custom endpoints →
-  honest "endpoint reached but no usable model"). The composer footer **drops the model chip** — a DM
-  talks to an agent identity and a channel to a roster, not to one model; model/provider/effort stay
-  visible only in the Details popover, run/debug, ledger, and the profile editor. A new
-  **capability-driven `AgentModelEffortSelector`** (Provider → Model → effort, effort options derived
-  from the model's `supportedThinkingLevels`) saves the canonical provider-qualified id, parsed by one
-  shared `core/agentModelId` helper so a colon-bearing model id (Bedrock `amazon.nova-lite-v1:0`,
-  Ollama `qwen2:7b`) is never mis-split. Runtime resolution: request override → agent-owned model →
-  catalog first-ranked fallback, coercing effort to the model's supported ladder (default `medium`).
-  Two review rounds (xhigh + follow-up): round 2 fixed a custom-endpoint inherit-model DM/channel turn
-  that threw instead of degrading to a configuration-error agent, a custom (no-catalog) provider that
-  collapsed out of the selector, a stale-effort save divergence, a `/models`-only false "connection
-  successful", and folded the reasoning ladder into a shared `AGENT_REASONING_LADDER`. Implements the
-  `provider-connection-model-ownership` plan (#256, shape (a)). Spec:
-  `docs/spec/agent-pi-mono-implementation.md` + `agent-event-log-rendering.md` +
-  `agent-delegation-runtime.md` + `design-system.md`.
-- **Unified file preview surface (PR #262, codex-2)** — file-node previews and loose
-  agent/local-file previews collapse into one `nodeId`-keyed `FilePreviewPanel` with two lifecycle
-  states (`loose` → `ingested`) over a single mounted frame: a **read-only filename title** (fixing
-  the `Untitled` shown by title-less file nodes), a breadcrumb sourced from the filesystem/source
-  when loose and from outliner ancestry when ingested, the shared `FilePreviewShell` hero, and the
-  file node's children outline + backlinks when ingested. **Add to outline** copies the loose source
-  into an asset, creates a file node under Today, and rebinds the same mounted surface to the new
-  node **in place** (no remount/jump) — rewriting the bound view's target to the stored asset so the
-  hero no longer depends on the volatile loose source. File nodes no longer open a `NodePanel` node
-  page: every navigation entry routes them to the unified surface, which is also reported to the
-  agent's user-view context and persists its children-outline expansion. Panel chrome
-  (`usePanelTitleDock`, `PanelStickyBreadcrumb`, `PanelChildrenOutline`) is extracted to
-  `PanelShared.tsx` and shared with `NodePanel`. Reviewed over **three `/code-review high` rounds**
-  (round 1: 10 findings — assetId/UUID-as-title, file nodes missing from agent view-context +
-  outline-expansion persistence, a scroll/breadcrumb reset-key mismatch, a post-bind loose-source
-  hero divergence, a false "added" confirmation, an inert-but-clickable loose breadcrumb, scattered
-  reroute, and chrome duplication; all fixed across rounds 2–3). typecheck + 482 renderer tests +
-  file-attachments/agent-process e2e green. Specs: `docs/spec/ui-behavior.md` +
-  `docs/spec/workspace-layout.md`.
-- **Unified agent prompt composition + Anthropic L0 cache breakpoints (PR #263, codex)** — the four
-  ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`, `LIN_CHILD_AGENT_CORE_PROMPT`,
-  `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) collapse into one
-  `composeAgentPrompt(definition, context)` whose blocks are layered by **scope × volatility**
-  (universal **L0 firmware** → capability modules → per-agent persona/skills). **Custom DM/Channel
-  agents and fresh child runs now receive the same perception and conduct/safety firmware as the
-  built-in assistant**; memory and child-run behavior become capability modules that follow effective
-  tool capability (so an agent's recall/dream guidance tracks the tools it actually has). Adds
-  **cross-agent prompt caching**: for multi-agent Channel member runs and fresh child runs,
-  `applyAgentPromptCacheBreakpoints` rewrites the Anthropic provider payload in `onPayload` — it
-  splits the stable system block into `L0 firmware` + `rest` (both cache-marked) so the identical
-  firmware prefix is shared across agents, while preserving the provider's last-tool/last-user
-  breakpoints inside Anthropic's 4-breakpoint budget (dropping the OAuth identity breakpoint first
-  when over budget). Single-agent DMs, fork child runs (which still inherit the parent prompt), and
-  non-Anthropic providers are unchanged; per-turn environment, memory briefings, and user-view
-  reminders stay outside the stable prompt. Tool-rule matching and agent display-name derivation are
-  extracted to shared `agentToolRules.ts` / `agentDefinitionDisplay.ts` so prompt capability gating
-  cannot drift from the actually-injected tool roster. Specs:
-  `docs/spec/agent-pi-mono-implementation.md` + `docs/spec/agent-delegation-runtime.md`.
-- **Agent permission model — consequence-based `decide(effect)` core (PR #252, codex)** — the agent
-  tool permission gate is rebuilt around an operation's **consequence** rather than a mode/action/
-  classifier matrix. `decideAgentOperationEffect(effect)` yields three outcomes: local reversible
-  **WORK → allow** silently, **COMMIT** (irreversible / external / credential / outside-scope)
-  **→ ask** (approve once or remember as a narrow grant), and a **FORBIDDEN** safety **floor → deny**
-  that trust settings cannot bypass. The old **3 safety modes, the LLM bash classifier, Full Access,
-  the shell allowlist, and the renderer exception editor are removed**; shell inverts to a
-  floor-blocklist (an unknown *static* command is WORK by construction). `file_delete` is a new
-  reversible tool that moves content to `.agent-trash`. Grants are narrow and typed —
-  `Scope(read|write:root)` (path-containment matched; a read grant never authorizes a write),
-  `External(target)`, `Command(form)` — and revocable from Settings ▸ Security. Floors cover host
-  destruction, disk format, raw-disk / persistence (incl. `crontab`) / git-internal / permission-config
-  writes, credential exfiltration, and obfuscated remote-code execution, scanning the `bash -c` inner
-  command and splitting on `\n` / lone `&` (redirections preserved). PR-1 of the
-  `agent-permission-redesign` set; folder-handoff and `file_convert` follow. Specs:
-  `docs/spec/agent-tool-permissions.md`, `agent-pi-mono-implementation.md`, `agent-skills.md`.
-- **Colored identity avatars + icon-free "Worked for" header (PR #245, cc)** —
-  an agent's avatar now carries a per-identity hue instead of one neutral fill: a dedicated
-  `--identity-tint-0..7` palette — its own decorative category, kept distinct from functional state
-  (B3) and status (B4) — deterministically assigned by an identity hash (`agentAvatarColor.ts`, a
-  byte-identical murmur to `tagColors.ts`) and mixed toward `--surface` so the tint reads soft and
-  theme-aware in both light and dark, never a baked box. A hairline same-hue ring gives the small pill
-  definition; it ships as the tokenized `--avatar-tint-ring` (B11 — `box-shadow` stays a `var()`,
-  mirroring `--inline-ref-focus-shadow`). Separately, the result-first process header drops its leading
-  status glyph for a single **trailing** chevron slot (codex-style); the live spinner swaps into that
-  same slot while the turn is working, so the title text never shifts across the loading→sealed
-  transition ("labels don't move"). Renderer/CSS only — no protocol/shared surface. Visual gate verified
-  light + dark; design-system token guards green. Spec: `docs/spec/design-system.md`.
-- **Compact Channel attribution — avatar+name header over a full-width reply (PR #243, cc-2)** —
-  a Channel assistant row no longer indents its body into an avatar gutter. The row is now a column:
-  an **attribution header** (avatar + speaker name on one line) above a **full-width reply body** aligned
-  to the avatar's left edge, so every Channel reply reclaims the horizontal space the per-message avatar
-  column used to cost. The actor-name block moves from beneath the reply into the header (the old negative
-  `margin-bottom` hack drops; the row gap owns that spacing). A DM assistant row carries no attribution
-  header, so its content was already full-width and is unchanged. Renderer/CSS only — no protocol/shared
-  surface. Visual gate verified light + dark. Spec: `docs/spec/design-system.md`.
-- **Result-first turn fold for DM and Channel (PR #240, cc-2)** —
-  every agent turn now renders **result-first**: the final answer is the message, while thinking,
-  tool calls, and interim narration fold behind a collapsed `Worked for {duration}` disclosure. DM
-  and Channel share one fold mechanism — the Channel text-only render path and the single-tool inline
-  block are removed — and each Channel agent's final message gets its own copy/regenerate action bar
-  (`isLastInTurn` is now actor-aware). `Worked for {duration}` is the producing run's wall-clock
-  (`updatedAt − startedAt`, threaded as `runDurationMs` on the message entity), falling back to the
-  descriptive "Thought · used N tools" summary when the run wall-clock is unknown — a still-`running`
-  run reports unknown rather than a fake "<1s". A resultless turn that ends on a tool/thought
-  auto-expands so its interim text stays visible instead of hiding behind the fold; a multi-run turn
-  (reactive-compaction retry) sums each distinct run's wall-clock. The pure row-building logic is
-  extracted into `agentConversationRows.ts` for unit testing. Pairs with #239 (the agent-side
-  environment reminder) to complete `channel-group-chat-semantics`. Spec:
-  `docs/spec/agent-event-log-rendering.md`, `docs/spec/agent-architecture.md`.
-
-- **Channel/DM framing moves from the member system prompt to a per-turn environment reminder (PR #239, cc-2)** —
-  a Channel/DM member's stable system prompt is now **identity only** (display name + mention,
-  description, authored instructions, profile skills) via one `buildAgentMemberSystemPrompt` that
-  replaces the split `buildChannelPeerSystemPrompt` / `buildDirectMessageAgentSystemPrompt`, so the
-  same agent's prompt is byte-identical (and cacheable) across its DM and any Channel. DM-vs-Channel
-  framing, the member roster, and the Channel communication norms are **environment**, so they ride a
-  new per-turn `<conversation-environment>` `<system-reminder>` (`buildConversationEnvironmentReminder`,
-  assembled in `deriveRuntimePiMessages` next to the memory reminder, POV-correct for the executing
-  member). The Channel block adds the previously-missing norm — *only your final message is shared with
-  the other members; intermediate thinking and tool steps stay private* — so members lead with the
-  result instead of narrating their process into the thread. DM-vs-Channel is keyed off conversation
-  **identity** (`isCanonicalDmConversationId`), not live agent headcount, so a coordinator-only Channel
-  is still framed as a Channel. `escapeXml` moves to `src/core/reminderXml.ts` and the POV identity
-  preamble + roster share one `agentMemberMentionLabel` (consistent escaping). PR 1 of 2 for Channel
-  group-chat semantics (agent side); the human-side render fold + per-agent action bar follow. Gate
-  (main): `/code-review` flagged a DM/Channel authority regression (decided by headcount, not identity)
-  — fixed to `isCanonicalDmConversationId` with a coordinator-only-Channel runtime regression test;
-  typecheck + `test:core` (1016) + `docs:check` green. Spec: `docs/spec/agent-pi-mono-implementation.md`.
-- **Cross-agent contact is baseline-allow + consultee approval attribution (PR #236, cc)** —
-  `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']` flips `'ask'` → `'allow'`, so consulting another
-  agent is ungated in **every** safety mode (`ask_first` / `balanced` / `full_access`); safety stays on
-  each consultee's **own** capability permissions plus the unchanged depth/cycle/concurrency guards
-  (`agentDelegation.ts`), and the now-redundant `agent.delegate.spawn` entry is dropped from
-  `FULL_ACCESS_ALLOW_ACTIONS`. A consultee's own gated (`'ask'`) **or** hard-denied
-  (`permission_notice`) action that surfaces in the parent conversation is now **attributed to it** via
-  `AgentApprovalRequestView.requestedByAgentId`, resolved to the consultee's canonical mention token on
-  the approval card ("Requested by @researcher"); attribution is derived at the delegation layer from
-  the authoritative `contextMode` (a fresh consult → the consultee; a fork → the spawner's inherited
-  attribution, so a consultee's own fork stays the consultee's and the user's own fork stays
-  unattributed), not an id heuristic. The contradictory "Spawn child agents" Security rule and the
-  vestigial `allowable` mechanism (its only non-allowable rule) are removed. Spec:
-  `docs/spec/agent-tool-permissions.md`, `docs/spec/design-system.md`,
-  `docs/plans/agent-conversation-model.md` (Build note → shipped).
-- **UI quality Layer 1 — composition rhythm + design-system consistency (PR #228, codex-2)** —
-  a CSS-only sweep (plus spec sync) shipping the two Layer-1 lanes of the UI-quality suite as one
-  pass. Composition tokens are centralised in `tokens.css`: the reading measure `--reading-max`
-  (720px) is split from the `--settings-content-max-width` (920px) utility cap, with
-  `--panel-content-max` aliased onto the reading measure; a `--title-display/-section/-group`
-  heading scale and a `--row-h-dense/-comfortable` row-height tier alias the existing values, so
-  these are tokenizations with no visual change. Visible alignments: the outliner / agent / panel
-  context menus, the agent-composer image preview, and the date popovers now use the shared glass
-  material (`--material-popover` + `--material-backdrop`, which carry the
-  `prefers-reduced-transparency` / high-contrast opaque fallback for free) on the
-  `--radius-overlay-sm` (10px) overlay radius rung; icon-only chrome controls (breadcrumb close,
-  page-back, panel close, view-toolbar pill, panel more-button) drop their box for pill geometry and
-  colour-only hover (B6); `:focus` becomes `:focus-visible` across fields and triggers with the
-  neutral focus ring, retiring the `--agent-accent` focus leak in the subagent follow-up textarea
-  (B3); chrome captions are `user-select: none` (B10); and the current agent conversation row uses
-  `--selection-bg` so it reads distinctly from hover. Spec corrections folded in: the product icon
-  library is documented as `lucide-react` (the prior "hand-curated inline-SVG set" description was
-  stale), and the design-system B2 one-liner now reflects that in-app theming drives
-  `nativeTheme.themeSource` with no renderer `[data-theme]` bridge. A post-merge cleanup dropped the
-  unconsumed `--row-h-compact` rung the lane had declared (agent rows stay compact via line/padding
-  geometry, not a fixed row height) and re-synced the spec. Design folded into
-  `docs/spec/design-system.md`.
-- **Responsive workspace robustness — rails, pane capacity, indentation, tag/breadcrumb overflow (PR #223, codex-2)** —
-  at small window widths the floating sidebar and agent rail widths were independent and could
-  reserve more horizontal space than the window could host; because the canvas hides horizontal
-  overflow, the main reading pane would silently crush instead of exposing a rescue path. New
-  shared `src/renderer/ui/workspaceResponsiveLayout.ts` holds the layout metrics + floor math.
-  Rail widths now separate a **user preference** from a **rendered width**: drag / keyboard /
-  reset update the preference; window resize, pane-count changes, and rail reopen recompute only
-  the rendered width against the current pane floor (agent rail yields first, then sidebar,
-  neither below its minimum). The key consequence is the preference is never destroyed — a
-  transient narrow window no longer permanently ratchets a wider rail down. New pane creation is
-  gated by available width: root/file-preview splits repurpose an existing workspace pane when too
-  narrow, and an agent-debug open in a too-narrow window now reports "Window is too narrow to open
-  another pane." (en + zh-Hans) instead of silently no-oping. Deep outline, sidebar-tree, and
-  preview/backlink indentation all cap visual depth at one shared `MAX_OUTLINE_INDENT_DEPTH`
-  (document depth/keyboard structure unchanged). Tag bars wrap chips with row gaps (inline
-  plain-text-row slot expands the row instead of overflowing the next), and breadcrumb segments
-  carry width shares that protect the final current-context segment in narrow panes. A CSS
-  `min-width` backstop covers the single-pane canvas; multi-pane stays JS-gated by design (a hard
-  per-pane CSS floor would turn impossible-narrow states into canvas-level horizontal scroll).
-  `docs/spec/workspace-layout.md` updated. Gate (main): `/code-review high` (7 angles) surfaced 10
-  findings (top: a rail-width ratchet that lost the user's chosen width on transient resize; an
-  agent-first ordering violation on single-rail drag; a per-pointermove reflow on the drag hot
-  path); all fixed in the follow-up commit — preference/rendered split, unified floor clamp,
-  metrics snapshotted at drag start, pure capacity predicate split from the reflow side effect,
-  dead exports removed — with new renderer + e2e coverage. Renderer-only, no protocol change.
-- **Outline tag/checkbox syntax unified on one shared grammar (PR #222, codex)** —
-  `src/core/textSyntax.ts` becomes the canonical home for the outline tag token,
-  tag extraction/removal, canonical `formatTag` serialization, the live-`#`-trigger
-  query, and checkbox-marker parsing. The agent outline parser, paste metadata
-  harvest, live `#` trigger, agent projection, user-view context, and clipboard
-  serialization all import the shared helpers instead of four drifting local
-  regexes. User-visible changes: `formatTag` now bracket-escapes tag names
-  containing `]`, backslash, or newline-style characters (`\]`/`\\`/`\n`/`\r`/`\t`)
-  so such names round-trip, and emits bare `#中文` for Unicode names (one shared
-  bare-name class for parse and format); checkbox markers are recognized when the
-  marker is alone or whitespace-separated (`[x] body`, bare `[x]`/`[ ]`) while
-  `[x]body` stays literal text; empty tag names fail fast. Bracket tag names accept
-  raw backslashes. Pure refactor, no protocol change. Spec:
-  `docs/spec/agent-tool-design.md`, `docs/spec/ui-behavior.md`.
-- **Delegation run records + run-status converge onto one shape (C1+C2) (PR #225, cc-2)** —
-  the three near-duplicate records describing a delegated (child) run now derive from one
-  canonical `DelegationDetail` (`src/core/agentEventLog.ts`): the durable
-  `AgentChildRunRecord` and the IPC `AgentChildRunSnapshot` ARE a `DelegationDetail`, and the
-  in-memory runtime record (`AgentRunRecord` → `DelegationRunState`) `extends` it with
-  live-execution state only. The shared id fields
-  (`executingAgentId`/`parentAgentId`/`memoryOwnerAgentId`) became **required** — the spawn
-  writer always sets them — so `restorePersistedRuns` carries the descriptive half verbatim
-  and the defensive fallbacks drop out (C1). The dual run-status enums collapse:
-  `AgentChildRunStatus` (`…|stopped`) is **deleted**; every data-layer surface (durable
-  record, IPC snapshot, runtime record, `child_run.*` events, run ledger, and the
-  model-facing `AgentChildRunActionResult`) now speaks the single `AgentRunStatus`
-  (`…|cancelled`) vocabulary. `renderTaskStatusFromRunStatus` moves to core
-  `agentRenderProjection.ts` as the **one** pure projection (`cancelled → stopped`) every
-  task/child-run render entity flows through — the renderer keeps the user-facing word
-  "stopped" while the data is uniform (render components unchanged). `unattended` is now
-  **durable** — recorded on `child_run.started` and projected onto the record — so a
-  cross-restart resume rebuilds the agent with the same approval policy (was in-memory
-  only). The run ledger's terminal-status → lifecycle-event mapping is now an exhaustive
-  `satisfies`-checked table instead of a nested ternary. C3 (run-context assembly) stays
-  folded into the M-series context-assembly rewrite (A7). No `commands.ts`/`types.ts`
-  change. Design folded into `docs/plans/agent-program.md` § Convergence.
-- **Agent dock + channel configuration refinement (PR #217, codex)** — refines the
-  agent dock header, conversation menu, DM/Channel rows, and unread/menu
-  affordances to the current design-system rules, and moves agent and channel
-  **create/edit** out of in-settings inline editors into dedicated native child
-  windows. New `AgentConfigWindow` / `ChannelConfigWindow` renderer surfaces are the
-  single authoring path (the Settings "Agent Profiles" pane is now a list of launch
-  points only); main-process window construction is unified behind one
-  `createConfigChildWindow` helper shared by the provider, agent, and channel
-  windows, all with the same A3-hardened `webPreferences` and `isLiveWindow`-guarded
-  parent/cleanup handling. The built-in **Tenon assistant** is now registered in the
-  delegation registry, so selecting it as a command/child `agent_type` resolves and
-  dispatches instead of throwing; and a persisted fresh child run whose agent
-  definition was deleted/renamed after it started now **recovers** by continuing
-  with the Tenon assistant rather than hard-erroring on resume (a durable recovery
-  path, not a generic dispatch fallback). Settings deep-links are fixed: `agent=<id>`
-  opens that agent's config window and creation uses a separate `agentMode=create`
-  param, removing the reserved-value collision that made an agent literally named
-  `create` un-editable. Creating a channel now navigates the main panel to the new
-  conversation (`agentNavigateToConversation` IPC), and `refreshAfterSettingsChange`
-  reloads agent definitions (concurrently) so a freshly authored agent's name/POV is
-  no longer stale until a conversation switch. Restores the Channel member POV
-  inspector entry from the Slack-style row menu. Removes the dead DM→Channel
-  escalation affordance and the Channel-creation `systemNotice` plumbing
-  (PM-ratified 2026-06-13: DM is strictly 1:1; any multi-party conversation is a
-  first-class named Channel, so there is no in-DM "upgrade to Channel" entry point).
-  Adds real Electron smoke coverage for the agent/channel config child-window
-  lifecycle (`tests/smoke/config-windows.smoke.ts`) and a draft plan
-  `docs/plans/channel-async-message-bus.md` for the next Channel-as-async-IM-bus
-  change (captured separately, not implemented here). Specs:
-  `docs/spec/agent-delegation-runtime.md`, `docs/spec/design-system.md`. Reviewed
-  via `/code-review high` (10 findings — all fixed in the follow-up commit, verified
-  by re-review with no new regressions).
-
-- **Agent UI glyph refresh (main, fast-track)** — the thinking indicator (thinking
-  rows + the thinking-only process-block header) now uses a dedicated `ThinkingIcon`
-  (lucide `Dices`) instead of the brain, and the skill glyph (the loaded-skill
-  affordance + the Settings → Skills category, which previously shared `BrainIcon`
-  with Memory) uses `Notebook`. `BrainIcon` stays for the memory tools
-  (recall / dream / Memory settings), so Memory and Skills are no longer drawn with
-  the same icon.
-
-- **Security Settings IA redesign — one honest trust model (PR #215, codex-3)** —
-  fixes a security-surface correctness bug: the old Security page read only
-  explicit overrides and otherwise showed the literal `Ask first`, so under Full
-  Access it displayed "Fetch web / Delete files / Run scripts → Ask first" while
-  the runtime would actually run them without asking. The page now mirrors the
-  runtime precedence — **hard safety blocks → your exceptions → the selected mode
-  default** — by sharing one pure decision model. A new `src/core/agentPermissionModel.ts`
-  holds the per-action-kind default table, the `ask_first`/`full_access` adjustment
-  sets, and `effectiveActionDecision(actionKind, mode, overrides, actionDefault?)`;
-  both the runtime fallback (`agentPermissions.ts`) and the renderer
-  (`permissionSettingsModel.ts`) compute from it, so display and runtime can no
-  longer drift. **Behavior-preserving extraction**: the runtime decision and
-  precedence are unchanged (the pre-existing `tests/core/agentPermissions.test.ts`
-  is untouched and passes; a new parity + truth-table test pins it), hard blocks
-  and the #214 `agent.skill.write` removal are preserved, and per-descriptor
-  `defaultDecision` is now injected from the central table except where a context
-  is intentionally stricter (outside-area/sensitive `deny`, inline shell edit
-  `ask`). The page is rebuilt around **Default + Exceptions**: the three-way mode
-  is the living default, explicit rules surface as visible deltas, deviation flips
-  the header to a derived "Custom · based on `<mode>` · N changed" with Reset, and
-  Granted Trust + Advanced collapse into one Exceptions list plus an "Add an
-  exception" disclosure (`agent.delegate.spawn` stays non-allowable; accepted
-  skill hashes are listed separately). Specs synced (`agent-tool-permissions.md`,
-  `agent-skills.md`); i18n en + zh-Hans. Gate (main): typecheck + test:core
-  (944 / 0 fail) + test:renderer (430 / 0 fail) + agent-settings e2e light/dark
-  (27 / 0); deep manual security/behavior-preservation review in lieu of the
-  billed `/security-review` (PM decision, mechanism byte-identical to review).
-
-- **Compact loaded-skill tool calls (PR #216, codex-2 + main follow-up)** — when
-  the model invokes an inline `skill` (status `loaded`), the agent transcript no
-  longer renders a generic Input/Output disclosure card whose Output is just the
-  `Launching skill: <name>` receipt. Instead it shows one compact line — a
-  dedicated skill glyph, the slash-prefixed skill name, and dimmed invocation
-  args — because the real payload is the steering message injected into the next
-  model turn, not a user-inspectable tool output. `context: fork` skills keep the
-  normal expandable disclosure (they carry a real child-run result). Detection
-  branches on the existing `details.data.status` (`loaded` vs `forked`) with a
-  `Launching skill:` text fallback; no backend/protocol change
-  (`AgentToolCallBlock.tsx` + token-based `agent-tool-rows.css`). Main follow-up
-  polish: the glyph is a dedicated `SkillIcon` (not the `BrainIcon` shared with
-  recall/dream memory tools), and the ellipsis-truncated name/args carry `title`
-  tooltips so the full value stays inspectable on hover. Spec: `docs/spec/agent-skills.md`.
-  Gate (main): typecheck + test:renderer (427 pass / 0 fail) + agent-process e2e
-  light/dark (`renders loaded skill calls`, 1 pass).
-
-- **Agent authoring cleanups (PR #213, codex-4)** — closes the #167-review-gate
-  residue. Agents loaded from `additionalAgentDirectories` now render **read-only**
-  in the editor (Duplicate only, no Save/Delete) since every write to them is
-  rejected by the main-layer containment guard anyway — `isAgentDefinitionWritable`
-  (`not built-in AND contained in a writable agents dir`) drives the view's
-  `readOnly`. An out-of-catalog `effort` value now coerces to "Inherit" in the Form
-  `<select>` instead of a browser-auto-selected catalog option. A new core guard
-  test runs the real `filterAgentTools` over the renderer `TOOL_CATALOG` so the two
-  can't silently drift. (The fourth cleanup, AGENT.md parser consolidation, already
-  shipped in #184.) Gate (main): typecheck + test:core (923 pass / 0 fail) +
-  test:renderer (421 pass / 0 fail) green; no styling change (B-series N/A); spec
-  `agent-delegation-runtime.md` synced in-PR.
-
-- **Agent permission safety modes (PR #193)** — the app-level
-  `permissionMode: trusted|restricted` is replaced by a global three-level
-  `AgentSafetyMode` (`ask_first` / `balanced` (default) / `full_access`) that
-  supplies descriptor default decisions as a first-class policy layer inside
-  `evaluateAgentToolPermission`, ordered after configured deny / the restricted
-  delegation sandbox / configured allow-ask and before the descriptor default. The
-  profile never materializes as broad allow rules and can never weaken a hard
-  floor: `full_access` only promotes classified non-redline routine automation
-  (allowed-root file/outliner edits + deletes, web fetch, local/project/dependency
-  execution, network writes, git/GitHub mutation, subagent spawn, Dream, skill
-  content writes, background processes) and still asks for deploy/publish, sandbox
-  override, config writes, sensitive local reads, and outside-root access — unknown
-  shell, sensitive writes, exfiltration, host destruction, permission modification,
-  and payment stay denied; `ask_first` additionally asks for ordinary local
-  file/outliner edits and skill invocation. Legacy stored `permissionMode`
-  normalizes at read/write (`restricted→ask_first`, `trusted→balanced`); agent
-  definitions keep `permission-mode: restricted` only as a narrow delegation
-  sandbox and legacy `permission-mode: trusted` frontmatter is ignored on parse so
-  a definition can never widen above the global mode. The composer approval card
-  grew from one form to three kinds (`tool_permission` / `skill_trust` /
-  `permission_notice`): tool approvals add a *Hand everything to Lin, stop asking*
-  action that switches the global mode to `full_access` and approves the current
-  call; the in-flow `skill_trust` card accepts an unratified mutable skill's exact
-  current content hash (refused on mismatch) so automatic use no longer needs a
-  Settings detour; tell-only `permission_notice` cards make hard/configured denials
-  visible and dismissible (single-slot per conversation — a newer notice resolves
-  and replaces the older). All three card kinds listen to the active run's abort
-  signal and resolve as declined (`run_aborted` for blocking waiters) on stop. The
-  Settings → Permissions page becomes **Security**: a global trust-level control, a
-  revocable **Granted Trust** projection over action allow rules (revoked
-  immediately, also merged into any unsaved draft) and accepted skill hashes, plus
-  the prior action-kind rows demoted to **Advanced**. New permission event sources
-  (`safety_mode_profile`; reserved `trust_ledger`) distinguish default from
-  explicit resolution paths. Gate review (this main agent), two rounds: round 1
-  flagged missing abort handling on the two new card kinds, unbounded
-  permission-notice accumulation, and a save-vs-immediate inconsistency between the
-  two Granted Trust revoke buttons; round 2 resolved all — a shared
-  `denyPendingApprovalForRuntime` helper + abort-signal threading through skill
-  tool / skill-shell / notice paths, single-slot notice dedup, and immediate action-
-  grant revocation. Gates green: typecheck, core 866/0-fail (+5 new edge-case
-  tests), renderer 410/0-fail, e2e (composer + settings) 61/61 with the new
-  skill-trust / notice / Security specs (unrelated composer-geometry timing flakes
-  only). Specs synced (agent-tool-permissions / agent-skills / agent-tool-design /
-  agent-program F6); plan archived `done`.
-- **Agent memory: episodic sources + discriminated-union provenance (PR #195)** —
-  memory realignment PR-2 (D-4 episodic layer + D-5 sources reshape). A
-  `MemoryEntry.source` is now a discriminated union: a raw stream span
-  `{stream: 'conversation' | 'run', streamId, range: {fromSeqExclusive, throughSeq,
-  throughEventId}}` addressed in that stream's own seq space, or `{episodeId}`. Dream
-  consolidation now writes a memory-owned episode gist (new `memory.episode_recorded`
-  event projecting `AgentMemoryEpisode`) and the semantic facts it commits cite that
-  episode; the store maintains a principal-gated reverse index (episode → citing
-  facts). `recall(include_evidence)` zooms fact → episode gist → raw span, resolving
-  conversation and run evidence through one shared seq-window reader; the durable gist
-  is returned even when every raw span is gone (it is the memory-owned artifact), and
-  the gist reserves its share of `max_chars` before raw spans (and is itself clamped to
-  the remaining budget). The legacy `messageRange` evidence resolver and the dead
-  `buildDreamMemoryExtractionSpan` path were removed. Storage layout bumped to **v3**
-  with no legacy source reader — pre-release clean-cut wipe of old agent data, no
-  migration. Specs synced (agent architecture / data-model / delegation-runtime /
-  event-log-rendering / tool-design); the superseded `agent-memory-episodic-index`
-  draft is archived.
-- **Run unification: the subagent entity is dissolved (PR #184)** — the concept
-  model's 7 primitives now hold in code: a delegation is just a Run whose
-  `parentRunId` points at another run. A delegated (child) run is an ordinary
-  Run with its own `runs/<runId>/` append-only ledger; the parent stores only
-  the `parentToolCallId ↔ childRunId` join — `state.subagents` and transcript
-  payload snapshots are gone. ONE evidence addressing scheme everywhere (stable
-  `{seq, eventId}`; the `runId:message:N` codec and payload pinning deleted),
-  ONE watermark shape (`{seq, eventId}` per stream; the positional
-  `{messageCount, payloadId}` cursor deleted), ONE compaction semantics
-  (event-sourced; the snapshot-rewrite path deleted — the #178
-  evidence-preserving invariant now holds structurally). The word `Subagent`
-  left the type system (`agent_child_run_*` commands, `child_run.*` events,
-  delegation/child-run vocabulary); AGENT.md frontmatter parsing exists exactly
-  once (`core/agentMarkdown.ts`); a `layout.json {v}` generation sentinel
-  replaces the #180 detector pile (fail-open invariants carried over;
-  pre-release wipe, no migration). Fork-vs-fresh semantics (#164), memory
-  ownership, permission flow (verified byte-equivalent at the gate), sidechain
-  rendering, and task-panel visibility are preserved. Hardened across two gate
-  rounds: a `runs.json` read-modify-write race that could silently drop a
-  finished turn's messages from replay is serialized onto the index queue
-  (red-verified regression test); the child-run reducer now accepts
-  terminal→running as resume semantics; the e2e layer genuinely migrated to the
-  new transcript command; quit-path settling covers per-run ledger queues; the
-  new `agent_child_run_transcript` IPC fail-closes on cross-conversation reads;
-  Dream skips delegation ledgers missing their `run.started` boundary. E2E
-  316/316 green; visual verification light + dark passed.
-
-### Fixed
-
-- **Manual "Dream now" pre-checks for new evidence and advises when there is nothing new (PR #320, cc-2)** —
-  a manual Dream over too little new evidence used to be a wasted model round-trip that just no-ops. A new
-  read-only **`agent_dream_readiness`** command (`AgentRuntime.previewDreamReadiness()`, mirroring the
-  scheduled volume calc via an extracted `collectDreamEvidence`) now runs first; below the volume bar,
-  Settings → Agent → Memory surfaces a thin-data advisory plus a **"Dream anyway"** override instead of
-  running. The manual Dream flow gets its **own** `'dream'` request scope (not the shared `'mutation'` one)
-  so an unrelated settings mutation in flight can't invalidate the readiness request and leave
-  "Dreaming…" stuck forever. **Gate (main):** `/code-review high` (3 findings — independent request scope,
-  advisory copy, `collectDreamEvidence` extraction — all folded by the author); re-verified on the rebased
-  head: typecheck ✓ · dream/readiness/backoff `test:core` 20/0 · `agent-settings` e2e **33/33** (the gate
-  caught and the author fixed an `outlinerMock` regression where `agent_dream_readiness` fell through to the
-  `agent_*` `undefined` stub, breaking the pre-check pass-through). Spec (`agent-skills`, `agent-tool-design`)
-  and both i18n locales synced (A6).
-- **Dream remembers nothing instead of recording low-value memory (PR #319, cc-2)** — a Dream over a
-  trivial chat used to be forced to write *something* (e.g. a `#d-episode` that only narrated "Neva
-  answered a Chengdu weather follow-up") because two forces required output: the runtime threw
-  `"… completed without creating or editing memory nodes"` on a successful zero-write child (→ failure
-  backoff + re-fire, training the model to always write ≥1 node), and the SKILL/prompt framed a
-  `#d-memory` container as mandatory. Now **"remembering nothing" is a first-class, common outcome**: the
-  zero-write throw is removed, the one-container rule is conditional on actually writing, and
-  transcript-narration / assistant-action episodes are explicitly banned (with the Chengdu-weather line as
-  a negative example). **Reverses a prior #302/#308 decision** — a *clean* zero-write completion now
-  records `dream.completed` with zero change counts **and advances the watermark**, so a
-  considered-but-empty span is not re-read. **But truncation is not a no-op:** the main review gate caught
-  that a child reaching `completed` via a maxTurns abort or an unresolved context overflow also returns
-  zero writes — advancing the watermark there would silently drop that span's evidence forever. The
-  delegation runtime now flags such runs `incomplete` (set before the maxTurns abort, guarded by
-  `isStreaming`; and on overflow at completion), surfaced through `runToToolData`; a truncated **zero-write**
-  Dream is treated as a **failure to retry** (watermark held), while a truncated run that *did* write keeps
-  its work. **Gate (main):** `/code-review high` (8 finder angles → verify) surfaced the truncation
-  data-loss path as Finding 1; the author's fix gates the watermark advance on a clean terminal state.
-  Re-verified by main on the real head: typecheck ✓ · `test:core` **1046/0** (incl. a new deterministic
-  context-overflow test proving the truncated span is retried, not dropped) · `docs:check` ✓. Six
-  `docs/spec/*` synced (A6).
-- **Live process header stays on the `Working` divider + stable disclosure scroll (PR #317, codex-2)** —
-  two live-process presentation defects from the Codex-style transcript. (1) **Header:** an active turn
-  without a run clock used to replace the persistent header with a summary of the work below — the
-  running-tool / latest-thought line while collapsed, and the descriptive group summary while expanded. The
-  active header is now persistent: `Working for {t}` once the run clock is known, and bare `Working` when it
-  is not, whether the body is collapsed or expanded (the expanded timeline already carries the
-  thought/tool detail). The dead clock-less fallback in `summarizeProcess` (and its `lastThinkingText` /
-  `liveCollapsed` / `thinkingLabel` inputs + the orphaned `lastNonEmptyThinking` helper) is removed. (2)
-  **Disclosure scroll:** a user expand/collapse changes transcript row height, and the chat panel's
-  stick-to-bottom could then pull the scroller after the disclosure anchor had restored, so the clicked row
-  felt like it jumped. A user disclosure toggle now pauses stick-to-bottom, and every agent disclosure
-  (process row, folded tool-activity group, individual tool row) exposes a stable `data-agent-disclosure-id`
-  so the same row is re-anchored after render. **Gate (main):** `/code-review high` (8 finder angles →
-  verify) — the substantive candidates (anchor restore re-arming stick near the bottom; the pause being
-  "permanent"; clock-less `Working` losing detail) were each traced to design-intended or non-reachable on
-  the real path; the one surviving finding (dead `summarizeProcess` params) was folded by the author before
-  merge. typecheck ✓ · `agentProcess` test 10/0 (re-run by main) · author suite `test:renderer` 593/0 ·
-  `docs:check` ✓.
-- **Tool-output context slimming de-coupled from the canonical transcript (PR #313, cc-2)** — the
-  per-batch budget offload and the time-based microcompact used to overwrite a tool result's `content`
-  with a slim preview/`payload_ref` to shrink the model's per-request copy. That mutated the *canonical*
-  record, so on reload an old `web_search`/`web_fetch` decayed into an input-only / no-output row. A
-  `tool_result.replaced` now writes a separate **`modelSlimmedContent`** field and leaves `content` full
-  forever (the Claude Code 2.1 stance: slim the model's copy, keep the persisted transcript whole).
-  Model-context derivation substitutes **`modelFacingContent`** (`modelSlimmedContent ?? content`) — the
-  consumers are runtime pi-message derivation, the per-batch sizing in `collectToolResultBatches`, and
-  Dream memory extraction — while the UI transcript and search index keep reading the full `content`. The
-  replaced event is the durable, monotonic slim-decision journal: replay never shrinks the canonical
-  content (so a result is never un-slimmed → cache-stable) and slim-decision logic reads the model-facing
-  copy so an already-offloaded/cleared result is never re-emitted (no prompt-cache churn). The search
-  index's `tool_result.replaced` branch preserves the full creation-entry text, advances the seq, and
-  merges the offload payload id — it never indexes the slim bytes. **Behavior note:** Dream now digests
-  what the agent actually saw (the slim copy), matching pre-decouple behavior, rather than the
-  re-expanded full output. **Gate (main):** the merge folded the `/code-review xhigh` findings (model-facing
-  sizing, search-index never-index-slim, Dream model-facing, reducer `updatedAt`) with regression tests
-  and an adversarial verify of the fix delta (all four CONFIRMED-CORRECT, no new bug, no layering
-  violation). Spec synced (`agent-pi-mono-implementation.md`). typecheck ✓ · `test:core` 1043 / 0 fail ·
-  `test:renderer` 560 / 0 fail · `docs:check` ✓.
-- **Parallel tool calls render every result, no mid-turn red flash (PR #314, main)** — one assistant
-  turn that fans out parallel tool calls (e.g. several `web_search`/`web_fetch`) had two rendering
-  defects. (1) **Persistence:** each tool result's `parentMessageId` was the assistant message, so N
-  parallel results were stored as *siblings*; the transcript's single-leaf active path keeps one child per
-  node, so N-1 results fell off-path → invisible → rendered as resultless "Failed" rows (≈half of all
-  parallel-tool results). Results now chain onto the run's tail `lastMessageId` (`assistant → result₁ →
-  result₂ → …`), honoring the documented "run is a linear spine" contract, so every result stays on the
-  active path. (2) **Live status:** the per-row spinner was granted to only the single most-recent
-  un-settled tool (and only while `pendingToolCallIds` was empty), so in the frame after a parallel batch
-  is emitted but before the runtime marks the calls in-flight, every tool but the last flashed red
-  ("red → running → success"). A new pure `isToolCallRowActive` predicate treats every un-settled tool
-  (no result, no `outcome`, no child run) as pending while the turn is live. Extends the
-  `fix/tool-call-spinner-stuck` `outcome` work below. Both regression tests mutation-verified; two
-  independent adversarial reviews clean. Spec synced (`agent-event-log-rendering.md`). typecheck ✓ ·
-  `test:core` 1041 / 0 fail · `test:renderer` 560 / 0 fail · `docs:check` ✓.
-- **Completed tool steps no longer spin forever (main, `fix/tool-call-spinner-stuck`)** — a finished
-  step (e.g. a `web_search` that returned) kept showing a spinner for the rest of the run. The
-  authoritative `tool_call.completed` / `tool_call.failed` events were replay no-ops, so the renderer
-  inferred "done" only from a later `tool_result.created` message; when that result never lands in the
-  projection (some built-in SDK tools complete without one) the row fell through to the active-turn
-  fallback and spun indefinitely. Replay now stamps a per-call **`outcome`** (`completed`/`failed`) onto
-  the toolCall content, the render entry carries it (the pi `AssistantMessage` drops it), and
-  `getToolCallStatus` resolves a settled call to done/error even with no result message — the active-turn
-  fallback now only bridges genuinely un-settled, resultless calls. Render-only (model context never sees
-  `outcome`) and survives reload via replay. Spec synced (`agent-event-log-rendering.md`); new core replay
-  test + renderer `getToolCallStatus` cases. typecheck ✓ · `test:core` 1040 pass / 2 skip / 0 fail ·
-  `test:renderer` 555 pass / 0 fail · `docs:check` ✓.
-- **Editing Neva's tool allow/deny list hot-swaps the live conversation (PR #299, main)** — a tools
-  edit through the settings editor persisted to the built-in overlay but never re-resolved the open
-  conversation's `agentToolFilter`, so a just-removed tool stayed callable until the conversation was
-  reopened. The `updateAgentDefinition` hot-swap loop (which already re-applied persona/model/effort)
-  now also recomputes `agentToolFilter` from the freshly-materialized built-in overlay and rebuilds
-  the live tool set via `applyRuntimeToolSettings`. Adds an integration regression test (verified red
-  without the fix). This was finding #2 of the #294 post-merge `/code-review max`; finding #3
-  (`tools:[]` → all-on) was a verified false positive — the editor maps "uncheck all" to
-  `tools: undefined` (inherit all) by design and never stores an empty allow-list for the built-in.
-- **Invoked skills can read their own reference files; web_fetch verification pages route to the
-  browser without flagging real articles (PR #292, codex)** — three corrections. (1) **Skill reference
-  reads:** a resource-backed inline skill exposes `${AGENT_SKILL_DIR}` and points `file_read` at support
-  files such as `references/*.md`, but the permission audit and the file-tool execution roots had
-  diverged, so those reads could still be rejected after permissions were loosened. The runtime now
-  projects the *exact* invoked-skill directory into the typed file boundary as a **read-only** root —
-  a source-tree `src/main/builtInSkills/<skill>` path in dev, the copied `built-in-skills/<skill>`
-  directory in packaged builds. `getActiveSkillReadRoots` re-validates every restored skill against the
-  live registry (`skill.skillRoot === expectedRoot`), so transcript text cannot grant arbitrary reads,
-  and it never grants write access or exposes sibling/parent skill dirs; the read still passes the
-  normal sensitive-path block (the `isSensitivePath` check precedes the inside-area check). (2)
-  **web_fetch verification detection:** Reddit/DataDome-style "please wait while we verify" interstitials
-  (including ones served with HTTP 200/401) now route to the browser fallback, but the markers are kept
-  narrow — explicit interstitial phrases, and DataDome markers only when a `verify`/`verification`/
-  `captcha` word co-occurs — so a full article that merely embeds a bot-protection asset (e.g. a
-  `js.datadome.co` tag) is **not** misrouted and discarded. (3) **Live Channel tool status:** a tool
-  that fails mid-turn in the live Channel working-detail now renders as an **error** instead of a green
-  "done" — a dedicated `failedToolCallIds` channel carries error state alongside `pendingToolCallIds`,
-  and the per-run tool-result index is built once per projection (one O(messages) pass, not one per run).
-  Specs: `docs/spec/agent-skills.md`, `docs/spec/agent-tool-permissions.md`. **Gate (main):**
-  `/code-review high` (8 finder angles, recall-biased) → blocking findings (over-broad fetch markers
-  re-introducing the documented false-positive class; errored live tool rendering green) fixed in
-  follow-up `05854c28`, plus the per-run scan collapsed to a single pass and a skills early-out;
-  re-verified typecheck ✓ · `agentWebFetchFallback` 17/17 · `agentChannelRuntime` 32/32 ·
-  `agentRenderProjection` 25/25.
-- **The agent dock reopens the conversation you last selected, not always the latest (PR #261, codex-4)** —
-  opening the agent dock after a renderer remount/reload restored the *latest* conversation rather than the
-  DM or Channel the user last had open: the selected conversation only lived in memory, and the initial
-  restore path always picked latest. The renderer runtime store now **persists the last-selected conversation
-  id** (`AgentRuntimeStore` gains an injectable `AgentConversationPreferenceStore`; the browser impl is
-  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort so a failed write never
-  blocks chat) and **restores it before falling back to latest** — startup tries the remembered DM/Channel via
-  `restoreConversation(id)`, and on failure clears the remembered id and falls back to `restoreLatestConversation`
-  (the `requestVersion` guard blocks stale writes from a superseded restore). The preference is written at the
-  single choke point `hydrateConversation` (select / new / reload / restore all funnel through it) and cleared
-  when the active conversation is closed; the injectable store keeps tests independent of browser localStorage.
-- **A DM child run folds into its spawning turn's process — no orphan boundary, no broken style (PR #247, cc)** —
-  a child run spawned by an `agent` tool call inside a **DM** (a non-multi-agent conversation) used to render
-  as a conversation-level **child-run boundary row** (a centered divider between two rules), which surfaced
-  two bugs from the reported screenshot: (1) the row **persisted after re-editing** the message that started
-  the turn — child runs carry no message/branch anchor, so `insertChildRunRows` appended the orphan at the
-  transcript end once the parent tool call left the active branch; and (2) **broken style** — the "Agent task"
-  label wrapped to a second line and the description overflowed the panel's right edge. The reframe: in a DM a
-  child run is the agent's own **implicit** behavior — it quietly delegated a slice of the current turn — so it
-  now **folds into that turn's process** instead of standing as a first-class divider. The in-process `agent`
-  tool-call block already renders full parity (summary "Agent task · {description}", expand-to-result, open
-  full transcript) via `childRunsByParentToolCallId`; the fix is two coordinated gates on the **same**
-  multi-agent flag — the projection **skips** the boundary row (`!multiAgent && parentToolCallId`) and the
-  renderer **keeps** (does not suppress) the tool-call block in a non-multi-agent conversation. Same-flag
-  lockstep is load-bearing: it makes the "child run vanishes" failure (no boundary AND no fold) provably
-  impossible, including for a single-agent channel. Because the folded run lives inside the turn's own message,
-  it is turn-anchored and branch-pruned with that message — an edit removes it cleanly, no orphan. The
-  **multi-agent Channel** boundary row and the **parentless command-fire** row are unchanged; the surviving
-  boundary's CSS shrink chain (`min-width: 0` + ellipsis) is hardened so it single-lines and ellipsizes instead
-  of wrapping/overflowing. Spec: `docs/spec/agent-event-log-rendering.md`.
-
-- **Channel "Interrupted" verdict tied to the run's real status — the root fix (PR #244, cc)** —
-  the recurring multi-agent Channel mislabel (a coordinator turn shown red **"Interrupted after thinking"**
-  while it looked unfinished) that #240 and #242 both only patched. Root cause: the "interrupted" verdict
-  was a pure RENDER heuristic — `turnFailedWithoutProse = turnEnded && !finalIsProse` — that never consulted
-  the run's real outcome. Because a multi-agent Channel hardcodes `turnPhase: idle` (every Channel row's
-  `turnEnded` is always true), it collapsed to "ends on a thinking/tool block → red Interrupted" for **any**
-  result-less turn, whether it completed cleanly, was mid-flight in a projection gap, or genuinely failed.
-  The fix decouples the two concerns the heuristic conflated, both off the run's authoritative status:
-  (1) the core projection stamps `turnInterrupted` on each assistant message from the producing run's REAL
-  status (`failed`/`cancelled`, or a crash-orphaned `running` run absent from the live `activeRunIds`), so
-  the red label + error styling fire ONLY on a genuine interruption — a cleanly `completed` turn is never
-  red, in either mode; (2) surfacing a resultless turn's process is now mode-aware
-  (`surfaceResultlessProcess`) — a genuine interruption surfaces in either mode, and a sealed resultless DM
-  turn still surfaces its work (#240 preserved unchanged), but a cleanly-completed resultless **Channel**
-  turn folds to the neutral **"Worked for …"** header (atomic delivery — its process lives in the activity
-  detail view, not inline). The dead `turnEnded` plumbing is removed; the e2e mock now carries
-  `turnInterrupted` to mirror the real entity. The four #240 DM e2e tests pass unchanged; visual verified
-  light + dark (a completed Channel `web_fetch` turn now reads "Worked for 5s", a cancelled one stays red
-  "Interrupted"). Spec: `docs/spec/agent-event-log-rendering.md`.
-
-- **Channel turns deliver atomically — suppress in-progress turns from the transcript (PR #242, cc-2)** —
-  a running Channel agent's turn no longer appears in the transcript until it completes, realizing the
-  spec's atomic-delivery rule and fixing the false **"Interrupted after thinking"** label that #240's
-  result-first fold surfaced on actively-working turns. `buildTranscriptRows` now suppresses every
-  message whose producing run is **live** in a multi-agent Channel — keyed off the in-memory active-run
-  set the runtime passes in (`options.activeRuns`), NOT the persisted `status === 'running'`: a run left
-  `running` by a crash/quit is absent from the live set, so its **interrupted** turn still renders rather
-  than silently vanishing (regression-guarded). The in-flight turn's progress stays in
-  `channelActivityEntries`; the whole turn appears once its run seals, rendered result-first. A spawned
-  child run is held back the same way, so its boundary row never orphans to the transcript end while the
-  parent is hidden, then reappears anchored once the parent lands. Gated on `isMultiAgentConversation`,
-  so a DM still streams its active turn live. A shared `isRunRunning` predicate replaces the scattered
-  inline status checks (and fixes a latent `activeRun` undefined-deref in the activity-entry gate).
-  Addresses the `/code-review max` findings on the first cut (live-set keying, child-run symmetry, the
-  shared helper, and the test). Spec: `docs/spec/agent-event-log-rendering.md`.
-- **Delegation runtime hygiene — stop-salvage + shared child-agent harness (PR
-  #221, cc-2)** — a `stop()`ped child run now keeps the last partial assistant
-  text it produced (surfaced in the synchronous tool result and terminal
-  notification) instead of reporting an empty result; spawn (`startAgent`) and
-  resume (`ensureLiveAgent`) build the child agent through one
-  `buildChildAgentHarness`, so a resumed run honors the **current**
-  disabled-skill/agent settings (the resume path previously skipped those gates)
-  and carries its `unattended` flag in-memory. The salvage is scoped to the
-  current live span via a `salvageFromIndex` floor (set at resume, reset at
-  compaction), so a run resumed after completing and then stopped before new
-  output no longer resurrects the prior round's result; `send()` rebuilds the
-  agent before mutating run state so a failed rebuild can't strand the run or
-  wipe its prior result. No protocol/`commands.ts`/`types.ts` change.
-- **Built-in skill path handling + skill-write permission simplification (PR
-  #214, codex-2)** — code-registered built-in skills (currently `/skillify`) no
-  longer render a fake `Base directory for this skill: built-in/<name>` header or
-  claim a readable `built-in/<name>/SKILL.md`, so the model stops attempting an
-  out-of-workspace `file_read` that hit a hard permission block; built-ins render
-  body-only and post-compact bookkeeping records them as `built-in:<name>`.
-  Restore bookkeeping hardened: `parseLoadedSkillFromText` skips forked-skill
-  result messages (guarded on `<skill-result>`) so one-shot child-run output is
-  never re-injected as persistent skill guidance, the skill-listing-state identity
-  uses `built-in:<name>` instead of the pseudo path, and `addLoadedSkill` no longer
-  stats the non-existent built-in file. Permission model: the dedicated
-  `agent.skill.write` action is **removed** — writes into recognized skill
-  directories now use the ordinary `file_write` / `file_edit` permission decision
-  (PM-ratified 2026-06-12); recognition still drives validation, provenance,
-  rollback metadata, audit events, and hot-reload, and the safety floor remains
-  invocation-time ratification (agent-written skills are born unratified and need
-  exact-byte user acceptance to become model-invocable). Specs synced:
-  `docs/spec/agent-skills.md`, `agent-tool-design.md`, `agent-tool-permissions.md`,
-  `agent-progress.md`. Gate (main): typecheck + test:core (936 pass / 2 skip /
-  0 fail).
-
-- **Packaged agent local-file root no longer defaults to `/` (PR #192)** — the
-  launch-time fallback was `LIN_AGENT_LOCAL_ROOT ?? process.cwd()`; in a packaged
-  app launched from Finder, `process.cwd()` can be `/`, which made the whole disk
-  the agent's allowed file area (ordinary non-sensitive reads/writes outside any
-  intended project boundary defaulting to in-root behavior). Root resolution is
-  now a pure resolver (`src/main/agentLocalRoot.ts`): a non-empty
-  `LIN_AGENT_LOCAL_ROOT` (trimmed) is an explicit override; source/dev runs keep
-  `process.cwd()` (the `dev:*` scripts run from the repo clone, so dev stays
-  repo-bound); packaged runs with no override use the dedicated
-  `<userData>/agent-local-root` directory — a sibling of the app's own
-  persistence, never `/` and never the full `userData` — created at startup so
-  bash/file-tool cwd exists. This only narrows the default-allow area; the
-  sensitive-path redlines and out-of-root deny/ask rules are unchanged. Boundary
-  semantics documented in `docs/spec/agent-tool-permissions.md`. Hard prerequisite
-  for Full Access in `agent-permission-safety-modes`, now cleared.
-
-- **Dream backoff hygiene + manual-bypass coverage (PR #190)** — follow-up to #189
-  closing its two accepted gate notes: `fireDream` now prunes `dreamFailureBackoff`
-  entries for pools that are no longer dream principals (e.g. a deleted agent) at the
-  start of each scheduled pass, bounding the in-memory map to live pools (a live pool
-  with an armed window is always in the principal set, so it is never pruned); and a
-  new integration test asserts a manual `/dream` ignores an open backoff window and
-  records a `completed` run, covering the manual-bypass gate and the completed branch
-  of `recordDreamFailureBackoff`.
-
-- **A failing scheduled Dream backs off instead of re-firing every tick (PR #189)** —
-  the Dream scheduler ticks every 60s and its gate only consults the pool's last
-  *success* (`shouldFireDateSchedule(…, lastSuccessAt)`); a failed Dream advances
-  neither `lastSuccessAt` nor the watermark, so a persistently failing Dream
-  (provider down, quota, …) re-created a fresh `failed` run record every minute,
-  per pool — up to 1440/day/pool. Added a per-pool, in-memory failure backoff
-  (sibling to the `dreamingPools` guard): after a *scheduled* Dream fails, the pool
-  is held off for an exponentially growing, capped window (5 min → 10 → 20 → … →
-  6 h cap), cleared on the first success. A manual `/dream` ignores the window (the
-  user asked for it now) and its outcome still resets the backoff, so a manual run
-  can un-stick the schedule; `skipped` outcomes leave the window untouched. The
-  curve is a pure helper (`dreamBackoff.ts`). In-memory by design — transient
-  scheduler control state, not durable self-model — so a restart costs one extra
-  attempt, never a flood. Does not retroactively clean already-piled records.
-
-- **Dream sessionId stays within the provider `prompt_cache_key` cap (PR #188)** —
-  the Dream batch stream `sessionId` was `${principalKey}:dream:${runId}:${n}` =
-  79 chars; pi-ai clamps the request body's `prompt_cache_key` to 64 but still
-  writes the untruncated id into the `session-id` request header, so the
-  `openai-codex` backend rejected every packaged-app Dream with HTTP 400
-  (`Invalid 'prompt_cache_key': … length 79`). Dropped the `principalKey` prefix
-  (`runId` = `dream-run-<uuid>` is already globally unique and the prefix bought no
-  cache affinity) → new form `dream:<runId>:<n>` = 54 chars. The format now lives
-  in one `buildDreamSessionId(runId, batchIndex)` builder so no caller can
-  re-prepend a principal; a unit test guards the 64-char cap. Normal chat was
-  unaffected (its `conversationId` is 29 chars).
-
-- **Outliner indent and trailing-draft placement (PR #182)** — closes the boarded
-  fast-track `outliner-indent-draft-fixes`. Batch Tab no longer force-expands the
-  selected siblings themselves, and the skip-batch-members run rule now lives in core
-  `batchIndentNodes` so agent-driven batch indents are covered too, not just the
-  keyboard path. Single indent expands the target in the same paint as the projection
-  move instead of one frame early. A trailing draft outdented with Shift+Tab now lands
-  in the parent scope directly after its old parent — a `{parentId, afterId}` placement
-  with one shared resolver (`src/renderer/state/trailingDraftPlacement.ts`) drives
-  rendering, the materialize index, Tab inversion, and ArrowUp/Backspace, and Enter
-  materializes in place on both the text and empty paths. Structural row moves gained a
-  reduced-motion-aware FLIP animation (duration derived from the motion token ladder),
-  outdent is blocked at the panel root, and outdenting a parent's last child collapses
-  the emptied parent. Two gate rounds; five low-severity residuals recorded on the PR.
-
-- **IME composition survives the split echo and empty rows (PR #177)** — fixes #176, the
-  P1 `skill` → `sk ill` mid-word tearing, with two independent root causes closed: (1) a
-  split echo's focusRequest landing ~60–80 ms into a live composition force-committed the
-  partial word — a global composition gate now parks focusRequest application while any
-  composition is live, and at compositionend the composing editor relays the (never-flushed)
-  composed text through the existing pendingInput rail to the echo's focus target, so the
-  word lands whole at the head of the new row; (2) an empty textblock has no #text node to
-  host the IME's marked range, so ProseMirror's first non-append composition rewrite redrew
-  the paragraph and killed the OS IME session — compositionstart now seeds empty blocks with
-  the existing zero-width sentinel anchor (stripped by the codec, never persisted). Renderer-
-  only; leg 1 pinned by a real-app CDP probe (`scripts/probe-ime-split.ts`), leg 2 verified
-  with a real Pinyin IME (CDP cannot emulate it — caveat recorded in `ui-behavior.md`).
-
-- **Agent memory evidence survives transcript compaction (PR #178)** — closes M3 Phase 1
-  (`agent-memory-source-binding`, plan archived `done`). Both Dream evidence renderers dropped the
-  post-compact reminder along with all hidden boilerplate — but after a subagent fork auto-compacts
-  (transcript payload superseded) or a conversation `/compact`s (active path re-anchored at the
-  post-compact root), that reminder is the only remaining carrier of the pre-compaction content, so
-  the content was silently never distilled while the Dream watermark advanced past it; additionally a
-  fork-prefix boundary recorded against a longer, superseded transcript clamped into a permanent
-  silent skip of the whole run. Dream evidence now surfaces the compaction summary (anchored
-  extraction, the inverse of the reminder producer and co-located with it in `agentCompaction.ts`),
-  reads the fork boundary envelope-first (written atomically with the messages it indexes), and
-  treats a boundary beyond the payload length as "fresh evidence, Dream from 0". The review round
-  hardened the extractor anchoring (a hidden block merely quoting the preamble can no longer leak
-  hidden context into evidence), pinned the reminder strings as persisted-format surface, and deduped
-  the renderer exception + test fixtures. Invariant recorded in `agent-data-model` §13.17. Gate:
-  RED-on-main verification + multi-agent `/code-review`; typecheck; `test:core` 801/0.
-  ([#178](https://github.com/relixiaobo/lin-outliner/pull/178))
-- **Launcher keeps the dock icon + first ⌘Q quits promptly, at the root (PR #171)** — supersedes PR #170's
-  show/hide toggle and the dock-icon fast-track with the actual root causes, found to be **two independent
-  bugs**. (1) *Dock icon vanished when the launcher was summoned:* the launcher's all-Spaces collection
-  behavior (`setVisibleOnAllWorkspaces`) transforms the app's process type to `UIElementApplication`
-  (accessory), dropping the dock icon + ⌘Tab entry (electron#26350); the native `collectionBehavior` attempt
-  (commit cea2998) did **not** avoid the transform and is reverted (addon byte-identical to `main`). Fixed by
-  adding Electron's purpose-built **`skipTransformProcessType: true`** to `setVisibleOnAllWorkspaces` on
-  show/hide, so it joins all Spaces without the transform. (2) *First ⌘Q needed two presses* (reproduced on a
-  fresh launch with the launcher never summoned — unrelated to all-Spaces): the `before-quit` handler
-  `preventDefault()`s the OS ⌘Q to flush, and the prior re-issued `app.quit()` lingered for seconds before the
-  process actually exited. Now the handler drains in-flight writes then **`app.exit(0)`**s — review-hardened to
-  first `AgentRuntime.drainPendingWrites()` (session event-log appends + the crash-safe Dream/command-sweep
-  tails) under a 2.5s hard timeout so a slow in-flight Dream LLM call can't block the quit, with the global-
-  hotkey unregister inlined into `before-quit` (since `app.exit` skips `will-quit`). Gate: high-effort
-  `/code-review` (3 findings — runtime-write durability, `app.exit` over `process.exit`, the `will-quit` trap —
-  all fixed and verified on the merged tree) + typecheck + `test:core` 774/0; the packaged ⌘Tab / over-
-  fullscreen-float / no-focus-steal / dock-icon checks remain a one-time manual eyeball on the `.dmg`.
-  ([#171](https://github.com/relixiaobo/lin-outliner/pull/171))
-
-- **Tenon shows its dock icon again (fast-track)** — the packaged app ran in macOS "accessory" activation
-  policy (window + menu bar present, but no dock icon and no ⌘Tab entry) — a side effect of the always-present
-  non-activating launcher NSPanel. The prior `app.dock.show()` re-assert did not restore it (that API only
-  un-does an explicit `dock.hide()`); replaced with `app.setActivationPolicy('regular')` right after the
-  launcher is created, which forces the app back to a regular foreground app. Verified by typecheck; the dock
-  icon itself needs a one-time packaged-build eyeball (same as the ⌘Q fix).
-- **First ⌘Q quits the packaged app (PR #170)** — the prewarmed global launcher window called
-  `setVisibleOnAllWorkspaces(true)` at creation and kept it forever, even while hidden; a window that
-  permanently joins all Spaces makes AppKit skip `applicationShouldTerminate:` on the first ⌘Q, so the
-  `before-quit` flush never fired and the app needed two presses. The all-Spaces (incl. other apps'
-  full-screen) collection behavior is now toggled **only while the launcher is visible** — set in
-  `showLauncherWindow`, cleared in `hideLauncherWindow` (every dismissal routes through it) — so the common
-  quit path (launcher hidden) is free of the bug, while cross-Space float is unchanged while it is open.
-  Gate: `/code-review` + hide/show path audit (sole `.hide()` / `setVisibleOnAllWorkspaces` callers) +
-  typecheck + `test:core` 766/0; the packaged first-⌘Q outcome still needs a one-time manual eyeball on the
-  `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
-
-### Internal
-
-- **agent turn render projection — extract message-flow semantics (PR #316, codex-2)** —
-  behavior-preserving refactor of the agent transcript renderer. A new pure `agentTurnProjection`
-  module (`projectAssistantTurn` → `AgentTurnProcessProjection`) sits between the
-  `AgentRenderProjection` message and the React components and owns the turn-level semantics that
-  used to live inside `AgentAssistantTurnContent`: the result-first process-vs-final partition, the
-  synthetic Working/Worked-for process item, default fold-state inputs, stable disclosure ids, and
-  tool-activity grouping boundaries. `AgentProcessBlock` now consumes one `process` object instead of
-  ~7 separate props, and the render-item union `AgentProcessSegmentBlock` (`kind: thinking|toolCall|
-  narration`) becomes `AgentTurnProcessItem` (`type: reasoning|toolCall|agentMessage`). No functional
-  or visual change — reasoning/tool detail rows are untouched; the partition heuristic (final answer =
-  trailing text after the last thinking/tool block) is preserved exactly, and disclosure ids are now
-  more stable across streaming (original content index vs the prior filtered index). **Gate (main):**
-  `/code-review xhigh` — zero correctness findings (every formula traced byte-equivalent to the deleted
-  inline version across line-by-line / removed-behavior / cross-file angles); three type-model cleanup
-  findings (dead `phase` and `sourceIndex` fields, duplicate final-message shape) fixed by the author
-  before merge. typecheck ✓ · `test:renderer` 597 pass / 0 fail · `docs:check` ✓. Design folded into
-  `docs/spec/agent-event-log-rendering.md`; plan archived to `docs/plans/archive/`.
-- **Composer model-control test: silence the act() warning (PR #298, main, fast-track)** — the
-  `AgentComposerModelControl` test mounts the anchored-overlay flyout, which (lacking
-  `requestAnimationFrame` under linkedom) deferred its reposition `setStyle` to a `setTimeout`
-  that fired after the render's `act()` block ("An update … was not wrapped in act(...)"). The test
-  harness now installs a synchronous `requestAnimationFrame` stub so the reposition runs inline
-  inside `act` — deterministic and warning-free (no product-code change; the two remaining
-  `CommandAgentPicker` / `DateValuePicker` warnings are pre-existing and unrelated).
-- **self-definition write dedup in `agentLocalTools` (PR #287, main)** — behavior-preserving
-  cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
-  `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
-  `instructions`). Extracted three helpers — `selfDefinitionWriteData`,
-  `notifySelfDefinitionContentWrite`, `selfDefinitionWriteInstructions` — that own the skill/agent
-  mapping once so the two tools stay in lockstep, and dropped the dead `agentDefinitionWrite` parameter
-  `notifySuccessfulAgentDefinitionContentWrite` only `void`-ed. No functional change. typecheck ✓ ·
-  `agentLocalTools` + `agentRuntimeSkillsIntegration` + `agentSkills` core suites 283 pass / 4 skip / 0
-  fail.
-- **agent-debug: correct stale slimming comment; pin light summary to its oracle (PR #274, cc-2)** —
-  comments + tests only, no behavior change. (1) Fixed a stale comment in `agentDebugView.ts`:
-  cross-run `tool_result.replaced` (output slimming) is matched to its producing run by the
-  globally-unique `toolCallId` (spliced at derivation), **not** "stamped with its producing run's id"
-  — the round-1 approach #264 reverted; the comment now matches the implementation and the spec
-  (`agent-event-log-rendering.md`). (2) Added equivalence tests pinning the light `summarizeRunStream`
-  path to the correct-by-construction `summarizeDebugRun` oracle (single-round + multi-round in-flight
-  usage rollup), enforcing the "summary never disagrees with the detail" invariant both functions'
-  comments promise. **Gate (main):** `/code-review xhigh` — no findings (comment correction verified
-  against spec; equivalence verified by running the suite); `agentDebugView.test.ts` 13 pass.
-  ([#274](https://github.com/relixiaobo/lin-outliner/pull/274))
-
-- **Plan: default #General channel (PR #265, codex-4)** — docs-only. Adds
-  `docs/plans/default-general-channel.md`: a Slack-like default **`#General`** Channel — a
-  reserved-identity Conversation that exists by default (user + coordinator), **auto-includes every
-  durable peer agent** as it appears (fork / child / headless runs excluded), and is the Agent Dock
-  default when no conversation is remembered. Membership = presence + addressability, **not**
-  participation; unaddressed turns still route to the coordinator, so auto-membership never becomes
-  auto-noise. **No stored conversation `kind`** (reserved id + runtime invariant); `@all` deferred.
-  **Gate (main):** squash-merged after a plan review, then folded in the two review fixes — removed
-  the plan `status` frontmatter (plans are frontmatter-free; status lives only in `docs/TASKS.md`)
-  and dropped the non-existent multi-"workspace" framing (there is one workspace; `localFileRoot` is
-  env/cwd). Boarded as P2 (not started).
-
-- **Plan: bundled built-in skill resources (PR #268, codex-4)** — docs-only. Adds
-  `docs/plans/bundled-built-in-skill-resources.md`: give app-shipped `built-in`
-  skills the standard Anthropic Agent Skills shape (a real `SKILL.md` +
-  `references/`/`scripts/`/`assets/` base directory so `${AGENT_SKILL_DIR}`
-  resolves and built-ins use progressive disclosure instead of a monolithic prompt
-  body), preserving the immutable built-in floor. PM-ratified after confirming the
-  folder shape against the official Agent Skills standard; the plan delivers
-  **structural conformance only** — `name:` frontmatter conformance + third-party
-  skill import is split out as a separate board item. Boarded as P1 (not started).
-
-- **Sync the security-exceptions e2e count to the 9-rule catalog (main, fast-track)** —
-  `agent-settings.spec.ts` asserted `toHaveCount(10)` select-popup rows, stale since #50f8e6e2 (ungate
-  cross-agent contact) intentionally dropped the `spawnChildAgents` (`agent.delegate.spawn`) rule from
-  `COMMON_PERMISSION_RULES`, taking it 10 → 9. Updated the assertion to 9; agent-settings e2e 33/33 green.
-
-- **Unified main-process JSON persistence into one store primitive (PR #226, codex-3)**
-  — the main process had three hand-rolled atomic-write implementations plus two
-  synchronous `writeFileSync` outliers (`agentSettings.ts` / `documentService.ts`
-  / `assetService.ts` / `appPreferences.ts` / `windowState.ts`), each re-deriving
-  temp-file + rename, mode handling, and read-modify-write locking. They now share
-  `src/main/jsonFileStore.ts`: `atomicWriteFile` (+ `writeJsonFileSync` for the two
-  synchronous callers), `readJsonOrDefault`, `writeJsonFile`, and a serialized
-  `updateJsonFile` read-modify-write under a per-path write lock. The lock map is
-  self-pruning (compare-and-delete the settled tail, so unique-path callers like
-  per-asset metadata don't accumulate entries), private-file mode is the single
-  exported `PRIVATE_JSON_FILE_OPTIONS` preset (0600 file / 0700 dir, no-op on
-  Windows), and a same-path nested write throws (`AsyncLocalStorage` guard) instead
-  of deadlocking. Preserves every on-disk format (file names, pretty vs compact,
-  trailing-newline, the plaintext-0600 secret/permission/provenance files) and the
-  secret data-loss guard (a corrupt blob still aborts the mutation rather than
-  overwriting). The asset sidecar write is now awaited before ingest resolves.
-  Zero on-disk format change. Gate (main): high-effort `/code-review` (6 findings,
-  all addressed in the fixup commit), typecheck + `test:core` (963/0) clean. Design
-  folded to `docs/plans/archive/main-json-store-unification.md`.
-- **TASKS.md is the single source of plan status (main, direct merge)** — plan
-  status + priority previously lived in both plan-file frontmatter and
-  `docs/TASKS.md`, and the two drifted whenever a plan shipped (e.g.
-  `security-settings-ia-redesign` sat in the Backlog as "awaiting ratification"
-  after shipping as #215). Status is project-management state, not a property of a
-  design, so it now lives in exactly one place: `docs/TASKS.md` is the single
-  source of plan todo/status/priority and links out to each plan, and plan files
-  are pure design carrying **no frontmatter** (stripped from all 32 active plans;
-  `archive/` kept as historical record). New `bun run docs:check` guard
-  (`scripts/docs-check.ts`), wired into the "before marking ready" gate: C1 every
-  `docs/plans/…` link in TASKS resolves, C2 no active plan is missing from the
-  board — offline + deterministic; it caught 3 pre-existing dangling archive links
-  + 2 orphan plans on first run. `AGENTS.md` reverses the "catalog = frontmatter"
-  rule. Design: `docs/plans/plan-status-single-source.md`.
-- **File preview plan refreshed (PR #209, docs-only)** — rewrites
-  `docs/plans/file-preview.md` (status stays `draft`) around a source-owned
-  `PreviewTarget` model: `local-file`, `asset`, `agent-payload`, and `url` are
-  first-class preview sources feeding one panel shell + renderer registry, with
-  per-source main-process authority (`local://` token minting, the existing
-  `asset://` jail, conversation/run-scoped payload reads, URL reader
-  extraction). Reconciles the plan with shipped reality (single-pane #85,
-  file-attachments #204/#206, `AgentPayloadRef` storage) — the remaining
-  structural prerequisite is generalizing per-panel history to a discriminated
-  `PanelView`, optionally split out as a standalone PR 0 refactor. PR sequence:
-  shell + web-native basics, then PDF, media streaming, Office, URL reader as
-  independent complete PRs. Gate (main): plan claims fact-checked against
-  `main` (panel state shape, protocols, payload surface, dependency table, PR
-  numbers all verified); one review round folded in five notes (PanelView
-  naming, agent-dock host-panel question, persisted-layout wipe note, PR 0
-  split option, spec/plan reference fixes).
-  ([#209](https://github.com/relixiaobo/lin-outliner/pull/209))
-
-- **Agent ledger hygiene (PR #205)** — drops dead conversation-ledger event
-  families that had no replay handler and no real reader (`task.created` /
-  `task.completed`, `config.change`, `review_card.created`, `metric.recorded`),
-  removes the now-empty render-projection compatibility fields `queuedMessages`
-  and `activeRunAgentId` (and their renderer plumbing + e2e mocks), and stops the
-  config tool from writing `config.change` audit records (writes still apply and
-  return the refreshed setting). Successful `skill.created` / `skill.patched` /
-  `skill.replaced` audit events now carry the active `runId` so they land in the
-  run ledger instead of the conversation log. Also fixes visible-transcript
-  grafting so an active run's multi-segment spine renders contiguously (a
-  non-active peer reply can no longer split the active run's tool/result
-  continuation), backed by a new oracle test over concurrent multi-segment
-  Channel runs (uniqueness, contiguity, active-branch completeness, replay
-  stability). Specs synced; no persisted shape changed (no `userData` wipe).
-  Gate: typecheck + test:core (900) + test:renderer (418) green.
-  ([#205](https://github.com/relixiaobo/lin-outliner/pull/205))
-
-- **Post-merge cleanup for #205/#206 (main agent)** — removes the orphaned
-  `.agent-channel-queued` CSS rule left dead by #205, documents the optional
-  `pdftoppm` dependency for PDF thumbnails in the architecture spec, and drops an
-  always-true `file.size >= 0` filter in `dataTransferFiles`. Typecheck +
-  test:renderer green.
-
-- **Agent conversation UX plan ratified (PR #197, docs-only)** — adds
-  `docs/plans/agent-conversation-entry-identity-ux.md` (drafted by codex-2, then
-  revised on `main` into the PM-ratified contract after the review conversation):
-  five independent UX features over the ratified conversation semantics —
-  roster-as-DM-list + New Channel flow with an explicit DM→Channel escalation verb
-  (UI + arbitrary-agent-DM runtime in one PR) · speaker identity (DM header /
-  grouped Channel rows; subsumes `agent-avatar-v1`) · composer model chip becomes
-  display+navigate (the current menu mutates the global provider — fixed in one
-  step) · a Channel activity area built to the parallel co-addressee semantics
-  plus automatic reply anchors · time separators + native context-menu Details.
-  Also adds `docs/plans/agent-channel-parallel-runtime.md` (draft): concurrent
-  co-addressee execution + completion-order delivery as a pure execution-layer
-  upgrade of the already-committed independence semantics. Design only; no
-  runtime behavior change. ([#197](https://github.com/relixiaobo/lin-outliner/pull/197))
-
-- **Agent permission safety-modes plan ratified (PR #187, docs-only)** — adds
-  `docs/plans/agent-permission-safety-modes.md` (PM-ratified consumer trust model:
-  safety floor / trust-grant ledger / Ask First·Balanced·Full Access ladder /
-  internal delegation sandbox; one approval card with graduated exits; one Security
-  settings page) and `docs/plans/agent-local-root-boundary.md` (build-ready precursor:
-  the packaged-app `process.cwd()` file-root fallback may resolve to `/`, which would
-  make the whole disk the allowed file area). Design only; no runtime behavior change.
-
-- **Agent storage clean-cut: session vocabulary dies, pools unify under `principals/` (PR #180)** —
-  the pre-release format clean-cut (`agent-storage-clean-cut`, PM-ratified full scope; plan archived
-  `done` in-PR). Stored `session.*` event types and the persisted `sessionId` field become
-  `conversation.*` / `conversationId` (the last format-level residue of the M0.5 rename, which had
-  stopped at the public surface); ALL ~1000 code identifiers follow; memory pools unify under
-  `principals/<principalKey>/memory/` (the agent-vs-user path asymmetry is gone); `${AGENT_SESSION_ID}`
-  → `${AGENT_CONVERSATION_ID}`; checkpoint/search-index versions bumped (full replay / rebuild
-  fallback). **No migration** (pre-release policy): the store detects any old-format artifact on first
-  access and wipes the agent data root. The gate ran two rounds: round 1 (NO-GO) found the wipe
-  detector was **content-triggerable** — a substring probe on the conversation head line could match
-  user-controlled title/goal text and `rm -rf` all agent data — plus a sticky memoized rejection that
-  bricked storage for the run on any non-ENOENT probe error; round 2 verified the fixes (`8fff92e`):
-  structural field-level detection (parse the head, require a `sessionId` *key* or a `session.*`
-  `type`; torn/corrupt heads are ambiguity, never proof) and fail-open-to-operation-never-to-wipe
-  (probe errors log + continue, next launch re-probes), each with 1:1 regression tests. Verified
-  independently at the pinned head: typecheck · `test:core` 808/0 · `test:renderer` 405/0. Non-blocking
-  follow-ups recorded on the PR (per-launch probe cost, bounded-line-reader dedup, residue constants,
-  user-pool-only false negative).
-- **Delete the `MODEL_ID_REPLACEMENTS` silent migration layer (main, fast-track)** — from the
-  2026-06-10 pre-release architecture sweep (PM-ratified disposition B): `agentSettings.ts` silently
-  rewrote persisted legacy Haiku model ids to `claude-haiku-4-5` at read time — a back-compat
-  migration layer the pre-release policy forbids. Deleted (`normalizeModelId` and the map); a stale
-  persisted model id now surfaces in settings instead of silently transforming. typecheck ·
-  `test:core` 808/0.
-
-- **Redirect `agent-task-model` → fold post-#167 cleanup into the conversation model (PR #168)** — docs-only.
-  A drafted standalone "dissolve subagent into Agent(profile)+Task(run)" plan was reviewed and found to
-  reinvent the already-approved, in-progress agent program (`agent-program` M0–M3 / `agent-conversation-model`
-  / `agent-data-model`) and to conflict with several ratified decisions. **Redirected:**
-  `docs/plans/agent-task-model.md` archived as `status: superseded` (slimmed to the path-not-taken record +
-  a verified conflict table), and only the sound post-#167 kernel folded into `agent-conversation-model.md`
-  §Code mapping as a **bounded CLEAN-CUT** note — retire `general` (empty-body built-in post-#167, redundant
-  with the primary identity run fresh), `fork` as a context *mode* (not a pseudo-`AgentDefinition`), and drop
-  the `Agent` tool's per-call `model`/`effort` overrides (capability is profile-only). Bounds held at the
-  gate: no stored conversation `kind` (F2), no redesign of the protected `agentSubagentIdentity.ts` /
-  `agentSubagentTranscript.ts` seams, "Task" stays the off-floor `background` run (`RunMeta.kind`), the
-  model-facing rename is contract + UX only (storage names may stay), and any identity-string change (e.g.
-  retiring `general`'s owner key) is a dev-`userData` wipe — not a no-op rename. No code or spec change.
-  ([#168](https://github.com/relixiaobo/lin-outliner/pull/168))
-
-- **Revise agent memory planning toward the target write/read surface (PR #157)** — docs-only plan
-  adjustment (PM-ratified 2026-06-07) across four `docs/plans/*.md`, no production or spec change. Pins two
-  decisions for the M2 build. **Write authority — DECIDED:** the durable memory line is written by exactly
-  two runtime-owned writers (Settings/Profile UI for explicit edits, Dream/extraction for automatic
-  consolidation); there is no model-visible memory write tool and no synchronous foreground "remember this"
-  path. **Read surface — DECIDED:** a single model-visible read-only `recall` tool over durable memory (no
-  model-visible `past_chats` and no second chat-search tool); `include_evidence` defaults to false and, when
-  true, returns raw conversation/run excerpts only as an `evidence[]` field nested under the matching
-  `MemoryEntry` (never a sibling in the ranked list, expandable only through the entry's provenance), with
-  `status:'invalidated'` filtering, isolation-tier enforcement, and a `max_chars` cap. States the accepted
-  consequence explicitly: old conversations Dream never distilled into a `MemoryEntry` are not
-  foreground-recallable by design. Spec left untouched on purpose (A6 — current code still ships the inline
-  memory tool / `past_chats`; reconcile in the M2 implementation PR).
-  ([#157](https://github.com/relixiaobo/lin-outliner/pull/157))
-
-- **Close agent M1 tail verification + plan hygiene (PR #156)** — no production code: added e2e coverage for
-  the pending `ask_user_question` card (light/dark `prefers-color-scheme`, real `user_question_request` event
-  path + `agent_resolve_user_question` submit) and for the Settings Memory view/edit/forget pane
-  (`agent_list/update/forget_memory` IPC + renderer-mock support); marked the M1 "Profile UI" and
-  "visual verification" checklist items done; archived the completed `agent-tool-permissions-hardening` plan
-  (`status: done`) and repointed its references. ([#156](https://github.com/relixiaobo/lin-outliner/pull/156))
-
-### Changed
-
-- **Outliner focus and selection shortcut polish (PR #186)** — entering a regular
-  node page now places edit focus at the start of the first visible body row (the
-  trailing draft when the page is empty; search pages such as Recents stay
-  result-views and take no edit focus). `Cmd+A` escalates from fully selected
-  editor/field text to visible-row selection on a second consecutive press (an
-  empty control escalates immediately). `Backspace` at the start of a field name
-  deletes the field row through the selection-delete path; that and empty-content-row
-  deletion keep focus on the previous visible row, the next surviving row, or the
-  panel trailing draft when it was the only body row. Reopening the collapsed agent
-  dock focuses the composer as a true one-shot (an approval/question card consumes
-  the reopen without a later focus steal). `Cmd+[` / `Cmd+]` page history now works
-  while text is focused; `Option+Arrow` stays platform word-navigation inside
-  editors. Spec synced in-PR (`ui-behavior.md`, `outliner-parity-matrix.md`,
-  `workspace-layout.md`).
-
-- **Workspace skills require explicit acceptance (PR #185)** — `project`-source skills
-  (anything under the workspace's `.agents/skills`, including nested discovery and
-  in-root additional directories) now fail **closed**: they stay out of the automatic
-  model skill listing and refuse model-triggered invocation until the user accepts the
-  exact current `SKILL.md` content hash in Settings → Skills. Slash invocation still
-  works immediately (the user's command is per-run consent). Hand-edit
-  self-ratification is now `user`-source only; a repo update changes the hash and
-  drops an accepted workspace skill back to pending. Trust derivation is a single
-  pure function (`deriveSkillTrust`) feeding both model gates; the Skills tab marks
-  unaccepted project rows with a workspace-specific chip. Spec folded into
-  `docs/spec/agent-skills.md`; plan `agent-skill-workspace-trust` archived `done`.
-  Follow-up copy fix on `main`: the pending chip separator now uses the codebase's
-  `·` convention in both locales.
-
-- **Memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject (PR #183)** —
-  first unit of the PM-ratified `agent-memory-realignment` program (charter decisions D-1…D-9; the
-  program one-pager + R1–R6 trio reconciliation ratified and recorded in the charter in-PR).
-  **Authority docs rewritten** (`agent-memory-foundations`, `agent-data-model` canonical table +
-  Extension §reframe, `agent-architecture` §memory): raw ledgers are ground truth *below* memory;
-  the episodic layer (episodes + memory-owned gist) is the acknowledged gap PR-2 fills; the index is
-  pure pointers (gist is episodic content, not index); `MemoryEntry.principal` is documented as the
-  pool's **owner/believer** (whose self-model), matching what the write paths always did; the
-  raw-first Dream-evidence rule is restated to bind context-management artifacts (compaction
-  summaries stay locators, never evidence; memory-owned episode gist becomes the post-supersede
-  carrier in PR-2). **One person rule** (D-2): both Dream pools now write third-person-singular,
-  subject-elided facts — the subject stays normalized in the pool key (rename-safe) — and the
-  `<memory>` briefing renders zone-tagged **bullet lists** (`<self>` / `<principal name="…">`, no
-  subject prepending, no conjugation; the old prose render baked today's single reader into storage
-  as a verb form and misrendered for any other reader). **`recall` grounds against the briefing**
-  (D-3): visible entries carry a reader-relative `subject` ("self" or the same display name the
-  briefing zone uses, single shared name source); raw internal principal keys never reach the model.
-  Cross-pool duplication is now prompt-guided (D-9, with a run-log-only-evidence escape hatch).
-  No schema change (one protocol-surface doc comment). Gate: one fix round; local integration
-  test-merge against post-#179 main (typecheck · core 844/0 incl. all M3-A tests · renderer 409/0)
-  before merge. **Post-merge: wipe `~/.lin-outliner-*` dev userData in every clone** — legacy
-  base-form facts are off-contract under the new render.
-  ([#183](https://github.com/relixiaobo/lin-outliner/pull/183))
-
-- **Memory language surfaces speak the academic model (PR #181)** — `agent-memory-academic-alignment`
-  shipped (plan archived `done` in-PR; subsumed the former D2 `agent-memory-encoding-signal`). Language
-  surfaces only, zero storage/schema/tool-contract change. The Dream prompt is rewritten as a
-  **consolidation** pass — selection stated as an **encoding policy** (durable, context-free knowledge;
-  novelty/prediction-error weighted: corrections, surprising tool results, failed-then-replaced
-  approaches are the strongest signal) with **reconsolidation** framing for update/invalidate; the
-  anti-injection evidence fence stays verbatim, and the new fence-containment test anchors the tags'
-  own lines so the prompt's prose mention of the fence cannot satisfy it. The `<memory>` briefing opens
-  with a fixed self-introduction as the working-memory slice of the semantic store (exported constant,
-  single source for tests); `recall` is described as **cued retrieval** over the semantic store with
-  `include_evidence` as **source access** into the episodic record (parameter names/shapes unchanged),
-  and its empty-result instruction keeps the active-entries-only qualifier. Forgetting copy follows
-  foundations §5.4 — never "delete": Settings chips read `Inactive/已失效`, the Dream boundary row
-  counts `invalidated/失效`; permission descriptors and the spec set (`agent-tool-design`,
-  `agent-skills`, `agent-data-model`, plus straggler sweep over `agent-pi-mono-implementation`,
-  `agent-progress`, `agent-event-log-rendering`) use the same vocabulary (A6). Gate: medium
-  `/code-review` (7 finder angles + per-finding verifiers), one fix round; typecheck · `test:core`
-  809/0 · renderer 405/0 · agent-settings e2e 20/20 (CI=1) · Settings memory pane light+dark visual.
-  Accepted trade-off noted on the PR: the briefing intro persists in each turn's reminder (~24
-  tokens/turn) as the only memory framing subagents see.
-  ([#181](https://github.com/relixiaobo/lin-outliner/pull/181))
-
-- **Principal-keyed memory: the user is an ordinary principal (PR #173)** — Phase 3 of
-  [[agent-memory-model]], implementing the PM-ratified (2026-06-09) `agent-data-model` §4 contract.
-  `MemoryEntry` (+ `AgentMemoryEntryView` / `AgentMemoryEventBase`) is re-keyed by **`principal`** — the
-  subject a fact is *about* — replacing `agentId`; a pool is one principal's undivided self-model. Agent
-  pools stay in `agents/<id>/memory/`, the user pool lives at `principals/user-<id>/memory/`; both ride the
-  same `AppendOnlySeqLog` primitive, no new event types, pre-release clean cut (no migration — wipe
-  `~/.lin-outliner-*` dev userData; stale `agentId`-keyed lines are dropped on read). **Per-principal Dream
-  (one writer per pool):** agent-Dream consolidates an agent's run log → its pool; user-Dream consolidates
-  the user's member-conversations → the user pool (executed by the main agent, principal-anchored run-meta,
-  single-writer, watermark-serialized; manual `/dream` fires it on demand). Extraction prompts are
-  subject-aware ("You …" vs "The user …"). **Membership read:** briefing/recall surface the reader's own
-  pool (`<self>`, second person) plus each co-member principal's pool (`<principal name="The user">`, third
-  person) under a fair round-robin resident cap; the user is always a co-member, so the user's self-model is
-  shared into every agent — subagents inherit visibility from the parent session by design. **Read-path
-  security gate:** cross-principal recall returns the distilled fact only; raw `sources` evidence
-  dereferences only for the reader's own pool. The former `isolated` retrieval tier is removed
-  (`originWorkspace` is provenance only); `read-only-global` (pause writes) remains. Gate (3 rounds,
-  protocol surface): r1 — an e2e mock regression (memory pane crash), a hollow subagent membership gate
-  (resolved as inheritance-by-design, honestly documented), and a Dream prompt-injection surface fixed with
-  a per-request randomized evidence fence; r2 — the torn-tail read fix was found to lose-then-brick on the
-  *write* side (append welds onto the torn fragment), fixed in r3 by a pre-append tail repair (newline-only
-  tears preserve the final event; mid-file corruption still fails loudly for reads and writes). Verified on
-  the merged tree: typecheck + `test:core` 789/0 + `test:renderer` 389/0 + agent-settings e2e 20/20; spec
-  updated in the same change (A6). GitHub flagged the merge CONFLICTING (modify/rename vs #174's plan
-  archive move) while ort merged clean — resolved by merging `main` into the branch at the gate.
-  ([#173](https://github.com/relixiaobo/lin-outliner/pull/173))
-
-- **Skill governance convergence: single-source identity + ratification gate (PR #174)** — one
-  convergence pass over the shipped M1 skill-authoring subsystem, design in
-  `docs/spec/agent-skills.md` + `docs/plans/agent-skills-authoring.md`. **(1) Protocol:**
-  `SkillDefinition.source` collapses `'built-in' | 'user' | 'project' | 'dynamic'` → `AgentSourceKind`
-  (`'built-in' | 'user' | 'project'`), symmetric with agents — `dynamic` was a discovery mode, not a
-  source; nested-discovered dirs now tag `project`. `SkillDefinition` gains `ratified` + `contentHash`.
-  **(2) Closed governance hole:** one `resolveSkillContentTarget` resolver powers the loader, the
-  file-tool write gateway, and the `agent.skill.write` permission classifier, so "what is a skill" can
-  no longer disagree across layers — a skill in an additional configured dir outside the root (e.g.
-  `~/team-skills/`) was loaded as model-invocable yet bypassed skill-write governance entirely; now every
-  recognized skill write is uniformly ask-gated. **(3) Ratification gate replaces write-time policy:** the
-  gateway records each agent-written `SKILL.md` canonical content hash (registry in-memory +
-  `agent-skill-provenance.json` in userData, shared by subagents); a skill whose current hash matches its
-  record is **unratified** — excluded from the model listing and `trigger: 'agent'` invocation refused
-  (`skill_not_ratified`), while slash invocation always works with `allowed-tools` honored (the user's
-  command is per-run consent). A user hand-edit changes the hash and self-ratifies. Deleted: the
-  `RISKY_ALLOWED_TOOL_NAMES` string heuristic and the forced `disable-model-invocation` file rewrite —
-  lin never writes policy into an authored file. Validity/safety checks (size, frontmatter, hidden/exec
-  support files, secret scan) stay at the write boundary as model feedback. Gate: `/code-review` (1
-  finding — a CRLF/BOM hash-domain mismatch that fail-opened the ratification gate when an agent edited a
-  CRLF/BOM-authored skill) fixed in `33ae703` via a canonical `skillContentHash` shared by record + load
-  sides, with an independent re-check confirming the gate now holds; typecheck + `test:core` 780/0 +
-  `test:renderer` 389/0; spec updated in the same change (A6).
-  ([#174](https://github.com/relixiaobo/lin-outliner/pull/174))
-
-- **Distilled-memory `<memory>` briefing + subject-elided Dream writer (PR #172)** — Phase 1+2 of
-  [[agent-memory-model]] as one complete PR, **zero protocol change** (`MemoryEntry`, the `recall` tool,
-  and the `memory.*` / `dream.completed` events are consumed as-is). **Render:** the old
-  `<agent-memory>` `id=…/fact=…` reminder is replaced by a new pure module `agentMemoryBriefing.ts`
-  that projects selected entries into a `<memory>` briefing with reader-relative zones — the reading
-  agent's own pool renders second-person `<self>` ("You verify…"), any other principal's pool renders
-  third-person `<principal name>` (a Phase-3 affordance, unit-tested but unreachable until §4 sharing
-  ships). Storage stays person-neutral; render hides scaffolding (`id`/`status`), XML-escapes, and
-  returns null when empty. Selection is now **resident** (newest active, capped at 12) — the stable
-  distilled prefix — with query-specific retrieval left to the `recall` tool (the volatile tail); the
-  now-dead `query` arg was dropped from `buildMemoryReminder` and the subagent host interface/cache key.
-  **Dream:** the extraction prompt gains the subject-elided base-form writer contract (no leading
-  subject; name third parties; authority-as-phrasing) plus merge/conditionalize/invalidate consolidation
-  heuristics; the `{added,updated,forgotten,skipped}` `dream.completed.changes` shape is unchanged.
-  Gate: `/code-review high` (7 findings) → fixes verified — fragile leading-subject strip regex removed
-  in favor of faithful subject-prepend (Dream is the single enforcement point), shared `escapeXml`
-  extracted to `agentReminderXml.ts`, constant de-duplicated; typecheck + `test:core` 774/0.
-  ([#172](https://github.com/relixiaobo/lin-outliner/pull/172))
-
-- **Auto-initialize field config is one multi-select picker (PR #169)** — a `date` field's Auto-initialize
-  strategies previously rendered as several identical-looking "No" switches (the strategy name lived only in an
-  invisible `aria-label`); they now collapse into a single multi-select picker (closed: the chosen strategies
-  inline; open: a checklist that toggles membership without closing). Implemented as an additive, gated
-  `multiple` mode on the shared `NodeValuePicker` — the single-select callers pass no new props and are
-  unchanged. Also fixes a **silent data-loss bug** found at the gate: changing a field's type left stored
-  strategies the new type doesn't offer lingering invisibly, to be dropped on the next unrelated edit — now
-  `setFieldConfig` prunes auto-init strategies to the new type's valid set at the core seam (the deep fix), not
-  just in the picker. The on-disk value contract (comma-joined strategy string) is unchanged.
-  ([#169](https://github.com/relixiaobo/lin-outliner/pull/169))
-
-- **Runtime-owned Dream memory extraction, per-turn slice (PR #159)** — the automatic half of the #157 M2
-  write authority. After each completed foreground run, a runtime-owned worker (`agentDreamExtraction.ts` +
-  `AgentRuntime` wiring) sends the raw current-turn evidence (user/assistant/tool messages, not summaries)
-  plus the currently visible memory through a bounded no-tools model completion, then applies the proposed
-  add/update/forget actions to the durable memory event store with `conversationId`/`messageRange`/`runId`/
-  `eventId` provenance. It is fire-and-forget after the turn emits idle (a Dream failure can never break the
-  foreground turn), serialized on one runtime queue, and bounded (≤5 actions, fact-length clamp, transcript
-  char budgets). Isolation is enforced on the write path: `read-only-global` runs no extraction (facts learned
-  in a workspace don't enter the global pool), `isolated` only reads/updates/forgets memory scoped to the
-  session's `originWorkspace`, and `add` tags the originWorkspace while `update` preserves the entry's own.
-  Injected `<agent-memory>` reminders are filtered out of the evidence (no self-feedback loop). The secret/
-  credential capture surface is guarded only by the extractor prompt — a PM-accepted, prompt-level decision
-  (2026-06-07) matching the runtime-owned write design, with a defense-in-depth code guard backlogged as
-  `agent-dream-secret-redaction` (P3). This is the per-turn slice only; time/activity/lock-gated offline
-  consolidation (`autoDream`) and the task panel remain later P2/P3 work. Gate: typecheck + `test:core` 661/0
-  (incl. runtime isolation/`read-only-global`/no-op-update regression tests + a new `agentDreamExtraction`
-  unit suite); two high-effort finder passes (security + correctness) cleared, two low correctness findings
-  (provenance run-boundary, no-op update churn) fixed before merge. ([#159](https://github.com/relixiaobo/lin-outliner/pull/159))
-
-- **Agent memory recall clean cut: one read-only `recall` tool (PR #158)** — implements the #157 M2 decision.
-  Removed the two model-visible memory tools from the foreground agent pool — the `memory` CRUD tool
-  (`agentMemoryTool.ts`, deleted) and the `past_chats` tool (`agentPastChatsTool.ts`, deleted) — and replaced
-  them with a single read-only `recall` tool (`agentRecallTool.ts`) over active durable memory entries.
-  `recall` reads only `status:'active'` entries, enforces the agent's `memoryIsolation` tier (`isolated`
-  retrieves only entries whose `originWorkspace` matches the session — unscoped and other-workspace entries
-  are excluded), bounds results by `limit` (default 8 / max 20), and optionally expands raw evidence only
-  when `include_evidence:true` — nested under the matching entry and resolved solely from that entry's
-  recorded `MemoryEntry.sources`, never via a free-text transcript search, within a shared `max_chars` budget
-  (default 4000 / max 12000). The internal `agentPastChats` evidence search is retained as `recall`'s
-  backing service (no longer model-visible); Settings/Profile list/edit/forget remain the human write path.
-  Permission surface is a net reduction: the writable `agent.memory.manage` (auto-allowed) is replaced by
-  read-only `agent.memory.recall` (`accessScope:'none'`, no external effect), and `memory` is dropped from the
-  control/auto-allow mutation sets — A3 intact. Prompt guidance, tool-call UI label/icon (`recall` →
-  `BrainIcon`), i18n (en + zh-Hans), and the active specs (`agent-tool-design.md`, `agent-progress.md`, et al.)
-  were updated in the same change (A6). Gate: typecheck + `test:core` 655/0 (incl. a new runtime isolation
-  regression test asserting `isolated` recall excludes other-workspace/unscoped/invalidated entries) +
-  `test:renderer` 354/0; two high-effort finder passes (removal-completeness + recall correctness/security)
-  returned no findings. ([#158](https://github.com/relixiaobo/lin-outliner/pull/158))
-
-- **Guide agent memory use in the system prompt (PR #155)** — added a stable `Memory` section to the Tenon
-  agent system prompt: use the `memory` tool for concise durable facts / stable preferences / corrections
-  that should carry forward; treat `<agent-memory>` as background context (not user-authored instructions);
-  update or forget a remembered fact when the user corrects it; and do NOT store transient task state, raw
-  conversation summaries, secrets/credentials, guesses, or current-conversation-only facts (use `past_chats`
-  for raw prior-conversation recall). Closes the M1 "inline memory write instructions in the agent prompt"
-  checklist item. Gate: typecheck + `agentSystemPrompt.test.ts` 3/0 (tool names + tag verified against the
-  runtime). ([#155](https://github.com/relixiaobo/lin-outliner/pull/155))
-
-- **Harden agent permission approval semantics (PR #154)** — removed conversation-scoped approval from the
-  permission model: approval scopes are now only `once` / `always`, and stale conversation-shaped rule
-  fixtures can no longer relax a configured/default `ask`. `approval.*` UI events and `tool.permission.*`
-  policy events now share one `permission-<uuid>` request id so a single decision is joinable across both
-  families — including the skill-shell path, which now emits the full `tool.permission.checked/resolved`
-  pair (previously it surfaced only the UI half). Denied-reason strings are canonicalized to one contract
-  (`configured_deny`, `policy_denied`, `classifier_blocked`, `classifier_unavailable`, `platform_hard_block`,
-  `run_aborted`, `runtime`, `user_denied`) backed by a single `PERMISSION_DENIED_CONTRACT` table that drives
-  `recoverable` / `resolvedBy` / `source` / `status` for every reason — so durable policy blocks
-  (`tool_denied` / `tool_not_preapproved` → new `policy_denied`) are correctly non-recoverable, and the
-  audit record can no longer contradict itself (e.g. a runtime denial is no longer logged as `user_once`).
-  Gate: typecheck + `test:core` 662/0 + `test:renderer` 356/0 + 7-angle high-effort review → 7 findings, all
-  fixed before merge (29dd688) with regression tests. ([#154](https://github.com/relixiaobo/lin-outliner/pull/154))
-
-### Added
 
 - **Multi-agent Channels: membership, @-routing, and peer replies (PR #179, M3-A)** — a conversation
   can now hold multiple agent members and run them as an IM group chat. Membership is event-sourced
@@ -5071,6 +2392,1194 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
+  delegating Turn now carries a live card in its process block: one line per
+  child agent with a readable name, its status, and elapsed time, so a
+  delegation is something you watch rather than something you wait out. Each
+  running line has its own Stop, a child Thread's header has one, and the
+  composer's Stop now closes the whole request — the Turn plus every piece of
+  delegated work it owns, including a child that was only holding queued work
+  and had not started yet. Stopping is scoped to the request you made, so
+  background work from an earlier request keeps running: it stays visible on
+  its own Turn's card, with its own Stop, rather than being swept up by a
+  decision you did not make. Work you stop stays stopped — queued content does
+  not resurface in a later request — and re-delegating to a stopped child is how
+  you resume it. Stop reaches only your own conversations, at any depth.
+- **One Skill library, and a way to add your own (PR #470, cc)** — Skill
+  settings were organised by where a Skill came from: a managed panel, then a
+  separate list of everything else, with catalog browse and a GitHub URL field
+  standing open as permanent page furniture. Provenance is an implementation
+  detail — you think "my Skills" — so it is now **one list over every source**,
+  sorted by the name you read, with the source as a chip on the row and
+  everything that adds a Skill collected behind a `+`. A managed Skill and a
+  local one are turned off the same way now, by one predicate rather than two
+  mechanisms, and the cap on how many Skills you could disable rose from 20 to
+  1000 — past 20 the 21st was silently dropped and the Skill stayed available
+  to the model. You can point Tenon at **a folder of your own Skills** from the
+  app for the first time; Tenon reads the Skills *inside* the folder you
+  choose, so picking a folder that is itself a Skill asks before adding its
+  container and says plainly that every other Skill in there comes along.
+  Managed update checks no longer run on every glance — at most once every six
+  hours per Skill, once shortly after launch — and when an update is waiting,
+  the Skills row in the settings sidebar says how many. A folder whose name
+  cannot be a Skill's name (a space, non-ASCII) is refused when it is read
+  rather than when it is written to, so a Skill can no longer load, list and
+  run while edits to its own definition go ungoverned.
+- **The Plan says which step the agent is on (PR #467, cc-2)** — the progress
+  pill above the composer showed a bare `Step 3 / 5`, so following along meant
+  opening the checklist to find out what step 3 was. It now carries the current
+  step's text — `2/5 · Draft the summary` — ellipsized to one line at a fixed
+  height so it never reflows the composer, and a Plan whose every step is
+  complete reads as complete rather than as its last step. The current step is
+  marked by weight and colour rather than by a spinner alone, whose cue
+  disappears entirely under reduced motion; step rows carry their status as
+  text for assistive technology, and the live announcement includes the step's
+  text rather than only a counter. The pill also appears on a Thread with **no
+  composer** — a watched child or automation Thread — where closing the
+  checklist returns focus to the pill instead of dropping it to the document
+  body.
+- **A Plan update is recorded like any other tool call (PR #468, cc-2)** — the
+  model would emit a dozen visible `Thought` rows deliberating about calling
+  `update_plan` and nothing would ever appear, because the Plan's tool-call Item
+  was deliberately excluded from the persisted Turn (PR #438). The reasoning
+  leaked the action while the action stayed hidden, so the agent read as
+  thinking about a tool it never called. `update_plan` is now an ordinary
+  recorded call: it reaches the transcript, counted activity groups, Turn
+  Diagnostics, reload history, and Turn copy through the paths every other tool
+  already uses. It is worded as the act — "Updated the plan", collapsing to
+  "Updated the plan 3 times" when consecutive — never as `Used update_plan`, and
+  carries its own glyph. The pill is unchanged and complementary: it remains the
+  ephemeral fast path for *which step* the agent is on, while the recorded call
+  is the account that it updated the Plan at all.
+- **The agent stops imitating its own thinking, and starts thinking again (PR
+  #465, codex-4)** — Tenon rebuilt canonical context before every provider call
+  and wrote reasoning Items back into the provider's own assistant channel as
+  `[Reasoning]`-prefixed text. That channel is a few-shot demonstration, so
+  after six Tenon-authored examples the model imitated the format: it emitted
+  `[Reasoning]` prose as a visible commentary message and spent zero reasoning
+  tokens on that call. Canonical reasoning now contributes no assistant prose to
+  reconstructed history, and signed native reasoning survives the tool loop
+  within a Turn, retained in memory under strict `(turnId, provider, api,
+  model)` identity. The retention can only re-attach reasoning parts to messages
+  canonical projection already produced — never a message, tool call, tool
+  result, or ordering — and an identity mismatch drops the part and continues
+  instead of failing the Turn. If a matching provider cannot prepare a payload
+  from an unrecognised signature, the gateway strips signed thinking and retries
+  preparation once; other provider, network, and service errors are unchanged.
+  No renderer filter was added, because hiding `[Reasoning]` would leave the
+  model still being taught to write it. A real OpenAI Responses run restored 134
+  native reasoning tokens across a three-call tool loop with no markers left in
+  the transcript.
+- **A subagent gets one row in the parent transcript, and that row tells the
+  truth (PR #466, codex-2)** — a delegated child used to append a fresh row for
+  every lifecycle event, so one subagent read as several and the parent's
+  transcript grew a row for work the reader had already seen finish. Each child
+  now occupies exactly one live presentation row: terminal parent Items are
+  authoritative, and the latest canonical child Turn is used only as the live
+  fallback, retained per Thread even when child history is unloaded — reload
+  omissions, rollback, and subtree deletion clear that cache rather than letting
+  it go stale. The row shows live elapsed time and distinct
+  idle/completed/interrupted/failed/unavailable states, and the process divider
+  says `Waiting on N subagents · elapsed` only when `wait_agent` is the sole
+  in-progress tool, so the parent never claims to be waiting on a child that
+  already finished. Collaboration identity (`status`, `taskPath`, `nickname`,
+  `role`) and the child's exact terminal `TurnError` are persisted as typed
+  records instead of a bare status string. Budget failures are classified only
+  by `Turn.error.code` and rendered as resource-limit copy with no token
+  quantities anywhere the reader can see, and raw collaboration output stays out
+  of user surfaces. Child Threads remain composer-less; navigation and
+  per-child interrupt are still to come. **This is a pre-release protocol clean
+  cut** — the codec rejects the old `subAgentActivity` and `agentsStates`
+  shapes, so wipe clone-local `~/.lin-outliner-*` dev userData before running.
+- **The run's status line stops claiming more than the run is doing (PR #463,
+  cc-2)** — a settled Turn is now always described in the past instead of
+  falling through to the live "Working" label, and exactly one element owns a
+  Turn's terminal status — with something always owning it, including the case
+  where a Turn was interrupted before it produced anything at all and no
+  process divider exists to state it. A Turn blocked on the user says so and
+  stops its spinner, because a spinner claims work is happening; the elapsed
+  time is deliberately left as wall-clock since the Turn started — the same
+  span the server records — so the live label and the settled one cannot
+  contradict each other, and the wait is named rather than subtracted. Counted
+  activity reports finished and in-flight work separately ("Read 5 files ·
+  reading 1") instead of one present-tense count covering work already done. A
+  reasoning disclosure that opened by default now latches open for the rest of
+  the Thread session, so an arriving Item can no longer snap it shut and shift
+  the layout under the reader — an explicit collapse still wins, and a reloaded
+  transcript rests at the settled default rather than permanently expanding
+  every reasoning Item a reader once watched live. The reconnect banner honors
+  `prefers-reduced-motion` and can no longer outlive the attempt it describes.
+- **Tool rows say what the agent did, and show status without a mystery glyph
+  (PR #461, cc-2)** — a tool row in the transcript now keeps its own icon and
+  reads as a sentence about the work: "Read \"Chapter Three\"" rather than
+  "Used node_read", with single rows and grouped rows speaking one vocabulary.
+  Status is carried by colour on that same glyph plus a word — a failed row
+  tints `--status-danger` and says so, and a collapsed group appends per-status
+  tallies where only the tally is tinted, so one failure out of six no longer
+  paints the whole line red. The generic red pill is gone. A command row
+  renders the caller's own bash `description` when there is one, while its
+  tooltip always keeps the real shell text, so a description can never mask
+  what actually ran; when there is none, the label strips heredoc bodies,
+  `cd X &&` scaffolding, and the thread's own working-directory prefix. Four
+  icons were re-picked (file delete, `web_fetch`, MCP vs unknown tool, skill).
+
+
+- **pi-ai / pi-agent-core upgraded `0.80.3 -> 0.80.6` (PR #390, codex)** —
+  adopts the refreshed upstream model catalog and exposes `max` as a distinct
+  canonical reasoning level after `xhigh` across provider projection, agent
+  profiles, skills, Settings, the composer picker, persistence, and runtime
+  dispatch. Tool calls from `stopReason: "length"` assistant messages are now
+  rejected before execution and returned as failed tool results for safe retry.
+  The upgrade also brings request-level cost tiers plus upstream context-budget,
+  retry, OAuth, transport, reasoning-replay, and provider-normalization fixes.
+  **Gate (main):** code review found no reportable findings. Verified with
+  typecheck, production build, focused core/runtime/renderer suites, full
+  renderer tests, light/dark reasoning-menu E2E, docs check, and diff check.
+
+- **Model-specific reasoning effort labels (PR #379, codex-4)** — agent model
+  options now carry optional display-only effort labels derived from each
+  provider model's thinking map while keeping persisted profile effort values
+  canonical. The composer model menu and Settings agent profile selector now
+  show only the selected model's supported reasoning levels and render labels
+  such as `XHigh`, `Max`, `LOW`, or `HIGH` without saving provider-specific
+  strings. **Gate (main):** code review found no reportable findings. Verified
+  with typecheck, core tests, renderer tests, docs check, and `git diff
+  --check`.
+
+- **Ask user question stepper polish (PR #378, codex-4)** — the
+  multi-question `ask_user_question` composer stepper now uses compact
+  `Input needed · 1/2` title-row progress, moves Back into an icon-only header
+  control from step 2 onward, and lowers `Discuss first` into a left-side escape
+  hatch while keeping primary navigation on the right. Styling stays token-based,
+  and the spec/e2e coverage now pin the compact heading and icon Back behavior.
+  **Gate (main):** code review found no reportable findings. Verified with
+  typecheck, renderer tests, targeted stepper/discuss e2e coverage, docs check,
+  and `git diff --check`.
+
+- **Tana-style view toolbar polish (PR #350, codex-2)** — node and saved-search result toolbars now use a
+  field-first interaction model: a real leading name-filter chip writes `sys:name contains` filter rules;
+  Display/Group/Sort/Filter menus open as contextual popovers; filter summary chips target the exact saved
+  rule id, including multiple filters on the same field; Sort shows priority metadata and blocks duplicate
+  pending adds; and filtered-out rows use a clearer expandable disclosure. Nested toolbars align with their
+  owner row column, portal tooltips replace duplicated native/CSS tips, and search-result summary bars route
+  into the same toolbar path. `docs/spec/ui-behavior.md` synced. **Gate (main):** review found two race bugs
+  (stale filter-chip input reuse and pending-sort duplicate creation); round-2 fix `d30c67f8` resolved both
+  with regression E2E. Verified: `definition-config` E2E 15/0, `search-query-builder` E2E 2/0,
+  `test:renderer` 633/0, `docs:check`, and `git diff --check`.
+
+- **pi-ai / pi-agent-core upgraded `0.78.0 → 0.80.2` with a clean `Models` migration (PR #348, codex-3)** —
+  the main-process agent runtime moves off the removed pi global helpers
+  (`completeSimple`/`streamSimple`/`getModels`/`getProviders`/`getProviderApiKey`/`getOAuthApiKey`) onto the
+  `Models` instance API. A new composition root (`src/main/piModels.ts`) wraps one
+  `builtinModels({ credentials })`, wires the existing `agent-secrets.json` as pi's `CredentialStore`
+  (OAuth refresh persists under the existing file lock), and routes custom OpenAI-compatible endpoints
+  through internal `tenon-custom:<id>` providers while keeping the external provider id on renderer,
+  event-log, and run-fingerprint surfaces. Provider auth — stored keys, ambient env, OAuth refresh,
+  managed credentials, provider-specific headers/env, and the Cloudflare AI Gateway baseUrl shape — now
+  resolves at request time via `Models.applyAuth()` instead of being flattened into an `apiKey` string.
+  Keyless endpoints are allowed for localhost/loopback/`*.localhost` only (shared `isLocalBaseUrl`
+  predicate in `src/core/localEndpoint.ts`); a local endpoint uses a deliberately-stored key when one
+  exists (e.g. a local proxy fronted by a master key) and otherwise an inert client key — an **ambient**
+  provider key (env / OAuth / managed) is never forwarded to localhost. Picks up upstream provider-metadata, billing-hazard, and vulnerable-dep
+  fixes. Gated by `/code-review xhigh` (10 finder angles + sweep) with a round-2 pass that preserved real
+  model context windows behind custom endpoints, kept `api_key` credential `env` across the store
+  round-trip, and stopped pruning keyless-remote provider rows at startup.
+
+- **`node_edit` is now single-node and non-pruning (plan PR #346 + impl PR #347, codex-4)** — the agent
+  `node_edit` tool can no longer delete outline content by omission. The old whole-subtree reconcile is
+  removed: `old_string:"*"` (which replaced the entire annotated outline) now returns `subtree_edit_removed`,
+  and a multi-node outline fragment can no longer trash existing children that are absent from the desired
+  outline. Outline edits are scoped to **one node** — its root line, fields, field values, and saved-search
+  config — and apply **non-pruning upsert** semantics: omitted fields and field values are **preserved**;
+  removals are an explicit by-id `node_delete`. New fields are inserted **before** a node's ordinary children
+  (so they render in the field strip, not below the children); changing a field value's *kind* (text ↔
+  reference) is rejected up front with `invalid_field_value_kind` and a `node_delete`-then-recreate
+  instruction, **before** any mutation is applied (no partial commit). `node_create`, `move`, `merge`, and
+  `replace_with_reference_to` are unchanged. **Gate (main):** `/code-review high` + round-2 fix landed all
+  three findings (dead clear-warning / mis-reported `afterOutline`, field placement, kind-change partial
+  commit), each with a regression test; `docs/spec/agent-tool-design.md` updated in the same change.
+- **Search nodes excluded from references (PR #335, codex; follow-up PR #336, main)** — saved-search
+  nodes and their query internals no longer count as reference sources in a target node's References
+  footer or the relevance reference-authority graph. Excluded: materialized search-result references,
+  direct references and plain-text mentions on `search` nodes, and query operand references/mentions
+  inside `queryCondition` subtrees (e.g. a "field is [node]" operand, which is materialized as a
+  default-role `reference` under the condition and previously polluted the operand's backlinks).
+  Real user-authored references in ordinary child content — including manual children placed under a
+  search node and their reference grandchildren — stay fully counted. Implemented via a cached
+  `searchReferenceSourcePredicate` (node is `search`-typed, a result `reference` attached directly to a
+  search node, or inside a `queryCondition` subtree) applied across the backlink, inline-ref, and
+  unlinked-mention branches. #336 closed an asymmetry from the original review: the backlink branch
+  excluded a reference via its parent while the inline-ref scan keyed off the node itself, so a result
+  ref carrying inline content could leak — both branches are now symmetric. Spec synced in
+  `ui-behavior.md` + `search-query-grammar.md`. **Gate (main):** manual review + full verification —
+  typecheck clean, `references.test` 11/0, `test:core` 1056/0, `docs:check` OK.
+
+- **Native focus rings + agent transcript polish (PR #332, codex-2)** — focus rings on text controls
+  (`input` / `textarea` / `select`) are now **keyboard-only**: a renderer-level `:root[data-input-modality]`
+  attribute (set by a capturing pointerdown/keydown tracker) gates the neutral ring so ordinary clicks no
+  longer paint web-form boxes, while keyboard navigation (Tab, arrows, number-stepper ↑↓) still shows it.
+  The agent rail slide is **sibling-stable** — opening the dock reflows only the agent rail (never resizes
+  or repaints the sidebar), and a content-triggered chat-source reveal now **defers its scroll/highlight
+  until the rail finishes opening** (transitionend or a motion-duration fallback), guarded against
+  conversation switches mid-transition. Centered transcript **time separators are removed** (timestamps
+  stay in the message Details popover). `will-change` dropped from both rails. **Gate (main):**
+  `/code-review high` (8 findings) → codex-2 fix `c6076e89`: the global keyboard ring moved to a
+  low-specificity `:where()` form so component `box-shadow: none` suppressions (`.input-bare`,
+  `.code-block-textarea`, `.inset-card .settings-sheet-row-input`) win again instead of re-exposing
+  clipped/boxed rings; `.definition-text-input` focus paint gated behind keyboard modality (with a CSS
+  guard test); deferred reveal cleared on conversation change; `clampAgentRailForPanelFloor` de-duplicated
+  onto a shared `allowSidebarRelief` mode; both-rails-change reflow no longer skips sidebar relief; dead
+  launcher modality install removed. Verified: typecheck clean, `test:renderer` 615/0. Spec synced:
+  `design-system`.
+- **Response Run Details pane reworked + shared read-only code blocks (PR #325, codex)** — the assistant
+  reply info button now opens a **run-scoped** Run Details pane (one concrete response run; an already-open
+  pane retargets when another reply's info button is clicked, and falls back to the inline details popover
+  when the workspace can't fit a pane). Run Details moves onto the **shared pane chrome** (same sticky
+  breadcrumb / close alignment / content shell as node and file panes), drops the manual refresh button
+  (still refreshes from runtime events), and reorganizes into **Summary / Model Input / Execution**. Model
+  Input splits into system prompt, tools, history, and current request from the **captured provider
+  payloads** (what was actually sent); Execution is a flat expandable call list in provider output order
+  (thinking, assistant text, tool calls, tool results). Reply and call usage hovers now share one
+  `AgentUsageBreakdown` (token rows + total cost + cached share), and a shared read-only `CodeBlockSurface`
+  backs agent markdown, tool rows, Run Details, transcript messages, and outliner code rows. **Gate
+  (main):** `/code-review high` (10 findings) → codex fix `f912835c`: disclosure no longer collapses on
+  live count change (reset keyed on run id), debug snapshot stops re-emitting per provider round (messages
+  captured once, excluded from the dedupe hash), narrow-window info button falls back to the inline
+  popover, code blocks highlight lazily on expand, the no-`user`-row model-input split now labels the
+  whole window as the current request, the `[tool_result …]` prefix contract moved to a shared
+  `agentDebugProtocol` helper, and the usage-breakdown + `DebugMetric`/`truncate`/`formatDuration`
+  duplication was removed. Verified: typecheck clean, `test:core` 1064/0, `docs:check` OK, e2e
+  `agent-debug-panel` + `outliner-code-block` + `agent-process` 26/0. Spec synced:
+  `agent-event-log-rendering`, `workspace-layout`, `commands`, `i18n`.
+- **`file_read` is now a provider-neutral runtime ingestion boundary (PR #326, codex-3)** — reverses the
+  native-PDF payload approach from PR #322 (above): `src/main/agentNativePdfPayloads.ts` and the
+  `nativePdfRead` plumbing are removed, so no provider-native PDF blocks or raw PDF bytes/base64 are sent
+  as the canonical path. The model still passes a local path; the runtime picks the representation. PDFs
+  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded to 60k chars);
+  explicit `pages` renders bounded JPEG page images with `pdftoppm`; oversized scanned PDFs return
+  metadata plus a hint to request a narrower range. Rich documents (`.docx`, `.pptx`, `.xlsx`, `.xls`,
+  `.epub`) convert to Markdown through optional **MarkItDown**, probed locally via
+  `LIN_AGENT_MARKITDOWN_COMMAND` (accepts an executable path **or** a command line like
+  `python3 -m markitdown`), then `markitdown`, then `python3 -m markitdown` — no plugins/cloud/LLM
+  backends, no self-install. Local extractors share one subprocess runner
+  (`src/main/agentToolProcess.ts`: `LIN_AGENT_EXTRA_TOOL_PATH` + common GUI/system PATH segments,
+  SIGTERM→SIGKILL escalation, bounded stdout/stderr capture). Missing Poppler or MarkItDown stays a
+  recoverable tool error — the agent installs the dependency via `bash` under the normal permission/audit
+  path and retries the same call. `.html`/`.htm` stay on the plain-text read path (no MarkItDown
+  dependency, still editable). **Gate (main):** `/code-review xhigh` (8 findings fixed + regression-tested
+  in `09939d1a`: pdftotext stderr false-positive, `pages` render-before-extract, restored `%PDF-`
+  magic-byte check, bounded pdftotext capture, cached MarkItDown probes, accurate truncation char counts,
+  env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
+  `agent-progress`.
+- **`file_read` derived-ingestion results are now cached in-process (PR #327, codex-3)** — a direct
+  follow-up to PR #326. Successful expensive runtime extractions (MarkItDown rich-document → Markdown and
+  PDF `pdfinfo`/`pdftotext` metadata+text) are memoized in a small bounded **LRU cache**
+  (`src/main/agentFileIngestionCache.ts`), so re-reading unchanged content skips the subprocess. Entries
+  key on **source SHA-256 + extractor identity + relevant options + local tool environment** (PATH /
+  extra-tool path), so a changed file, a different extractor, or a different toolchain all miss correctly.
+  Errors are **not** cached, and per-read PDF page-render output directories remain per-read scratch (not
+  cached). Ordinary text-file freshness and `file_edit` guards are unchanged. The source hash is computed
+  by **streaming** the file (`src/main/fileHashing.ts` `sha256File`), so hashing a near-limit document no
+  longer buffers it whole in memory; the bounded-LRU eviction is now a single shared helper
+  (`src/main/boundedMap.ts`), and cached values are `structuredClone`d on get/set so a caller can never
+  mutate a cached entry. **Gate (main):** `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`:
+  streaming hash (no 50 MB read-to-hash buffer), shared `setBoundedMapEntry`, `structuredClone` isolation,
+  a dedicated cache unit test, and a `beforeEach` cache reset to remove cross-test pollution. Verified:
+  typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0 (2 skip). Spec synced:
+  `agent-tool-design`.
+- **Dream channel launcher reworked into scheduled settings + a separate manual run (PR #330, codex-2)** —
+  a fast-track follow-up to `dream-channel-and-memory-retire`. The bottom-of-channel surface no longer looks
+  like a chat composer: it splits into **Scheduled Dream** (a "next run" readout + a recurrence picker reusing
+  the shared `DateValuePicker`, with a Dream-specific empty placeholder and a Save action) and a separate
+  **Manual run** popover (date-window + optional focus text). The shared date picker gains date-only,
+  bounded (`maxDate`), top-anchored (`popoverPlacement`/`popoverGap`), and recurrence end-date ("Ends" switch)
+  modes needed by Dream while preserving the command-node schedule behavior; `CalendarMonthGrid` gains an
+  `isDateDisabled` predicate with keyboard-roving fallback to the nearest enabled date, and
+  `nextDateScheduleDue` is added by refactoring the schedule math into one direction-parameterized core shared
+  with `mostRecentDateScheduleDue`. Recurrence `until` is now guarded `>= anchor` at every layer
+  (`buildScheduleString`, the picker commit path, and the calendar). **Gate (main):** `/code-review high`
+  (9 findings fixed across 2 rounds) — including a **caught-and-fixed regression** where the schedule-math
+  dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules evaluated after
+  their `UNTIL`; the `withinUntil` short-circuit was sound only for the forward search, fixed to `continue` in
+  the past direction with a covering test. Verified: typecheck clean, `test:core` 1056/0, `test:renderer`
+  606/0.
+
+
+- **Agent transcript rebuilt to 1:1 Codex desktop-client message flow (PR #312, `message-flow-rebuild`)** —
+  the agent process rendering is rebuilt as one typed-stream → render-group splitter → nested collapse model,
+  matching the OpenAI Codex desktop client. The per-turn body is a **flat timeline** (no left rail/indent) under
+  a **persistent divider** — the live "Working / Working for {t}" clock while active, "Worked for {t}" once
+  sealed — that stays put through expand and auto-collapse. The turn fold **auto-expands while working and
+  auto-collapses the moment the final answer starts** (Codex machine C), **reversing #306's default-collapsed
+  live process** (PM-ratified). Consecutive tool calls fold into one **counted activity group** ("Ran 3
+  commands · read 2 files", machine B) expandable to the individual rows; reasoning folds like a tool step with
+  a fixed "Thinking"/"Thought" label + a dim one-line gist. A user expand/collapse is **sticky and persisted per
+  conversation** (`agentDisclosureStore`, the renderer analog of Codex's `collapsedTurnsById`), surviving reload
+  and conversation switch. New `agentRenderGroups` splitter + `AgentToolActivityGroup` + `formatRunDuration`
+  with full unit/e2e coverage; supersedes the #311 4-gap design. **Gate (main):** reconciled with #314 — every
+  un-settled tool spins while the turn is live (`isToolCallRowActive`) across the standalone row, the activity
+  group (counts + member spinners), and the header summary, so a parallel batch never flashes red or miscounts
+  as failed mid-turn; the live clock no longer runs away to ~20000d when the turn-start anchor is unknown.
+  typecheck ✓ · `test:core` 1043 · `test:renderer` 587 · e2e `agent-process` 15/15 · `docs:check` ✓ ·
+  adversarial reconciliation review clean · visual verification light+dark.
+- **Stabilize disclosure scroll anchoring — live agent process + outliner collapse (PR #306, codex-3)** —
+  live agent process rows now default **collapsed** (reversing the previous auto-expand-while-working /
+  auto-collapse-on-settle): the collapsed header is the live status line — the pending tool, then the
+  latest non-empty thinking preview, then `Working...` — and updates **in place** to
+  `Worked for {duration}` once the turn seals, with no header jump. A user's expand/collapse choice is
+  now **sticky across the live→sealed transition**: the assistant-turn React key is runId-first (with a
+  same-render dedup backstop), so the row no longer remounts when the streaming placeholder id is
+  replaced by the sealed id, and the spinner moves into the timeline only while the fold is expanded.
+  On any disclosure toggle — agent process folds, and outliner chevron / indent-guide collapse on long
+  flat lists — a shared scroll-anchor helper (`disclosureScrollAnchor.ts` + `usePendingDisclosureAnchor`)
+  captures the clicked trigger's viewport top before the state change and restores it after the layout
+  commit (re-resolving a detached trigger via `data-agent-process-id` / `data-node-id`), so removing or
+  adding descendant rows never pulls the clicked row up or down; the correction is instantaneous, never
+  smooth-scrolled. Native CSS `overflow-anchor` is retained as the floor for non-disclosure layout
+  shifts, with the manual JS as the final authority for the clicked element. Spec synced:
+  `agent-event-log-rendering.md`, `ui-behavior.md`. **Gate (main):** `/code-review high` → 10 findings,
+  all addressed in `3efd82d2` and re-verified — typecheck, `test:renderer` 552/0,
+  `agent-process.spec.ts` 13/13, `outliner-trailing-expand.spec.ts` 23/23 (incl. the `<1px`
+  clicked-chevron anchor assertion).
+- **Single-agent finish collapse — the one-Neva invariant is now code-enforced (PR #300, cc-2)** —
+  removes every surface that could create, load, or delegate-to a *second* agent, completing the
+  collapse begun in #294. Gone: agent-definition authoring (the `agent_create` / `delete` /
+  `duplicate` command kinds + IPC / client / UI + the `/create-agent` skill), file-backed agent
+  loading (the `.agents/agents/` registry scan, `additionalAgentDirectories`), the `Agent` tool's
+  `agent_type` parameter (delegation is now structurally **fork-only** — a fork runs *as* Neva in an
+  isolated context, never a different agent), the skill `agent` field, the dead cross-principal
+  memory redaction, and `isMultiAgentConversation`. Neva stays editable in place; her same-agent
+  fork sub-runs (research / dream / Task) are unchanged. The scheduled-command `commandAgent`
+  selector is removed end-to-end (a command always forks the current agent), and
+  `AgentChildRunActionResult.context_mode` is narrowed to `'fork'`. Net −3791/+546 across 61 files;
+  design folded into the agent specs (A6). **Gate (main):** `/code-review high` (8 finder angles +
+  verify) → 5 findings, all addressed in a follow-up commit (commandAgent removed end-to-end,
+  `context_mode` narrowed, dead `resolveChildRunMemoryOwner` deleted); typecheck ✓, `test:core`
+  1034 / `test:renderer` 547 / `docs:check` ✓. **Shape (a)** one PR.
+- **Single-agent collapse — one customizable agent, channels only, one memory (PR #294, cc-2)** —
+  the multi-agent surface collapses to a single directly-editable assistant (Neva). Conversations
+  become inline channels: the DM primitive, member-roster surface, runtime POV assembly, dead
+  channel-turn execution machinery, the message-addressing protocol, and the multi-agent channel-org
+  tools (`channel_create` / `channel_update`, added in #289) are all removed. Memory collapses to one
+  believer-keyed first-person pool and `memoryIsolation` is dropped — the single pool is always
+  writable. Neva is directly editable (display name, persona, tools, skills, model, effort) via a
+  settings overlay keyed by `agentId`, persisting only fields that differ from the code base so an
+  unchanged persona never freezes; the stable `name` remains the memory anchor. Dream surfacing
+  relocated into Settings → Memory & activity. Net −9929/+2012 across 66 files; design folded into the
+  agent specs (A6). A prior review cycle closed 4 editable-Neva findings (`9940e1d8`).
+- **Channel activity run details — one-agent Channels unified · live process stream · popover polish
+  (PR #291, codex)** — Channel conversations now route ALL run state through the activity row + per-run
+  detail flow, including a **coordinator-only (one-agent) Channel**, which previously fell back to the
+  DM composer/streaming tail. A new `usesChannelActivitySurface(conversationId, members)` (Channel id
+  prefix OR ≥2 agent members) replaces the old `isMultiAgentConversation`-only checks across the
+  runtime, the render projection, the renderer, and the e2e mock, so "is this a Channel?" is decided by
+  one shared helper. The per-run **detail view now renders the live process stream** — thinking, tool
+  calls, and interim prose — through the same transcript UI as DM responses: each run retains its
+  structured live blocks (`assistantContent`) and the projection surfaces them as
+  `streamingContent`, while the main Channel transcript stays whole-utterance only. A coordinator-only
+  Channel keeps its DM-equivalent single-reader turn context (memory briefing + skill/agent listings);
+  only a multi-agent Channel suppresses them for the reader-neutral shared log. Activity popover
+  geometry polish: centered in-flow working row, tokenized spacing (`--channel-activity-*`), neutral
+  avatar/line layout (the semantic-color status dot removed), a compact per-run stop reusing the
+  composer-action button, and a quiet underline-on-focus "Stop all". Specs: `docs/spec/
+  agent-architecture.md`, `agent-event-log-rendering.md`, `agent-progress.md`, `commands.md`,
+  `design-system.md`. **Gate (main):** `/code-review xhigh` (10 finder angles, recall-biased) → 10
+  findings — runtime never emitted `streamingContent` (headline feature dead in production, masked by
+  test fixtures); coordinator-only Channel silently dropped its memory/skill/agent reminders;
+  cross-run tool-call-id collision in the live view; dropped child-run "View transcript" affordance;
+  renderer/core Channel-detection divergence; `lin-agent-channel-` literal duplicated 4×; dead
+  constants; duplicated label dispatch; shallow-copy isolation gap; e2e-mock suppression fidelity —
+  ALL resolved in follow-up commit `27eab8ad` (incl. two new tests exercising the **real** runtime
+  producing `streamingContent` and retaining the coordinator-only memory briefing). Re-verified:
+  typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `test:renderer` 526 pass / 0 fail ✓ ·
+  targeted channel-activity `test:e2e` 4 passed ✓ · `docs:check` ✓.
+- **`web_fetch` success rate — browser identity · cross-host redirects · transient retry · challenge
+  precision (PR #288, cc-2)** — local, user-initiated `web_fetch` retuned purely for success rate (a
+  deliberate local-only SSRF/privacy stance), **no new tool** and the result envelope unchanged. (1)
+  Requests present a real Chrome desktop identity — User-Agent + `sec-ch-ua` client hints +
+  `sec-fetch-*` — and across a redirect chain the headers track a real navigation: `Referer` follows
+  Chrome's strict-origin-when-cross-origin default (full URL same-origin, origin-only cross-origin,
+  dropped on an https→http downgrade) and `Sec-Fetch-Site` degrades monotonically once the chain
+  crosses origin; the embedded-browser fallback renders with the same UA. (2) Redirects are followed
+  transparently across hosts (shorteners/trackers/regional fronts), preserving the server's literal
+  scheme (no http→https upgrade once redirecting, which would break an http-only target); a cross-host
+  landing returns content plus a non-fatal `redirected_host` hint, and a redirect to a local/private
+  host is the one case refused — on both the HTTP path (every hop validated by `isPublicWebFetchUrl`)
+  and the browser fallback (`will-navigate`/`will-redirect` blocked + landing URL re-checked). (3) A
+  raw transient transport throw earns one short-backoff retry, gated by a **denylist** of the
+  deterministic faults (DNS/refused/TLS/unsafe-port/bad-scheme) that would fail identically — so the
+  retry works whether the platform surfaces a Chromium `net::ERR_*` code or a generic fetch rejection;
+  HTTP responses (403/429/5xx, Cloudflare) are never retried and route straight to the browser
+  fallback. (4) Cloudflare-challenge detection narrowed to the `*cf_chl*` tokens + visible
+  interstitial phrases, so a full article merely embedding a Cloudflare beacon / `challenge-platform`
+  script / Turnstile widget is returned as-is rather than discarded for a wasted browser round-trip.
+  Spec folded into `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review xhigh` over four
+  review rounds → round 1 (15 findings: embedded-browser-fallback SSRF from dropped nav guards,
+  Cloudflare beacon false-positives, 429/503 retry double-handling, dropped `application/json` Accept,
+  http→https redirect upgrade, spec drift) → round 2 (6: re-added browser nav guards, narrowed
+  markers, per-hop `Referer`/`Sec-Fetch-Site`, retry whitelist) → round 3 (3 SSRF host-classifier
+  bypasses — IPv4-mapped IPv6, the `fc00::/7` ULA regex, trailing-dot `localhost.` — plus full-path
+  cross-site `Referer` and chain-unaware `Sec-Fetch-Site`) → round 4 (IPv4-compatible `::a.b.c.d` and
+  NAT64 `64:ff9b::/96` IPv6 decode) — all resolved and unit-tested. Merged via an integration merge
+  resolving an `agentWebConstants.ts` conflict with #290 (both add a real Chrome UA; deduped onto a
+  shared `CHROME_MAJOR`). typecheck ✓ · `test:core` 1113 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
+- **`web_search` robustness — real UA · transient retry · DuckDuckGo fallback (PR #290, cc-2)** —
+  three reliability improvements to the default `kind: "web"` path, **no new tool** and the result
+  envelope unchanged. (1) The off-screen search window renders with a real Chrome desktop User-Agent
+  (`setUserAgent`) instead of Electron's default (which advertised `Electron` + the app name), so
+  engines serve the standard desktop SERP the scrapers target. (2) A transient navigation fault is
+  retried once with a short backoff on both the primary and the fallback engine — and because the
+  engines are fixed reputable hosts, `navigation_failed` (the dominant outcome of a mid-flight
+  network/DNS blip, via `did-fail-load`), `network_error`, and nav `timeout` all count as transient;
+  blocks, extraction misses, bad queries, and aborts do not. (3) When Google is blocked, fails
+  recoverably, or returns zero results, `web_search` falls back to the DuckDuckGo HTML endpoint
+  (`providerName: "duckduckgo_html"`); a parsed DuckDuckGo page is authoritative even when empty (so
+  the agent hears "no results — broaden" rather than a misleading "retry / use a browser"), and if
+  DuckDuckGo also fails to parse, the primary Google outcome (its hint/error + `google.com` finalUrl)
+  is surfaced rather than discarded. The rate-limit gate moved from per-navigation (`withSearchWindow`)
+  to **once per `web_search` call** (`execute()`), so the internal retry + fallback cascade no longer
+  self-throttles or burns the cross-call burst budget mid-call; Bing Images and the DuckDuckGo
+  fallback now share one `runServerRenderedSerp` skeleton so their block/abort/timeout handling cannot
+  drift. The fallback warning no longer asserts "Google was unavailable" (the primary may have been
+  reachable but empty/unparsed). Spec: `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review
+  xhigh` (10 finder angles + verify + sweep) → 12 findings; cc-2's fix commit resolved them all (the
+  headline being the retry that never fired because `isTransientSearchError` omitted `navigation_failed`,
+  plus the false fallback warning, the rate-limit-slot multiplication, and Google-diagnostics loss on
+  double failure); re-verified typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
+- **Unified agent transcript process UI (PR #284, codex-2)** — the assistant turn/process-fold
+  renderer is extracted into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`)
+  now used by the DM transcript, the child-run task-detail timeline, **and** the Channel live-run
+  drill-in — delivering #280's deferred "full DM-style process reuse in the drill-in". A live turn
+  shows a locked **"Working…"** row while active and default-collapses to **"Worked for …"** once it
+  settles; the final answer always renders as top-level prose (never moves in/out of the fold, so it
+  no longer remounts on seal), and live/sealed-resultless process groups auto-expand so interim
+  thinking/tool work is never buried. Tool pending state is tightened: a tool row is pending only when
+  its id is in `pendingToolCallIds` (or the single trailing in-flight tool when the runtime reports
+  none), so a stale/resultless historical tool call no longer shows a perpetual spinner. The bespoke
+  child-run transcript UI is removed — the task-detail panel adapts a raw child-run transcript into the
+  shared rows (with real `Worked for`/`Interrupted` from `childRun.status`), and the Channel drill-in
+  adapts the per-run `streamingText` into the same live assistant-turn UI while the canonical Channel
+  transcript still receives only whole sealed utterances. Spec: `docs/spec/agent-event-log-rendering.md`.
+  **Gate (main):** `/code-review max` (10 finder angles + verify + sweep) → 14 findings, all addressed
+  by codex-2 (final-prose remount removed via `Math.max(0, lastProcessIndex+1)`; inner groups made
+  live-aware `sealed={!turnActive}`; per-tool pending via a `fallbackActiveToolCall` instead of the
+  whole-turn flag; orphan tool-result `compactText` + 280px `<pre>` cap restored; hidden-only
+  `<system-reminder>` user messages dropped instead of rendering an empty bubble; dead
+  `expandState`/`liveCollapsed` reachable-again or removed; shared `processSummaryFacts` + single
+  `toolStatus` closure; live placeholder reuses `createAssistantPlaceholderFromModel` + a real
+  `modelApi`; the `getComputedStyle` test stub now restores). A scope expansion (a Channel
+  activity-area rewrite that collided head-on with the just-shipped #280 indicator) was caught at the
+  gate and **dropped on rebase** — the PR keeps #280's indicator and only swaps the drill-in body.
+  typecheck ✓ · `test:renderer` 525 ✓ · `test:core` 1081 pass / 2 skip ✓ · `docs:check` ✓ ·
+  `agent-process` e2e 12 ✓ · `agent-composer` (Channel + child-run) e2e 2 ✓; light+dark visual not
+  re-run this gate. ([#284](https://github.com/relixiaobo/lin-outliner/pull/284))
+- **Channel "working" indicator rework (PR #280, cc)** — the multi-agent Channel "who's responding"
+  surface changes from a corner-anchored floating activity pill (whose translucent list bled
+  transcript text — 穿模) to an **in-flow status row** directly above the composer that occupies its
+  own height, never overlaps the transcript, and is removed entirely when nothing is in flight.
+  Collapsed, it is a quiet `menu` trigger: an avatar stack (`+n` overflow), a generic working summary
+  (≤2 working → names, ≥3 → count), and reduced-motion-safe typing dots. Clicking it opens an
+  **opaque level-1 menu** built on the shared overlay primitives (`MenuSurface` + `useAnchoredOverlay`
+  for viewport flip/clamp + `useMenuKeyboard` for Escape / roving / focus-restore, portaled to
+  `<body>`) — so it can never get stuck open or run off-screen, and the opaque `--overlay-bg` ends
+  the bleed-through. Each row shows the per-agent state (thinking / using tools / received) with a
+  semantic status dot, a per-run **Stop**, and a header **Stop all**; clicking a row drills into that
+  run's live-text view. The producer already emits one entry per live run plus pending `received`
+  turns, so this is a renderer + CSS + i18n change with no projection/main rewrite. DM / single-agent
+  is unchanged; full DM-style process reuse in the drill-in is a tracked follow-up. Specs:
+  `docs/spec/design-system.md`, `docs/spec/agent-event-log-rendering.md`.
+  ([#280](https://github.com/relixiaobo/lin-outliner/pull/280))
+- **Default-allow agent tool permissions (plan #277 → PR #279, codex)** — the agent tool permission
+  model changes from the consequence model's COMMIT→`ask` tier to **default-allow + blocklist**.
+  `decideAgentOperationEffect` returns `allow` for every effect except a non-overridable **hard
+  redline** (`deny`): credential exfiltration, permission/provider/secret self-modification,
+  payment, and root/home/whole-workdir host destruction. A small user-overridable **soft-block**
+  tier (remote-code pipes, OS-persistence + git-internal writes, opaque/obfuscated execution,
+  unparseable shell) raises an **allow-once / always-allow / block-now** approval card that defaults
+  to block on a countdown; the auto-block now fires authoritatively in the main process. Tool
+  permission settings gain a **user blocklist** and a **soft-block-allow exception** list alongside
+  the grants ledger (`blocks` / `softBlockAllows`, persisted via
+  `agent_append_tool_permission_block` and the Settings → Security panel), and the agent debug log
+  can add a narrow `Command()` / `Action()` block after the fact. Static **heredoc redaction** stops
+  `python3 - <<'PY' … PY` artifact generation from false-blocking as `hidden_exec`. Notice-only
+  permission cards and the runtime auto skill-trust prompt are removed. **Pre-release: no
+  migration** — the permission config gains `blocks` / `softBlockAllows` arrays; wipe
+  `~/.lin-outliner-*` dev userData if needed. Spec: `docs/spec/agent-tool-permissions.md`,
+  `docs/spec/agent-skills.md`.
+  ([#279](https://github.com/relixiaobo/lin-outliner/pull/279))
+- **Perf P2: default flat outliner, streaming projection patches, structural-save coalescing (PR #275, codex-3)** —
+  three independent P2 optimizations from the performance program (`performance-optimization.md`).
+  (1) The main outliner renders through the windowed/flat row producer by default; the recursive
+  `OutlinerView → OutlinerItem → nested OutlinerView` path (which mounts every expanded node) is retained
+  only as a reload-scoped diagnostic fallback behind `localStorage('lin:recursive-outliner') === '1'`.
+  (2) Streamed direct-message turns no longer rebuild and clone the whole agent render projection per
+  coalesced tick: main keeps the last emitted projection and emits a `projection_patch` for the single
+  active assistant message (carrying a base revision; the renderer reloads the conversation if the patch
+  cannot apply cleanly), folds it preserving unchanged entity references, reuses derived
+  message/tool/pending-run objects, memoizes transcript rows, throttles the live markdown tail to an 80 ms
+  parse cadence, and moves tail auto-scroll into one `requestAnimationFrame` without a per-revision forced
+  `scrollHeight` read. Channel turns stay result-first/transcript-atomic and use the full-projection
+  fallback. (3) Structural document mutations coalesce their `saveCore` into the existing 700 ms text-edit
+  window instead of writing a whole workspace snapshot per edit, flushed before text materialization,
+  transactions, undo/redo, and app `before-quit`. Gate: `/code-review xhigh` — every finding addressed and
+  re-verified; merged result passes typecheck + `test:core` + `test:renderer` + `docs:check`. Specs:
+  `docs/spec/architecture.md`, `docs/spec/ui-behavior.md`.
+  ([#275](https://github.com/relixiaobo/lin-outliner/pull/275))
+- **Run-grounded agent debug surface (PR #264, cc-2)** — the agent debug panel is rebuilt as a
+  read-only **view of the execution tree** (conversation → runs per agent → rounds → request-window
+  / response / tool-exchange), derived directly from the run ledgers the system already writes —
+  no parallel snapshot representation, no provider-wire re-parsing, no cross-stream seq-matching.
+  Each round is one provider call, bounded by `assistant_message.started`. The agent's outbound
+  system prompt + tool schemas are captured once per run (hash-deduped) into the run's own stream;
+  the triggering user message and any cross-run tool-result slimming are spliced into a run's
+  derivation from a single `latestSeq`-cached read of the conversation segment (slimming matched
+  to its producing run by globally-unique `toolCallId`). Every on-screen string passes one
+  secret-redaction gate — key-name + value-pattern (`sk-`/`ghp_`/`github_pat`/JWT/`Bearer`/
+  `password`/`api_key`…) + large-blob elision, consolidated in `agentSecretRedaction.ts`.
+  Replaces the four `agent_debug_*` commands with `agent_debug_view` / `agent_debug_run`, and
+  deletes the old snapshot/projection surface (`agentDebug.ts` + `agentDebugProjection.ts`,
+  ~800 lines) with its IPC, types, and the `debug.snapshot.created` event (now
+  `debug.run_snapshot.created`, run-stream-scoped and replay-neutral). Pre-release: no migration —
+  old debug payloads are simply gone. Spec: `docs/spec/agent-event-log-rendering.md`.
+- **Providers own the connection, the agent profile owns model + effort (PR #267, cc)** — a provider
+  config is now a **connection record only** (`{ providerId; baseUrl?; enabled }`); `modelId` /
+  `reasoningLevel` are dropped from the stored config and from the `AgentProviderConfigView` /
+  `AgentProviderConfigInput` protocol surface. Which model/effort actually runs is owned by the agent
+  that runs: user/project agents keep `AgentDefinition.model` / `effort`, and the read-only built-in
+  assistant gets a **settings-owned overlay** keyed by `agentId` (`builtInAgentProfiles`, via
+  `getBuiltInAgentProfile` / `setBuiltInAgentProfile`). The provider-config window becomes
+  connection-only (credential/auth, optional Base URL, `Test connection`, Save/remove — no model or
+  thinking-level picker), and `Test connection` validates **reachability** with an internally chosen
+  probe (first-ranked catalog model → `GET {baseUrl}/models` discovery for custom endpoints →
+  honest "endpoint reached but no usable model"). The composer footer **drops the model chip** — a DM
+  talks to an agent identity and a channel to a roster, not to one model; model/provider/effort stay
+  visible only in the Details popover, run/debug, ledger, and the profile editor. A new
+  **capability-driven `AgentModelEffortSelector`** (Provider → Model → effort, effort options derived
+  from the model's `supportedThinkingLevels`) saves the canonical provider-qualified id, parsed by one
+  shared `core/agentModelId` helper so a colon-bearing model id (Bedrock `amazon.nova-lite-v1:0`,
+  Ollama `qwen2:7b`) is never mis-split. Runtime resolution: request override → agent-owned model →
+  catalog first-ranked fallback, coercing effort to the model's supported ladder (default `medium`).
+  Two review rounds (xhigh + follow-up): round 2 fixed a custom-endpoint inherit-model DM/channel turn
+  that threw instead of degrading to a configuration-error agent, a custom (no-catalog) provider that
+  collapsed out of the selector, a stale-effort save divergence, a `/models`-only false "connection
+  successful", and folded the reasoning ladder into a shared `AGENT_REASONING_LADDER`. Implements the
+  `provider-connection-model-ownership` plan (#256, shape (a)). Spec:
+  `docs/spec/agent-pi-mono-implementation.md` + `agent-event-log-rendering.md` +
+  `agent-delegation-runtime.md` + `design-system.md`.
+- **Unified file preview surface (PR #262, codex-2)** — file-node previews and loose
+  agent/local-file previews collapse into one `nodeId`-keyed `FilePreviewPanel` with two lifecycle
+  states (`loose` → `ingested`) over a single mounted frame: a **read-only filename title** (fixing
+  the `Untitled` shown by title-less file nodes), a breadcrumb sourced from the filesystem/source
+  when loose and from outliner ancestry when ingested, the shared `FilePreviewShell` hero, and the
+  file node's children outline + backlinks when ingested. **Add to outline** copies the loose source
+  into an asset, creates a file node under Today, and rebinds the same mounted surface to the new
+  node **in place** (no remount/jump) — rewriting the bound view's target to the stored asset so the
+  hero no longer depends on the volatile loose source. File nodes no longer open a `NodePanel` node
+  page: every navigation entry routes them to the unified surface, which is also reported to the
+  agent's user-view context and persists its children-outline expansion. Panel chrome
+  (`usePanelTitleDock`, `PanelStickyBreadcrumb`, `PanelChildrenOutline`) is extracted to
+  `PanelShared.tsx` and shared with `NodePanel`. Reviewed over **three `/code-review high` rounds**
+  (round 1: 10 findings — assetId/UUID-as-title, file nodes missing from agent view-context +
+  outline-expansion persistence, a scroll/breadcrumb reset-key mismatch, a post-bind loose-source
+  hero divergence, a false "added" confirmation, an inert-but-clickable loose breadcrumb, scattered
+  reroute, and chrome duplication; all fixed across rounds 2–3). typecheck + 482 renderer tests +
+  file-attachments/agent-process e2e green. Specs: `docs/spec/ui-behavior.md` +
+  `docs/spec/workspace-layout.md`.
+- **Unified agent prompt composition + Anthropic L0 cache breakpoints (PR #263, codex)** — the four
+  ad-hoc prompt assemblers (`LIN_AGENT_SYSTEM_PROMPT`, `LIN_CHILD_AGENT_CORE_PROMPT`,
+  `buildFreshAgentSystemPrompt`, `buildAgentMemberSystemPrompt`) collapse into one
+  `composeAgentPrompt(definition, context)` whose blocks are layered by **scope × volatility**
+  (universal **L0 firmware** → capability modules → per-agent persona/skills). **Custom DM/Channel
+  agents and fresh child runs now receive the same perception and conduct/safety firmware as the
+  built-in assistant**; memory and child-run behavior become capability modules that follow effective
+  tool capability (so an agent's recall/dream guidance tracks the tools it actually has). Adds
+  **cross-agent prompt caching**: for multi-agent Channel member runs and fresh child runs,
+  `applyAgentPromptCacheBreakpoints` rewrites the Anthropic provider payload in `onPayload` — it
+  splits the stable system block into `L0 firmware` + `rest` (both cache-marked) so the identical
+  firmware prefix is shared across agents, while preserving the provider's last-tool/last-user
+  breakpoints inside Anthropic's 4-breakpoint budget (dropping the OAuth identity breakpoint first
+  when over budget). Single-agent DMs, fork child runs (which still inherit the parent prompt), and
+  non-Anthropic providers are unchanged; per-turn environment, memory briefings, and user-view
+  reminders stay outside the stable prompt. Tool-rule matching and agent display-name derivation are
+  extracted to shared `agentToolRules.ts` / `agentDefinitionDisplay.ts` so prompt capability gating
+  cannot drift from the actually-injected tool roster. Specs:
+  `docs/spec/agent-pi-mono-implementation.md` + `docs/spec/agent-delegation-runtime.md`.
+- **Agent permission model — consequence-based `decide(effect)` core (PR #252, codex)** — the agent
+  tool permission gate is rebuilt around an operation's **consequence** rather than a mode/action/
+  classifier matrix. `decideAgentOperationEffect(effect)` yields three outcomes: local reversible
+  **WORK → allow** silently, **COMMIT** (irreversible / external / credential / outside-scope)
+  **→ ask** (approve once or remember as a narrow grant), and a **FORBIDDEN** safety **floor → deny**
+  that trust settings cannot bypass. The old **3 safety modes, the LLM bash classifier, Full Access,
+  the shell allowlist, and the renderer exception editor are removed**; shell inverts to a
+  floor-blocklist (an unknown *static* command is WORK by construction). `file_delete` is a new
+  reversible tool that moves content to `.agent-trash`. Grants are narrow and typed —
+  `Scope(read|write:root)` (path-containment matched; a read grant never authorizes a write),
+  `External(target)`, `Command(form)` — and revocable from Settings ▸ Security. Floors cover host
+  destruction, disk format, raw-disk / persistence (incl. `crontab`) / git-internal / permission-config
+  writes, credential exfiltration, and obfuscated remote-code execution, scanning the `bash -c` inner
+  command and splitting on `\n` / lone `&` (redirections preserved). PR-1 of the
+  `agent-permission-redesign` set; folder-handoff and `file_convert` follow. Specs:
+  `docs/spec/agent-tool-permissions.md`, `agent-pi-mono-implementation.md`, `agent-skills.md`.
+- **Colored identity avatars + icon-free "Worked for" header (PR #245, cc)** —
+  an agent's avatar now carries a per-identity hue instead of one neutral fill: a dedicated
+  `--identity-tint-0..7` palette — its own decorative category, kept distinct from functional state
+  (B3) and status (B4) — deterministically assigned by an identity hash (`agentAvatarColor.ts`, a
+  byte-identical murmur to `tagColors.ts`) and mixed toward `--surface` so the tint reads soft and
+  theme-aware in both light and dark, never a baked box. A hairline same-hue ring gives the small pill
+  definition; it ships as the tokenized `--avatar-tint-ring` (B11 — `box-shadow` stays a `var()`,
+  mirroring `--inline-ref-focus-shadow`). Separately, the result-first process header drops its leading
+  status glyph for a single **trailing** chevron slot (codex-style); the live spinner swaps into that
+  same slot while the turn is working, so the title text never shifts across the loading→sealed
+  transition ("labels don't move"). Renderer/CSS only — no protocol/shared surface. Visual gate verified
+  light + dark; design-system token guards green. Spec: `docs/spec/design-system.md`.
+- **Compact Channel attribution — avatar+name header over a full-width reply (PR #243, cc-2)** —
+  a Channel assistant row no longer indents its body into an avatar gutter. The row is now a column:
+  an **attribution header** (avatar + speaker name on one line) above a **full-width reply body** aligned
+  to the avatar's left edge, so every Channel reply reclaims the horizontal space the per-message avatar
+  column used to cost. The actor-name block moves from beneath the reply into the header (the old negative
+  `margin-bottom` hack drops; the row gap owns that spacing). A DM assistant row carries no attribution
+  header, so its content was already full-width and is unchanged. Renderer/CSS only — no protocol/shared
+  surface. Visual gate verified light + dark. Spec: `docs/spec/design-system.md`.
+- **Result-first turn fold for DM and Channel (PR #240, cc-2)** —
+  every agent turn now renders **result-first**: the final answer is the message, while thinking,
+  tool calls, and interim narration fold behind a collapsed `Worked for {duration}` disclosure. DM
+  and Channel share one fold mechanism — the Channel text-only render path and the single-tool inline
+  block are removed — and each Channel agent's final message gets its own copy/regenerate action bar
+  (`isLastInTurn` is now actor-aware). `Worked for {duration}` is the producing run's wall-clock
+  (`updatedAt − startedAt`, threaded as `runDurationMs` on the message entity), falling back to the
+  descriptive "Thought · used N tools" summary when the run wall-clock is unknown — a still-`running`
+  run reports unknown rather than a fake "<1s". A resultless turn that ends on a tool/thought
+  auto-expands so its interim text stays visible instead of hiding behind the fold; a multi-run turn
+  (reactive-compaction retry) sums each distinct run's wall-clock. The pure row-building logic is
+  extracted into `agentConversationRows.ts` for unit testing. Pairs with #239 (the agent-side
+  environment reminder) to complete `channel-group-chat-semantics`. Spec:
+  `docs/spec/agent-event-log-rendering.md`, `docs/spec/agent-architecture.md`.
+
+- **Channel/DM framing moves from the member system prompt to a per-turn environment reminder (PR #239, cc-2)** —
+  a Channel/DM member's stable system prompt is now **identity only** (display name + mention,
+  description, authored instructions, profile skills) via one `buildAgentMemberSystemPrompt` that
+  replaces the split `buildChannelPeerSystemPrompt` / `buildDirectMessageAgentSystemPrompt`, so the
+  same agent's prompt is byte-identical (and cacheable) across its DM and any Channel. DM-vs-Channel
+  framing, the member roster, and the Channel communication norms are **environment**, so they ride a
+  new per-turn `<conversation-environment>` `<system-reminder>` (`buildConversationEnvironmentReminder`,
+  assembled in `deriveRuntimePiMessages` next to the memory reminder, POV-correct for the executing
+  member). The Channel block adds the previously-missing norm — *only your final message is shared with
+  the other members; intermediate thinking and tool steps stay private* — so members lead with the
+  result instead of narrating their process into the thread. DM-vs-Channel is keyed off conversation
+  **identity** (`isCanonicalDmConversationId`), not live agent headcount, so a coordinator-only Channel
+  is still framed as a Channel. `escapeXml` moves to `src/core/reminderXml.ts` and the POV identity
+  preamble + roster share one `agentMemberMentionLabel` (consistent escaping). PR 1 of 2 for Channel
+  group-chat semantics (agent side); the human-side render fold + per-agent action bar follow. Gate
+  (main): `/code-review` flagged a DM/Channel authority regression (decided by headcount, not identity)
+  — fixed to `isCanonicalDmConversationId` with a coordinator-only-Channel runtime regression test;
+  typecheck + `test:core` (1016) + `docs:check` green. Spec: `docs/spec/agent-pi-mono-implementation.md`.
+- **Cross-agent contact is baseline-allow + consultee approval attribution (PR #236, cc)** —
+  `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']` flips `'ask'` → `'allow'`, so consulting another
+  agent is ungated in **every** safety mode (`ask_first` / `balanced` / `full_access`); safety stays on
+  each consultee's **own** capability permissions plus the unchanged depth/cycle/concurrency guards
+  (`agentDelegation.ts`), and the now-redundant `agent.delegate.spawn` entry is dropped from
+  `FULL_ACCESS_ALLOW_ACTIONS`. A consultee's own gated (`'ask'`) **or** hard-denied
+  (`permission_notice`) action that surfaces in the parent conversation is now **attributed to it** via
+  `AgentApprovalRequestView.requestedByAgentId`, resolved to the consultee's canonical mention token on
+  the approval card ("Requested by @researcher"); attribution is derived at the delegation layer from
+  the authoritative `contextMode` (a fresh consult → the consultee; a fork → the spawner's inherited
+  attribution, so a consultee's own fork stays the consultee's and the user's own fork stays
+  unattributed), not an id heuristic. The contradictory "Spawn child agents" Security rule and the
+  vestigial `allowable` mechanism (its only non-allowable rule) are removed. Spec:
+  `docs/spec/agent-tool-permissions.md`, `docs/spec/design-system.md`,
+  `docs/plans/agent-conversation-model.md` (Build note → shipped).
+- **UI quality Layer 1 — composition rhythm + design-system consistency (PR #228, codex-2)** —
+  a CSS-only sweep (plus spec sync) shipping the two Layer-1 lanes of the UI-quality suite as one
+  pass. Composition tokens are centralised in `tokens.css`: the reading measure `--reading-max`
+  (720px) is split from the `--settings-content-max-width` (920px) utility cap, with
+  `--panel-content-max` aliased onto the reading measure; a `--title-display/-section/-group`
+  heading scale and a `--row-h-dense/-comfortable` row-height tier alias the existing values, so
+  these are tokenizations with no visual change. Visible alignments: the outliner / agent / panel
+  context menus, the agent-composer image preview, and the date popovers now use the shared glass
+  material (`--material-popover` + `--material-backdrop`, which carry the
+  `prefers-reduced-transparency` / high-contrast opaque fallback for free) on the
+  `--radius-overlay-sm` (10px) overlay radius rung; icon-only chrome controls (breadcrumb close,
+  page-back, panel close, view-toolbar pill, panel more-button) drop their box for pill geometry and
+  colour-only hover (B6); `:focus` becomes `:focus-visible` across fields and triggers with the
+  neutral focus ring, retiring the `--agent-accent` focus leak in the subagent follow-up textarea
+  (B3); chrome captions are `user-select: none` (B10); and the current agent conversation row uses
+  `--selection-bg` so it reads distinctly from hover. Spec corrections folded in: the product icon
+  library is documented as `lucide-react` (the prior "hand-curated inline-SVG set" description was
+  stale), and the design-system B2 one-liner now reflects that in-app theming drives
+  `nativeTheme.themeSource` with no renderer `[data-theme]` bridge. A post-merge cleanup dropped the
+  unconsumed `--row-h-compact` rung the lane had declared (agent rows stay compact via line/padding
+  geometry, not a fixed row height) and re-synced the spec. Design folded into
+  `docs/spec/design-system.md`.
+- **Responsive workspace robustness — rails, pane capacity, indentation, tag/breadcrumb overflow (PR #223, codex-2)** —
+  at small window widths the floating sidebar and agent rail widths were independent and could
+  reserve more horizontal space than the window could host; because the canvas hides horizontal
+  overflow, the main reading pane would silently crush instead of exposing a rescue path. New
+  shared `src/renderer/ui/workspaceResponsiveLayout.ts` holds the layout metrics + floor math.
+  Rail widths now separate a **user preference** from a **rendered width**: drag / keyboard /
+  reset update the preference; window resize, pane-count changes, and rail reopen recompute only
+  the rendered width against the current pane floor (agent rail yields first, then sidebar,
+  neither below its minimum). The key consequence is the preference is never destroyed — a
+  transient narrow window no longer permanently ratchets a wider rail down. New pane creation is
+  gated by available width: root/file-preview splits repurpose an existing workspace pane when too
+  narrow, and an agent-debug open in a too-narrow window now reports "Window is too narrow to open
+  another pane." (en + zh-Hans) instead of silently no-oping. Deep outline, sidebar-tree, and
+  preview/backlink indentation all cap visual depth at one shared `MAX_OUTLINE_INDENT_DEPTH`
+  (document depth/keyboard structure unchanged). Tag bars wrap chips with row gaps (inline
+  plain-text-row slot expands the row instead of overflowing the next), and breadcrumb segments
+  carry width shares that protect the final current-context segment in narrow panes. A CSS
+  `min-width` backstop covers the single-pane canvas; multi-pane stays JS-gated by design (a hard
+  per-pane CSS floor would turn impossible-narrow states into canvas-level horizontal scroll).
+  `docs/spec/workspace-layout.md` updated. Gate (main): `/code-review high` (7 angles) surfaced 10
+  findings (top: a rail-width ratchet that lost the user's chosen width on transient resize; an
+  agent-first ordering violation on single-rail drag; a per-pointermove reflow on the drag hot
+  path); all fixed in the follow-up commit — preference/rendered split, unified floor clamp,
+  metrics snapshotted at drag start, pure capacity predicate split from the reflow side effect,
+  dead exports removed — with new renderer + e2e coverage. Renderer-only, no protocol change.
+- **Outline tag/checkbox syntax unified on one shared grammar (PR #222, codex)** —
+  `src/core/textSyntax.ts` becomes the canonical home for the outline tag token,
+  tag extraction/removal, canonical `formatTag` serialization, the live-`#`-trigger
+  query, and checkbox-marker parsing. The agent outline parser, paste metadata
+  harvest, live `#` trigger, agent projection, user-view context, and clipboard
+  serialization all import the shared helpers instead of four drifting local
+  regexes. User-visible changes: `formatTag` now bracket-escapes tag names
+  containing `]`, backslash, or newline-style characters (`\]`/`\\`/`\n`/`\r`/`\t`)
+  so such names round-trip, and emits bare `#中文` for Unicode names (one shared
+  bare-name class for parse and format); checkbox markers are recognized when the
+  marker is alone or whitespace-separated (`[x] body`, bare `[x]`/`[ ]`) while
+  `[x]body` stays literal text; empty tag names fail fast. Bracket tag names accept
+  raw backslashes. Pure refactor, no protocol change. Spec:
+  `docs/spec/agent-tool-design.md`, `docs/spec/ui-behavior.md`.
+- **Delegation run records + run-status converge onto one shape (C1+C2) (PR #225, cc-2)** —
+  the three near-duplicate records describing a delegated (child) run now derive from one
+  canonical `DelegationDetail` (`src/core/agentEventLog.ts`): the durable
+  `AgentChildRunRecord` and the IPC `AgentChildRunSnapshot` ARE a `DelegationDetail`, and the
+  in-memory runtime record (`AgentRunRecord` → `DelegationRunState`) `extends` it with
+  live-execution state only. The shared id fields
+  (`executingAgentId`/`parentAgentId`/`memoryOwnerAgentId`) became **required** — the spawn
+  writer always sets them — so `restorePersistedRuns` carries the descriptive half verbatim
+  and the defensive fallbacks drop out (C1). The dual run-status enums collapse:
+  `AgentChildRunStatus` (`…|stopped`) is **deleted**; every data-layer surface (durable
+  record, IPC snapshot, runtime record, `child_run.*` events, run ledger, and the
+  model-facing `AgentChildRunActionResult`) now speaks the single `AgentRunStatus`
+  (`…|cancelled`) vocabulary. `renderTaskStatusFromRunStatus` moves to core
+  `agentRenderProjection.ts` as the **one** pure projection (`cancelled → stopped`) every
+  task/child-run render entity flows through — the renderer keeps the user-facing word
+  "stopped" while the data is uniform (render components unchanged). `unattended` is now
+  **durable** — recorded on `child_run.started` and projected onto the record — so a
+  cross-restart resume rebuilds the agent with the same approval policy (was in-memory
+  only). The run ledger's terminal-status → lifecycle-event mapping is now an exhaustive
+  `satisfies`-checked table instead of a nested ternary. C3 (run-context assembly) stays
+  folded into the M-series context-assembly rewrite (A7). No `commands.ts`/`types.ts`
+  change. Design folded into `docs/plans/agent-program.md` § Convergence.
+- **Agent dock + channel configuration refinement (PR #217, codex)** — refines the
+  agent dock header, conversation menu, DM/Channel rows, and unread/menu
+  affordances to the current design-system rules, and moves agent and channel
+  **create/edit** out of in-settings inline editors into dedicated native child
+  windows. New `AgentConfigWindow` / `ChannelConfigWindow` renderer surfaces are the
+  single authoring path (the Settings "Agent Profiles" pane is now a list of launch
+  points only); main-process window construction is unified behind one
+  `createConfigChildWindow` helper shared by the provider, agent, and channel
+  windows, all with the same A3-hardened `webPreferences` and `isLiveWindow`-guarded
+  parent/cleanup handling. The built-in **Tenon assistant** is now registered in the
+  delegation registry, so selecting it as a command/child `agent_type` resolves and
+  dispatches instead of throwing; and a persisted fresh child run whose agent
+  definition was deleted/renamed after it started now **recovers** by continuing
+  with the Tenon assistant rather than hard-erroring on resume (a durable recovery
+  path, not a generic dispatch fallback). Settings deep-links are fixed: `agent=<id>`
+  opens that agent's config window and creation uses a separate `agentMode=create`
+  param, removing the reserved-value collision that made an agent literally named
+  `create` un-editable. Creating a channel now navigates the main panel to the new
+  conversation (`agentNavigateToConversation` IPC), and `refreshAfterSettingsChange`
+  reloads agent definitions (concurrently) so a freshly authored agent's name/POV is
+  no longer stale until a conversation switch. Restores the Channel member POV
+  inspector entry from the Slack-style row menu. Removes the dead DM→Channel
+  escalation affordance and the Channel-creation `systemNotice` plumbing
+  (PM-ratified 2026-06-13: DM is strictly 1:1; any multi-party conversation is a
+  first-class named Channel, so there is no in-DM "upgrade to Channel" entry point).
+  Adds real Electron smoke coverage for the agent/channel config child-window
+  lifecycle (`tests/smoke/config-windows.smoke.ts`) and a draft plan
+  `docs/plans/channel-async-message-bus.md` for the next Channel-as-async-IM-bus
+  change (captured separately, not implemented here). Specs:
+  `docs/spec/agent-delegation-runtime.md`, `docs/spec/design-system.md`. Reviewed
+  via `/code-review high` (10 findings — all fixed in the follow-up commit, verified
+  by re-review with no new regressions).
+
+- **Agent UI glyph refresh (main, fast-track)** — the thinking indicator (thinking
+  rows + the thinking-only process-block header) now uses a dedicated `ThinkingIcon`
+  (lucide `Dices`) instead of the brain, and the skill glyph (the loaded-skill
+  affordance + the Settings → Skills category, which previously shared `BrainIcon`
+  with Memory) uses `Notebook`. `BrainIcon` stays for the memory tools
+  (recall / dream / Memory settings), so Memory and Skills are no longer drawn with
+  the same icon.
+
+- **Security Settings IA redesign — one honest trust model (PR #215, codex-3)** —
+  fixes a security-surface correctness bug: the old Security page read only
+  explicit overrides and otherwise showed the literal `Ask first`, so under Full
+  Access it displayed "Fetch web / Delete files / Run scripts → Ask first" while
+  the runtime would actually run them without asking. The page now mirrors the
+  runtime precedence — **hard safety blocks → your exceptions → the selected mode
+  default** — by sharing one pure decision model. A new `src/core/agentPermissionModel.ts`
+  holds the per-action-kind default table, the `ask_first`/`full_access` adjustment
+  sets, and `effectiveActionDecision(actionKind, mode, overrides, actionDefault?)`;
+  both the runtime fallback (`agentPermissions.ts`) and the renderer
+  (`permissionSettingsModel.ts`) compute from it, so display and runtime can no
+  longer drift. **Behavior-preserving extraction**: the runtime decision and
+  precedence are unchanged (the pre-existing `tests/core/agentPermissions.test.ts`
+  is untouched and passes; a new parity + truth-table test pins it), hard blocks
+  and the #214 `agent.skill.write` removal are preserved, and per-descriptor
+  `defaultDecision` is now injected from the central table except where a context
+  is intentionally stricter (outside-area/sensitive `deny`, inline shell edit
+  `ask`). The page is rebuilt around **Default + Exceptions**: the three-way mode
+  is the living default, explicit rules surface as visible deltas, deviation flips
+  the header to a derived "Custom · based on `<mode>` · N changed" with Reset, and
+  Granted Trust + Advanced collapse into one Exceptions list plus an "Add an
+  exception" disclosure (`agent.delegate.spawn` stays non-allowable; accepted
+  skill hashes are listed separately). Specs synced (`agent-tool-permissions.md`,
+  `agent-skills.md`); i18n en + zh-Hans. Gate (main): typecheck + test:core
+  (944 / 0 fail) + test:renderer (430 / 0 fail) + agent-settings e2e light/dark
+  (27 / 0); deep manual security/behavior-preservation review in lieu of the
+  billed `/security-review` (PM decision, mechanism byte-identical to review).
+
+- **Compact loaded-skill tool calls (PR #216, codex-2 + main follow-up)** — when
+  the model invokes an inline `skill` (status `loaded`), the agent transcript no
+  longer renders a generic Input/Output disclosure card whose Output is just the
+  `Launching skill: <name>` receipt. Instead it shows one compact line — a
+  dedicated skill glyph, the slash-prefixed skill name, and dimmed invocation
+  args — because the real payload is the steering message injected into the next
+  model turn, not a user-inspectable tool output. `context: fork` skills keep the
+  normal expandable disclosure (they carry a real child-run result). Detection
+  branches on the existing `details.data.status` (`loaded` vs `forked`) with a
+  `Launching skill:` text fallback; no backend/protocol change
+  (`AgentToolCallBlock.tsx` + token-based `agent-tool-rows.css`). Main follow-up
+  polish: the glyph is a dedicated `SkillIcon` (not the `BrainIcon` shared with
+  recall/dream memory tools), and the ellipsis-truncated name/args carry `title`
+  tooltips so the full value stays inspectable on hover. Spec: `docs/spec/agent-skills.md`.
+  Gate (main): typecheck + test:renderer (427 pass / 0 fail) + agent-process e2e
+  light/dark (`renders loaded skill calls`, 1 pass).
+
+- **Agent authoring cleanups (PR #213, codex-4)** — closes the #167-review-gate
+  residue. Agents loaded from `additionalAgentDirectories` now render **read-only**
+  in the editor (Duplicate only, no Save/Delete) since every write to them is
+  rejected by the main-layer containment guard anyway — `isAgentDefinitionWritable`
+  (`not built-in AND contained in a writable agents dir`) drives the view's
+  `readOnly`. An out-of-catalog `effort` value now coerces to "Inherit" in the Form
+  `<select>` instead of a browser-auto-selected catalog option. A new core guard
+  test runs the real `filterAgentTools` over the renderer `TOOL_CATALOG` so the two
+  can't silently drift. (The fourth cleanup, AGENT.md parser consolidation, already
+  shipped in #184.) Gate (main): typecheck + test:core (923 pass / 0 fail) +
+  test:renderer (421 pass / 0 fail) green; no styling change (B-series N/A); spec
+  `agent-delegation-runtime.md` synced in-PR.
+
+- **Agent permission safety modes (PR #193)** — the app-level
+  `permissionMode: trusted|restricted` is replaced by a global three-level
+  `AgentSafetyMode` (`ask_first` / `balanced` (default) / `full_access`) that
+  supplies descriptor default decisions as a first-class policy layer inside
+  `evaluateAgentToolPermission`, ordered after configured deny / the restricted
+  delegation sandbox / configured allow-ask and before the descriptor default. The
+  profile never materializes as broad allow rules and can never weaken a hard
+  floor: `full_access` only promotes classified non-redline routine automation
+  (allowed-root file/outliner edits + deletes, web fetch, local/project/dependency
+  execution, network writes, git/GitHub mutation, subagent spawn, Dream, skill
+  content writes, background processes) and still asks for deploy/publish, sandbox
+  override, config writes, sensitive local reads, and outside-root access — unknown
+  shell, sensitive writes, exfiltration, host destruction, permission modification,
+  and payment stay denied; `ask_first` additionally asks for ordinary local
+  file/outliner edits and skill invocation. Legacy stored `permissionMode`
+  normalizes at read/write (`restricted→ask_first`, `trusted→balanced`); agent
+  definitions keep `permission-mode: restricted` only as a narrow delegation
+  sandbox and legacy `permission-mode: trusted` frontmatter is ignored on parse so
+  a definition can never widen above the global mode. The composer approval card
+  grew from one form to three kinds (`tool_permission` / `skill_trust` /
+  `permission_notice`): tool approvals add a *Hand everything to Lin, stop asking*
+  action that switches the global mode to `full_access` and approves the current
+  call; the in-flow `skill_trust` card accepts an unratified mutable skill's exact
+  current content hash (refused on mismatch) so automatic use no longer needs a
+  Settings detour; tell-only `permission_notice` cards make hard/configured denials
+  visible and dismissible (single-slot per conversation — a newer notice resolves
+  and replaces the older). All three card kinds listen to the active run's abort
+  signal and resolve as declined (`run_aborted` for blocking waiters) on stop. The
+  Settings → Permissions page becomes **Security**: a global trust-level control, a
+  revocable **Granted Trust** projection over action allow rules (revoked
+  immediately, also merged into any unsaved draft) and accepted skill hashes, plus
+  the prior action-kind rows demoted to **Advanced**. New permission event sources
+  (`safety_mode_profile`; reserved `trust_ledger`) distinguish default from
+  explicit resolution paths. Gate review (this main agent), two rounds: round 1
+  flagged missing abort handling on the two new card kinds, unbounded
+  permission-notice accumulation, and a save-vs-immediate inconsistency between the
+  two Granted Trust revoke buttons; round 2 resolved all — a shared
+  `denyPendingApprovalForRuntime` helper + abort-signal threading through skill
+  tool / skill-shell / notice paths, single-slot notice dedup, and immediate action-
+  grant revocation. Gates green: typecheck, core 866/0-fail (+5 new edge-case
+  tests), renderer 410/0-fail, e2e (composer + settings) 61/61 with the new
+  skill-trust / notice / Security specs (unrelated composer-geometry timing flakes
+  only). Specs synced (agent-tool-permissions / agent-skills / agent-tool-design /
+  agent-program F6); plan archived `done`.
+- **Agent memory: episodic sources + discriminated-union provenance (PR #195)** —
+  memory realignment PR-2 (D-4 episodic layer + D-5 sources reshape). A
+  `MemoryEntry.source` is now a discriminated union: a raw stream span
+  `{stream: 'conversation' | 'run', streamId, range: {fromSeqExclusive, throughSeq,
+  throughEventId}}` addressed in that stream's own seq space, or `{episodeId}`. Dream
+  consolidation now writes a memory-owned episode gist (new `memory.episode_recorded`
+  event projecting `AgentMemoryEpisode`) and the semantic facts it commits cite that
+  episode; the store maintains a principal-gated reverse index (episode → citing
+  facts). `recall(include_evidence)` zooms fact → episode gist → raw span, resolving
+  conversation and run evidence through one shared seq-window reader; the durable gist
+  is returned even when every raw span is gone (it is the memory-owned artifact), and
+  the gist reserves its share of `max_chars` before raw spans (and is itself clamped to
+  the remaining budget). The legacy `messageRange` evidence resolver and the dead
+  `buildDreamMemoryExtractionSpan` path were removed. Storage layout bumped to **v3**
+  with no legacy source reader — pre-release clean-cut wipe of old agent data, no
+  migration. Specs synced (agent architecture / data-model / delegation-runtime /
+  event-log-rendering / tool-design); the superseded `agent-memory-episodic-index`
+  draft is archived.
+- **Run unification: the subagent entity is dissolved (PR #184)** — the concept
+  model's 7 primitives now hold in code: a delegation is just a Run whose
+  `parentRunId` points at another run. A delegated (child) run is an ordinary
+  Run with its own `runs/<runId>/` append-only ledger; the parent stores only
+  the `parentToolCallId ↔ childRunId` join — `state.subagents` and transcript
+  payload snapshots are gone. ONE evidence addressing scheme everywhere (stable
+  `{seq, eventId}`; the `runId:message:N` codec and payload pinning deleted),
+  ONE watermark shape (`{seq, eventId}` per stream; the positional
+  `{messageCount, payloadId}` cursor deleted), ONE compaction semantics
+  (event-sourced; the snapshot-rewrite path deleted — the #178
+  evidence-preserving invariant now holds structurally). The word `Subagent`
+  left the type system (`agent_child_run_*` commands, `child_run.*` events,
+  delegation/child-run vocabulary); AGENT.md frontmatter parsing exists exactly
+  once (`core/agentMarkdown.ts`); a `layout.json {v}` generation sentinel
+  replaces the #180 detector pile (fail-open invariants carried over;
+  pre-release wipe, no migration). Fork-vs-fresh semantics (#164), memory
+  ownership, permission flow (verified byte-equivalent at the gate), sidechain
+  rendering, and task-panel visibility are preserved. Hardened across two gate
+  rounds: a `runs.json` read-modify-write race that could silently drop a
+  finished turn's messages from replay is serialized onto the index queue
+  (red-verified regression test); the child-run reducer now accepts
+  terminal→running as resume semantics; the e2e layer genuinely migrated to the
+  new transcript command; quit-path settling covers per-run ledger queues; the
+  new `agent_child_run_transcript` IPC fail-closes on cross-conversation reads;
+  Dream skips delegation ledgers missing their `run.started` boundary. E2E
+  316/316 green; visual verification light + dark passed.
+
+
+- **Outliner focus and selection shortcut polish (PR #186)** — entering a regular
+  node page now places edit focus at the start of the first visible body row (the
+  trailing draft when the page is empty; search pages such as Recents stay
+  result-views and take no edit focus). `Cmd+A` escalates from fully selected
+  editor/field text to visible-row selection on a second consecutive press (an
+  empty control escalates immediately). `Backspace` at the start of a field name
+  deletes the field row through the selection-delete path; that and empty-content-row
+  deletion keep focus on the previous visible row, the next surviving row, or the
+  panel trailing draft when it was the only body row. Reopening the collapsed agent
+  dock focuses the composer as a true one-shot (an approval/question card consumes
+  the reopen without a later focus steal). `Cmd+[` / `Cmd+]` page history now works
+  while text is focused; `Option+Arrow` stays platform word-navigation inside
+  editors. Spec synced in-PR (`ui-behavior.md`, `outliner-parity-matrix.md`,
+  `workspace-layout.md`).
+
+- **Workspace skills require explicit acceptance (PR #185)** — `project`-source skills
+  (anything under the workspace's `.agents/skills`, including nested discovery and
+  in-root additional directories) now fail **closed**: they stay out of the automatic
+  model skill listing and refuse model-triggered invocation until the user accepts the
+  exact current `SKILL.md` content hash in Settings → Skills. Slash invocation still
+  works immediately (the user's command is per-run consent). Hand-edit
+  self-ratification is now `user`-source only; a repo update changes the hash and
+  drops an accepted workspace skill back to pending. Trust derivation is a single
+  pure function (`deriveSkillTrust`) feeding both model gates; the Skills tab marks
+  unaccepted project rows with a workspace-specific chip. Spec folded into
+  `docs/spec/agent-skills.md`; plan `agent-skill-workspace-trust` archived `done`.
+  Follow-up copy fix on `main`: the pending chip separator now uses the codebase's
+  `·` convention in both locales.
+
+- **Memory realignment Step 0 + PR-1: one person rule, bullet briefing, recall subject (PR #183)** —
+  first unit of the PM-ratified `agent-memory-realignment` program (charter decisions D-1…D-9; the
+  program one-pager + R1–R6 trio reconciliation ratified and recorded in the charter in-PR).
+  **Authority docs rewritten** (`agent-memory-foundations`, `agent-data-model` canonical table +
+  Extension §reframe, `agent-architecture` §memory): raw ledgers are ground truth *below* memory;
+  the episodic layer (episodes + memory-owned gist) is the acknowledged gap PR-2 fills; the index is
+  pure pointers (gist is episodic content, not index); `MemoryEntry.principal` is documented as the
+  pool's **owner/believer** (whose self-model), matching what the write paths always did; the
+  raw-first Dream-evidence rule is restated to bind context-management artifacts (compaction
+  summaries stay locators, never evidence; memory-owned episode gist becomes the post-supersede
+  carrier in PR-2). **One person rule** (D-2): both Dream pools now write third-person-singular,
+  subject-elided facts — the subject stays normalized in the pool key (rename-safe) — and the
+  `<memory>` briefing renders zone-tagged **bullet lists** (`<self>` / `<principal name="…">`, no
+  subject prepending, no conjugation; the old prose render baked today's single reader into storage
+  as a verb form and misrendered for any other reader). **`recall` grounds against the briefing**
+  (D-3): visible entries carry a reader-relative `subject` ("self" or the same display name the
+  briefing zone uses, single shared name source); raw internal principal keys never reach the model.
+  Cross-pool duplication is now prompt-guided (D-9, with a run-log-only-evidence escape hatch).
+  No schema change (one protocol-surface doc comment). Gate: one fix round; local integration
+  test-merge against post-#179 main (typecheck · core 844/0 incl. all M3-A tests · renderer 409/0)
+  before merge. **Post-merge: wipe `~/.lin-outliner-*` dev userData in every clone** — legacy
+  base-form facts are off-contract under the new render.
+  ([#183](https://github.com/relixiaobo/lin-outliner/pull/183))
+
+- **Memory language surfaces speak the academic model (PR #181)** — `agent-memory-academic-alignment`
+  shipped (plan archived `done` in-PR; subsumed the former D2 `agent-memory-encoding-signal`). Language
+  surfaces only, zero storage/schema/tool-contract change. The Dream prompt is rewritten as a
+  **consolidation** pass — selection stated as an **encoding policy** (durable, context-free knowledge;
+  novelty/prediction-error weighted: corrections, surprising tool results, failed-then-replaced
+  approaches are the strongest signal) with **reconsolidation** framing for update/invalidate; the
+  anti-injection evidence fence stays verbatim, and the new fence-containment test anchors the tags'
+  own lines so the prompt's prose mention of the fence cannot satisfy it. The `<memory>` briefing opens
+  with a fixed self-introduction as the working-memory slice of the semantic store (exported constant,
+  single source for tests); `recall` is described as **cued retrieval** over the semantic store with
+  `include_evidence` as **source access** into the episodic record (parameter names/shapes unchanged),
+  and its empty-result instruction keeps the active-entries-only qualifier. Forgetting copy follows
+  foundations §5.4 — never "delete": Settings chips read `Inactive/已失效`, the Dream boundary row
+  counts `invalidated/失效`; permission descriptors and the spec set (`agent-tool-design`,
+  `agent-skills`, `agent-data-model`, plus straggler sweep over `agent-pi-mono-implementation`,
+  `agent-progress`, `agent-event-log-rendering`) use the same vocabulary (A6). Gate: medium
+  `/code-review` (7 finder angles + per-finding verifiers), one fix round; typecheck · `test:core`
+  809/0 · renderer 405/0 · agent-settings e2e 20/20 (CI=1) · Settings memory pane light+dark visual.
+  Accepted trade-off noted on the PR: the briefing intro persists in each turn's reminder (~24
+  tokens/turn) as the only memory framing subagents see.
+  ([#181](https://github.com/relixiaobo/lin-outliner/pull/181))
+
+- **Principal-keyed memory: the user is an ordinary principal (PR #173)** — Phase 3 of
+  [[agent-memory-model]], implementing the PM-ratified (2026-06-09) `agent-data-model` §4 contract.
+  `MemoryEntry` (+ `AgentMemoryEntryView` / `AgentMemoryEventBase`) is re-keyed by **`principal`** — the
+  subject a fact is *about* — replacing `agentId`; a pool is one principal's undivided self-model. Agent
+  pools stay in `agents/<id>/memory/`, the user pool lives at `principals/user-<id>/memory/`; both ride the
+  same `AppendOnlySeqLog` primitive, no new event types, pre-release clean cut (no migration — wipe
+  `~/.lin-outliner-*` dev userData; stale `agentId`-keyed lines are dropped on read). **Per-principal Dream
+  (one writer per pool):** agent-Dream consolidates an agent's run log → its pool; user-Dream consolidates
+  the user's member-conversations → the user pool (executed by the main agent, principal-anchored run-meta,
+  single-writer, watermark-serialized; manual `/dream` fires it on demand). Extraction prompts are
+  subject-aware ("You …" vs "The user …"). **Membership read:** briefing/recall surface the reader's own
+  pool (`<self>`, second person) plus each co-member principal's pool (`<principal name="The user">`, third
+  person) under a fair round-robin resident cap; the user is always a co-member, so the user's self-model is
+  shared into every agent — subagents inherit visibility from the parent session by design. **Read-path
+  security gate:** cross-principal recall returns the distilled fact only; raw `sources` evidence
+  dereferences only for the reader's own pool. The former `isolated` retrieval tier is removed
+  (`originWorkspace` is provenance only); `read-only-global` (pause writes) remains. Gate (3 rounds,
+  protocol surface): r1 — an e2e mock regression (memory pane crash), a hollow subagent membership gate
+  (resolved as inheritance-by-design, honestly documented), and a Dream prompt-injection surface fixed with
+  a per-request randomized evidence fence; r2 — the torn-tail read fix was found to lose-then-brick on the
+  *write* side (append welds onto the torn fragment), fixed in r3 by a pre-append tail repair (newline-only
+  tears preserve the final event; mid-file corruption still fails loudly for reads and writes). Verified on
+  the merged tree: typecheck + `test:core` 789/0 + `test:renderer` 389/0 + agent-settings e2e 20/20; spec
+  updated in the same change (A6). GitHub flagged the merge CONFLICTING (modify/rename vs #174's plan
+  archive move) while ort merged clean — resolved by merging `main` into the branch at the gate.
+  ([#173](https://github.com/relixiaobo/lin-outliner/pull/173))
+
+- **Skill governance convergence: single-source identity + ratification gate (PR #174)** — one
+  convergence pass over the shipped M1 skill-authoring subsystem, design in
+  `docs/spec/agent-skills.md` + `docs/plans/agent-skills-authoring.md`. **(1) Protocol:**
+  `SkillDefinition.source` collapses `'built-in' | 'user' | 'project' | 'dynamic'` → `AgentSourceKind`
+  (`'built-in' | 'user' | 'project'`), symmetric with agents — `dynamic` was a discovery mode, not a
+  source; nested-discovered dirs now tag `project`. `SkillDefinition` gains `ratified` + `contentHash`.
+  **(2) Closed governance hole:** one `resolveSkillContentTarget` resolver powers the loader, the
+  file-tool write gateway, and the `agent.skill.write` permission classifier, so "what is a skill" can
+  no longer disagree across layers — a skill in an additional configured dir outside the root (e.g.
+  `~/team-skills/`) was loaded as model-invocable yet bypassed skill-write governance entirely; now every
+  recognized skill write is uniformly ask-gated. **(3) Ratification gate replaces write-time policy:** the
+  gateway records each agent-written `SKILL.md` canonical content hash (registry in-memory +
+  `agent-skill-provenance.json` in userData, shared by subagents); a skill whose current hash matches its
+  record is **unratified** — excluded from the model listing and `trigger: 'agent'` invocation refused
+  (`skill_not_ratified`), while slash invocation always works with `allowed-tools` honored (the user's
+  command is per-run consent). A user hand-edit changes the hash and self-ratifies. Deleted: the
+  `RISKY_ALLOWED_TOOL_NAMES` string heuristic and the forced `disable-model-invocation` file rewrite —
+  lin never writes policy into an authored file. Validity/safety checks (size, frontmatter, hidden/exec
+  support files, secret scan) stay at the write boundary as model feedback. Gate: `/code-review` (1
+  finding — a CRLF/BOM hash-domain mismatch that fail-opened the ratification gate when an agent edited a
+  CRLF/BOM-authored skill) fixed in `33ae703` via a canonical `skillContentHash` shared by record + load
+  sides, with an independent re-check confirming the gate now holds; typecheck + `test:core` 780/0 +
+  `test:renderer` 389/0; spec updated in the same change (A6).
+  ([#174](https://github.com/relixiaobo/lin-outliner/pull/174))
+
+- **Distilled-memory `<memory>` briefing + subject-elided Dream writer (PR #172)** — Phase 1+2 of
+  [[agent-memory-model]] as one complete PR, **zero protocol change** (`MemoryEntry`, the `recall` tool,
+  and the `memory.*` / `dream.completed` events are consumed as-is). **Render:** the old
+  `<agent-memory>` `id=…/fact=…` reminder is replaced by a new pure module `agentMemoryBriefing.ts`
+  that projects selected entries into a `<memory>` briefing with reader-relative zones — the reading
+  agent's own pool renders second-person `<self>` ("You verify…"), any other principal's pool renders
+  third-person `<principal name>` (a Phase-3 affordance, unit-tested but unreachable until §4 sharing
+  ships). Storage stays person-neutral; render hides scaffolding (`id`/`status`), XML-escapes, and
+  returns null when empty. Selection is now **resident** (newest active, capped at 12) — the stable
+  distilled prefix — with query-specific retrieval left to the `recall` tool (the volatile tail); the
+  now-dead `query` arg was dropped from `buildMemoryReminder` and the subagent host interface/cache key.
+  **Dream:** the extraction prompt gains the subject-elided base-form writer contract (no leading
+  subject; name third parties; authority-as-phrasing) plus merge/conditionalize/invalidate consolidation
+  heuristics; the `{added,updated,forgotten,skipped}` `dream.completed.changes` shape is unchanged.
+  Gate: `/code-review high` (7 findings) → fixes verified — fragile leading-subject strip regex removed
+  in favor of faithful subject-prepend (Dream is the single enforcement point), shared `escapeXml`
+  extracted to `agentReminderXml.ts`, constant de-duplicated; typecheck + `test:core` 774/0.
+  ([#172](https://github.com/relixiaobo/lin-outliner/pull/172))
+
+- **Auto-initialize field config is one multi-select picker (PR #169)** — a `date` field's Auto-initialize
+  strategies previously rendered as several identical-looking "No" switches (the strategy name lived only in an
+  invisible `aria-label`); they now collapse into a single multi-select picker (closed: the chosen strategies
+  inline; open: a checklist that toggles membership without closing). Implemented as an additive, gated
+  `multiple` mode on the shared `NodeValuePicker` — the single-select callers pass no new props and are
+  unchanged. Also fixes a **silent data-loss bug** found at the gate: changing a field's type left stored
+  strategies the new type doesn't offer lingering invisibly, to be dropped on the next unrelated edit — now
+  `setFieldConfig` prunes auto-init strategies to the new type's valid set at the core seam (the deep fix), not
+  just in the picker. The on-disk value contract (comma-joined strategy string) is unchanged.
+  ([#169](https://github.com/relixiaobo/lin-outliner/pull/169))
+
+- **Runtime-owned Dream memory extraction, per-turn slice (PR #159)** — the automatic half of the #157 M2
+  write authority. After each completed foreground run, a runtime-owned worker (`agentDreamExtraction.ts` +
+  `AgentRuntime` wiring) sends the raw current-turn evidence (user/assistant/tool messages, not summaries)
+  plus the currently visible memory through a bounded no-tools model completion, then applies the proposed
+  add/update/forget actions to the durable memory event store with `conversationId`/`messageRange`/`runId`/
+  `eventId` provenance. It is fire-and-forget after the turn emits idle (a Dream failure can never break the
+  foreground turn), serialized on one runtime queue, and bounded (≤5 actions, fact-length clamp, transcript
+  char budgets). Isolation is enforced on the write path: `read-only-global` runs no extraction (facts learned
+  in a workspace don't enter the global pool), `isolated` only reads/updates/forgets memory scoped to the
+  session's `originWorkspace`, and `add` tags the originWorkspace while `update` preserves the entry's own.
+  Injected `<agent-memory>` reminders are filtered out of the evidence (no self-feedback loop). The secret/
+  credential capture surface is guarded only by the extractor prompt — a PM-accepted, prompt-level decision
+  (2026-06-07) matching the runtime-owned write design, with a defense-in-depth code guard backlogged as
+  `agent-dream-secret-redaction` (P3). This is the per-turn slice only; time/activity/lock-gated offline
+  consolidation (`autoDream`) and the task panel remain later P2/P3 work. Gate: typecheck + `test:core` 661/0
+  (incl. runtime isolation/`read-only-global`/no-op-update regression tests + a new `agentDreamExtraction`
+  unit suite); two high-effort finder passes (security + correctness) cleared, two low correctness findings
+  (provenance run-boundary, no-op update churn) fixed before merge. ([#159](https://github.com/relixiaobo/lin-outliner/pull/159))
+
+- **Agent memory recall clean cut: one read-only `recall` tool (PR #158)** — implements the #157 M2 decision.
+  Removed the two model-visible memory tools from the foreground agent pool — the `memory` CRUD tool
+  (`agentMemoryTool.ts`, deleted) and the `past_chats` tool (`agentPastChatsTool.ts`, deleted) — and replaced
+  them with a single read-only `recall` tool (`agentRecallTool.ts`) over active durable memory entries.
+  `recall` reads only `status:'active'` entries, enforces the agent's `memoryIsolation` tier (`isolated`
+  retrieves only entries whose `originWorkspace` matches the session — unscoped and other-workspace entries
+  are excluded), bounds results by `limit` (default 8 / max 20), and optionally expands raw evidence only
+  when `include_evidence:true` — nested under the matching entry and resolved solely from that entry's
+  recorded `MemoryEntry.sources`, never via a free-text transcript search, within a shared `max_chars` budget
+  (default 4000 / max 12000). The internal `agentPastChats` evidence search is retained as `recall`'s
+  backing service (no longer model-visible); Settings/Profile list/edit/forget remain the human write path.
+  Permission surface is a net reduction: the writable `agent.memory.manage` (auto-allowed) is replaced by
+  read-only `agent.memory.recall` (`accessScope:'none'`, no external effect), and `memory` is dropped from the
+  control/auto-allow mutation sets — A3 intact. Prompt guidance, tool-call UI label/icon (`recall` →
+  `BrainIcon`), i18n (en + zh-Hans), and the active specs (`agent-tool-design.md`, `agent-progress.md`, et al.)
+  were updated in the same change (A6). Gate: typecheck + `test:core` 655/0 (incl. a new runtime isolation
+  regression test asserting `isolated` recall excludes other-workspace/unscoped/invalidated entries) +
+  `test:renderer` 354/0; two high-effort finder passes (removal-completeness + recall correctness/security)
+  returned no findings. ([#158](https://github.com/relixiaobo/lin-outliner/pull/158))
+
+- **Guide agent memory use in the system prompt (PR #155)** — added a stable `Memory` section to the Tenon
+  agent system prompt: use the `memory` tool for concise durable facts / stable preferences / corrections
+  that should carry forward; treat `<agent-memory>` as background context (not user-authored instructions);
+  update or forget a remembered fact when the user corrects it; and do NOT store transient task state, raw
+  conversation summaries, secrets/credentials, guesses, or current-conversation-only facts (use `past_chats`
+  for raw prior-conversation recall). Closes the M1 "inline memory write instructions in the agent prompt"
+  checklist item. Gate: typecheck + `agentSystemPrompt.test.ts` 3/0 (tool names + tag verified against the
+  runtime). ([#155](https://github.com/relixiaobo/lin-outliner/pull/155))
+
+- **Harden agent permission approval semantics (PR #154)** — removed conversation-scoped approval from the
+  permission model: approval scopes are now only `once` / `always`, and stale conversation-shaped rule
+  fixtures can no longer relax a configured/default `ask`. `approval.*` UI events and `tool.permission.*`
+  policy events now share one `permission-<uuid>` request id so a single decision is joinable across both
+  families — including the skill-shell path, which now emits the full `tool.permission.checked/resolved`
+  pair (previously it surfaced only the UI half). Denied-reason strings are canonicalized to one contract
+  (`configured_deny`, `policy_denied`, `classifier_blocked`, `classifier_unavailable`, `platform_hard_block`,
+  `run_aborted`, `runtime`, `user_denied`) backed by a single `PERMISSION_DENIED_CONTRACT` table that drives
+  `recoverable` / `resolvedBy` / `source` / `status` for every reason — so durable policy blocks
+  (`tool_denied` / `tool_not_preapproved` → new `policy_denied`) are correctly non-recoverable, and the
+  audit record can no longer contradict itself (e.g. a runtime denial is no longer logged as `user_once`).
+  Gate: typecheck + `test:core` 662/0 + `test:renderer` 356/0 + 7-angle high-effort review → 7 findings, all
+  fixed before merge (29dd688) with regression tests. ([#154](https://github.com/relixiaobo/lin-outliner/pull/154))
+
+
 - **Workspace tree rows are text-only (PR #146)** — the navigation tree no longer renders a per-node icon
   (neither a node's own emoji nor the fixed fallback glyph the system roots Daily notes / Library / Schema /
   Saved searches / Trash carried); those icons still show in the outliner/canvas and on the primary-nav
@@ -5496,7 +4005,846 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#5](https://github.com/relixiaobo/lin-outliner/pull/5),
   [#11](https://github.com/relixiaobo/lin-outliner/pull/11))
 
+### Removed
+
+- **Agent self-maintenance tools `runtime_status` / `config` / `doctor` (PR #333, cc-2)** —
+  removed all three M1 self-maintenance tools (originally shipped in #153) as over-built for
+  their current value: `runtime_status` and `doctor` are self-*observation* (and `doctor`'s
+  strongest check — "provider not configured" — is unreachable, since the agent can't run a
+  tool without a configured provider), while `config`'s write whitelist was mostly network
+  tuning the agent never changes mid-task. Deleted the `agentSelfMaintenanceTools.ts` module
+  + its test, `createSelfMaintenanceRuntime` and both wiring sites in `agentRuntime.ts`, the
+  `selfMaintenance` option/mount in `agentTools.ts`, and the four
+  `agent.{runtime.status,config.read,config.write,doctor.run}` permission action kinds with
+  their descriptor / alias / tool-profile / restricted-base / control-classifier entries.
+  **Default agent tool count 26 → 23** (sub-agents never mounted these and are unchanged).
+  Self-configuration **stays a goal** — its implementation paradigm (dedicated tool vs. an
+  `file_edit` + validated config-write pipeline with last-known-good recovery) is being
+  re-evaluated and returns in a follow-up PR; runtime settings stay user-managed via
+  Settings → Agent meanwhile. Pre-release, no migration: a remembered grant keyed on a
+  removed `agent.*` kind becomes inert (acceptable per the no-back-compat rule). **Gate
+  (main):** `/code-review high` → one comment-only finding (a stale "self-maintenance"
+  mention in the tool-filter doc comment) fixed in `21ca8bf5`. Verified: typecheck clean,
+  `test:core` 1054/0, `test:renderer` 607/0, `docs:check` OK. Specs synced: `agent-tool-design`,
+  `agent-progress`, `agent-pi-mono-implementation`, `agent-event-log-rendering`; plan
+  `agent-self-modification` updated to record M1 shipped-then-removed.
+
+
+- **`file_convert` tool removed — redundant with `bash` (PR #331, cc-2)** — the typed `file_convert`
+  local tool added no capability over `bash`: both spawned the same converter binaries
+  (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the **same process environment**
+  (`buildAgentLocalToolProcessEnv` PATH/env, workdir `cwd`) and under the **same permission floor** —
+  the only difference was `shell:false` vs `shell:true`. Its "highest-frequency workflow" rationale
+  (from #266) was never measured (A9), and hardcoding `sips` made it **less** portable than `bash`'s
+  fallback. Removes `createFileConvertTool` + the converters/helpers, the three `file.convert.*` action
+  kinds (`deriveFileConvertActionDescriptors` / path-descriptor copy), `'file_convert'` from
+  `LOCAL_FILE_TOOL_NAMES`, the `file_convert` tests, and the spec sections. Default agent tool count
+  **27 → 26** (local tools 9 → 8). **Kept** (shared with `file_read` PDF/document ingestion):
+  `IMAGE_MEDIA_TYPES`, `getPdfPageCount`, `POPPLER_RECOVERY_INSTRUCTIONS`, `runProcess`; the `bash`
+  description now points the agent at `soffice`/`pdftoppm`/`sips` for conversion. **Gate (main):**
+  `/code-review high` (2 dead-code findings) → cleanup commit `c242cc97` drops the orphaned
+  `selectPdfConversionPageRange` (its only caller was the removed `convertPdfToImages`; `file_read`'s
+  PDF path uses the distinct `selectPdfPageRange`) and the now-unused `copyFile`/`unlink` imports.
+  Verified at gate on the merge commit: `typecheck` clean, `test:core` 1061 ran / 0 fail (2 skip);
+  `docs:check` OK. Specs synced:
+  `agent-tool-design`, `agent-skills`. Pre-release: no migration — a remembered grant keyed on a
+  `file.convert.*` kind becomes inert (acceptable per the no-back-compat rule).
+- **Legacy believer-pool memory projection retired (PR #329, codex-2)** — the third and final PR of
+  `dream-channel-and-memory-retire`, finishing the #302 teardown now that PR #328 derives the Dream cursor
+  and `lastSuccessAt` from the channel. Deletes the per-principal believer-pool **memory projection + its
+  memory API inside `AgentEventStore`** (`recordMemoryEpisode` / `listMemoryEntries` / `updateMemoryEntry` /
+  `removeMemoryEntry` / `readDreamState` / `appendDreamCompleted`), the now-dead
+  `agentMemoryActivation` / `agentMemoryRetrieval` modules, the
+  `AgentMemoryEntry` / `AgentMemoryEvent` / `AgentDreamWatermark` / `dream.completed` types, the
+  `agent_list_memory` (+ `agent_update_memory` / `agent_forget_memory`) commands and their renderer/main
+  plumbing, and the **Settings → Memory** entry-management UI. The `AgentEventStore` **class stays** — it
+  still stores every conversation's events, run streams, payloads, run-meta, and index. Durable
+  model-readable memory is now solely the `#d-*` outline timeline nodes; Dream run history is the protected
+  Dream channel's `dream.finished` audit log. Pool-only core tests removed with the code. **Gate (main):**
+  `/code-review xhigh` (clean) + rebased-stack re-verification — no dangling references, typecheck clean,
+  `test:core` 1051/0, `test:renderer` 601/0, e2e `agent-settings` 33/33. Specs synced: `agent-architecture`,
+  `agent-delegation-runtime`, `agent-event-log-rendering`, `agent-progress`. Pre-release: no migration (wipe
+  `~/.lin-outliner-*`).
+
 ### Fixed
+
+- **Closing a menu in the agent panel no longer bounces your focus to the
+  composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
+  Escape put focus back on the trigger, as it should, and then a frame later the
+  composer took it away, so the next Tab started from the top of the document
+  instead of the control you had just used. The panel's click hand-back decides a
+  frame after the click whether anything claimed it, and for a control that opens
+  a popup that question has no good answer that late: the menu deliberately puts
+  focus back on its trigger, which is indistinguishable from the browser simply
+  leaving it there. A control that opens a popup now keeps focus for the whole
+  open-and-close cycle, decided at click time. One consequence: clicking a trigger
+  to close its own open menu leaves focus on the trigger, which is what native
+  menus do and what keyboard users need.
+
+
+- **A long conversation no longer loses the ability to delegate (PR #471,
+  cc-2)** — the descendant token pool was keyed on the parent Thread, so spend
+  accumulated across every Turn of that Thread's life against the 1.5M default.
+  Once it crossed, every later spawn was refused forever; the only reset was
+  subtree deletion, and `/clear` never touched the ledger. Because the user is
+  never shown a token number by design, this arrived as delegation silently
+  going dead with no cause and no way out. Spend is now request-scoped: a pool
+  belongs to the delegating Turn that opened it and is shared by everything
+  spawned inside that Turn's subtree, and the next Turn opens its own. A
+  fire-and-forget child keeps charging the request that asked for it until it
+  settles, and re-delegating to an idle child whose pool was already reclaimed
+  binds it to the pool of the Turn delegating now, so no descendant Turn runs
+  uncovered. Structure is deliberately not rescoped — depth 2 and the durable
+  sixteen-direct-children count stay Thread-lifetime.
+- **Expanding a transcript disclosure no longer moves the row you clicked (PR
+  #469, codex)** — opening a Thought, a tool output, or a long user message in
+  the agent transcript could shove that row up or down the screen, because
+  bottom-follow and the virtualized-row measurement compensation both
+  re-scrolled inside the same layout transaction as the toggle. An explicit
+  toggle now owns its transaction: the control's viewport position is captured
+  before the update and held while delayed measurements settle, and every
+  programmatic scroll — bottom pin, send anchoring, virtual compensation —
+  yields to it instead of competing with it. Work that arrives while the anchor
+  holds is replayed after it releases rather than dropped, so a streaming
+  response keeps following the bottom and a message sent mid-expansion still
+  lands at the top of the viewport. When the expansion needs more scroll range
+  than the transcript has, a transient renderer-only tail runway supplies
+  exactly the missing amount and is reclaimed by later content or by scrolling.
+  Sending or choosing Jump to latest supersedes a pending anchor outright, an
+  asynchronous tool-output read holds it only until the read lands (bounded at
+  three seconds, so a lost reply cannot latch scrolling), and wheel, pointer,
+  touch, or keyboard input still cancels it immediately.
+
+
+- **Agent panel focus hand-back (PR #449, cc, fast-track)** — a mouse click in
+  the thread view that nothing claims now returns focus to the composer
+  ("terminal model"), so transcript blank space and one-shot actions (copy,
+  fork, disclosure toggles, details) no longer strand focus outside the input.
+  A click keeps focus where the browser put it when it targets a typing
+  surface, a link or node reference, or a text selection kept for copying, and
+  defers to any surface that installs its own focus target within a frame of
+  the click (self-focusing popovers, dialogs, the inline message editor).
+  Keyboard-activated clicks are never intercepted, and an active
+  `request_user_input` suspends the hand-back. **Gate (main):** review verified
+  the decision module's fail-safe failure direction (unlisted focusables read
+  as claimed → no refocus, never focus theft), the rAF ordering against the
+  plan popover's self-focus, and the menu focus-restore claim; clean test-merge
+  with `main`, typecheck, and 793 renderer tests (12 new) on the merged state.
+- **Thread completion layout stability (PR #448, codex-3)** — an Agent Turn no
+  longer shifts when its response moves from streaming to completed. The
+  user-message action slot and the response footer are reserved at one height
+  for the whole Turn lifecycle, so the generating indicator swaps to the
+  terminal Copy, Continue in new chat, and Details controls without moving the
+  answer. Empty process timelines no longer render, the process divider keeps
+  the same tokenized spacing above and below with or without visible process
+  Items, every Markdown block keeps its memoized component identity as the
+  final streaming block seals, and `content-visibility` containment applies
+  from a Turn's first render instead of arriving at terminalization.
+  **Gate (main):** review independently verified the spacing arithmetic and the
+  slot/footer heights against the token ladder; three findings (indicator
+  vertical centering, live-state context-menu gating, spec line wrap) were
+  fixed in `958a3e0d` with regression assertions. Verified with typecheck, the
+  focused Thread E2E suite (46 pass) on the PR head, and light/dark visual
+  verification of the live and completed states.
+- **Tag selector active-tag index (PR #427, codex)** — active tag
+  definitions, normalized labels, hexadecimal-color penalties, exact-label
+  lookup, and empty-query ordering are now cached once per renderer projection
+  snapshot. Repeated selector opens and query changes reuse that snapshot, while
+  empty-query menus skip already-applied tags and stop at the visible limit
+  without rescanning or reranking the full tag set. **Gate (main):** review found
+  no reportable issues. Verified with typecheck, 74 focused renderer tests, the
+  full renderer suite (962 pass), docs check, diff check, and a 60,000-call
+  randomized old-versus-new differential check.
+- **Field-name reuse candidate index (PR #426, codex)** — active field
+  definitions and Trash ancestry are now indexed once per renderer projection
+  snapshot, so focused field-name queries avoid rescanning the complete document
+  on every keystroke while preserving complete prefix-first matches and localized
+  display sorting. **Gate (main):** the first review found that localized index
+  ordering could hide real ASCII prefixes and that a 24-result bound changed the
+  picker contract; Codex switched the search index to lowercase code-unit ordering
+  and restored complete results before merge. Verified with typecheck, 87 focused
+  renderer tests, the full renderer suite (961 pass), focused light/dark E2E,
+  docs check, and diff check.
+- **System reference values overlay (PR #424, codex)** — read-only References,
+  Owner, and Day field rows now layer their synthetic projections over the
+  renderer document index instead of copying the full `byId` map for every
+  visible field. The overlay preserves Map lookup and iteration semantics while
+  rejecting mutation. **Gate (main):** review found no reportable issues.
+  Verified with typecheck, 16 focused system-field tests, the full renderer suite
+  (955 pass), docs check, and diff check.
+- **Panel date navigation index (PR #422, codex)** — renderer document state now
+  maintains day-note tag membership and per-date direct-child counts from
+  projection deltas, and the panel calendar reads only its visible date window
+  instead of rescanning the full document. Fallback Day tags, renames, duplicate
+  dates, and sparse updates preserve existing behavior. **Gate (main):** the
+  first review found that ordinary incremental updates still cloned complete
+  backing maps; the second found that every tag-member set eagerly allocated
+  1,024 empty buckets. Codex replaced those paths with sparse occupied-bucket
+  maps and native sets below 64 members before merge. Verified with typecheck,
+  full renderer tests, focused light/dark date-navigation E2E, docs check, diff
+  check, and a 5,000-operation incremental-versus-rebuild differential check.
+- **Search query complexity budget (PR #421, codex)** — canonical and saved
+  search queries now pass through bounded iterative compilation before
+  evaluation, with explicit depth, node, operand, and group-child limits.
+  Agent search outlines, renderer query summaries, and reference-cycle checks
+  avoid recursive traversal; truncated summaries disclose omitted rules instead
+  of silently hiding them. **Gate (main):** the first review found four boundary
+  regressions covering pre-mutation admission, ordinary outline validation,
+  large acyclic references, and summary truncation; codex fixed all four before
+  merge. Verified with typecheck, full Core and renderer tests, focused search /
+  outline / reference tests, docs check, and diff check. The two related search
+  builder E2E cases remain blocked by the existing `main` Recents-click timeout.
+- **Renderer delta reducer surface (PR #420, codex)** — renderer projection
+  delta folding now keeps `byId` and per-node render revisions in bucketed
+  copy-on-write sparse maps, with delta `projection.nodes` exposed through a
+  lazy array-shaped view. Ordinary deltas patch only changed/removed ids,
+  preserve unchanged node object identity, and avoid materializing the previous
+  map or full node array on the hot reducer path. **Gate (main):** review found
+  no reportable issues. Verified with typecheck, full renderer tests, focused
+  sparse projection / reducer / real-Core delta integration tests, docs check,
+  and diff check.
+- **Diagnostic log coalescing (PR #419, codex)** — diagnostic errors now
+  aggregate in memory by fingerprint and flush through a bounded compact JSONL
+  writer, reducing write amplification during repeated renderer/runtime error
+  storms while preserving reveal, export, fatal-error, and before-quit durability
+  paths. Renderer global diagnostics now install once in the main world through
+  the preload IPC bridge. **Gate
+  (main):** first review found a reveal path that could report success after a
+  failed explicit flush; codex fixed it before merge. Verified with typecheck,
+  focused diagnostics / JSON file-store / renderer capture tests, docs check,
+  and diff check.
+- **Renderer formatting cache (PR #418, codex)** — renderer date/time and
+  number formatting call sites now share bounded `Intl.DateTimeFormat` and
+  `Intl.NumberFormat` caches, preserving the existing visible strings while
+  avoiding repeated formatter construction in Agent panels, file previews, and
+  calendar chrome. **Gate (main):** review found no reportable issues. Verified
+  with typecheck, full renderer tests, focused formatting/cache and migrated
+  call-site tests, docs check, and diff check.
+- **Agent definition-create read-model routing (PR #417, codex)** — definition
+  `node_create` now uses the maintained document read model for initial Schema
+  validation and a mutation-local projection view fed by command deltas for
+  create/config writes, so field/tag definition creation avoids public
+  full-projection fanout on `DocumentService` hosts. **Gate (main):** review
+  found no reportable issues. Verified with typecheck, focused DocumentService /
+  Agent node-tool tests, docs check, and diff check.
+- **Agent node_create read-model routing (PR #416, codex)** — ordinary Agent
+  `node_create` now uses the maintained document read model for initial
+  validation and a mutation-local projection view updated from command deltas
+  for target-reference and outline create paths. The collector is threaded
+  through fields, recursive nodes, search nodes, code blocks, tags, checkboxes,
+  nested fields, and visible result assembly so `DocumentService`-backed creates
+  avoid repeated public full-projection reads while fallback hosts keep
+  correctness. **Gate (main):** review found no reportable issues. Verified with
+  typecheck, full Core tests, focused DocumentService / DocumentReadModel /
+  Agent node-tool coverage, docs check, and diff check.
+- **Rich-text editor patch runtime (PR #415, codex)** — ordinary focused
+  rich-text edits now emit bounded patches from ProseMirror transactions, update
+  renderer row/title mirrors through refs instead of whole-snapshot React state,
+  and reserve full snapshots for explicit slow boundaries. Core/Loro patch
+  application reuses caller rich-text metadata for ordinary replace/mark
+  patches, keeping sparse state-cache snapshots while avoiding full rich-text
+  decode on the hot path. **Gate (main):** first review found an inline-reference
+  boundary deletion regression; codex fixed it before merge. Verified with
+  typecheck, Core tests, focused renderer rich-text/trigger/paste/shortcut
+  suites, docs check, diff check, manual inline-reference boundary repros, and
+  cache-verification tests.
+- **Document read model for Agent node tools (PR #414, codex)** — the main
+  process now keeps a `DocumentReadModel` fresh from projection deltas, letting
+  Agent `node_read` and `node_search` reuse a maintained `ProjectionIndex`
+  instead of rebuilding one from a full projection per call. `node_edit
+  replace_outline` also uses transaction-local sparse projection facts on
+  `DocumentService` hosts, avoiding repeated full projection reads while
+  preserving annotated-outline results. **Gate (main):** review found no
+  reportable issues. Verified with typecheck, full Core tests, focused
+  read-model/DocumentService/Agent node-tool coverage, docs check, diff check,
+  and cache-verification tests.
+- **Core sparse transactions (PR #413, codex)** — Core mutations now finalize
+  from explicit touched-node ids instead of whole-state materialization on the
+  hot path. Operation history stores bounded affected-id summaries, journal and
+  undo retention are capped, deep shared-state export avoids stack failures,
+  replication import uses sparse event candidates when safe, and field/tag-heavy
+  tree imports cache resolution while committing responsive chunks. **Gate
+  (main):** review found no reportable issues. Verified with typecheck, full
+  Core/renderer tests, focused sparse replication/import/cache coverage, docs
+  check, and diff check.
+- **Single-delivery projection routing (PR #412, codex)** — local renderer
+  document commands now apply their returned projection update once, while the
+  main process suppresses the duplicate `projection_changed` event back to the
+  invoking `webContents`. Main-owned mutations remain broadcastable, and live
+  search refreshes route through the command runner so sender suppression cannot
+  leave search rows stale. **Gate (main):** review found one swallowed
+  live-search refresh path; codex fixed it before merge. Verified with
+  typecheck, focused Core/renderer tests, full renderer tests, docs check, and
+  diff check.
+- **Renderer no-op command outcomes (PR #411, codex)** — blocked, empty, or
+  local-UI-only renderer command paths now return a renderer-local no-op instead
+  of fetching and reseeding the full projection. The command runner skips
+  projection application, focus commits, and `flushSync` for those no-ops, while
+  nested slash-file cleanup failures abort without clearing the user-visible
+  error. **Gate (main):** review found one nested command failure swallowing
+  issue; codex fixed it before merge. Verified with typecheck, focused renderer
+  tests, diff check, and a renderer scan proving no `api.getProjection()`
+  sentinels remain.
+- **Provider transient request retries (PR #395, codex)** — OpenAI and Azure
+  Responses requests now retry pre-stream `5xx` and bounded transport failures
+  four times with abortable jittered backoff, while retaining the independent
+  one-time replay for prematurely terminated streams before material output.
+  Retry progress is runtime-only, concurrent Runs preserve independent status,
+  and exhausted provider errors render after generated content and before reply
+  actions. **Gate (main):** ultra review found one concurrent-Run status-loss
+  issue; codex fixed it before merge. Verified with typecheck, 23 focused Core
+  tests, 751 renderer tests, focused Playwright coverage, light/dark visual QA,
+  docs check, and diff check; the full Core suite's five failures reproduce on
+  `main` and come from external Presentation skill resource drift.
+- **References as field values (PR #393, codex-4)** — removed the Tenon-only
+  `reference` field type and its dedicated picker/command. Plain fields now store
+  text, inline references, and whole-row reference children through the generic
+  reference path, while options constraints, backlinks, reference counts,
+  search, and computed system reference rows remain intact. Agent field
+  inference and definition schemas now use `plain` for reference-valued and
+  mixed fields. **Gate (main):** ultra review found no reportable issues.
+  Verified with typecheck, affected Core suites, 742 renderer tests, 55 focused
+  Playwright tests, docs check, and diff check; the full Core suite's five
+  failures come from external Presentation skill resource drift.
+- **Queued steer consumption (PR #391, codex)** — the Agent composer now removes
+  its editable queued-steer preview as soon as the runtime persists that steer as
+  the next visible user message, even while the same Run continues. Conversation
+  identity plus the prior visible-user-message baseline prevent an older matching
+  message from clearing a new queue item; append, edit, cancel, rejection, Run
+  settlement, and conversation-switch cleanup remain intact.
+- **Structured field resolution (PR #385, codex)** — semantic `Field:: value`
+  writes now reuse an existing owner field or unique field definition before
+  creating a new definition, preserve existing typed field configs, infer new
+  field types conservatively, and fail closed on duplicate active field matches.
+  Agent `node_create` / `node_edit` and paste metadata now share the resolver,
+  `Done:: true/false` writes through the synced system Done field, and core
+  guards prevent manual field creation, field-definition rename, and definition
+  reuse from creating duplicate active field names on one owner.
+- **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
+  active pane before provider settings finish loading, and the main window
+  startup path paints persistent window chrome instead of a generic centered
+  loading page. Provider, Agent, and Channel config child windows now also paint
+  their header, field structure, and footer actions before their data IPC
+  resolves, with only local busy/disabled state while loading. The empty Agent
+  panel stays blank while provider settings load instead of showing a loading card
+  or flashing no-provider onboarding.
+- **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
+  delete action beside inline rename in the conversation menu, while protected
+  General/Dream Channels keep both mutation controls hidden.
+- **Agent skill turn coalescing** — loaded skill steering no longer splits the
+  conversation transcript into a standalone assistant turn when the follow-up
+  assistant segment belongs to the same run. The skill/tool call and continuation
+  now render as one assistant reply, while hidden notifications that separate
+  different runs remain invisible turn boundaries. Verified with targeted
+  renderer coverage, full renderer tests, typecheck, docs check, and diff check.
+
+
+- **Outliner row-start Enter insertion (direct main, fast-track)** — pressing
+  `Enter` at the start of a non-empty row now creates and focuses a previous
+  sibling instead of splitting the row or moving the row text under an expanded
+  parent. The editor split payload carries row-start state, the row handler
+  preserves the current subtree, and E2E coverage locks the expanded-parent
+  regression. Verified with typecheck, docs check, diff check, full outliner
+  row-editing E2E coverage, and targeted renderer keymap tests.
+- **Run Details transcript turn coalescing (PR #372, codex-3)** — Run Details
+  now adapts raw `assistant(toolCall) -> toolResult -> assistant(text)`
+  transcripts into one assistant turn instead of visually splitting the final
+  answer away from its tool/skill process. Matching tool results remain process
+  data, hidden-only user notifications still split turns invisibly, and orphan
+  tool results continue to render as capped plain text. **Gate (main):** code
+  review found no reportable findings. Verified with typecheck, docs check, diff
+  check, targeted transcript/row tests, and the full renderer suite.
+- **Disclosure anchor scroll-release spec synced (PR #366, codex-4)** —
+  `docs/spec/ui-behavior.md` now explicitly records that immediate user scroll
+  input releases the temporary disclosure scroll anchor, so delayed virtual-row
+  measurement corrections must not pull the viewport back after the user has
+  moved it. This documents the #358 shipped behavior. **Gate (main):** code
+  review found no reportable findings. Verified with `docs:check`, targeted
+  disclosure-anchor renderer tests, and `git diff --check`.
+- **Agent tool rows use semantic icons and readable activity summaries (PR #363, codex-2)** —
+  agent tool-call rows now share one renderer presentation registry for lucide icons and activity
+  buckets, so local file tools, outliner node tools, child-run controls, web, memory, skill,
+  question, history, restore, and unknown tools render with neutral purpose-specific glyphs instead
+  of overloaded warning or file icons. Tool-row summaries now use localized readable copy for
+  canonical tools, and folded activity groups distinguish file/node read-search-create-edit-delete
+  and node restore buckets while keeping pending/error as the only status overrides. The event-log
+  rendering spec records the registry contract and child-run folding behavior. **Gate (main):**
+  code review found restore activity and spec-sync issues; codex-2 fixed both before merge.
+  Verified with typecheck, targeted renderer suites, i18n coverage, `docs:check`, and
+  `git diff --check`.
+- **Retired the obsolete outliner Settings root (PR #362, codex)** — the
+  document-level `Settings` system root is no longer seeded, projected, searched,
+  protected, or shown in the workspace tree; the standalone product Settings
+  window is now the only Settings surface. Empty default legacy `settings` roots
+  are removed on restore, while any retired root with user content or live
+  references is unlocked and moved into Library to avoid data loss. Specs and
+  projection fixtures were updated with the new root shape. **Gate (main):**
+  code review found one data-preservation bug; codex fixed it before merge.
+  Verified with typecheck, focused core/renderer suites, `docs:check`, and a
+  legacy Settings-child restore reproduction.
+- **Hidden Dream system prompt context no longer appears in transcript system lines (PR #360,
+  codex-2)** — Dream channel manual/scheduled anchors may carry model-only
+  `<system-reminder>` prompt context next to their human-readable summary; the renderer now filters
+  those hidden blocks from system actor lines while preserving the visible `Manual Dream` /
+  `Scheduled Dream` anchor text. The text extraction path is covered by renderer tests for mixed
+  hidden-context + visible-anchor rows and hidden-only suppression, and
+  `docs/spec/agent-event-log-rendering.md` records the intended Dream anchor behavior.
+  **Gate (main):** code review found no reportable findings. Verified with targeted renderer tests,
+  typecheck, `docs:check`, and `git diff --check`.
+- **Disclosure scroll anchoring stays stable through delayed measurements (PR #358, codex-4)** —
+  expanding or collapsing long virtualized outliner rows now keeps the clicked chevron visually
+  anchored across multiple row-measurement frames, while releasing that temporary anchor as soon as
+  the user scrolls or signals scroll intent so the helper does not pull the viewport back. The shared
+  disclosure anchor helper updates its expected scroll position after its own restorations and cleans
+  up frame/listener state when the anchor expires. `docs/spec/ui-behavior.md` records the outliner
+  behavior. **Gate (main):** code review found one P1 user-scroll override regression; codex-4 fixed
+  it with renderer coverage. Merge verified with typecheck, targeted renderer tests, targeted
+  outliner E2E, and `git diff --check`.
+- **Agent work divider timing and folding (PR #357, codex-2)** — agent turns now keep one
+  persistent `Working / Working for ...` divider timed from run start while active, then collapse
+  to `Worked for ...` after sealing without an extra top-level disclosure. Nested thinking/tool
+  rows remain available inside the divider, repeated tool calls summarize as grouped activity, and
+  answered lone-reasoning turns stay folded by default while resultless lone-reasoning turns still
+  open for readability. **Gate (main):** code review found one answered-turn disclosure regression;
+  codex-2 fixed it with E2E coverage. Merge verified with typecheck, targeted renderer tests,
+  `docs:check`, and `git diff --check`; local `agent-process` E2E could not start because this
+  sandbox denied the Vite dev-server port bind.
+- **Custom Responses stability and compaction accounting (PR #356, codex)** —
+  custom OpenAI-compatible Responses endpoints now use a compatibility request profile that promotes
+  leading system/developer input to top-level `instructions`, keeps low verbosity, and enables automatic
+  parallel tool calls when tools are present. Custom Responses prompt-cache affinity is restored so
+  cache-capable gateways can return provider usage, while auto compact now follows Codex-style
+  provider-usage-led accounting across providers: it triggers near 90% of the model context window,
+  prefers latest provider-reported total tokens plus locally-added tail, and falls back to local
+  estimation before provider usage exists. Terminated custom Responses streams are salvaged only after
+  a complete tool call reaches `toolcall_end`, avoiding execution of partial streamed arguments.
+  **Gate (main):** code review found one P1 partial-tool-call salvage bug; codex fixed it with a
+  regression. Verified with targeted stream/compat tests, typecheck, and `git diff --check`.
+- **Custom Responses gateways disable prompt-cache affinity (PR #355, codex)** —
+  custom OpenAI-compatible endpoints that preserve the `openai-responses` request shape now force
+  provider stream `cacheRetention: "none"` for non-official base URLs across normal agent turns,
+  compact summary requests, and provider connection probes. This stops Tenon from sending
+  `prompt_cache_key` / session-affinity headers to gateways whose Responses cache implementation may
+  differ, while official `https://api.openai.com/v1` Responses requests keep the configured cache
+  retention. `docs/spec/agent-pi-mono-implementation.md` records the intended custom endpoint behavior.
+  **Gate (main):** code review found no reportable findings. Verified with targeted provider/runtime
+  tests, typecheck, and `docs:check`.
+- **Custom OpenAI endpoints keep the Responses API for catalog models (PR #354, codex)** —
+  custom OpenAI-compatible provider rows now preserve the catalog model's API adapter when the selected
+  model is known, so Responses models such as `gpt-5.5` keep `openai-responses` instead of being routed
+  through the Chat Completions compatibility shape. Unknown proxy-only models still default to
+  `openai-completions`, and the connection-test `/models` discovery probe now applies the same catalog
+  lookup before sending its bounded ping. Provider stream failures render inline only when the terminal
+  assistant message has `stopReason: "error"`, preserving partial output while leaving user aborts as
+  completed aborted turns. **Gate (main):** code review found one missed connection-test path; codex fixed
+  it with a regression. Verified with typecheck, full `test:core`, `docs:check`, and `git diff --check`.
+- **Active-run tail re-anchored after compact (PR #351, codex-2)** — auto compact during an
+  in-flight provider run no longer leaves the run's in-memory tail pointing at the pre-compact
+  assistant/tool branch. Later assistant or tool-result segments from that same run now append after
+  the post-compact leaf, so the next model-context build does not re-enter the oversized
+  summarized-away path and loop through compaction again. Stale transient tool payload/call state is
+  cleared at the same boundary. `docs/spec/agent-skills.md` records the invariant. **Gate (main):**
+  deep review found no blocking findings; typecheck, `docs:check`, targeted runtime/event-log tests,
+  full `test:core` (1116 pass), and `git diff --check` green.
+- **Runs-panel title robustness + verifier double-serialization (main, direct-to-`main`, 2026-06-28)** —
+  follow-up polish on the agent-goal feature (#343): the Work/Runs row title (also used as the row's
+  `aria-label`) now collapses a free-form `objective` to a single whitespace-normalized line capped at 120
+  chars, so a long or multi-line objective no longer ships a wall of text to the screen reader; and the
+  verifier objective (which serializes node/file changes plus up to 40 tool-trace entries) is built once
+  instead of twice per verification. No behavior change to verification outcomes. Typecheck clean;
+  `agentRuntimeChildRuns` + `agentRenderProjection` 48/0.
+- **Trashed schema definitions treated as inactive + Trash permanent-delete actions (PR #338, codex)** —
+  deleting a tag/field definition moved it to Trash, but the app still let it be reused for new tags,
+  fields, and `options_from_supertag` derivation. Core commands and renderer pickers now reject trashed
+  `tagDef`/`fieldDef` nodes everywhere (apply tag, create tagged node, reuse field def, configure
+  `extends` / `childSupertag` / `sourceSupertag`, option-from-supertag selection, template/extends
+  chains, name-based lookup) while existing on-row "deleted" badges stay visible; typing the same name
+  creates a fresh active definition under Schema. Trash also gains **Delete forever** (per trashed
+  subtree) and **Empty Trash** (root) context actions, both behind the shared confirmation dialog and
+  the `permanentDeleteCandidateIds` locked/in-trash filter. Specs (`commands.md`, `ui-behavior.md`)
+  synced. **Gate (main):** two review rounds (3 findings fixed — DefinitionConfigPanel supertag picker
+  now excludes trashed, shared `isNodeInSubtree` extracted, Empty Trash shares the locked filter);
+  typecheck + `test:core` 1060 + `test:renderer` 621 + `docs:check` green; the only new visual is the
+  `--status-danger` menu-item color + the existing `ConfirmDialog` (token-level light/dark review).
+- **Packaged `userData` directory pinned to `…/Tenon` (main, infra)** — the packaged app now resolves
+  its `userData` directory **explicitly** to `<appData>/Tenon` instead of relying on Electron's
+  `app.getName()` default. Electron derives that default from the bundled package.json `name`
+  (`lin-outliner`), NOT electron-builder's `build.productName` (`Tenon`), so a rebuild whose asar
+  package.json lacked `productName` could silently move the data directory from `…/Tenon` to
+  `…/lin-outliner` and look like data loss. Extracted the resolution into a pure, unit-tested
+  `resolveUserDataDir` (`src/main/userDataPath.ts`), moved `app.setName(APP_NAME)` ahead of the first
+  `userData` read, and boot-log the resolved directory for future diagnosis. Precedence is unchanged
+  (`ELECTRON_USER_DATA_DIR` verbatim → `$HOME/.lin-outliner-dev` from source → packaged `…/Tenon`).
+  AGENTS.md "Dev environment" synced. **Gate (main):** typecheck clean, `test:core` 1060/0 (incl. 4 new
+  `resolveUserDataDir` cases). Note: a pre-existing `…/lin-outliner` (756M, from older builds) is
+  intentionally left in place pending a separate cleanup decision (PM-ratified 2026-06-25: Tenon is
+  authoritative).
+
+
+- **Manual "Dream now" pre-checks for new evidence and advises when there is nothing new (PR #320, cc-2)** —
+  a manual Dream over too little new evidence used to be a wasted model round-trip that just no-ops. A new
+  read-only **`agent_dream_readiness`** command (`AgentRuntime.previewDreamReadiness()`, mirroring the
+  scheduled volume calc via an extracted `collectDreamEvidence`) now runs first; below the volume bar,
+  Settings → Agent → Memory surfaces a thin-data advisory plus a **"Dream anyway"** override instead of
+  running. The manual Dream flow gets its **own** `'dream'` request scope (not the shared `'mutation'` one)
+  so an unrelated settings mutation in flight can't invalidate the readiness request and leave
+  "Dreaming…" stuck forever. **Gate (main):** `/code-review high` (3 findings — independent request scope,
+  advisory copy, `collectDreamEvidence` extraction — all folded by the author); re-verified on the rebased
+  head: typecheck ✓ · dream/readiness/backoff `test:core` 20/0 · `agent-settings` e2e **33/33** (the gate
+  caught and the author fixed an `outlinerMock` regression where `agent_dream_readiness` fell through to the
+  `agent_*` `undefined` stub, breaking the pre-check pass-through). Spec (`agent-skills`, `agent-tool-design`)
+  and both i18n locales synced (A6).
+- **Dream remembers nothing instead of recording low-value memory (PR #319, cc-2)** — a Dream over a
+  trivial chat used to be forced to write *something* (e.g. a `#d-episode` that only narrated "Neva
+  answered a Chengdu weather follow-up") because two forces required output: the runtime threw
+  `"… completed without creating or editing memory nodes"` on a successful zero-write child (→ failure
+  backoff + re-fire, training the model to always write ≥1 node), and the SKILL/prompt framed a
+  `#d-memory` container as mandatory. Now **"remembering nothing" is a first-class, common outcome**: the
+  zero-write throw is removed, the one-container rule is conditional on actually writing, and
+  transcript-narration / assistant-action episodes are explicitly banned (with the Chengdu-weather line as
+  a negative example). **Reverses a prior #302/#308 decision** — a *clean* zero-write completion now
+  records `dream.completed` with zero change counts **and advances the watermark**, so a
+  considered-but-empty span is not re-read. **But truncation is not a no-op:** the main review gate caught
+  that a child reaching `completed` via a maxTurns abort or an unresolved context overflow also returns
+  zero writes — advancing the watermark there would silently drop that span's evidence forever. The
+  delegation runtime now flags such runs `incomplete` (set before the maxTurns abort, guarded by
+  `isStreaming`; and on overflow at completion), surfaced through `runToToolData`; a truncated **zero-write**
+  Dream is treated as a **failure to retry** (watermark held), while a truncated run that *did* write keeps
+  its work. **Gate (main):** `/code-review high` (8 finder angles → verify) surfaced the truncation
+  data-loss path as Finding 1; the author's fix gates the watermark advance on a clean terminal state.
+  Re-verified by main on the real head: typecheck ✓ · `test:core` **1046/0** (incl. a new deterministic
+  context-overflow test proving the truncated span is retried, not dropped) · `docs:check` ✓. Six
+  `docs/spec/*` synced (A6).
+- **Live process header stays on the `Working` divider + stable disclosure scroll (PR #317, codex-2)** —
+  two live-process presentation defects from the Codex-style transcript. (1) **Header:** an active turn
+  without a run clock used to replace the persistent header with a summary of the work below — the
+  running-tool / latest-thought line while collapsed, and the descriptive group summary while expanded. The
+  active header is now persistent: `Working for {t}` once the run clock is known, and bare `Working` when it
+  is not, whether the body is collapsed or expanded (the expanded timeline already carries the
+  thought/tool detail). The dead clock-less fallback in `summarizeProcess` (and its `lastThinkingText` /
+  `liveCollapsed` / `thinkingLabel` inputs + the orphaned `lastNonEmptyThinking` helper) is removed. (2)
+  **Disclosure scroll:** a user expand/collapse changes transcript row height, and the chat panel's
+  stick-to-bottom could then pull the scroller after the disclosure anchor had restored, so the clicked row
+  felt like it jumped. A user disclosure toggle now pauses stick-to-bottom, and every agent disclosure
+  (process row, folded tool-activity group, individual tool row) exposes a stable `data-agent-disclosure-id`
+  so the same row is re-anchored after render. **Gate (main):** `/code-review high` (8 finder angles →
+  verify) — the substantive candidates (anchor restore re-arming stick near the bottom; the pause being
+  "permanent"; clock-less `Working` losing detail) were each traced to design-intended or non-reachable on
+  the real path; the one surviving finding (dead `summarizeProcess` params) was folded by the author before
+  merge. typecheck ✓ · `agentProcess` test 10/0 (re-run by main) · author suite `test:renderer` 593/0 ·
+  `docs:check` ✓.
+- **Tool-output context slimming de-coupled from the canonical transcript (PR #313, cc-2)** — the
+  per-batch budget offload and the time-based microcompact used to overwrite a tool result's `content`
+  with a slim preview/`payload_ref` to shrink the model's per-request copy. That mutated the *canonical*
+  record, so on reload an old `web_search`/`web_fetch` decayed into an input-only / no-output row. A
+  `tool_result.replaced` now writes a separate **`modelSlimmedContent`** field and leaves `content` full
+  forever (the Claude Code 2.1 stance: slim the model's copy, keep the persisted transcript whole).
+  Model-context derivation substitutes **`modelFacingContent`** (`modelSlimmedContent ?? content`) — the
+  consumers are runtime pi-message derivation, the per-batch sizing in `collectToolResultBatches`, and
+  Dream memory extraction — while the UI transcript and search index keep reading the full `content`. The
+  replaced event is the durable, monotonic slim-decision journal: replay never shrinks the canonical
+  content (so a result is never un-slimmed → cache-stable) and slim-decision logic reads the model-facing
+  copy so an already-offloaded/cleared result is never re-emitted (no prompt-cache churn). The search
+  index's `tool_result.replaced` branch preserves the full creation-entry text, advances the seq, and
+  merges the offload payload id — it never indexes the slim bytes. **Behavior note:** Dream now digests
+  what the agent actually saw (the slim copy), matching pre-decouple behavior, rather than the
+  re-expanded full output. **Gate (main):** the merge folded the `/code-review xhigh` findings (model-facing
+  sizing, search-index never-index-slim, Dream model-facing, reducer `updatedAt`) with regression tests
+  and an adversarial verify of the fix delta (all four CONFIRMED-CORRECT, no new bug, no layering
+  violation). Spec synced (`agent-pi-mono-implementation.md`). typecheck ✓ · `test:core` 1043 / 0 fail ·
+  `test:renderer` 560 / 0 fail · `docs:check` ✓.
+- **Parallel tool calls render every result, no mid-turn red flash (PR #314, main)** — one assistant
+  turn that fans out parallel tool calls (e.g. several `web_search`/`web_fetch`) had two rendering
+  defects. (1) **Persistence:** each tool result's `parentMessageId` was the assistant message, so N
+  parallel results were stored as *siblings*; the transcript's single-leaf active path keeps one child per
+  node, so N-1 results fell off-path → invisible → rendered as resultless "Failed" rows (≈half of all
+  parallel-tool results). Results now chain onto the run's tail `lastMessageId` (`assistant → result₁ →
+  result₂ → …`), honoring the documented "run is a linear spine" contract, so every result stays on the
+  active path. (2) **Live status:** the per-row spinner was granted to only the single most-recent
+  un-settled tool (and only while `pendingToolCallIds` was empty), so in the frame after a parallel batch
+  is emitted but before the runtime marks the calls in-flight, every tool but the last flashed red
+  ("red → running → success"). A new pure `isToolCallRowActive` predicate treats every un-settled tool
+  (no result, no `outcome`, no child run) as pending while the turn is live. Extends the
+  `fix/tool-call-spinner-stuck` `outcome` work below. Both regression tests mutation-verified; two
+  independent adversarial reviews clean. Spec synced (`agent-event-log-rendering.md`). typecheck ✓ ·
+  `test:core` 1041 / 0 fail · `test:renderer` 560 / 0 fail · `docs:check` ✓.
+- **Completed tool steps no longer spin forever (main, `fix/tool-call-spinner-stuck`)** — a finished
+  step (e.g. a `web_search` that returned) kept showing a spinner for the rest of the run. The
+  authoritative `tool_call.completed` / `tool_call.failed` events were replay no-ops, so the renderer
+  inferred "done" only from a later `tool_result.created` message; when that result never lands in the
+  projection (some built-in SDK tools complete without one) the row fell through to the active-turn
+  fallback and spun indefinitely. Replay now stamps a per-call **`outcome`** (`completed`/`failed`) onto
+  the toolCall content, the render entry carries it (the pi `AssistantMessage` drops it), and
+  `getToolCallStatus` resolves a settled call to done/error even with no result message — the active-turn
+  fallback now only bridges genuinely un-settled, resultless calls. Render-only (model context never sees
+  `outcome`) and survives reload via replay. Spec synced (`agent-event-log-rendering.md`); new core replay
+  test + renderer `getToolCallStatus` cases. typecheck ✓ · `test:core` 1040 pass / 2 skip / 0 fail ·
+  `test:renderer` 555 pass / 0 fail · `docs:check` ✓.
+- **Editing Neva's tool allow/deny list hot-swaps the live conversation (PR #299, main)** — a tools
+  edit through the settings editor persisted to the built-in overlay but never re-resolved the open
+  conversation's `agentToolFilter`, so a just-removed tool stayed callable until the conversation was
+  reopened. The `updateAgentDefinition` hot-swap loop (which already re-applied persona/model/effort)
+  now also recomputes `agentToolFilter` from the freshly-materialized built-in overlay and rebuilds
+  the live tool set via `applyRuntimeToolSettings`. Adds an integration regression test (verified red
+  without the fix). This was finding #2 of the #294 post-merge `/code-review max`; finding #3
+  (`tools:[]` → all-on) was a verified false positive — the editor maps "uncheck all" to
+  `tools: undefined` (inherit all) by design and never stores an empty allow-list for the built-in.
+- **Invoked skills can read their own reference files; web_fetch verification pages route to the
+  browser without flagging real articles (PR #292, codex)** — three corrections. (1) **Skill reference
+  reads:** a resource-backed inline skill exposes `${AGENT_SKILL_DIR}` and points `file_read` at support
+  files such as `references/*.md`, but the permission audit and the file-tool execution roots had
+  diverged, so those reads could still be rejected after permissions were loosened. The runtime now
+  projects the *exact* invoked-skill directory into the typed file boundary as a **read-only** root —
+  a source-tree `src/main/builtInSkills/<skill>` path in dev, the copied `built-in-skills/<skill>`
+  directory in packaged builds. `getActiveSkillReadRoots` re-validates every restored skill against the
+  live registry (`skill.skillRoot === expectedRoot`), so transcript text cannot grant arbitrary reads,
+  and it never grants write access or exposes sibling/parent skill dirs; the read still passes the
+  normal sensitive-path block (the `isSensitivePath` check precedes the inside-area check). (2)
+  **web_fetch verification detection:** Reddit/DataDome-style "please wait while we verify" interstitials
+  (including ones served with HTTP 200/401) now route to the browser fallback, but the markers are kept
+  narrow — explicit interstitial phrases, and DataDome markers only when a `verify`/`verification`/
+  `captcha` word co-occurs — so a full article that merely embeds a bot-protection asset (e.g. a
+  `js.datadome.co` tag) is **not** misrouted and discarded. (3) **Live Channel tool status:** a tool
+  that fails mid-turn in the live Channel working-detail now renders as an **error** instead of a green
+  "done" — a dedicated `failedToolCallIds` channel carries error state alongside `pendingToolCallIds`,
+  and the per-run tool-result index is built once per projection (one O(messages) pass, not one per run).
+  Specs: `docs/spec/agent-skills.md`, `docs/spec/agent-tool-permissions.md`. **Gate (main):**
+  `/code-review high` (8 finder angles, recall-biased) → blocking findings (over-broad fetch markers
+  re-introducing the documented false-positive class; errored live tool rendering green) fixed in
+  follow-up `05854c28`, plus the per-run scan collapsed to a single pass and a skills early-out;
+  re-verified typecheck ✓ · `agentWebFetchFallback` 17/17 · `agentChannelRuntime` 32/32 ·
+  `agentRenderProjection` 25/25.
+- **The agent dock reopens the conversation you last selected, not always the latest (PR #261, codex-4)** —
+  opening the agent dock after a renderer remount/reload restored the *latest* conversation rather than the
+  DM or Channel the user last had open: the selected conversation only lived in memory, and the initial
+  restore path always picked latest. The renderer runtime store now **persists the last-selected conversation
+  id** (`AgentRuntimeStore` gains an injectable `AgentConversationPreferenceStore`; the browser impl is
+  localStorage-backed under `lin-outliner:agent-last-conversation:v1`, best-effort so a failed write never
+  blocks chat) and **restores it before falling back to latest** — startup tries the remembered DM/Channel via
+  `restoreConversation(id)`, and on failure clears the remembered id and falls back to `restoreLatestConversation`
+  (the `requestVersion` guard blocks stale writes from a superseded restore). The preference is written at the
+  single choke point `hydrateConversation` (select / new / reload / restore all funnel through it) and cleared
+  when the active conversation is closed; the injectable store keeps tests independent of browser localStorage.
+- **A DM child run folds into its spawning turn's process — no orphan boundary, no broken style (PR #247, cc)** —
+  a child run spawned by an `agent` tool call inside a **DM** (a non-multi-agent conversation) used to render
+  as a conversation-level **child-run boundary row** (a centered divider between two rules), which surfaced
+  two bugs from the reported screenshot: (1) the row **persisted after re-editing** the message that started
+  the turn — child runs carry no message/branch anchor, so `insertChildRunRows` appended the orphan at the
+  transcript end once the parent tool call left the active branch; and (2) **broken style** — the "Agent task"
+  label wrapped to a second line and the description overflowed the panel's right edge. The reframe: in a DM a
+  child run is the agent's own **implicit** behavior — it quietly delegated a slice of the current turn — so it
+  now **folds into that turn's process** instead of standing as a first-class divider. The in-process `agent`
+  tool-call block already renders full parity (summary "Agent task · {description}", expand-to-result, open
+  full transcript) via `childRunsByParentToolCallId`; the fix is two coordinated gates on the **same**
+  multi-agent flag — the projection **skips** the boundary row (`!multiAgent && parentToolCallId`) and the
+  renderer **keeps** (does not suppress) the tool-call block in a non-multi-agent conversation. Same-flag
+  lockstep is load-bearing: it makes the "child run vanishes" failure (no boundary AND no fold) provably
+  impossible, including for a single-agent channel. Because the folded run lives inside the turn's own message,
+  it is turn-anchored and branch-pruned with that message — an edit removes it cleanly, no orphan. The
+  **multi-agent Channel** boundary row and the **parentless command-fire** row are unchanged; the surviving
+  boundary's CSS shrink chain (`min-width: 0` + ellipsis) is hardened so it single-lines and ellipsizes instead
+  of wrapping/overflowing. Spec: `docs/spec/agent-event-log-rendering.md`.
+
+- **Channel "Interrupted" verdict tied to the run's real status — the root fix (PR #244, cc)** —
+  the recurring multi-agent Channel mislabel (a coordinator turn shown red **"Interrupted after thinking"**
+  while it looked unfinished) that #240 and #242 both only patched. Root cause: the "interrupted" verdict
+  was a pure RENDER heuristic — `turnFailedWithoutProse = turnEnded && !finalIsProse` — that never consulted
+  the run's real outcome. Because a multi-agent Channel hardcodes `turnPhase: idle` (every Channel row's
+  `turnEnded` is always true), it collapsed to "ends on a thinking/tool block → red Interrupted" for **any**
+  result-less turn, whether it completed cleanly, was mid-flight in a projection gap, or genuinely failed.
+  The fix decouples the two concerns the heuristic conflated, both off the run's authoritative status:
+  (1) the core projection stamps `turnInterrupted` on each assistant message from the producing run's REAL
+  status (`failed`/`cancelled`, or a crash-orphaned `running` run absent from the live `activeRunIds`), so
+  the red label + error styling fire ONLY on a genuine interruption — a cleanly `completed` turn is never
+  red, in either mode; (2) surfacing a resultless turn's process is now mode-aware
+  (`surfaceResultlessProcess`) — a genuine interruption surfaces in either mode, and a sealed resultless DM
+  turn still surfaces its work (#240 preserved unchanged), but a cleanly-completed resultless **Channel**
+  turn folds to the neutral **"Worked for …"** header (atomic delivery — its process lives in the activity
+  detail view, not inline). The dead `turnEnded` plumbing is removed; the e2e mock now carries
+  `turnInterrupted` to mirror the real entity. The four #240 DM e2e tests pass unchanged; visual verified
+  light + dark (a completed Channel `web_fetch` turn now reads "Worked for 5s", a cancelled one stays red
+  "Interrupted"). Spec: `docs/spec/agent-event-log-rendering.md`.
+
+- **Channel turns deliver atomically — suppress in-progress turns from the transcript (PR #242, cc-2)** —
+  a running Channel agent's turn no longer appears in the transcript until it completes, realizing the
+  spec's atomic-delivery rule and fixing the false **"Interrupted after thinking"** label that #240's
+  result-first fold surfaced on actively-working turns. `buildTranscriptRows` now suppresses every
+  message whose producing run is **live** in a multi-agent Channel — keyed off the in-memory active-run
+  set the runtime passes in (`options.activeRuns`), NOT the persisted `status === 'running'`: a run left
+  `running` by a crash/quit is absent from the live set, so its **interrupted** turn still renders rather
+  than silently vanishing (regression-guarded). The in-flight turn's progress stays in
+  `channelActivityEntries`; the whole turn appears once its run seals, rendered result-first. A spawned
+  child run is held back the same way, so its boundary row never orphans to the transcript end while the
+  parent is hidden, then reappears anchored once the parent lands. Gated on `isMultiAgentConversation`,
+  so a DM still streams its active turn live. A shared `isRunRunning` predicate replaces the scattered
+  inline status checks (and fixes a latent `activeRun` undefined-deref in the activity-entry gate).
+  Addresses the `/code-review max` findings on the first cut (live-set keying, child-run symmetry, the
+  shared helper, and the test). Spec: `docs/spec/agent-event-log-rendering.md`.
+- **Delegation runtime hygiene — stop-salvage + shared child-agent harness (PR
+  #221, cc-2)** — a `stop()`ped child run now keeps the last partial assistant
+  text it produced (surfaced in the synchronous tool result and terminal
+  notification) instead of reporting an empty result; spawn (`startAgent`) and
+  resume (`ensureLiveAgent`) build the child agent through one
+  `buildChildAgentHarness`, so a resumed run honors the **current**
+  disabled-skill/agent settings (the resume path previously skipped those gates)
+  and carries its `unattended` flag in-memory. The salvage is scoped to the
+  current live span via a `salvageFromIndex` floor (set at resume, reset at
+  compaction), so a run resumed after completing and then stopped before new
+  output no longer resurrects the prior round's result; `send()` rebuilds the
+  agent before mutating run state so a failed rebuild can't strand the run or
+  wipe its prior result. No protocol/`commands.ts`/`types.ts` change.
+- **Built-in skill path handling + skill-write permission simplification (PR
+  #214, codex-2)** — code-registered built-in skills (currently `/skillify`) no
+  longer render a fake `Base directory for this skill: built-in/<name>` header or
+  claim a readable `built-in/<name>/SKILL.md`, so the model stops attempting an
+  out-of-workspace `file_read` that hit a hard permission block; built-ins render
+  body-only and post-compact bookkeeping records them as `built-in:<name>`.
+  Restore bookkeeping hardened: `parseLoadedSkillFromText` skips forked-skill
+  result messages (guarded on `<skill-result>`) so one-shot child-run output is
+  never re-injected as persistent skill guidance, the skill-listing-state identity
+  uses `built-in:<name>` instead of the pseudo path, and `addLoadedSkill` no longer
+  stats the non-existent built-in file. Permission model: the dedicated
+  `agent.skill.write` action is **removed** — writes into recognized skill
+  directories now use the ordinary `file_write` / `file_edit` permission decision
+  (PM-ratified 2026-06-12); recognition still drives validation, provenance,
+  rollback metadata, audit events, and hot-reload, and the safety floor remains
+  invocation-time ratification (agent-written skills are born unratified and need
+  exact-byte user acceptance to become model-invocable). Specs synced:
+  `docs/spec/agent-skills.md`, `agent-tool-design.md`, `agent-tool-permissions.md`,
+  `agent-progress.md`. Gate (main): typecheck + test:core (936 pass / 2 skip /
+  0 fail).
+
+- **Packaged agent local-file root no longer defaults to `/` (PR #192)** — the
+  launch-time fallback was `LIN_AGENT_LOCAL_ROOT ?? process.cwd()`; in a packaged
+  app launched from Finder, `process.cwd()` can be `/`, which made the whole disk
+  the agent's allowed file area (ordinary non-sensitive reads/writes outside any
+  intended project boundary defaulting to in-root behavior). Root resolution is
+  now a pure resolver (`src/main/agentLocalRoot.ts`): a non-empty
+  `LIN_AGENT_LOCAL_ROOT` (trimmed) is an explicit override; source/dev runs keep
+  `process.cwd()` (the `dev:*` scripts run from the repo clone, so dev stays
+  repo-bound); packaged runs with no override use the dedicated
+  `<userData>/agent-local-root` directory — a sibling of the app's own
+  persistence, never `/` and never the full `userData` — created at startup so
+  bash/file-tool cwd exists. This only narrows the default-allow area; the
+  sensitive-path redlines and out-of-root deny/ask rules are unchanged. Boundary
+  semantics documented in `docs/spec/agent-tool-permissions.md`. Hard prerequisite
+  for Full Access in `agent-permission-safety-modes`, now cleared.
+
+- **Dream backoff hygiene + manual-bypass coverage (PR #190)** — follow-up to #189
+  closing its two accepted gate notes: `fireDream` now prunes `dreamFailureBackoff`
+  entries for pools that are no longer dream principals (e.g. a deleted agent) at the
+  start of each scheduled pass, bounding the in-memory map to live pools (a live pool
+  with an armed window is always in the principal set, so it is never pruned); and a
+  new integration test asserts a manual `/dream` ignores an open backoff window and
+  records a `completed` run, covering the manual-bypass gate and the completed branch
+  of `recordDreamFailureBackoff`.
+
+- **A failing scheduled Dream backs off instead of re-firing every tick (PR #189)** —
+  the Dream scheduler ticks every 60s and its gate only consults the pool's last
+  *success* (`shouldFireDateSchedule(…, lastSuccessAt)`); a failed Dream advances
+  neither `lastSuccessAt` nor the watermark, so a persistently failing Dream
+  (provider down, quota, …) re-created a fresh `failed` run record every minute,
+  per pool — up to 1440/day/pool. Added a per-pool, in-memory failure backoff
+  (sibling to the `dreamingPools` guard): after a *scheduled* Dream fails, the pool
+  is held off for an exponentially growing, capped window (5 min → 10 → 20 → … →
+  6 h cap), cleared on the first success. A manual `/dream` ignores the window (the
+  user asked for it now) and its outcome still resets the backoff, so a manual run
+  can un-stick the schedule; `skipped` outcomes leave the window untouched. The
+  curve is a pure helper (`dreamBackoff.ts`). In-memory by design — transient
+  scheduler control state, not durable self-model — so a restart costs one extra
+  attempt, never a flood. Does not retroactively clean already-piled records.
+
+- **Dream sessionId stays within the provider `prompt_cache_key` cap (PR #188)** —
+  the Dream batch stream `sessionId` was `${principalKey}:dream:${runId}:${n}` =
+  79 chars; pi-ai clamps the request body's `prompt_cache_key` to 64 but still
+  writes the untruncated id into the `session-id` request header, so the
+  `openai-codex` backend rejected every packaged-app Dream with HTTP 400
+  (`Invalid 'prompt_cache_key': … length 79`). Dropped the `principalKey` prefix
+  (`runId` = `dream-run-<uuid>` is already globally unique and the prefix bought no
+  cache affinity) → new form `dream:<runId>:<n>` = 54 chars. The format now lives
+  in one `buildDreamSessionId(runId, batchIndex)` builder so no caller can
+  re-prepend a principal; a unit test guards the 64-char cap. Normal chat was
+  unaffected (its `conversationId` is 29 chars).
+
+- **Outliner indent and trailing-draft placement (PR #182)** — closes the boarded
+  fast-track `outliner-indent-draft-fixes`. Batch Tab no longer force-expands the
+  selected siblings themselves, and the skip-batch-members run rule now lives in core
+  `batchIndentNodes` so agent-driven batch indents are covered too, not just the
+  keyboard path. Single indent expands the target in the same paint as the projection
+  move instead of one frame early. A trailing draft outdented with Shift+Tab now lands
+  in the parent scope directly after its old parent — a `{parentId, afterId}` placement
+  with one shared resolver (`src/renderer/state/trailingDraftPlacement.ts`) drives
+  rendering, the materialize index, Tab inversion, and ArrowUp/Backspace, and Enter
+  materializes in place on both the text and empty paths. Structural row moves gained a
+  reduced-motion-aware FLIP animation (duration derived from the motion token ladder),
+  outdent is blocked at the panel root, and outdenting a parent's last child collapses
+  the emptied parent. Two gate rounds; five low-severity residuals recorded on the PR.
+
+- **IME composition survives the split echo and empty rows (PR #177)** — fixes #176, the
+  P1 `skill` → `sk ill` mid-word tearing, with two independent root causes closed: (1) a
+  split echo's focusRequest landing ~60–80 ms into a live composition force-committed the
+  partial word — a global composition gate now parks focusRequest application while any
+  composition is live, and at compositionend the composing editor relays the (never-flushed)
+  composed text through the existing pendingInput rail to the echo's focus target, so the
+  word lands whole at the head of the new row; (2) an empty textblock has no #text node to
+  host the IME's marked range, so ProseMirror's first non-append composition rewrite redrew
+  the paragraph and killed the OS IME session — compositionstart now seeds empty blocks with
+  the existing zero-width sentinel anchor (stripped by the codec, never persisted). Renderer-
+  only; leg 1 pinned by a real-app CDP probe (`scripts/probe-ime-split.ts`), leg 2 verified
+  with a real Pinyin IME (CDP cannot emulate it — caveat recorded in `ui-behavior.md`).
+
+- **Agent memory evidence survives transcript compaction (PR #178)** — closes M3 Phase 1
+  (`agent-memory-source-binding`, plan archived `done`). Both Dream evidence renderers dropped the
+  post-compact reminder along with all hidden boilerplate — but after a subagent fork auto-compacts
+  (transcript payload superseded) or a conversation `/compact`s (active path re-anchored at the
+  post-compact root), that reminder is the only remaining carrier of the pre-compaction content, so
+  the content was silently never distilled while the Dream watermark advanced past it; additionally a
+  fork-prefix boundary recorded against a longer, superseded transcript clamped into a permanent
+  silent skip of the whole run. Dream evidence now surfaces the compaction summary (anchored
+  extraction, the inverse of the reminder producer and co-located with it in `agentCompaction.ts`),
+  reads the fork boundary envelope-first (written atomically with the messages it indexes), and
+  treats a boundary beyond the payload length as "fresh evidence, Dream from 0". The review round
+  hardened the extractor anchoring (a hidden block merely quoting the preamble can no longer leak
+  hidden context into evidence), pinned the reminder strings as persisted-format surface, and deduped
+  the renderer exception + test fixtures. Invariant recorded in `agent-data-model` §13.17. Gate:
+  RED-on-main verification + multi-agent `/code-review`; typecheck; `test:core` 801/0.
+  ([#178](https://github.com/relixiaobo/lin-outliner/pull/178))
+- **Launcher keeps the dock icon + first ⌘Q quits promptly, at the root (PR #171)** — supersedes PR #170's
+  show/hide toggle and the dock-icon fast-track with the actual root causes, found to be **two independent
+  bugs**. (1) *Dock icon vanished when the launcher was summoned:* the launcher's all-Spaces collection
+  behavior (`setVisibleOnAllWorkspaces`) transforms the app's process type to `UIElementApplication`
+  (accessory), dropping the dock icon + ⌘Tab entry (electron#26350); the native `collectionBehavior` attempt
+  (commit cea2998) did **not** avoid the transform and is reverted (addon byte-identical to `main`). Fixed by
+  adding Electron's purpose-built **`skipTransformProcessType: true`** to `setVisibleOnAllWorkspaces` on
+  show/hide, so it joins all Spaces without the transform. (2) *First ⌘Q needed two presses* (reproduced on a
+  fresh launch with the launcher never summoned — unrelated to all-Spaces): the `before-quit` handler
+  `preventDefault()`s the OS ⌘Q to flush, and the prior re-issued `app.quit()` lingered for seconds before the
+  process actually exited. Now the handler drains in-flight writes then **`app.exit(0)`**s — review-hardened to
+  first `AgentRuntime.drainPendingWrites()` (session event-log appends + the crash-safe Dream/command-sweep
+  tails) under a 2.5s hard timeout so a slow in-flight Dream LLM call can't block the quit, with the global-
+  hotkey unregister inlined into `before-quit` (since `app.exit` skips `will-quit`). Gate: high-effort
+  `/code-review` (3 findings — runtime-write durability, `app.exit` over `process.exit`, the `will-quit` trap —
+  all fixed and verified on the merged tree) + typecheck + `test:core` 774/0; the packaged ⌘Tab / over-
+  fullscreen-float / no-focus-steal / dock-icon checks remain a one-time manual eyeball on the `.dmg`.
+  ([#171](https://github.com/relixiaobo/lin-outliner/pull/171))
+
+- **Tenon shows its dock icon again (fast-track)** — the packaged app ran in macOS "accessory" activation
+  policy (window + menu bar present, but no dock icon and no ⌘Tab entry) — a side effect of the always-present
+  non-activating launcher NSPanel. The prior `app.dock.show()` re-assert did not restore it (that API only
+  un-does an explicit `dock.hide()`); replaced with `app.setActivationPolicy('regular')` right after the
+  launcher is created, which forces the app back to a regular foreground app. Verified by typecheck; the dock
+  icon itself needs a one-time packaged-build eyeball (same as the ⌘Q fix).
+- **First ⌘Q quits the packaged app (PR #170)** — the prewarmed global launcher window called
+  `setVisibleOnAllWorkspaces(true)` at creation and kept it forever, even while hidden; a window that
+  permanently joins all Spaces makes AppKit skip `applicationShouldTerminate:` on the first ⌘Q, so the
+  `before-quit` flush never fired and the app needed two presses. The all-Spaces (incl. other apps'
+  full-screen) collection behavior is now toggled **only while the launcher is visible** — set in
+  `showLauncherWindow`, cleared in `hideLauncherWindow` (every dismissal routes through it) — so the common
+  quit path (launcher hidden) is free of the bug, while cross-Space float is unchanged while it is open.
+  Gate: `/code-review` + hide/show path audit (sole `.hide()` / `setVisibleOnAllWorkspaces` callers) +
+  typecheck + `test:core` 766/0; the packaged first-⌘Q outcome still needs a one-time manual eyeball on the
+  `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
+
 
 - **Page-header icon stays visible in dark mode (PR #148)** — the neutral system-page header icons
   (Library / Schema / Trash / Saved searches), rendered in a `.panel-header-icon` chip styled with
@@ -5861,6 +5209,648 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
 
 ### Internal
+
+- **Collaboration tool handlers live in their own domain (PR #456, codex-2)** —
+  `ToolRuntime` carried the implementation of the collaboration tools as well as
+  the dispatch for every tool; the handlers moved verbatim into
+  `thread/SubagentCollaboration.ts` through the extension contribution seam,
+  leaving `ToolRuntime` as dispatch and assembly only (572 → 488 lines) and
+  retiring the subagent-budget plan's spawn-handler carve-out. A catalog
+  byte-stability judge landed before the move rather than after, so the tool
+  catalog is provably byte-unchanged across it and every future contribution
+  migration is guarded the same way.
+  *(Recorded 2026-08-03: this shipped 2026-07-30 with no changelog entry, found
+  by auditing merged pull requests against this file.)*
+
+- **The repository has CI (PR #477 + direct commits, main-agent)** — `main` had no automated test signal at
+  all, so a red baseline was only ever discovered when a PR gate happened to run
+  the full e2e suite; that had happened three rounds running, each time costing
+  the gating PR the work of proving the failures were not its own. Every push to
+  `main` now runs five independent whole-suite Playwright samples in parallel and
+  publishes a frequency table to one tracking issue. Five, because a single run
+  cannot tell a red baseline from a flake — a test was called deterministic here
+  on four consecutive failures and then passed twice. Whole-suite samples rather
+  than sharding or repeating individual tests, because the failures worth catching
+  only appear in a full run. It does not gate pull requests, and retries stay at
+  zero: making an unstable suite report green would hide the thing being measured.
+  It runs on macOS, because the suite encodes the platform the product ships on —
+  the first version ran on Linux, where a different keyboard modifier and font
+  stack produced ten stable failures that pass on macOS, which is the kind of
+  false red people learn to ignore. A pull request gets the same five samples on
+  the same runner image and a comment subtracting `main`'s numbers from its own,
+  because headless CI turned out to disagree with a developer's machine too —
+  attribution needs both measurements taken in one environment, not two
+  environments made to agree. Also fixed `trace: 'on-first-retry'` sitting
+  alongside an unset `retries`, which meant Playwright traces had never once been
+  captured.
+
+
+
+- **The built-in import Skill is named for what it is (PR #474, codex)** — the
+  Skill was called `data-cleanup`, after a category, while everything it
+  actually exposes — the wrapper on `PATH`, the CLI, the packaged resource
+  directory — was already `tenon-import`. It is `tenon-import` throughout now.
+  The packaged wrapper's executable bit is no longer set from a path written
+  out by hand in the packaging hook: one shared constant feeds both the runtime
+  and the hook, and a wrong path now fails the build loudly instead of skipping
+  the `chmod` in silence — the mode of failure that would otherwise ship an app
+  where the import CLI is present but cannot run.
+- **A core test no longer goes red because the machine is busy (PR #473,
+  codex-2)** — the deep shared-state export test builds a chain past the
+  snapshot-depth threshold, which costs about a second and a half on an idle
+  machine and eight times that when the CPU is contended. It inherited the
+  default five-second budget, so `test:core` failed for anyone running it
+  alongside other work. It now carries its own budget, chosen from measured
+  timings and written down next to it, and builds only as deep as the threshold
+  it is testing actually requires.
+- **The e2e suite is a clean gate signal again (PR #464, codex)** — the two
+  deterministic B5 guard failures that had been red on `main` since
+  `51d7cab8` were one real omission, not two: the "Jump to latest" pill paints
+  `--material-popover` with a backdrop filter but was never registered as a
+  chrome/overlay surface. It is registered now, by exact selector and with a
+  comment stating why it qualifies — transient level-1 navigation chrome
+  floating above the transcript viewport, which is what the Thread rendering
+  spec already calls it — rather than stripping glass off a surface the design
+  intends to have it; the guard's parsing and matching are unchanged. The
+  third spec filed as red, the `/attachment` file-name row, no longer
+  reproduces anywhere and was deliberately left alone instead of being
+  "fixed" by invention.
+
+- **Browser Control plan refresh (PR #459, codex-3, plan-only)** — the
+  `agent-browser-control` plan now matches the shipped runtime
+  (#444/#445/#451/#456) and the PM's pre-implementation rulings: prepared
+  execution rides the kernel runner port via a four-operation
+  `ToolExecutionContract`, capability intent and the allow/deny decision
+  travel in a durable start-event envelope, `ToolExecutionAdapter` supersedes
+  `ToolRuntime.instrumentTool` as the lifecycle/hook owner, and a new
+  non-user-configurable `decide(effect)` safety floor (host `ToolSafetyEffect`
+  vocabulary with `filesystem.write` first, plus fail-closed admission of
+  unrecognized output flags) backs worst-case containment for unclassified
+  commands. Gate review confirmed 7 findings; all addressed same-day.
+
+- **E2E guard debt paid down (main)** — cleared every deterministic guard
+  failure that had accumulated on `main` from merges whose gates ran unit
+  tests only: named the automation-settings and time-picker focus-ring
+  transfers plus the read-only `ProviderParameterList` tooltip component in
+  the cursor-affordances exception maps, tokenized the automation unread-dot
+  margin (`--space-3`), registered `canvas.css`'s pane-drag reduced-motion
+  rule, and rewrote the composer attachment-error probe around the Office
+  ownership-file rejection (the 10 MB limit it relied on was removed by
+  bounded large-file observations). Full e2e suite is deterministically
+  green; remaining one-off failures are parallel-load flakiness only.
+
+- **Agent thread UX plans (PR #454, cc-2, plan-only)** — three gate-reviewed
+  plans landed: `agent-subagent-interaction` (status truth for delegated work,
+  children leave the Thread list, live delegation card, cascading user Stop —
+  the task-contract Layer 1 opening), `agent-run-presentation-consistency`
+  (truthful tool-row/process states, plan-progress pill), and
+  `agent-thread-scroll-follow` (send anchoring + visible follow state). Gate
+  review contributed three corrections (bright-line-as-admission-invariant
+  ruling, collision refresh, #160 panel lineage citation); board entries carry
+  status.
+
+- **ThreadService decomposition (PR #451, codex-2)** — the 4,502-line god
+  object split into four owned modules over one shared coordination core:
+  `ThreadCore` (single `KeyedMutex` by construction, notification bus, stores,
+  canonical reads), `TurnLifecycle` (admission→acceptance→execution→steering),
+  `SubagentCollaboration` (spawn/mailbox/wait/activities),
+  `ThreadCatalogOps` (start/fork/rollback/archive/naming),
+  `ThreadResourceOps` (attachments/resources/pruning), behind a byte-compatible
+  850-line facade. Zero behavior change, proven mechanically: facade API frozen
+  (64/64 public methods), test suites entirely untouched (1554 core / 793
+  renderer, 0 fail), five-file line budget within +5% with 2 lines to spare,
+  `src/core/` and `runtime/` diff-empty, four per-stage commits, real-run
+  smoke. Zero review findings. **Gate (main):** six mechanical tripwires run
+  independently on both the original and post-#450 rebase baselines.
+
+- **Subagent token budgets, PR B: mid-Turn enforcement (PR #450, codex)** —
+  the kernel now consults a live budget view before every model call on
+  budgeted, non-user Turns (ThreadService supplies the committed ledger base;
+  the executor composes the normalizer's in-flight usage; user-triggered Turns
+  are never offered the port — the bright line holds mid-Turn). First crossing
+  of 80% delivers one canonical steering notice with actual figures
+  ("synthesize and conclude"), advisory under A12 (delivery failure logs and
+  continues). Exhaustion before outstanding model work settles the Turn
+  interrupted with ledger-total-of-budget figures; a terminal answer under
+  racing steering settles completed (overshoot accrues per PR A), undrained
+  steering is never falsely consumed, and the event cadence stays balanced.
+  Golden parity fixtures untouched (non-budgeted runs byte-identical).
+  **Gate (main):** high-effort review (7 verified defects, all fixed
+  same-day), plan tripwires, typecheck, 1554 core / 793 renderer tests.
+
+- **Subagent token budgets, PR A (PR #446, codex)** — spawn-time token budgets
+  as a host-owned circuit breaker (PM-ratified sizing policy: breaker not
+  allocation). Optional `max_total_tokens` on `spawn_agent`; global default
+  1,500,000 tokens ON by default (`subagentTokenBudget` runtime setting, null
+  disables); children of budgeted spawners default to min(default, spawner
+  remaining) and exhausted senders cannot spawn. Budgets live in a host-owned
+  `thread_budgets` ledger (`persistence/SubagentBudgetLedger.ts`, shared
+  goals.sqlite connection) — deliberately NOT a ThreadGoal, so no
+  auto-continuation enrollment, no Goal-slot collision, and the child cannot
+  lift its breaker. Exhausted children refuse non-user Turn admission with a
+  typed `SubagentBudgetExhaustedError` (goal continuation defers with the real
+  reason; automations fail with the accurate message; parents read it verbatim
+  from collaboration tools); steering an in-flight Turn is never gated; usage
+  accrues inside the completion mutex including failure paths; the mailbox is
+  snapshot-atomic across admission; `wait_agent`/`list_agents` report
+  `tokensUsed`/`tokenBudget`; user-triggered Turns are never gated. **Gate
+  (main):** three passes — two high-effort multi-agent reviews (18 verified
+  findings, all fixed; the first round overturned the plan's own Goal-reuse
+  design), tripwires, typecheck, 1544 core / 781 renderer tests, live
+  dev-userData verification incl. idle-child no-restart and bright-line
+  scenarios.
+
+- **pi-ai import containment (PR #447, codex-2, fast-track)** — routed all
+  `pi-ai` type imports in the context/policy layers through the two sanctioned
+  chokepoints (`kernel/types` for the type vocabulary; `piModels` for the few
+  runtime functions non-transport files need, e.g.
+  `getSupportedThinkingLevels`). Import-lines-only diff across 12 files; the
+  `pi-ai` importer list now equals the transport allowlist exactly, so a future
+  transport swap touches only gateway/transport files. **Gate (main):**
+  mechanical diff-shape check, completion-criterion command, typecheck,
+  1528 core / 781 renderer tests.
+
+- **Native turn kernel (PR #445, codex-2)** — replaced `@earendil-works/pi-agent-core`
+  (dependency deleted) with a Tenon-owned turn kernel under
+  `src/main/agent/runtime/kernel/`: a pure loop over four ports (`ModelGateway`
+  transport port in front of `pi-ai`, `retryPolicy` as the sole owner of retry
+  and overflow-recovery attempt hiding, `NativeAgentRuntime` behind the existing
+  `PiAgentRuntime` seam, Tenon-owned kernel types incl. the re-exported
+  transport vocabulary). Behavior is bug-for-bug pi parity per the plan's
+  22-rule behavioral contract: identical normalized Item streams (golden
+  fixture + four deliberate judge mutations), steering drain points, sequential
+  batch downgrade, truncated-tool-call rejection, provider failures as data
+  with full terminal messages, completed-tool-call salvage, overflow-failure
+  prefixes, and internal-memory raw-transcript turns. The `maxRetries: 0`
+  suppression hack and the 500-line `agentStreamAbort` wrapper are gone
+  (absorbed as `kernel/retryPolicy.ts`, rename-tracked, assertions unchanged);
+  error classification is typed and status-first with a dedicated regression
+  test. **Gate (main):** plan tripwires, typecheck, 1528 core / 781 renderer
+  tests, high-effort multi-agent review (10 verified findings — one retry
+  classification-order regression plus nine cleanups — all fixed same-day),
+  real-run smoke against cc-switch (mixed sequential/parallel tool batch,
+  mid-stream steering, diagnostics parity).
+
+- **Agent context runtime completion + Model Interactions (PR #444, codex-3)** —
+  completed and closed the `agent-context-integrity` plan (PR 3 of 3): deterministic
+  per-request context budgeting with indivisible tool exchanges; automatic
+  preflight, provider-overflow, and manual compaction plus durable `/clear`
+  epochs; recursive Skill/Role/view/observation checkpoint restoration across
+  restart, compaction, fork, and inheritance; exact Subagent parent boundaries
+  with dependency-complete child-owned copies; Turn-stable provider
+  timeout/retry/cache policy; typed, versioned, Thread-owned Turn diagnostics
+  (pre-adapter Model Context, post-adapter Provider Request, typed runtime
+  activities) behind a rebuilt disclosure-only Model Interactions inspector.
+  Includes two review-fix rounds (10 verified findings from the high-effort
+  multi-agent gate review — among them inherited-context compaction loss, an
+  unserialized prune race, stacked provider retries, and a custom-endpoint
+  prompt-cache regression) and the live-incident fixes (pending subagent
+  activities no longer poison the next user turn; 429 is retried; prompt cache
+  verified live against cc-switch), plus subagent orchestration contracts:
+  `wait_agent` is terminal-state-driven with batched terminal outcomes carrying
+  child results, isolated Skills advertise their capability contract in the
+  catalog and return `outcome`-tagged results with explicit
+  synthesize-don't-repeat guidance, and Skill children use the `agent.skill`
+  source. **Gate (main):** high-effort multi-agent review + live forensic
+  report (PR comments), typecheck, 1521 core / 781 renderer tests, docs:check,
+  real cc-switch runs with cache-hit evidence.
+
+- **Unified Agent context composer (PR #441, codex-3)** — replaced parallel
+  provider-message builders with one stable L0/L1/L2 composer, canonical replay,
+  and atomic evidence admission for environment, bounded user view, resources,
+  attachments/images, additional context, and user input. Added Skill catalog
+  and invocation integrity across same-Turn refresh, restart, and publication
+  retry while preserving provider bytes for cache reuse. This is a clean
+  pre-release replacement with no migration, compatibility reader, fallback, or
+  dual write. PRs 1–2 of the active six-PR `agent-context-integrity` plan are now
+  shipped; global budgeting and compaction is next. **Gate (main):** iterative
+  review caught missing expanded reference-target children and child counts in
+  the user view, namespaced extension tools being misclassified as Core L1
+  capabilities, and expanded table records duplicating visible column field
+  entries. All were fixed before merge. Final head `35be64c8` had no reportable
+  findings; merged-main verification covered typecheck, full `test:core` (1438
+  pass, 6 environment-dependent skips), full `test:renderer` (775 pass), docs,
+  and diff checks.
+- **Browser Control 0.5 implementation plan (PR #443, codex)** — pinned the
+  active design to Browser Pilot 0.5 and specified one complete feature PR built
+  foundation-first: prepared tool execution, independent durable projections,
+  deterministic CLI-and-Skill distribution, direct command routing, Thread
+  identity, Turn files, conservative Browser capabilities, transient stdin,
+  lifecycle cleanup, and per-Turn Skill availability. No product code shipped.
+  **Gate (main):** ultra review closed the external-message block bypass,
+  missing non-shell stdin transport, and restricted-Thread Skill visibility
+  findings. Final head `830aaa12` had no reportable findings; `docs:check` and
+  diff check passed against that exact head.
+- **Browser Control and URL Preview planning boundaries (PR #442, codex)** —
+  replaced the former Tenon-native browser-tool direction with a pinned Browser
+  Pilot CLI-and-skill consumer contract through the classified `bash` path,
+  including Thread client isolation, Turn scratch output, conservative external
+  action and sensitive-read capabilities, and redacted durable command/result
+  projections. Future URL Preview rich capture is now an independent explicit
+  read-only internal-Preview feature; launcher providers retain classification
+  ownership only. **Gate (main):** four review rounds closed seven architecture,
+  persistence, permission, and failure-semantics findings. Final head `0fa8be0c`
+  had no reportable findings; verification covered typecheck, docs, and diff
+  checks.
+- **Canonical Agent context evidence contract (PR #440, codex-3)** — added the
+  shared interface for strict context evidence, reset, and compaction Items;
+  exact cursors and payload references; verified quota-bound Thread payload
+  storage; typed resource dependencies; and restart, rollback, and fork
+  reconciliation. Managed tool images retain preview and Add-to-outline support
+  without exposing canonical or scratch paths. This is PR 1 of the active
+  six-PR `agent-context-integrity` plan; composer, Skill, context-budget,
+  Subagent-inheritance, and provider/cache consumers remain follow-up units.
+  **Gate (main):** iterative review caught payload kind confusion, persisted
+  scratch observation paths, an attachment-sized allocation ceiling, cleanup
+  errors misreporting durable rollback, source-owned inherited images, and the
+  managed-image ingest regression; all were fixed before merge. Final head
+  `b810a00a` had no reportable findings; verification covered typecheck, full
+  `test:core` (1402 pass, 6 environment-dependent skips), full `test:renderer`
+  (767 pass), focused ownership/ingest tests (57 pass), Agent Thread E2E (43
+  pass), docs, and diff checks.
+- **Office ingestion and ordered inline attachments (PR #439, codex-3)** —
+  rejects Office ownership files before attachment or reading, adds a bounded
+  in-process PPTX structural-text reader with Strict OOXML support, and renders
+  files and image galleries at their canonical message positions without
+  losing filename markers. **Gate (main):** iterative review caught incomplete
+  PPTX package identity and exact relationship-type validation, split-text
+  editing that could destroy attachment order, and galleries that omitted
+  canonical image markers; all were fixed before merge. Final head `996f096a`
+  had no reportable findings; verification covered typecheck, full `test:core`
+  (1389 pass, 6 environment-dependent skips), full `test:renderer` (765 pass),
+  focused Core/renderer tests (15 pass), relevant Agent E2E (3 pass), docs, and
+  diff checks.
+- **Unified Agent execution interactions (PR #438, codex-4)** — made Plan
+  updates transient Turn-local progress, navigates Run Details in the current
+  workspace pane with Back history, and gives ordinary tools and Skills one
+  expandable argument/result disclosure with clickable local paths. **Gate
+  (main):** review caught non-outliner root navigation replacing the wrong pane
+  and an incomplete keyboard/scroll contract for long Plan checklists; both
+  were fixed before the final rebase over #437. Final head `0f95e430` had no
+  reportable findings; verification covered typecheck, full `test:core` (1373
+  pass, 6 environment-dependent skips), full `test:renderer` (764 pass),
+  relevant E2E (166 pass, with two unchanged guard failures reproduced on
+  pre-merge `main`), docs and diff checks, and light/dark visual verification.
+- **Large local resources (PR #437, codex-3)** — replaced the shared attachment
+  source-size ceiling with reference-based path-backed and managed resources,
+  chunked pathless uploads, bounded file and image observations, immutable image
+  prompt snapshots, exact attachment authorization, and independent managed
+  payload copies for Thread forks. **Gate (main):** review caught cleanup keys
+  coupled to mutable metadata, fork copies sharing writable inodes, and model or
+  Preview / Open / Reveal paths exposing canonical managed payloads; all three
+  were fixed before merge. Final head `964fe3b2` had no reportable findings;
+  verification across the final two heads covered typecheck, full `test:core`
+  (1372 pass, 6 environment-dependent skips), focused Core tests (91 pass),
+  full `test:renderer` (758 pass), Agent Thread E2E (40 pass), docs and diff
+  checks, and light/dark visual verification.
+- **Memory retrieval and inline Node citations (PR #436, codex-3)** — replaced
+  eager Memory briefing injection with relevance-driven `node_search` /
+  `node_read` routing and records usage only when a successfully read Memory Node
+  is cited through the rendered inline Node-reference affordance. Thread history
+  keeps the canonical tool process visible without a separate Memory disclosure.
+  **Gate (main):** iterative review caught Markdown literals being attributed as
+  citations, display/accounting parser drift for escapes and entities, and
+  reference-style links losing definitions across renderer blocks; all were
+  fixed before merge. Final head `3495305` passed the merged-main verification
+  listed with PR #435 below.
+- **Codex Automations (PR #435, codex-3)** — added host-owned durable scheduled
+  Agent work with strict protocol and IPC boundaries, SQLite-backed RRULE/IANA
+  scheduling, catch-up and overlap handling, canonical Thread/Turn execution,
+  crash recovery, local-project and managed-worktree modes, structured schedule
+  editing, unread Run state, and a complete light/dark Automation surface.
+  **Gate (main):** iterative review caught cleanup paths that could discard
+  ignored or embedded-repository content, stale worktree snapshots, the bounded
+  renderer page leaking into bulk-read behavior, and stale/same-millisecond Run
+  notification races; all were fixed before merge, including a durable monotonic
+  Run event sequence. Final head `321f65c` passed merged-main typecheck, full
+  `test:core` (1342 pass, 6 environment-dependent skips), full `test:renderer`
+  (758 pass), focused Automation + Agent Thread E2E (40 pass), docs check, and
+  diff check.
+- **Codex Memory on daily timeline Nodes (PR #434, codex-3)** — added durable
+  Codex-style Memory as ordinary editable Daily Notes Nodes under deterministic
+  protected `#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and
+  `#d-guidance` tags. The feature includes immutable Memory admission snapshots,
+  private control/provenance storage, Phase 1 extraction, Phase 2 consolidation,
+  generated-node lineage, rollback invalidation, confirmed Reset, derived
+  briefings, citations, settings, Open Memory, and fail-closed foreground
+  mutation/history authorization. **Gate (main):** four review rounds caught
+  publication, visibility, rollback, Reset, and history-authorization bugs,
+  including reserved tag-name redo and branched multi-step undo bypasses; all
+  were fixed before merge. Final head `cc8220f` passed typecheck, full
+  `test:core` (1299 pass, 6 environment-dependent skips), full `test:renderer`
+  (741 pass), docs check, diff check, and focused old-bypass repros.
+- **Canonical Thread Agent Core replacement (PR #429, codex-3)** — replaced the
+  former Conversation / Channel / Run / Issue agent stack with one canonical
+  TypeScript Thread / Turn / ThreadItem implementation across persistence,
+  runtime execution, IPC/preload, renderer state, Goals, Subagent collaboration,
+  tool output, and history controls. The clean pre-release replacement provides
+  append-only audit history, same-Thread Edit rollback, explicit Continue in new
+  chat forks, host-resolved admission, bounded Thread-owned payloads, automatic
+  Thread naming, and the retained Full Access capability boundary without
+  migration or compatibility readers. **Gate (main):** two review rounds caught
+  source-owned fork payload loss, forbidden `agent-debug` residue, dropped
+  catalog metadata for unloaded Threads, and transient renderer Threads after a
+  failed fork; all four were fixed before merge. Final head `c4ff101` passed
+  typecheck, the full Core suite (1250 pass, 6 environment-dependent skips), the
+  full renderer suite (734 pass), Agent Thread E2E (36 pass), docs check, diff
+  check, and the PR-recorded light/dark visual probe (3 pass).
+- **Codex Agent Core Thread-name notification interface (PR #433, codex-3)** —
+  added the Codex-aligned `thread/name/updated` contract for the complete
+  replacement in #429, carrying `threadId` plus an optional non-empty
+  `threadName`. The codec accepts the upstream omitted or null no-name forms and
+  normalizes both to an omitted field, while rejecting empty names, legacy
+  aliases, and unknown fields. **Gate (main):** review caught that the initial
+  contract required explicit null even though Codex omits `None`; the optional
+  shape and regression coverage were fixed before merge. Verified with
+  typecheck, 17 focused protocol tests, the full Core suite (1726 pass), docs
+  check, and diff check.
+- **Codex Agent Core rollback interface (PR #432, codex-3)** — defined
+  append-only audit plus same-Thread `thread/rollback`, exact omitted-Turn
+  extension hooks, current-history projection semantics, cumulative side-effect
+  and usage accounting, and the exhaustive Copy / Continue in new chat / Details
+  response menu for the complete replacement in #429. Memory now invalidates
+  generated context synchronously at rollback prepare, filters replacement-Turn
+  briefings and implicit Node-tool reads until receipt-backed reconciliation, and
+  retries failed terminal hooks in-process through one coalesced capped-backoff
+  loop. **Gate (main):** iterative review caught the stale Retry/Regenerate shared
+  contract, a replacement Turn that could observe rolled-back generated Memory,
+  and commit-hook failure that could suppress Memory until restart; all three were
+  fixed before merge. Verified with typecheck, 20 focused protocol/extension
+  tests, the full Core suite (1725 pass), docs check, and diff check.
+- **Codex Agent Core renderer interface (PR #431, codex-3)** — defined canonical
+  Thread configuration get/set, immutable Turn execution and token/cost details,
+  content-addressed bounded tool-output reads, provider-retry notifications, and
+  native response context-menu actions for the complete replacement in #429.
+  **Gate (main):** review caught rejection of bare model IDs and incomplete cached
+  token accounting; both were fixed before merge. The runtime-only legacy-colon
+  provider ownership check remains a merge gate for #429. Verified with typecheck,
+  14 focused protocol tests, the full Core suite (1721 pass), docs check, and diff
+  check.
+- **Codex Agent Core renderer admission defaults (PR #430, codex-3)** — split
+  the renderer-facing `thread/start` request from the fully resolved privileged
+  request so the host can supply the configured model provider and working
+  directory. This interface-only addendum unblocks the complete Agent Core
+  replacement without weakening privileged admission. **Gate (main):** review
+  found no reportable issues. Verified with typecheck, 12 focused protocol
+  tests, docs check, and diff check.
+- **Codex Agent Core interfaces (PR #428, codex-3)** — defined the canonical
+  Thread / Turn / ThreadItem protocol and codecs, Goal and extension contracts,
+  parent-bounded child configuration, collision-free provider tool identities,
+  and host-only document receipts and protected system-tag definitions. This is
+  the ordered interface unit; the complete runtime, persistence, transport,
+  renderer, and old-model replacement remains next. **Gate (main):** the first
+  review found four contract gaps covering protected-tag command classification,
+  child capability ceilings, flat provider-name ambiguity, and executable Item
+  lifecycle consistency; all four were fixed before merge. Verified with
+  typecheck, the full Core suite (1719 pass), docs check, and diff check.
+- **Codex agent restructure plans (PR #423, codex)** — ratified three plan-only
+  designs for a canonical Thread / Turn / ThreadItem core, Memory published as
+  editable daily-timeline Nodes, and host-owned Automations. Core remains ordered
+  as a human-led interface PR followed by the complete replacement; Memory and
+  Automations remain draft consumers that may proceed independently only after
+  Core lands. **Gate (main):** iterative review resolved all reportable findings,
+  including the global Memory-disable privacy boundary; the final head had no
+  reportable issues. Verified with typecheck, docs check, and diff check.
+- **Legacy data import adapter removal (PR #425, codex-4)** — removed the
+  unregistered `data_import` AgentTool compatibility adapter, its dead
+  capability classification, and adapter-only negative assertions. Import
+  remains exclusively on the `tenon-import` CLI/API path, with import-service
+  coverage retained under its current name and audit identity. **Gate (main):**
+  review found no reportable issues. Verified with typecheck, the full Core
+  suite (1689 pass), docs check, current-`main` merge-tree, and diff check.
+
+
+- **agent turn render projection — extract message-flow semantics (PR #316, codex-2)** —
+  behavior-preserving refactor of the agent transcript renderer. A new pure `agentTurnProjection`
+  module (`projectAssistantTurn` → `AgentTurnProcessProjection`) sits between the
+  `AgentRenderProjection` message and the React components and owns the turn-level semantics that
+  used to live inside `AgentAssistantTurnContent`: the result-first process-vs-final partition, the
+  synthetic Working/Worked-for process item, default fold-state inputs, stable disclosure ids, and
+  tool-activity grouping boundaries. `AgentProcessBlock` now consumes one `process` object instead of
+  ~7 separate props, and the render-item union `AgentProcessSegmentBlock` (`kind: thinking|toolCall|
+  narration`) becomes `AgentTurnProcessItem` (`type: reasoning|toolCall|agentMessage`). No functional
+  or visual change — reasoning/tool detail rows are untouched; the partition heuristic (final answer =
+  trailing text after the last thinking/tool block) is preserved exactly, and disclosure ids are now
+  more stable across streaming (original content index vs the prior filtered index). **Gate (main):**
+  `/code-review xhigh` — zero correctness findings (every formula traced byte-equivalent to the deleted
+  inline version across line-by-line / removed-behavior / cross-file angles); three type-model cleanup
+  findings (dead `phase` and `sourceIndex` fields, duplicate final-message shape) fixed by the author
+  before merge. typecheck ✓ · `test:renderer` 597 pass / 0 fail · `docs:check` ✓. Design folded into
+  `docs/spec/agent-event-log-rendering.md`; plan archived to `docs/plans/archive/`.
+- **Composer model-control test: silence the act() warning (PR #298, main, fast-track)** — the
+  `AgentComposerModelControl` test mounts the anchored-overlay flyout, which (lacking
+  `requestAnimationFrame` under linkedom) deferred its reposition `setStyle` to a `setTimeout`
+  that fired after the render's `act()` block ("An update … was not wrapped in act(...)"). The test
+  harness now installs a synchronous `requestAnimationFrame` stub so the reposition runs inline
+  inside `act` — deterministic and warning-free (no product-code change; the two remaining
+  `CommandAgentPicker` / `DateValuePicker` warnings are pre-existing and unrelated).
+- **self-definition write dedup in `agentLocalTools` (PR #287, main)** — behavior-preserving
+  cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
+  `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
+  `instructions`). Extracted three helpers — `selfDefinitionWriteData`,
+  `notifySelfDefinitionContentWrite`, `selfDefinitionWriteInstructions` — that own the skill/agent
+  mapping once so the two tools stay in lockstep, and dropped the dead `agentDefinitionWrite` parameter
+  `notifySuccessfulAgentDefinitionContentWrite` only `void`-ed. No functional change. typecheck ✓ ·
+  `agentLocalTools` + `agentRuntimeSkillsIntegration` + `agentSkills` core suites 283 pass / 4 skip / 0
+  fail.
+- **agent-debug: correct stale slimming comment; pin light summary to its oracle (PR #274, cc-2)** —
+  comments + tests only, no behavior change. (1) Fixed a stale comment in `agentDebugView.ts`:
+  cross-run `tool_result.replaced` (output slimming) is matched to its producing run by the
+  globally-unique `toolCallId` (spliced at derivation), **not** "stamped with its producing run's id"
+  — the round-1 approach #264 reverted; the comment now matches the implementation and the spec
+  (`agent-event-log-rendering.md`). (2) Added equivalence tests pinning the light `summarizeRunStream`
+  path to the correct-by-construction `summarizeDebugRun` oracle (single-round + multi-round in-flight
+  usage rollup), enforcing the "summary never disagrees with the detail" invariant both functions'
+  comments promise. **Gate (main):** `/code-review xhigh` — no findings (comment correction verified
+  against spec; equivalence verified by running the suite); `agentDebugView.test.ts` 13 pass.
+  ([#274](https://github.com/relixiaobo/lin-outliner/pull/274))
+
+- **Plan: default #General channel (PR #265, codex-4)** — docs-only. Adds
+  `docs/plans/default-general-channel.md`: a Slack-like default **`#General`** Channel — a
+  reserved-identity Conversation that exists by default (user + coordinator), **auto-includes every
+  durable peer agent** as it appears (fork / child / headless runs excluded), and is the Agent Dock
+  default when no conversation is remembered. Membership = presence + addressability, **not**
+  participation; unaddressed turns still route to the coordinator, so auto-membership never becomes
+  auto-noise. **No stored conversation `kind`** (reserved id + runtime invariant); `@all` deferred.
+  **Gate (main):** squash-merged after a plan review, then folded in the two review fixes — removed
+  the plan `status` frontmatter (plans are frontmatter-free; status lives only in `docs/TASKS.md`)
+  and dropped the non-existent multi-"workspace" framing (there is one workspace; `localFileRoot` is
+  env/cwd). Boarded as P2 (not started).
+
+- **Plan: bundled built-in skill resources (PR #268, codex-4)** — docs-only. Adds
+  `docs/plans/bundled-built-in-skill-resources.md`: give app-shipped `built-in`
+  skills the standard Anthropic Agent Skills shape (a real `SKILL.md` +
+  `references/`/`scripts/`/`assets/` base directory so `${AGENT_SKILL_DIR}`
+  resolves and built-ins use progressive disclosure instead of a monolithic prompt
+  body), preserving the immutable built-in floor. PM-ratified after confirming the
+  folder shape against the official Agent Skills standard; the plan delivers
+  **structural conformance only** — `name:` frontmatter conformance + third-party
+  skill import is split out as a separate board item. Boarded as P1 (not started).
+
+- **Sync the security-exceptions e2e count to the 9-rule catalog (main, fast-track)** —
+  `agent-settings.spec.ts` asserted `toHaveCount(10)` select-popup rows, stale since #50f8e6e2 (ungate
+  cross-agent contact) intentionally dropped the `spawnChildAgents` (`agent.delegate.spawn`) rule from
+  `COMMON_PERMISSION_RULES`, taking it 10 → 9. Updated the assertion to 9; agent-settings e2e 33/33 green.
+
+- **Unified main-process JSON persistence into one store primitive (PR #226, codex-3)**
+  — the main process had three hand-rolled atomic-write implementations plus two
+  synchronous `writeFileSync` outliers (`agentSettings.ts` / `documentService.ts`
+  / `assetService.ts` / `appPreferences.ts` / `windowState.ts`), each re-deriving
+  temp-file + rename, mode handling, and read-modify-write locking. They now share
+  `src/main/jsonFileStore.ts`: `atomicWriteFile` (+ `writeJsonFileSync` for the two
+  synchronous callers), `readJsonOrDefault`, `writeJsonFile`, and a serialized
+  `updateJsonFile` read-modify-write under a per-path write lock. The lock map is
+  self-pruning (compare-and-delete the settled tail, so unique-path callers like
+  per-asset metadata don't accumulate entries), private-file mode is the single
+  exported `PRIVATE_JSON_FILE_OPTIONS` preset (0600 file / 0700 dir, no-op on
+  Windows), and a same-path nested write throws (`AsyncLocalStorage` guard) instead
+  of deadlocking. Preserves every on-disk format (file names, pretty vs compact,
+  trailing-newline, the plaintext-0600 secret/permission/provenance files) and the
+  secret data-loss guard (a corrupt blob still aborts the mutation rather than
+  overwriting). The asset sidecar write is now awaited before ingest resolves.
+  Zero on-disk format change. Gate (main): high-effort `/code-review` (6 findings,
+  all addressed in the fixup commit), typecheck + `test:core` (963/0) clean. Design
+  folded to `docs/plans/archive/main-json-store-unification.md`.
+- **TASKS.md is the single source of plan status (main, direct merge)** — plan
+  status + priority previously lived in both plan-file frontmatter and
+  `docs/TASKS.md`, and the two drifted whenever a plan shipped (e.g.
+  `security-settings-ia-redesign` sat in the Backlog as "awaiting ratification"
+  after shipping as #215). Status is project-management state, not a property of a
+  design, so it now lives in exactly one place: `docs/TASKS.md` is the single
+  source of plan todo/status/priority and links out to each plan, and plan files
+  are pure design carrying **no frontmatter** (stripped from all 32 active plans;
+  `archive/` kept as historical record). New `bun run docs:check` guard
+  (`scripts/docs-check.ts`), wired into the "before marking ready" gate: C1 every
+  `docs/plans/…` link in TASKS resolves, C2 no active plan is missing from the
+  board — offline + deterministic; it caught 3 pre-existing dangling archive links
+  + 2 orphan plans on first run. `AGENTS.md` reverses the "catalog = frontmatter"
+  rule. Design: `docs/plans/plan-status-single-source.md`.
+- **File preview plan refreshed (PR #209, docs-only)** — rewrites
+  `docs/plans/file-preview.md` (status stays `draft`) around a source-owned
+  `PreviewTarget` model: `local-file`, `asset`, `agent-payload`, and `url` are
+  first-class preview sources feeding one panel shell + renderer registry, with
+  per-source main-process authority (`local://` token minting, the existing
+  `asset://` jail, conversation/run-scoped payload reads, URL reader
+  extraction). Reconciles the plan with shipped reality (single-pane #85,
+  file-attachments #204/#206, `AgentPayloadRef` storage) — the remaining
+  structural prerequisite is generalizing per-panel history to a discriminated
+  `PanelView`, optionally split out as a standalone PR 0 refactor. PR sequence:
+  shell + web-native basics, then PDF, media streaming, Office, URL reader as
+  independent complete PRs. Gate (main): plan claims fact-checked against
+  `main` (panel state shape, protocols, payload surface, dependency table, PR
+  numbers all verified); one review round folded in five notes (PanelView
+  naming, agent-dock host-panel question, persisted-layout wipe note, PR 0
+  split option, spec/plan reference fixes).
+  ([#209](https://github.com/relixiaobo/lin-outliner/pull/209))
+
+- **Agent ledger hygiene (PR #205)** — drops dead conversation-ledger event
+  families that had no replay handler and no real reader (`task.created` /
+  `task.completed`, `config.change`, `review_card.created`, `metric.recorded`),
+  removes the now-empty render-projection compatibility fields `queuedMessages`
+  and `activeRunAgentId` (and their renderer plumbing + e2e mocks), and stops the
+  config tool from writing `config.change` audit records (writes still apply and
+  return the refreshed setting). Successful `skill.created` / `skill.patched` /
+  `skill.replaced` audit events now carry the active `runId` so they land in the
+  run ledger instead of the conversation log. Also fixes visible-transcript
+  grafting so an active run's multi-segment spine renders contiguously (a
+  non-active peer reply can no longer split the active run's tool/result
+  continuation), backed by a new oracle test over concurrent multi-segment
+  Channel runs (uniqueness, contiguity, active-branch completeness, replay
+  stability). Specs synced; no persisted shape changed (no `userData` wipe).
+  Gate: typecheck + test:core (900) + test:renderer (418) green.
+  ([#205](https://github.com/relixiaobo/lin-outliner/pull/205))
+
+- **Post-merge cleanup for #205/#206 (main agent)** — removes the orphaned
+  `.agent-channel-queued` CSS rule left dead by #205, documents the optional
+  `pdftoppm` dependency for PDF thumbnails in the architecture spec, and drops an
+  always-true `file.size >= 0` filter in `dataTransferFiles`. Typecheck +
+  test:renderer green.
+
+- **Agent conversation UX plan ratified (PR #197, docs-only)** — adds
+  `docs/plans/agent-conversation-entry-identity-ux.md` (drafted by codex-2, then
+  revised on `main` into the PM-ratified contract after the review conversation):
+  five independent UX features over the ratified conversation semantics —
+  roster-as-DM-list + New Channel flow with an explicit DM→Channel escalation verb
+  (UI + arbitrary-agent-DM runtime in one PR) · speaker identity (DM header /
+  grouped Channel rows; subsumes `agent-avatar-v1`) · composer model chip becomes
+  display+navigate (the current menu mutates the global provider — fixed in one
+  step) · a Channel activity area built to the parallel co-addressee semantics
+  plus automatic reply anchors · time separators + native context-menu Details.
+  Also adds `docs/plans/agent-channel-parallel-runtime.md` (draft): concurrent
+  co-addressee execution + completion-order delivery as a pure execution-layer
+  upgrade of the already-committed independence semantics. Design only; no
+  runtime behavior change. ([#197](https://github.com/relixiaobo/lin-outliner/pull/197))
+
+- **Agent permission safety-modes plan ratified (PR #187, docs-only)** — adds
+  `docs/plans/agent-permission-safety-modes.md` (PM-ratified consumer trust model:
+  safety floor / trust-grant ledger / Ask First·Balanced·Full Access ladder /
+  internal delegation sandbox; one approval card with graduated exits; one Security
+  settings page) and `docs/plans/agent-local-root-boundary.md` (build-ready precursor:
+  the packaged-app `process.cwd()` file-root fallback may resolve to `/`, which would
+  make the whole disk the allowed file area). Design only; no runtime behavior change.
+
+- **Agent storage clean-cut: session vocabulary dies, pools unify under `principals/` (PR #180)** —
+  the pre-release format clean-cut (`agent-storage-clean-cut`, PM-ratified full scope; plan archived
+  `done` in-PR). Stored `session.*` event types and the persisted `sessionId` field become
+  `conversation.*` / `conversationId` (the last format-level residue of the M0.5 rename, which had
+  stopped at the public surface); ALL ~1000 code identifiers follow; memory pools unify under
+  `principals/<principalKey>/memory/` (the agent-vs-user path asymmetry is gone); `${AGENT_SESSION_ID}`
+  → `${AGENT_CONVERSATION_ID}`; checkpoint/search-index versions bumped (full replay / rebuild
+  fallback). **No migration** (pre-release policy): the store detects any old-format artifact on first
+  access and wipes the agent data root. The gate ran two rounds: round 1 (NO-GO) found the wipe
+  detector was **content-triggerable** — a substring probe on the conversation head line could match
+  user-controlled title/goal text and `rm -rf` all agent data — plus a sticky memoized rejection that
+  bricked storage for the run on any non-ENOENT probe error; round 2 verified the fixes (`8fff92e`):
+  structural field-level detection (parse the head, require a `sessionId` *key* or a `session.*`
+  `type`; torn/corrupt heads are ambiguity, never proof) and fail-open-to-operation-never-to-wipe
+  (probe errors log + continue, next launch re-probes), each with 1:1 regression tests. Verified
+  independently at the pinned head: typecheck · `test:core` 808/0 · `test:renderer` 405/0. Non-blocking
+  follow-ups recorded on the PR (per-launch probe cost, bounded-line-reader dedup, residue constants,
+  user-pool-only false negative).
+- **Delete the `MODEL_ID_REPLACEMENTS` silent migration layer (main, fast-track)** — from the
+  2026-06-10 pre-release architecture sweep (PM-ratified disposition B): `agentSettings.ts` silently
+  rewrote persisted legacy Haiku model ids to `claude-haiku-4-5` at read time — a back-compat
+  migration layer the pre-release policy forbids. Deleted (`normalizeModelId` and the map); a stale
+  persisted model id now surfaces in settings instead of silently transforming. typecheck ·
+  `test:core` 808/0.
+
+- **Redirect `agent-task-model` → fold post-#167 cleanup into the conversation model (PR #168)** — docs-only.
+  A drafted standalone "dissolve subagent into Agent(profile)+Task(run)" plan was reviewed and found to
+  reinvent the already-approved, in-progress agent program (`agent-program` M0–M3 / `agent-conversation-model`
+  / `agent-data-model`) and to conflict with several ratified decisions. **Redirected:**
+  `docs/plans/agent-task-model.md` archived as `status: superseded` (slimmed to the path-not-taken record +
+  a verified conflict table), and only the sound post-#167 kernel folded into `agent-conversation-model.md`
+  §Code mapping as a **bounded CLEAN-CUT** note — retire `general` (empty-body built-in post-#167, redundant
+  with the primary identity run fresh), `fork` as a context *mode* (not a pseudo-`AgentDefinition`), and drop
+  the `Agent` tool's per-call `model`/`effort` overrides (capability is profile-only). Bounds held at the
+  gate: no stored conversation `kind` (F2), no redesign of the protected `agentSubagentIdentity.ts` /
+  `agentSubagentTranscript.ts` seams, "Task" stays the off-floor `background` run (`RunMeta.kind`), the
+  model-facing rename is contract + UX only (storage names may stay), and any identity-string change (e.g.
+  retiring `general`'s owner key) is a dev-`userData` wipe — not a no-op rename. No code or spec change.
+  ([#168](https://github.com/relixiaobo/lin-outliner/pull/168))
+
+- **Revise agent memory planning toward the target write/read surface (PR #157)** — docs-only plan
+  adjustment (PM-ratified 2026-06-07) across four `docs/plans/*.md`, no production or spec change. Pins two
+  decisions for the M2 build. **Write authority — DECIDED:** the durable memory line is written by exactly
+  two runtime-owned writers (Settings/Profile UI for explicit edits, Dream/extraction for automatic
+  consolidation); there is no model-visible memory write tool and no synchronous foreground "remember this"
+  path. **Read surface — DECIDED:** a single model-visible read-only `recall` tool over durable memory (no
+  model-visible `past_chats` and no second chat-search tool); `include_evidence` defaults to false and, when
+  true, returns raw conversation/run excerpts only as an `evidence[]` field nested under the matching
+  `MemoryEntry` (never a sibling in the ranked list, expandable only through the entry's provenance), with
+  `status:'invalidated'` filtering, isolation-tier enforcement, and a `max_chars` cap. States the accepted
+  consequence explicitly: old conversations Dream never distilled into a `MemoryEntry` are not
+  foreground-recallable by design. Spec left untouched on purpose (A6 — current code still ships the inline
+  memory tool / `past_chats`; reconcile in the M2 implementation PR).
+  ([#157](https://github.com/relixiaobo/lin-outliner/pull/157))
+
+- **Close agent M1 tail verification + plan hygiene (PR #156)** — no production code: added e2e coverage for
+  the pending `ask_user_question` card (light/dark `prefers-color-scheme`, real `user_question_request` event
+  path + `agent_resolve_user_question` submit) and for the Settings Memory view/edit/forget pane
+  (`agent_list/update/forget_memory` IPC + renderer-mock support); marked the M1 "Profile UI" and
+  "visual verification" checklist items done; archived the completed `agent-tool-permissions-hardening` plan
+  (`status: done`) and repointed its references. ([#156](https://github.com/relixiaobo/lin-outliner/pull/156))
+
 
 - **Agent M1 memory v1 landed (PR #152)** — first M1 slice: an event-sourced, per-agent durable memory layer.
   Adds a `memory` agent tool (list/remember/update/forget), three IPC commands
