@@ -198,15 +198,20 @@ export interface BuiltInSkillResourceRootOptions {
 }
 
 /**
- * The single per-skill trust record, keyed by resolved skill file path. Provenance
- * (who produced the current bytes) and acceptance (which bytes the user accepted)
- * live side by side; ratification is derived from them, never stored.
+ * The per-skill provenance record, keyed by resolved skill file path: who produced
+ * the current bytes, and the one version before that, so an agent edit can be
+ * undone.
+ *
+ * It used to carry an accepted-content hash too, half of a trust model whose other
+ * half was a permission gate — a Skill could not be invoked until the user
+ * accepted it. That gate is an approval policy, which Tenon does not have
+ * (`agent-tool-permissions.md`, #410), and it had been hardcoded open for so long
+ * that neither half was reachable. Both are gone; provenance is what remains,
+ * because Undo genuinely needs it.
  */
 export interface AgentSkillProvenanceRecord {
   /** sha256 of the last SKILL.md content written through the agent file-tool path. */
   agentHash?: string;
-  /** sha256 of the content the user explicitly accepted for automatic model use. */
-  acceptedHash?: string;
   /** The one version preceding the last agent edit, for single-step undo. */
   previousVersion?: AgentSkillPreviousVersion;
 }
@@ -431,13 +436,6 @@ export class AgentSkillRuntime {
     await this.registry.recordAgentSkillWrite(skillFile, contentHash, previous);
   }
 
-  async acceptSkill(name: string, expectedHash: string): Promise<void> {
-    await this.registry.acceptSkill(name, expectedHash);
-  }
-
-  async revokeSkillAcceptance(name: string): Promise<void> {
-    await this.registry.revokeSkillAcceptance(name);
-  }
 
   async undoLastAgentSkillEdit(name: string): Promise<void> {
     await this.registry.undoLastAgentEdit(name);
@@ -879,9 +877,6 @@ class SkillRegistry {
     const existing = this.provenance.get(normalized);
     const record: AgentSkillProvenanceRecord = {
       agentHash: contentHash,
-      // Acceptance is byte-keyed: a stale acceptedHash simply stops matching, so
-      // a re-patched accepted skill clears accepted state without blocking use.
-      ...(existing?.acceptedHash ? { acceptedHash: existing.acceptedHash } : {}),
       // Single-step undo keeps only the version preceding THIS write; a create
       // (previous == null) has nothing to restore.
       ...(previous
@@ -895,40 +890,6 @@ class SkillRegistry {
       // The in-memory record still guards this Thread; a persistence failure must
       // not fail the skill write itself.
     }
-  }
-
-  async acceptSkill(name: string, expectedHash: string): Promise<void> {
-    const skill = await this.resolveMutableSkill(name);
-    // Closes the accept TOCTOU: the user accepts the bytes they SAW, not whatever is
-    // loaded at execution time. An agent write landing between render and click
-    // changes the hash and the accept is refused instead of ratifying sight-unseen.
-    if (expectedHash !== skill.contentHash) {
-      throw new Error(`Skill ${skill.name} changed since it was displayed. Review the skill again before accepting.`);
-    }
-    const normalized = path.resolve(skill.skillFile);
-    const record: AgentSkillProvenanceRecord = {
-      ...(this.provenance.get(normalized) ?? {}),
-      acceptedHash: skill.contentHash,
-    };
-    // Acceptance exists to be durable: persist first and surface a failure instead
-    // of holding an in-memory-only "accepted" state that silently vanishes on restart.
-    await this.provenanceStore?.save(normalized, record);
-    this.provenance.set(normalized, record);
-    this.reloadAll();
-  }
-
-  async revokeSkillAcceptance(name: string): Promise<void> {
-    const skill = await this.resolveMutableSkill(name);
-    const normalized = path.resolve(skill.skillFile);
-    const { acceptedHash: _cleared, ...rest } = this.provenance.get(normalized) ?? {};
-    const record = rest.agentHash || rest.previousVersion ? rest : null;
-    await this.provenanceStore?.save(normalized, record);
-    if (record) {
-      this.provenance.set(normalized, record);
-    } else {
-      this.provenance.delete(normalized);
-    }
-    this.reloadAll();
   }
 
   /**
@@ -976,9 +937,8 @@ class SkillRegistry {
     // the agent-write path (the in-memory record still guards this Thread).
     const record: AgentSkillProvenanceRecord = {
       ...(previous.agentHash ? { agentHash: previous.agentHash } : {}),
-      ...(existing?.acceptedHash ? { acceptedHash: existing.acceptedHash } : {}),
     };
-    const persisted = record.agentHash || record.acceptedHash ? record : null;
+    const persisted = record.agentHash ? record : null;
     if (persisted) {
       this.provenance.set(normalized, persisted);
     } else {
@@ -1072,7 +1032,7 @@ class SkillRegistry {
 
   async getModelInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
-    return [...this.skills.values()].filter((skill) => skill.modelInvocable && skill.ratified);
+    return [...this.skills.values()].filter((skill) => skill.modelInvocable);
   }
 
   async getUserInvocableSkills(): Promise<SkillDefinition[]> {
@@ -1205,12 +1165,9 @@ class SkillRegistry {
     if (this.seenSkillFileIds.has(fileId)) return false;
     this.seenSkillFileIds.add(fileId);
     const record = this.provenance.get(path.resolve(skill.skillFile));
-    const trust = deriveSkillTrust(skill, record);
     const skillWithIdentity = {
       ...skill,
       identity: normalizePathForPrompt(fileId),
-      ratified: trust.ratified,
-      accepted: trust.accepted,
       // Undo is offered only while the file still holds exactly the agent's bytes:
       // the previous-version record lingers after a user hand-edit, but restoring
       // over user content would silently destroy it (the action enforces the same
@@ -1256,13 +1213,6 @@ class SkillRegistry {
   }
 }
 
-function deriveSkillTrust(
-  skill: SkillDefinition,
-  record: AgentSkillProvenanceRecord | undefined,
-): { ratified: boolean; accepted: boolean } {
-  const accepted = record?.acceptedHash !== undefined && record.acceptedHash === skill.contentHash;
-  return { ratified: true, accepted };
-}
 
 export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRootOptions = {}): string {
   const isPackaged = options.isPackaged ?? appIsPackaged();
@@ -1507,9 +1457,6 @@ function createSkillDefinition(input: {
     whenToUse: whenToUse ? compactInlineText(whenToUse) : undefined,
     userInvocable: parseBooleanFrontmatter(input.frontmatter['user-invocable'], true),
     modelInvocable: !parseBooleanFrontmatter(input.frontmatter['disable-model-invocation'], false),
-    // Trust default; the registry flips this to false when the content hash matches a
-    // recorded agent write (addLoadedSkill).
-    ratified: true,
     contentHash: input.contentHash,
     managedContentHash: input.managedContentHash,
     allowedTools,

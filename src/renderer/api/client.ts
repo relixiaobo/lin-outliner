@@ -414,10 +414,6 @@ export const api = {
     command<{ revealed: boolean }>('agent_reveal_skill_directory', { path }),
   agentListUserInvocableSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
-  agentAcceptSkill: (skillName: string, expectedHash: string) =>
-    command<SkillDefinition[]>('agent_accept_skill', { skillName, expectedHash }),
-  agentRevokeSkillAcceptance: (skillName: string) =>
-    command<SkillDefinition[]>('agent_revoke_skill_acceptance', { skillName }),
   agentUndoSkillAgentEdit: (skillName: string) =>
     command<SkillDefinition[]>('agent_undo_skill_agent_edit', { skillName }),
   agentManagedSkillCatalog: () =>

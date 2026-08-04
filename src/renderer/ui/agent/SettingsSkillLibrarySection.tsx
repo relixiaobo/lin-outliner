@@ -105,8 +105,6 @@ interface LibraryRow {
   onToggle: (enabled: boolean) => void;
   actions: RowMenuAction[];
   actionsLabel: string;
-  /** Row-level accept action, used by unratified user/project Skills. */
-  accept?: { label: string; ariaLabel: string; onSelect: () => void };
 }
 
 export function SettingsSkillLibrarySection({
@@ -123,7 +121,7 @@ export function SettingsSkillLibrarySection({
   const t = useT();
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
-  // Skill trust actions (accept / revoke / undo) round-trip through main and return
+  // Undo round-trips through main and returns
   // the refreshed skill list; one shared busy flag keeps the row controls quiet
   // while a mutation is in flight.
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
@@ -401,17 +399,7 @@ export function SettingsSkillLibrarySection({
     .filter((skill) => skill.source !== 'managed')
     .map((skill) => {
       const disabled = disabledSkills.includes(skill.name);
-      // Trust state is derived in main. Mutable skills are model-usable
-      // by default; acceptedHash is only a retained management fact.
-      const pending = !skill.ratified;
       const actions: RowMenuAction[] = [...revealAction(skill.name)];
-      if (skill.accepted) {
-        actions.push({
-          label: t.settings.skills.revokeAcceptance,
-          disabled: skillTrustBusy,
-          onSelect: () => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(skill.name)),
-        });
-      }
       if (skill.canUndoLastAgentEdit) {
         actions.push({
           label: t.settings.skills.undoAgentEdit,
@@ -420,13 +408,6 @@ export function SettingsSkillLibrarySection({
         });
       }
       const chips: string[] = [];
-      if (pending) {
-        chips.push(skill.source === 'project'
-          ? t.settings.skills.pendingWorkspaceChip
-          : t.settings.skills.pendingChip);
-      } else if (skill.accepted) {
-        chips.push(t.settings.skills.acceptedChip);
-      }
       const localDirectory = directoryContaining(skill.rootDir, additionalSkillDirectories);
       if (localDirectory) {
         // No second "Show in Finder" here: the row already offers one for its
@@ -455,13 +436,6 @@ export function SettingsSkillLibrarySection({
         onToggle: () => onToggleSkill(skill.name),
         actions,
         actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
-        ...(pending ? {
-          accept: {
-            label: t.settings.skills.acceptButton,
-            ariaLabel: t.settings.skills.acceptSkill({ name: skill.name }),
-            onSelect: () => runSkillTrustAction(() => api.agentAcceptSkill(skill.name, skill.contentHash ?? '')),
-          },
-        } : {}),
       } satisfies LibraryRow;
     }), [allSkills, disabledSkills, onToggleSkill, skillTrustBusy, t]);
 
@@ -602,18 +576,6 @@ export function SettingsSkillLibrarySection({
               )}
               trailing={(
                 <>
-                  {row.accept ? (
-                    <Button
-                      aria-label={row.accept.ariaLabel}
-                      className="settings-skill-accept"
-                      disabled={row.busy}
-                      onClick={row.accept.onSelect}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      {row.accept.label}
-                    </Button>
-                  ) : null}
                   {row.actions.length > 0 ? (
                     <SettingsRowMenu
                       actions={row.actions}

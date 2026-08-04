@@ -761,10 +761,6 @@ export interface SkillDefinition {
   whenToUse?: string;
   userInvocable: boolean;
   modelInvocable: boolean;
-  /** Trust state derived from the current bytes and source-specific policy. */
-  ratified: boolean;
-  /** True when the user explicitly accepted exactly these bytes for automatic model use. */
-  accepted?: boolean;
   /** True when one previous version of the last agent edit is held for single-step undo. */
   canUndoLastAgentEdit?: boolean;
   /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */

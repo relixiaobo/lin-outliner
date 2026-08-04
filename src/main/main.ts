@@ -3693,16 +3693,6 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       return args.userInvocableOnly === true
         ? skillRuntime.listUserInvocableSkills()
         : skillRuntime.listAllSkills();
-    case 'agent_accept_skill': {
-      await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
-      await refreshTurnSkillTrustRecords();
-      return skillRuntime.listAllSkills();
-    }
-    case 'agent_revoke_skill_acceptance': {
-      await skillRuntime.revokeSkillAcceptance(String(args.skillName));
-      await refreshTurnSkillTrustRecords();
-      return skillRuntime.listAllSkills();
-    }
     case 'agent_undo_skill_agent_edit': {
       await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
       await refreshTurnSkillTrustRecords();

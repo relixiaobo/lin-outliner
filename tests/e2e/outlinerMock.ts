@@ -564,7 +564,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       userInvocable: true,
       modelInvocable: true,
       ratified: false,
-      accepted: false,
       canUndoLastAgentEdit: false,
       contentHash: 'hash-workspace-review-v1',
       allowedTools: [],
@@ -2841,25 +2840,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ))
             : agentSkills;
           return clone(skills) as T;
-        }
-        if (cmd === 'agent_accept_skill') {
-          const skillName = String(args.skillName ?? '');
-          const expectedHash = String(args.expectedHash ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill && skill.contentHash === expectedHash) {
-            skill.ratified = true;
-            skill.accepted = true;
-          }
-          return clone(agentSkills) as T;
-        }
-        if (cmd === 'agent_revoke_skill_acceptance') {
-          const skillName = String(args.skillName ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill) {
-            skill.ratified = false;
-            skill.accepted = false;
-          }
-          return clone(agentSkills) as T;
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
           const patch = args.patch as {
