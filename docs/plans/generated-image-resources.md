@@ -150,10 +150,31 @@ referenced by a committed Item, which during the producing call it is not — th
 return `null`. `useThreadResourcePath` is callback-scoped, so the path carries no
 guarantee once `use` returns, which is the one property the model needs.
 
-`image_paths` needs no payload-store lookup: the §2 path is absolute and
+**Across turns, the projector re-materializes.** The observation does not decay,
+it is deleted: `dispose()` runs `rm(target, { recursive: true, force: true })` on
+the whole observation workspace (`agentAttachmentMaterialization.ts:61-67`) from a
+`finally` at `TurnLifecycle.ts:1057`. Scratch TTL is only the crash-leftover
+backstop. So the path in a persisted envelope is dead by the next turn — and
+"generate an image", then "save that one to my Desktop", is an ordinary two-turn
+exchange, not a corner case. Replay does not rescue it either:
+`dynamicToolImageIdentity` emits `[Image output: <label>, <mime>, <bytes>]`
+(`ContextProjector.ts:1056-1064`) and carries no path.
+
+So the identity line gains one: on replay the projector resolves a **detached**
+observation and includes it, exactly as it already does for document assets at
+`:595-604`. `detachedResourceObservationPath` (`ThreadResourceOps.ts:273-289`) is
+already shaped as rebuild-if-missing and caches per resource identity, so the
+cost is one resolve per distinct image per thread, not per turn. The model then
+never holds a stale path: the one in front of it was resolved for the turn it is
+reading.
+
+This is deliberately closed rather than left open. The alternative — accept
+turn-scoped — ships a known dead end on the most ordinary follow-up the feature
+invites, and the fix lives in code this plan already touches.
+
+`image_paths` needs no payload-store lookup either way: the path is absolute and
 `readLocalImage`'s `resolveAgentLocalReadPath` already handles absolute paths, so
-deleting `generatedImagePaths.ts` is safe on its own. A lookup earns its place
-only if the open question resolves to cross-turn re-materialization.
+deleting `generatedImagePaths.ts` is safe on its own.
 
 `normalizeImagePathValue`'s markdown-target parsing
 (`agentImageGenerationTool.ts:459-463`) goes away with the `markdownImage` output
@@ -162,13 +183,20 @@ legacy reader, which pre-release we do not carry.
 
 ### 3. Instructions say what to do with it
 
-> Generated images are saved to `<dir>` as `<path>` by default. If you need a
-> generated image at another path, copy it and leave the original in place
-> unless the user explicitly asks you to delete it. The image is already shown
-> to the user; there is no need to render it again in the final answer.
+> The image is saved in this conversation and is already shown to the user —
+> there is no need to render it again in the final answer. `<path>` is a working
+> copy for this turn. If the image belongs somewhere in particular, copy it there
+> now; do not delete the working copy.
 
-The last sentence is now true rather than aspirational: the UI renders the image
-content item.
+Codex's version — "saved to `<dir>` … copy it and leave the original in place" —
+is **not** reusable verbatim, because it describes a durable append-only artifact
+directory and ours is deleted at turn end (§2). A model told the original persists
+may reasonably decline to copy, or hand the user a path that evaporates seconds
+later. The wording above says what is true: the Thread resource is the durable
+copy, the path is this turn's working copy.
+
+The first sentence is now accurate rather than aspirational — the UI renders the
+image content item (`ThreadItemView.tsx:885-887`).
 
 Placement policy beyond that — project-bound assets belong in the workspace,
 preview-only images can stay put, never overwrite an existing asset — is skill
@@ -176,11 +204,27 @@ material, not tool material.
 
 ### 4. Admission caps degrade per image, and are charged where the write happens
 
-An image can exceed `MAX_PERSISTED_TOOL_OUTPUT_IMAGES` (16), the per-call byte
-cap (20 MB), or the thread resource quota (`PiTurnExecutor.ts:90-91`,
-`:1399-1424`). Today it is dropped from `contentItems` while the scratch copy and
-its path survive, so the user still sees something. Delete the scratch write and
-that consolation disappears.
+The executor rejects an image for **five** distinct reasons, and only three are
+budgets:
+
+| Gate | Where | Reason |
+|---|---|---|
+| count (16) | `PiTurnExecutor.ts:1399` | `countLimit` |
+| per-image bytes (10 MB) + base64 validity | `measureToolPayloadImage`, `:1403` (`ToolPayloadStore.ts:54`, `:954-969`) | `imageByteLimit`, `invalidBase64` |
+| per-call bytes (20 MB) | `:1408` | `callByteLimit` |
+| mime shape | `dynamicImageMimeType`, `:1412` | `invalidMimeType` |
+| thread quota | `persistOutputImage`, `:1418` | `quotaExceeded` |
+
+Today an image failing any of them is dropped from `contentItems` while the
+scratch copy and its path survive, so the user still sees something. Delete the
+scratch write and that consolation disappears.
+
+Note which gates actually bite here. **Count never binds** —
+`MAX_GENERATED_IMAGES` is 4 (`agentImageGenerationTool.ts:25`) against the
+executor's 16. The **per-image 10 MB cap is the tightest**, at half the per-call
+budget, and providers routinely return PNGs past it; the observed session's image
+was 2.1 MB, so a four-image call is well inside it while one high-resolution
+image is not.
 
 **Persist what fits; report the rest.** The envelope returns paths for the
 admitted images and carries the shortfall in `successEnvelope`'s `status` /
@@ -189,30 +233,38 @@ remedy. Neither a scratch fallback — that reinstates the dual-store split this
 plan exists to delete — nor a silent drop.
 
 Not fail-closed, for three reasons. The **same boundary already degrades for
-every other producer**: over-cap images become an `imagesOmitted` note carrying
+every other producer**: rejected images become an `imagesOmitted` note carrying
 per-reason counts and the limits themselves (`PiTurnExecutor.ts:1439-1452`), and
 making `generate_image` alone throw would plant a special case at the exact
 boundary this plan unifies — the same shape as the `pruneAgentScratch` exemption
-§5 celebrates deleting. The **caps are per call**, so all-or-nothing discards
-work that fits: a four-image call tripping the byte cap on the third would throw
-away two good images, and the ~56s each took is the argument against discarding
-them. And **A12 points the other way**: its fail-closed clause is scoped to write
-boundaries "where corrupt data must not enter the store", while an over-cap image
-is not corrupt — declining to store it stores nothing wrong — and A12 names turn
-execution among the paths that must degrade rather than kill the user's action.
+§5 celebrates deleting. The **gates are per call and per image**, so
+all-or-nothing discards work that fits: a four-image call whose third trips the
+per-call byte cap would throw away two good images, and the ~56s each took is the
+argument against discarding them. And **A12 points the other way**: its
+fail-closed clause is scoped to write boundaries "where corrupt data must not
+enter the store", while an over-cap image is not corrupt — declining to store it
+stores nothing wrong — and A12 names turn execution among the paths that must
+degrade rather than kill the user's action.
 
-**Where the cap is charged.** Once the producer writes first, this stops being
-implicit. The per-call image budget (`persistedImages` / `persistedImageBytes`,
-today local to the executor's loop) becomes **call-scoped and owned by the
-admission call both sides make**. The producer asks, gets a ref or a refusal, and
-publishes a path only for refs; the executor's later pass on the same bytes
-dedups to the same verdict and re-charges nothing.
+**One gate, consulted twice.** Once the producer writes first, this stops being
+implicit. All five checks move behind a **single call-scoped admission call that
+both sides make** — not just the budget counters (`persistedImages` /
+`persistedImageBytes`, today local to the executor's loop) but the per-part
+predicates beside them. It returns ref-or-refusal; the producer publishes a path
+only for refs; the executor's later pass on the same bytes consults the recorded
+verdict instead of re-deriving one.
 
-This is the plan's one piece of real plumbing, and it is load-bearing: leave the
-budget in the executor loop and an image can be admitted tool-side, published to
-the model, then dropped from `contentItems` for cap reasons — unreferenced,
-reclaimed at turn finalization, and the model holds a dead path. Refusing at the
-single admission point makes that state unreachable by construction.
+Scoping only the *budget* would leave `measureToolPayloadImage` and
+`dynamicImageMimeType` behind in the executor, which reinstates precisely the
+state this section claims is unreachable: a 12 MB PNG clears the tool-side byte
+budget, is persisted, has its path published — and is then dropped by the
+executor's per-image check. Unreferenced, reclaimed at finalization, model
+holding a dead path. Same for an off-spec mime. Given the 10 MB per-image cap,
+that is an ordinary outcome for this tool, not a corner.
+
+This is the plan's one piece of real plumbing, and it is load-bearing: refusing
+at a single admission point is what makes the orphan state unreachable by
+construction rather than merely unlikely.
 
 ### 5. Scratch returns to a uniform TTL
 
@@ -242,21 +294,6 @@ creates the node. The document ends up owning what it displays, so deleting the
 Thread cannot break an image living in the user's outline — the concern is
 answered by inheritance, not by new code.
 
-## Open question
-
-**Observation lifetime across turns.** The model-visible path is turn-scoped
-(`TurnLifecycle.ts:982`, disposed at `:1057`). A model copying an image generated
-several turns earlier finds the path gone — and replay does not help it: on a
-later turn the image comes back through `dynamicToolImageIdentity`, which emits
-`[Image output: <label>, <mime>, <bytes>]` (`ContextProjector.ts:1056-1064`) and
-deliberately carries no path.
-
-Recommendation: re-materialize on demand.
-`detachedResourceObservationPath` (`ThreadResourceOps.ts:273-289`) is already
-shaped as rebuild-if-missing, and content addressing makes rebuilding cheap. The
-alternative — accept turn-scoped — leaves the model with a failure it cannot
-diagnose, which is the class of defect this plan is removing.
-
 ## Collision self-check
 
 `gh pr list`: #488 (`cc-2/settings-redesign`), #485
@@ -281,16 +318,18 @@ tool-agnostically.
 
 ## Build order
 
-1. Make the per-call image budget call-scoped and shared, so one admission call
-   answers both the producer and the executor (§4). This comes first: §2's path
-   must not be publishable for an image the executor would later drop.
+1. Move all five image gates behind one call-scoped admission call, so a single
+   verdict answers both the producer and the executor (§4). This comes first:
+   §2's path must not be publishable for an image the executor would later drop.
 2. `createThreadImageGenerationRuntime` gains the two `TurnExecutionContext`
    callbacks.
 3. `generate_image` persists → resolves → emits `extraContent`; delete the
    scratch write, `generatedImagePaths.ts`, and `toolImagePath`'s
    `generate_image` branch.
-4. The envelope carries the absolute path, the copy instruction, and the
+4. The envelope carries the absolute path, the working-copy instruction, and the
    per-image shortfall warning; `markdownImage` and its input parser are removed.
-5. Delete the `pruneAgentScratch` exemption.
-6. Fold into `docs/spec/agent-core.md` (generated images join managed tool
+5. The projector resolves a detached observation for replayed tool images and
+   includes it in the identity line (§2), so a cross-turn path is never stale.
+6. Delete the `pruneAgentScratch` exemption.
+7. Fold into `docs/spec/agent-core.md` (generated images join managed tool
    images) and `docs/spec/agent-tool-design.md`.
