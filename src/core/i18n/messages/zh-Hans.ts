@@ -159,11 +159,7 @@ export const zhHans: PartialMessages = {
       actionBlockLabel: '行为阻断',
       unknownBlockLabel: '阻断规则',
       removeRule: '移除',
-      systemBoundaryGroup: '系统边界',
-      systemBoundaryAriaLabel: '系统边界',
-      fullAccessBoundaryLabel: 'macOS 账户',
-      fullAccessBoundarySublabel: '智能体拥有与 Tenon 相同的文件访问权限，包括 Tenon 数据和已存的服务商凭据。',
-      fullAccessBoundaryNote: '系统原生的 TCC、管理员授权、钥匙串控制和服务登录仍然有效。',
+      fullAccessBoundaryNote: '智能体能触及的范围与你的 macOS 账户一致，包括 Tenon 自身的数据和已保存的服务方凭据。系统原生的 TCC、管理员授权、钥匙串控制和服务登录仍然有效。',
     },
     skills: {
       sectionAriaLabel: '技能',

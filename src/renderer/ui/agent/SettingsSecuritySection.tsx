@@ -43,7 +43,16 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
 
   return (
     <section className="agent-settings-section settings-security-section" aria-label={t.settings.security.sectionAriaLabel}>
-      <InsetGroup ariaLabel={t.settings.security.accessAriaLabel} label={t.settings.security.accessGroup}>
+      {/* The boundary is a FOOTNOTE, not a group. It was a section header over a
+          row whose label named a thing you cannot set and whose sublabel was a
+          paragraph — settings furniture wrapped around prose. It explains what
+          Full Access means, so it belongs under the row that says Full Access. */}
+      <InsetGroup
+        ariaLabel={t.settings.security.accessAriaLabel}
+        footnote={t.settings.security.fullAccessBoundaryNote}
+        id="agent-access"
+        label={t.settings.security.accessGroup}
+      >
         <InsetRow
           label={t.settings.security.accessModeLabel}
           sublabel={t.settings.security.fullAccessSublabel}
@@ -52,7 +61,11 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
         />
       </InsetGroup>
 
-      <InsetGroup ariaLabel={t.settings.security.blocksAriaLabel} label={t.settings.security.blocksGroup}>
+      <InsetGroup
+        ariaLabel={t.settings.security.blocksAriaLabel}
+        id="blocks"
+        label={t.settings.security.blocksGroup}
+      >
         {renderCapabilityRuleRows(
           blocks,
           t.settings.security.noBlocks,
@@ -60,18 +73,6 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
         )}
       </InsetGroup>
 
-      <InsetGroup
-        ariaLabel={t.settings.security.systemBoundaryAriaLabel}
-        footnote={t.settings.security.fullAccessBoundaryNote}
-        label={t.settings.security.systemBoundaryGroup}
-      >
-        <InsetRow
-          className="settings-system-boundary-row"
-          label={t.settings.security.fullAccessBoundaryLabel}
-          sublabel={t.settings.security.fullAccessBoundarySublabel}
-          wrap
-        />
-      </InsetGroup>
     </section>
   );
 }

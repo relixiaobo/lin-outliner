@@ -325,7 +325,10 @@ focus. Language uses `SelectControl variant="popup"`.
 
 **Agent.** Model services and Skills as pages, then Memory and Permissions
 inline. Permissions states the Full Access boundary and lists the user's explicit
-blocks; removing one commits on the row.
+blocks; removing one commits on the row. What that boundary means is a footnote
+under the row that states it, not a section of its own — a header over a row whose
+label named something unsettable and whose sublabel was a paragraph is settings
+furniture wrapped around prose.
 
 **Preview.** Translation — target language, automatic translation for webpages
 and for EPUBs, the translating model, and clearing saved translations — and

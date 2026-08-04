@@ -269,7 +269,6 @@ export function SettingsProvidersSection({
               : t.settings.providers.defaultImageModelSublabel}
             trailing={(
               <SelectControl
-                className="settings-image-model-select"
                 disabled={saving}
                 label={t.settings.providers.defaultImageModelLabel}
                 onChange={(event) => changeDefaultImageModel(event.target.value)}

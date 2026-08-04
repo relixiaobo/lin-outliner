@@ -190,11 +190,7 @@ export const en = {
       actionBlockLabel: 'Action block',
       unknownBlockLabel: 'Block rule',
       removeRule: 'Remove',
-      systemBoundaryGroup: 'System boundary',
-      systemBoundaryAriaLabel: 'System boundary',
-      fullAccessBoundaryLabel: 'macOS account',
-      fullAccessBoundarySublabel: 'The agent has the same filesystem access as Tenon, including Tenon data and stored provider credentials.',
-      fullAccessBoundaryNote: 'Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.',
+      fullAccessBoundaryNote: 'The agent reaches whatever your macOS account reaches, including Tenon\u2019s own data and stored provider credentials. Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.',
     },
     skills: {
       sectionAriaLabel: 'Skills',

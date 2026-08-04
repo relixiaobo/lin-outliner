@@ -290,7 +290,7 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
           </div>
         </div>
         <section aria-label="Security" class="agent-settings-section settings-security-section">
-          <div class="inset-group">
+          <div data-settings-anchor="agent-access" class="inset-group">
             <div class="inset-group-header">Agent access</div>
             <div role="list" class="inset-card" aria-label="Agent access">
               <div role="listitem" class="inset-row">
@@ -305,8 +305,9 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                 </div>
               </div>
             </div>
+            <p class="inset-group-footnote">The agent reaches whatever your macOS account reaches, including Tenon’s own data and stored provider credentials. Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.</p>
           </div>
-          <div class="inset-group">
+          <div data-settings-anchor="blocks" class="inset-group">
             <div class="inset-group-header">Your blocks</div>
             <div role="list" class="inset-card" aria-label="Your blocks">
               <div role="listitem" class="inset-row">
@@ -336,20 +337,6 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                 </div>
               </div>
             </div>
-          </div>
-          <div class="inset-group">
-            <div class="inset-group-header">System boundary</div>
-            <div role="list" class="inset-card" aria-label="System boundary">
-              <div role="listitem" class="inset-row settings-system-boundary-row">
-                <div class="inset-row-main is-static">
-                  <span class="inset-row-text is-wrap">
-                    <span class="inset-row-label">macOS account</span>
-                    <span class="inset-row-sublabel">The agent has the same filesystem access as Tenon, including Tenon data and stored provider credentials.</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-            <p class="inset-group-footnote">Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.</p>
           </div>
         </section>
       </section>
@@ -657,7 +644,7 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
                   </span>
                 </div>
                 <div class="inset-row-trailing">
-                  <span class="select-popup settings-image-model-select">
+                  <span class="select-popup">
                     <select class="select-popup-input" aria-label="Default model">
                       <option selected value="">Auto</option>
                     </select>

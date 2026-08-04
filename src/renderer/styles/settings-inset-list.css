@@ -247,6 +247,15 @@
   background: var(--fill-2);
 }
 
+/* No row control may grow to whatever its longest option happens to be. A gateway
+   that names models by path ("Codex / OpenAI_1 / GPT 5.6 Sonnet") pushed this
+   select across half the row and then clipped mid-word; one shared cap with an
+   ellipsis is both the constraint and the graceful failure. */
+.inset-row-trailing .select-popup-input {
+  max-width: min(320px, 42vw);
+  text-overflow: ellipsis;
+}
+
 .inset-row-value {
   /* A value stated as text rather than a control. Without a type token it
      inherited the root 16px and rendered LARGER than the 13px label it annotates;
@@ -258,20 +267,6 @@
 .settings-drilldown-chevron {
   flex: 0 0 auto;
   color: var(--text-tertiary);
-}
-
-.settings-system-boundary-row {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.settings-system-boundary-row .inset-row-main {
-  flex: 1 1 22rem;
-}
-
-.settings-system-boundary-row .inset-row-trailing {
-  flex: 0 1 auto;
-  padding: var(--space-2) var(--space-4) var(--space-4) var(--space-5);
 }
 
 /* An absence, not a disabled entry: secondary text at rest, no dimming, because

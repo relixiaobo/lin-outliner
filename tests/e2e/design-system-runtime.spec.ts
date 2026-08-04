@@ -522,7 +522,7 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.settings-window .inset-row',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: 'Agent', exact: true }).click();
-      await page.getByRole('list', { name: 'System boundary' }).waitFor({ state: 'visible' });
+      await page.getByRole('list', { name: 'Agent access' }).waitFor({ state: 'visible' });
     },
   },
   {

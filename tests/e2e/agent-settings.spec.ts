@@ -48,7 +48,7 @@ test.describe('agent settings window', () => {
     await expect(forward).toBeDisabled();
 
     await settings.getByRole('button', { name: 'Agent', exact: true }).click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -58,7 +58,7 @@ test.describe('agent settings window', () => {
     await expect(forward).toBeEnabled();
 
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
     await expect(forward).toBeDisabled();
 
     // The arrows now walk into pages too, which is the reason they stopped being
@@ -68,7 +68,7 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
     await expect(settings.getByRole('heading', { name: 'Model services' })).toBeVisible();
     await back.click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
   });
 
   test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
@@ -177,27 +177,23 @@ test.describe('agent settings window', () => {
     await settings.getByRole('button', { name: 'Agent', exact: true }).click();
     const filesystemRow = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
     await expect(filesystemRow.locator('.inset-row-trailing')).toHaveText('Full Access');
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('macOS account');
-    await expect(settings.getByText(/same filesystem access as Tenon/)).toBeVisible();
-    await expect(settings.getByText(/including Tenon data and stored provider credentials/)).toBeVisible();
+    // The boundary is a footnote under the row it explains, not a group of its
+    // own: a section header over a row whose label named something you cannot set
+    // and whose sublabel was a paragraph.
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toHaveCount(0);
+    await expect(settings.getByText(/whatever your macOS account reaches/)).toBeVisible();
+    await expect(settings.getByText(/including Tenon.s own data and stored provider credentials/)).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Your blocks' })).toContainText('No explicit blocks.');
     await expect(settings.getByText('Restricted', { exact: true })).toHaveCount(0);
     await expect(settings.getByRole('button', { name: /Choose Folder/ })).toHaveCount(0);
 
-    const modeRowMetrics = await settings.locator('.settings-system-boundary-row').evaluate((row) => {
-      const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
-      if (!sublabel) {
-        return null;
-      }
-      const sublabelBox = sublabel.getBoundingClientRect();
-      return {
-        sublabelHeight: sublabelBox.height,
-        sublabelWidth: sublabelBox.width,
-      };
-    });
-    expect(modeRowMetrics).not.toBeNull();
-    expect(modeRowMetrics!.sublabelWidth).toBeGreaterThanOrEqual(300);
-    expect(modeRowMetrics!.sublabelHeight).toBeLessThan(48);
+    // What this guarded was that the boundary prose stays readable rather than
+    // getting squeezed into a column. It is a footnote now, so that is what gets
+    // measured.
+    const footnoteWidth = await settings.locator('.inset-group-footnote').first().evaluate(
+      (note) => note.getBoundingClientRect().width,
+    );
+    expect(footnoteWidth).toBeGreaterThanOrEqual(300);
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
