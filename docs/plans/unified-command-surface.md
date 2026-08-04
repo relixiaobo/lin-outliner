@@ -691,8 +691,15 @@ app action plus a node-result action **with the main window closed**.
 
 **(a) Renderer-side effects.** Facts main cannot know — `isPinned` is localStorage
 workspace chrome (`useWorkspacePinnedNodes.ts`) — may be renderer-supplied when the
-resulting steps are also renderer-side (`workspace`, `reveal`, `clipboard`). Pin
-cannot corrupt the document because pinning never touches it.
+resulting steps are also renderer-side: **`workspace` and `reveal`**. Pin cannot
+corrupt the document because pinning never touches it.
+
+**`clipboard` is deliberately not on that list, and needs no exception.** It is a
+`main` step (see the effect union): main resolves the bounded text from the
+authoritative invocation and projection and writes it itself, precisely because the
+locked-down launcher cannot read the document. Listing it here would have been
+false twice over — routing *Copy text* toward a renderer that cannot obtain the
+text, and implying renderer-owned facts may feed a main-side write.
 
 **(b) One named parameter to one command.** The toolbar toggle genuinely needs
 `rowExpanded` to decide *whether the document changes at all* (see D1's table), so
