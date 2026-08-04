@@ -178,7 +178,7 @@ describe('Skill context reducer', () => {
     ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
   });
 
-  test('observes paths only from successful Core file tools, including payload-backed calls', async () => {
+  test('observes successful Core file paths from bounded Items without reading argument payloads', () => {
     const store = contextStore();
     const dynamicTool = (
       id: string,
@@ -242,27 +242,28 @@ describe('Skill context reducer', () => {
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
       },
+      {
+        ...dynamicTool('legacy-read', null, 'file_read', '/workspace/legacy.ts'),
+        modelCall: {
+          disposition: 'evidenceOnly' as const,
+          identity: null,
+          providerName: 'historical_dynamicToolCall',
+          redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
+          reason: 'canonicalHistoryUnavailable' as const,
+          correction: 'Inspect current state before deriving any new tool call.',
+        },
+      },
       dynamicTool('extension-read', 'example', 'file_read', '/workspace/extension.ts'),
       dynamicTool('unknown-file-tool', null, 'file_probe', '/workspace/probe.ts'),
       dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
     ])];
 
-    let activeReads = 0;
-    let maxActiveReads = 0;
-    const read = async (ref: ThreadContextPayloadReference) => {
-      activeReads += 1;
-      maxActiveReads = Math.max(maxActiveReads, activeReads);
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
-      const payload = await store.read(ref);
-      activeReads -= 1;
-      return payload;
-    };
-    expect(await observedSkillFilePaths(turns, read)).toEqual([
+    expect(observedSkillFilePaths(turns)).toEqual([
       '/workspace/core.ts',
-      '/workspace/payload.ts',
-      '/workspace/second-payload.ts',
+      '/workspace/legacy.ts',
+      '/workspace/presentation-only.ts',
+      '/workspace/second-presentation-only.ts',
     ]);
-    expect(maxActiveReads).toBe(2);
   });
 });
 

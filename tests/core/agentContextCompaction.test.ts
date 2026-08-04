@@ -91,6 +91,32 @@ describe('context compaction reducer', () => {
     }]);
   });
 
+  test('uses legacy Item identity and arguments for observation bookkeeping only', async () => {
+    const store = createPayloadStore();
+    const node = observation(
+      store,
+      'legacy-node-read',
+      'node_read',
+      { node_id: 'node-a' },
+      'Legacy node snapshot',
+    );
+    const legacyRead = {
+      ...node.items[0]!,
+      modelCall: canonicalHistoryUnavailableModelCall('historical_dynamicToolCall'),
+    } satisfies ThreadItem;
+    const legacyEdit = {
+      ...toolItem('legacy-node-edit', 'node_edit', { node_id: 'node-a', operation: 'replace_outline' }),
+      modelCall: canonicalHistoryUnavailableModelCall('historical_dynamicToolCall'),
+    } satisfies ThreadItem;
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [legacyRead, node.items[1]!]), turn(2, [legacyEdit])],
+      readContext: store.read,
+    });
+
+    expect(plan?.restoredState.activeObservations).toEqual([]);
+  });
+
   test('uses structured evidence summaries to invalidate the affected file observation', async () => {
     const store = createPayloadStore();
     const edited = observation(
@@ -719,6 +745,17 @@ function payloadBackedToolItem(
       ...replayableModelCall(tool, {}),
       arguments: { storage: 'payload', ref: argumentsRef },
     },
+  };
+}
+
+function canonicalHistoryUnavailableModelCall(providerName: string) {
+  return {
+    disposition: 'evidenceOnly' as const,
+    identity: null,
+    providerName,
+    redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
+    reason: 'canonicalHistoryUnavailable' as const,
+    correction: 'Inspect current state before deriving any new tool call.',
   };
 }
 

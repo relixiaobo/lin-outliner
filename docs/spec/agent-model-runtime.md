@@ -92,10 +92,11 @@ the marker states that placeholders were not executed values and must not be cop
 retried. An incompatible redacted copy freezes executed `evidenceOnly`: the validated
 source call still executes, but later history emits only typed evidence with the visible
 outcome. Other rejected `evidenceOnly` calls never execute and project correction
-evidence without a tool call or result. Mixed batches preserve original call order
-across these units. If evidence splits one provider assistant batch into multiple
-assistant segments, every segment that retains tool calls receives the same unmodified
-signed-thinking blocks owned by that batch.
+evidence without a tool call or result. Replayable calls from one provider assistant
+batch remain in one assistant message, their results follow in call order, and any typed
+evidence from rejected members is appended after that complete batch. Projection never
+splits the assistant message around evidence, so the batch's unmodified signed-thinking
+blocks are attached exactly once.
 
 The active Turn alone keeps a transient raw-call overlay for admitted executable calls,
 so an immediate follow-up provider request observes the exact value that executed. The

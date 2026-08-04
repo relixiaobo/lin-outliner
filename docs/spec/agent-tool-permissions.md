@@ -103,15 +103,20 @@ transaction metadata.
 Audit and diagnostics retain canonical identity, admission disposition, schema digest,
 and redacted observable arguments. Raw secret-like model values and host credentials do
 not enter Items, argument payloads, transcripts, renderer detail, or diagnostics. The
+diagnostic capture boundary structurally redacts a provider adapter's explicitly
+serialized function-call argument field; it does not treat arbitrary model-authored
+strings as JSON or promote the diagnostic copy into replay. The
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
-Structured redaction classifies complete camelCase, snake_case, and kebab-case key
-segments, so credential keys such as `secretKey`, `session_token`, and `private-key`
-are covered without treating budget/count fields as secrets. JSON encoded inside a
-string is parsed and redacted structurally when valid. Free-form command and file text
-is changed only for high-confidence credential formats; ordinary source/config text
-such as placeholder token assignments remains byte-identical.
+Structured redaction normalizes complete camelCase, snake_case, kebab-case, and
+unseparated key spellings, then matches explicit credential-key combinations. Keys such
+as `secretKey`, `session_token`, `private-key`, `apikey`, and `authtoken` are covered,
+while `token_budget`, `authorization_url`, and `passwordPolicy` remain ordinary data.
+Opaque strings are never parsed or reformatted as nested JSON. Free-form command, file,
+and JSON-shaped text changes only for high-confidence credential formats; ordinary
+source/config fixtures and placeholder token assignments remain byte-identical. A JSON
+pointer is recorded only when the persisted value actually differs from its source.
 
 ## Shared Resource Concurrency
 

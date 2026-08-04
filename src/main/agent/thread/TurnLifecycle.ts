@@ -373,10 +373,7 @@ export class TurnLifecycle {
                 configuration: active.configuration,
                 content: admission.content,
                 acceptedAt,
-                observedFilePaths: await observedSkillFilePaths(
-                  canonicalTurns,
-                  (ref) => this.core.payloads.readContext(thread.id, ref),
-                ),
+                observedFilePaths: observedSkillFilePaths(canonicalTurns),
               });
           const skillCatalog = await planSkillCatalogEvidence({
             turns: canonicalTurns,
@@ -857,10 +854,7 @@ export class TurnLifecycle {
             configuration: record.configuration,
             content: input,
             acceptedAt: startedAt,
-            observedFilePaths: await observedSkillFilePaths(
-              canonicalTurns,
-              (ref) => this.core.payloads.readContext(record.thread.id, ref),
-            ),
+            observedFilePaths: observedSkillFilePaths(canonicalTurns),
           });
       const skillCatalog = await planSkillCatalogEvidence({
         turns: canonicalTurns,

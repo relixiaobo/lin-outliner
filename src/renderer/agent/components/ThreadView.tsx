@@ -38,8 +38,9 @@ import type {
 } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import {
-  modelCallDisplayArguments,
-  modelCallDisplayName,
+  boundedToolArgumentsForDisplay,
+  toolItemInspectionArguments,
+  toolItemInspectionName,
 } from '../../../core/agent/modelCallHistory';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -2048,18 +2049,18 @@ export async function buildTurnCopyText(
 }
 
 function toolCopyName(item: ThreadToolItem): string {
-  return modelCallDisplayName(item.modelCall);
+  return toolItemInspectionName(item);
 }
 
 function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | null): string {
-  if (argumentsValue !== null) return jsonText(argumentsValue);
+  if (argumentsValue !== null) return jsonText(boundedToolArgumentsForDisplay(argumentsValue));
   if (item.modelCall.disposition !== 'evidenceOnly') {
     const source = item.modelCall.disposition === 'replayable'
       ? item.modelCall.arguments
       : item.modelCall.redactedArguments;
     if (source.storage === 'payload') return jsonText({ unavailable: 'stored tool arguments' });
   }
-  return jsonText(modelCallDisplayArguments(item.modelCall));
+  return jsonText(boundedToolArgumentsForDisplay(toolItemInspectionArguments(item)));
 }
 
 function projectedToolOutput(item: ThreadToolItem): string {

@@ -1036,12 +1036,13 @@ describe('canonical context projection', () => {
     ], true)]);
 
     expect(mixed.map((message) => message.role)).toEqual([
-      'user', 'assistant', 'toolResult', 'user', 'assistant', 'toolResult',
+      'user', 'assistant', 'toolResult', 'toolResult', 'user',
     ]);
-    const replayAssistant = mixed[4];
+    const replayAssistant = mixed[1];
     if (replayAssistant?.role !== 'assistant') throw new Error('Expected redacted replay assistant message.');
-    expect(replayAssistant.content.map((part) => part.type)).toEqual(['text', 'toolCall']);
+    expect(replayAssistant.content.map((part) => part.type)).toEqual(['toolCall', 'text', 'toolCall']);
     expect(messageText(replayAssistant)).toContain('replay notice');
+    expect(messageText(mixed.at(-1)!)).toContain('invalidArguments');
 
     const schemaInvalidRedaction = {
       ...redactedCall,

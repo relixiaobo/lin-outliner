@@ -747,6 +747,46 @@ describe('renderer Thread store', () => {
     }]);
   });
 
+  test('bounds payload-backed arguments before caching them for renderer surfaces', async () => {
+    const owner = thread('thread-1', 1);
+    const ref = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 1_000_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const payload = {
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+      value: { content: 'x'.repeat(1_000_000), path: '/workspace/large.txt' },
+    };
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/context/read') return { context: { ref, payload } };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    const item = {
+      ...commandTurn('turn-1', 'completed').items[0]!,
+      modelCall: {
+        ...replayableModelCall('bash', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } as ThreadItem;
+
+    const value = await store.readToolArguments(owner.id, 'turn-1', item);
+
+    expect(value).toMatchObject({ truncated: true });
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Expected a bounded argument summary.');
+    }
+    expect(value.originalChars).toBeGreaterThan(1_000_000);
+    expect(JSON.stringify(value, null, 2).length).toBeLessThanOrEqual(32_000);
+  });
+
   test('never resolves raw collaboration output through the renderer store', async () => {
     let reads = 0;
     const client = {

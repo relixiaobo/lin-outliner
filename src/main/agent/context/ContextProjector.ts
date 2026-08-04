@@ -225,6 +225,7 @@ export class CanonicalContextProjector {
     let assistantContent: Array<TextContent | ToolCall> = [];
     let assistantItemIds: string[] = [];
     let toolResults: ToolResultMessage[] = [];
+    let toolEvidence: string[] = [];
     const flushContextBlocks = () => {
       if (pendingContextBlocks.length === 0) return;
       pendingUserContent.push(contextBundle(pendingContextBlocks));
@@ -258,9 +259,14 @@ export class CanonicalContextProjector {
         messages.push(result);
         messagePartProvenance.push(result.content.map(() => ({ source: 'toolResult' })));
       }
+      for (const evidence of toolEvidence) {
+        messages.push({ role: 'user', content: [{ type: 'text', text: evidence }], timestamp: turn.startedAt });
+        messagePartProvenance.push([{ source: 'unknown' }]);
+      }
       assistantContent = [];
       assistantItemIds = [];
       toolResults = [];
+      toolEvidence = [];
     };
     const flushPendingUser = (timestamp: number) => {
       flushContextBlocks();
@@ -312,7 +318,7 @@ export class CanonicalContextProjector {
         continue;
       }
       if (item.type === 'contextReset') {
-        if (toolResults.length > 0) flushAssistant();
+        if (toolResults.length > 0 || toolEvidence.length > 0) flushAssistant();
         pendingUserContent = [];
         pendingUserProvenance = [];
         pendingContextBlocks = [];
@@ -340,9 +346,7 @@ export class CanonicalContextProjector {
           this.options.liveToolCall?.(turn.id, item.id) ?? null,
         );
         if (tool.kind === 'evidence') {
-          flushAssistant();
-          messages.push({ role: 'user', content: [{ type: 'text', text: tool.text }], timestamp: turn.startedAt });
-          messagePartProvenance.push([{ source: 'unknown' }]);
+          toolEvidence.push(tool.text);
           continue;
         }
         assistantItemIds.push(item.id);
@@ -351,7 +355,7 @@ export class CanonicalContextProjector {
         toolResults.push(tool.result);
         continue;
       }
-      if (toolResults.length > 0) flushAssistant();
+      if (toolResults.length > 0 || toolEvidence.length > 0) flushAssistant();
       switch (item.type) {
         case 'agentMessage':
           assistantItemIds.push(item.id);

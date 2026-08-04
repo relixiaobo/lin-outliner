@@ -27,8 +27,33 @@ const DURABLE_STRING_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9_./+=-]{12,}/gi,
 ];
 
-const SECRET_KEY_NOUNS = new Set(['authorization', 'bearer', 'password', 'passwd', 'pwd', 'secret']);
-const SECRET_KEY_PREFIXES = new Set(['api', 'auth', 'client', 'private']);
+const EXACT_SECRET_KEYS = new Set([
+  'authorization',
+  'authorizationheader',
+  'authorizationtoken',
+  'bearer',
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+]);
+const SECRET_KEY_PREFIXES = new Set(['api', 'auth', 'client', 'encryption', 'private', 'secret', 'signing']);
+const SECRET_TOKEN_PREFIXES = new Set([
+  'access',
+  'api',
+  'auth',
+  'bearer',
+  'bot',
+  'client',
+  'github',
+  'gitlab',
+  'id',
+  'oauth',
+  'refresh',
+  'session',
+  'slack',
+]);
 
 // A long unbroken token run (base64 / blob / data URI) — elided to a length note
 // so an inline image/blob can't bloat a debug payload or the cache.
@@ -79,8 +104,9 @@ export function redactSecretLikeJson<T>(value: T): SecretRedactionResult<T> {
   const redactedPaths: string[] = [];
   const visit = (input: unknown, path: string, secretKey: boolean): unknown => {
     if (secretKey) {
-      redactedPaths.push(path || '');
-      return redactValuePreservingShape(input);
+      const redacted = redactValuePreservingShape(input);
+      if (!jsonValuesEqual(redacted, input)) redactedPaths.push(path || '');
+      return redacted;
     }
     if (typeof input === 'string') {
       const redacted = redactDurableJsonString(input);
@@ -113,13 +139,15 @@ function redactValuePreservingShape(value: unknown): unknown {
 
 function isSecretKey(key: string): boolean {
   const segments = secretKeySegments(key);
-  if (segments.some((segment) => SECRET_KEY_NOUNS.has(segment))) return true;
-  if (segments.at(-1) === 'token') return true;
-  return segments.some((segment, index) => (
-    (segment === 'key' || segment === 'keys')
-    && index > 0
-    && SECRET_KEY_PREFIXES.has(segments[index - 1]!)
-  ));
+  if (segments.some((segment, index) => segment === 'secret' && segments[index + 1] === 'key')) return true;
+  const normalized = segments.join('');
+  if (EXACT_SECRET_KEYS.has(normalized)) return true;
+  for (const suffix of ['key', 'keys', 'secret'] as const) {
+    if (!normalized.endsWith(suffix)) continue;
+    if (SECRET_KEY_PREFIXES.has(normalized.slice(0, -suffix.length))) return true;
+  }
+  if (!normalized.endsWith('token')) return false;
+  return SECRET_TOKEN_PREFIXES.has(normalized.slice(0, -'token'.length));
 }
 
 function secretKeySegments(key: string): string[] {
@@ -132,7 +160,7 @@ function secretKeySegments(key: string): string[] {
 }
 
 function redactDurableJsonString(content: string): string {
-  let redacted = redactJsonEncodedObject(content);
+  let redacted = content;
   for (const pattern of DURABLE_STRING_REDACTION_PATTERNS) {
     pattern.lastIndex = 0;
     redacted = redacted.replace(pattern, '[redacted secret-like content]');
@@ -140,17 +168,25 @@ function redactDurableJsonString(content: string): string {
   return redacted;
 }
 
-function redactJsonEncodedObject(content: string): string {
-  const trimmed = content.trim();
-  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return content;
-  try {
-    const parsed = JSON.parse(content) as unknown;
-    if (parsed === null || typeof parsed !== 'object') return content;
-    const redacted = redactSecretLikeJson(parsed);
-    return redacted.redactedPaths.length > 0 ? JSON.stringify(redacted.value) : content;
-  } catch {
-    return content;
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((entry, index) => jsonValuesEqual(entry, right[index]));
   }
+  if (
+    left === null
+    || right === null
+    || typeof left !== 'object'
+    || typeof right !== 'object'
+  ) return false;
+  const leftEntries = Object.entries(left as Record<string, unknown>);
+  const rightRecord = right as Record<string, unknown>;
+  if (leftEntries.length !== Object.keys(rightRecord).length) return false;
+  return leftEntries.every(([key, entry]) => (
+    Object.prototype.hasOwnProperty.call(rightRecord, key)
+    && jsonValuesEqual(entry, rightRecord[key])
+  ));
 }
 
 function escapeJsonPointerToken(value: string): string {

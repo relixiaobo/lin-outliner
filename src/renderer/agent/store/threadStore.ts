@@ -20,7 +20,12 @@ import type {
   ThreadTurnsListResponse,
   Turn,
 } from '../../../core/agent/protocol';
-import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import {
+  boundedToolArgumentsForDisplay,
+  isCanonicalHistoryUnavailable,
+  modelCallArgumentSource,
+  toolItemInspectionArguments,
+} from '../../../core/agent/modelCallHistory';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { api } from '../../api/client';
 
@@ -403,11 +408,16 @@ export class ThreadStore {
 
   readToolArguments(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<JsonValue | null> {
     if (!('modelCall' in item)) return Promise.resolve(null);
+    if (isCanonicalHistoryUnavailable(item.modelCall)) {
+      return Promise.resolve(boundedToolArgumentsForDisplay(toolItemInspectionArguments(item)));
+    }
     if (item.modelCall.disposition === 'evidenceOnly') {
-      return Promise.resolve(item.modelCall.redactedArgumentsSummary);
+      return Promise.resolve(boundedToolArgumentsForDisplay(item.modelCall.redactedArgumentsSummary));
     }
     const source = modelCallArgumentSource(item.modelCall);
-    if (source.storage === 'inline') return Promise.resolve(source.value);
+    if (source.storage === 'inline') {
+      return Promise.resolve(boundedToolArgumentsForDisplay(source.value));
+    }
     const key = `${threadId}:${source.ref.id}`;
     let pending = this.toolArgumentsCache.get(key);
     if (!pending) {
@@ -419,7 +429,7 @@ export class ThreadStore {
       }).then((response) => {
         const context = response.context;
         return context?.ref.id === source.ref.id && context.payload.kind === 'toolCallArguments'
-          ? context.payload.value
+          ? boundedToolArgumentsForDisplay(context.payload.value)
           : null;
       }).catch(() => {
         this.toolArgumentsCache.delete(key);

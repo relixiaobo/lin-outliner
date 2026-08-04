@@ -263,8 +263,12 @@ presentation and audit projections only; no reverse mapper may recreate model
 arguments from them.
 Existing persisted tool Items that predate the envelope decode as
 `canonicalHistoryUnavailable` evidence. No decoder reconstructs their calls from
-presentation fields. Payload-backed arguments are available to renderer detail and Turn
-copy only through an Item-bound main-process read of the exact reference.
+presentation fields. Inspection-only consumers may use the Item's bounded identity,
+arguments, path, and outcome fields for existing rows, transcripts, Memory, Skills, and
+observation bookkeeping; provider replay never imports that compatibility helper.
+Payload-backed arguments are available to renderer detail and Turn copy only through an
+Item-bound main-process read of the exact reference, and are bounded before renderer
+caching, formatting, highlighting, or copying.
 
 Secret redaction compatibility is decided once against the admission schema. A
 compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
@@ -273,9 +277,13 @@ may overlay that raw admitted call transiently for its immediate follow-up provi
 request, but later Turns and every durable surface see only the frozen disposition.
 Cancellation stops each batch loop before it admits any remaining call, so those calls
 create neither Items nor argument payloads.
-Secret-key matching uses complete camelCase, snake_case, and kebab-case segments.
-Durable free-form strings redact only high-confidence credential formats, while valid
-JSON strings are parsed for structural key redaction before storage.
+Secret-key matching normalizes complete camelCase, snake_case, kebab-case, and
+unseparated spellings, then accepts only explicit credential-key combinations. Durable
+opaque strings, including JSON-shaped source text, are never structurally parsed or
+reformatted and redact only high-confidence credential formats. Redaction paths list
+only values that actually changed. Provider diagnostics separately recognize serialized
+function-call argument envelopes and structurally redact those known adapter fields before
+persistence; diagnostic decoding is never a replay authority.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID

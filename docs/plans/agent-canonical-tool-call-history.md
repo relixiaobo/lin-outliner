@@ -287,15 +287,22 @@ stable reason code, and actionable correction text. Reasons cover at least:
 
 On the next request, typed correction evidence replaces the rejected call. The
 projector never emits the invalid tool call, never emits an orphaned tool
-result, and never fabricates corrected arguments. Mixed batches keep every
-admitted call/result pair intact and append rejection evidence in original call
-order.
+result, and never fabricates corrected arguments. All replayable calls from one
+provider assistant batch stay in one assistant message, their results follow in
+call order, and rejection evidence is appended after the complete batch. Signed
+thinking therefore remains attached once to the assistant message that owns it.
 
 Model-supplied arguments pass the existing secret-like key/value redaction
 policy before persistence. Admitted calls whose values change use
 `redactedReplay`; rejected calls retain only evidence. Host-injected secrets
 remain outside model calls, while shell commands and other free-form model
-arguments are explicitly treated as possible secret carriers.
+arguments are explicitly treated as possible secret carriers. Structured key
+matching normalizes separated, camel-cased, and unseparated credential spellings;
+opaque strings are never parsed as nested JSON and change only for high-confidence
+credential formats. The sole structural-string exception is a provider adapter's
+explicit serialized function-call argument envelope: diagnostics decode and redact
+that known field before persistence, without feeding it back into Items or replay. A
+redaction path exists only when its value changed.
 
 ### Argument storage and lifecycle
 
@@ -325,11 +332,18 @@ Existing specialized Items remain the source for readable rows and execution
 facts. Surfaces that label data as tool arguments use the canonical envelope;
 the host-resolved `cwd` and similar values are shown only as execution context.
 Transcript export uses exact arguments, marked redacted arguments, or the
-evidence-only redacted summary, never an Item reverse mapper.
+evidence-only redacted summary, never an Item reverse mapper. For a pre-envelope
+`canonicalHistoryUnavailable` Item only, inspection consumers may show its own
+bounded presentation identity, arguments, path, and outcome. That compatibility
+helper is forbidden from provider projection. Renderer payload reads remain
+Item-bound and are reduced to a 32,000-character display value before caching,
+formatting, highlighting, or Turn copy.
 
 Diagnostics record admission phase, canonical identity, schema digest,
 replay/evidence disposition, and bounded redacted validation errors. They never
-capture raw secret-bearing values or host-only environment. Memory extraction
+capture raw secret-bearing values or host-only environment. Known provider
+function-call argument strings are structurally redacted at diagnostic capture;
+model-authored opaque strings remain byte-preserving. Memory extraction
 may summarize completed outcomes but cannot reconstruct calls from presentation
 fields.
 
@@ -337,7 +351,8 @@ Compaction treats an exact replayable call/result pair as an indivisible unit an
 a `redactedReplay` marker/call/result triple as a different indivisible unit. The
 marker can never be dropped, summarized, or moved independently while its
 redacted call survives. Rejection evidence remains an ordinary typed evidence
-unit. Restart, fork, current Turn tool loops, retry, and post-compaction
+unit after the owning assistant batch's complete call/results. It never splits that
+assistant message or duplicates its signed thinking. Restart, fork, current Turn tool loops, retry, and post-compaction
 projection must therefore make the same replay decision from the same persisted
 facts.
 
@@ -441,7 +456,8 @@ Main owns board/changelog updates at merge.
   payloads. Calls already admitted settle through the normal interrupted result.
 - **AC-15:** The new envelope has no legacy call reconstructor. A pre-envelope
   persisted tool Item remains openable as `canonicalHistoryUnavailable`
-  evidence and cannot emit a guessed call/result exchange.
+  evidence and cannot emit a guessed call/result exchange. Its own bounded fields
+  remain available to inspection, Skill path observation, and compaction invalidation.
 
 ### Risks and mitigations
 

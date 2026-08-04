@@ -136,7 +136,9 @@ export class TurnDiagnosticsCollector {
     const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
-    const normalizedRequest = redactSecretLikeJson(jsonValue(payload, true)).value;
+    const normalizedRequest = redactSecretLikeJson(
+      redactProviderSerializedArguments(jsonValue(payload, true)),
+    ).value;
     const index = this.providerCalls.length;
     this.bindPendingActivities(index);
     this.providerCalls.push({
@@ -627,6 +629,34 @@ function jsonValue(value: unknown, omitImageBytes: boolean, nestedImageContainer
     }
   }
   return result;
+}
+
+function redactProviderSerializedArguments(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map(redactProviderSerializedArguments);
+  if (!isRecord(value)) return value;
+  const serializedArguments = typeof value.arguments === 'string'
+    && (
+      value.type === 'function_call'
+      || value.type === 'tool_call'
+      || typeof value.name === 'string'
+    );
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    key === 'arguments' && serializedArguments
+      ? redactSerializedProviderArguments(entry as string)
+      : redactProviderSerializedArguments(entry as JsonValue),
+  ]));
+}
+
+function redactSerializedProviderArguments(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed === null || typeof parsed !== 'object') return value;
+    const redacted = redactSecretLikeJson(parsed);
+    return redacted.redactedPaths.length > 0 ? JSON.stringify(redacted.value) : value;
+  } catch {
+    return value;
+  }
 }
 
 function directImageBase64(

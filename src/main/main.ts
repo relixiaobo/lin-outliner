@@ -692,13 +692,10 @@ async function prepareSkillRuntimeForTurn(
     const settings = await getAgentRuntimeSettings();
     runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
     runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-    await runtime.notifyFileTouched(await observedSkillFilePaths(
-      [
-        ...context.historyBeforeTurn,
-        { ...context.turn, items: context.recorder.orderedItems() },
-      ],
-      context.readContext,
-    ));
+    await runtime.notifyFileTouched(observedSkillFilePaths([
+      ...context.historyBeforeTurn,
+      { ...context.turn, items: context.recorder.orderedItems() },
+    ]));
     return runtime;
   })();
   turnSkillRuntimeInitializations.set(context.turn.id, initialization);

@@ -41,7 +41,9 @@ import {
 } from '../context/ContextProjector';
 import {
   modelCallArgumentSource,
-  modelCallDisplayName,
+  toolItemInspectionArguments,
+  toolItemInspectionName,
+  type ToolHistoryInspectionItem,
 } from '../../../core/agent/modelCallHistory';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
@@ -250,7 +252,7 @@ async function itemLines(
     case 'dynamicToolCall':
     case 'collabAgentToolCall':
     case 'webSearch': {
-      const name = modelCallDisplayName(item.modelCall);
+      const name = toolItemInspectionName(item);
       const args = await transcriptToolArguments(item, reader);
       const stored = item.outputRef
         ? await reader.readOutput(item.outputRef).catch(() => null) ?? item.outputRef.summary
@@ -297,11 +299,11 @@ async function itemLines(
 }
 
 async function transcriptToolArguments(
-  item: Extract<ThreadItem, { readonly modelCall: unknown }>,
+  item: ToolHistoryInspectionItem,
   reader: TranscriptPayloadReader,
 ): Promise<import('../../../core/agent/protocol').JsonValue> {
   if (item.modelCall.disposition === 'evidenceOnly') {
-    return item.modelCall.redactedArgumentsSummary;
+    return toolItemInspectionArguments(item);
   }
   const source = modelCallArgumentSource(item.modelCall);
   if (source.storage === 'inline') return source.value;

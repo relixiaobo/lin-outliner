@@ -70,8 +70,9 @@ import {
 } from '../../threadReferences';
 import { basenameForPath } from '../../../../core/referenceMarkup';
 import {
+  boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
-  modelCallDisplayArguments,
+  toolItemInspectionArguments,
 } from '../../../../core/agent/modelCallHistory';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
@@ -657,6 +658,10 @@ function ToolItemDisclosure({
     readonly value: JsonValue | null;
   } | null>(null);
   const argumentsLoaded = loadedArguments?.argumentRefId === argumentRefId;
+  const fallbackArguments = useMemo(
+    () => boundedToolArgumentsForDisplay(toolItemInspectionArguments(item)),
+    [item],
+  );
   const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
   const holdAnchorUntilSettled = expandState.holdAnchorUntilSettled;
   useEffect(() => {
@@ -680,7 +685,14 @@ function ToolItemDisclosure({
       .then(([text, value]) => {
         if (cancelled) return;
         if (needsOutput && outputRefId) setLoadedOutput({ outputRefId, text: text ?? null });
-        if (needsArguments && argumentRefId) setLoadedArguments({ argumentRefId, value: value ?? null });
+        if (needsArguments && argumentRefId) {
+          setLoadedArguments({
+            argumentRefId,
+            value: value === null || value === undefined
+              ? null
+              : boundedToolArgumentsForDisplay(value),
+          });
+        }
       })
       .finally(settleAnchorHold);
     return () => {
@@ -699,7 +711,7 @@ function ToolItemDisclosure({
   ]);
   const argumentsValue = argumentsLoaded && loadedArguments.value !== null
     ? loadedArguments.value
-    : modelCallDisplayArguments(item.modelCall);
+    : fallbackArguments;
   const detail = toolDetail(item, t, onOpenThread, threadId, subagents, argumentsValue);
   const detailInput = argumentRefId && (!argumentsLoaded || loadedArguments.value === null)
     ? item.type === 'commandExecution' ? item.command : null
@@ -863,8 +875,8 @@ function toolDetail(
   t: Messages,
   onOpenThread: (threadId: string) => Promise<void>,
   threadId: string,
-  subagents?: ReadonlyMap<string, SubagentPresentation>,
-  argumentsValue: JsonValue = modelCallDisplayArguments(item.modelCall),
+  subagents: ReadonlyMap<string, SubagentPresentation> | undefined,
+  argumentsValue: JsonValue,
 ): ToolDetail {
   const empty = {
     input: null,
@@ -1934,7 +1946,7 @@ function jsonText(value: unknown): string {
 
 function commandDetailInput(
   item: Extract<ThreadItem, { readonly type: 'commandExecution' }>,
-  argumentsValue: JsonValue = modelCallDisplayArguments(item.modelCall),
+  argumentsValue: JsonValue,
 ): string {
   if (
     argumentsValue !== null

@@ -347,6 +347,7 @@ describe('Turn diagnostics', () => {
 
   test('redacts structured secrets from canonical messages and post-adapter requests', () => {
     const rawSecret = 'generic-model-secret';
+    const jsonShapedContent = '{\n  "token": "placeholder1234"\n}';
     const toolMessage: AssistantMessage = {
       ...assistantMessage(''),
       content: [{
@@ -384,7 +385,7 @@ describe('Turn diagnostics', () => {
       input: [{
         type: 'function_call',
         name: 'alpha',
-        arguments: JSON.stringify({ api_key: rawSecret, query: 'keep' }),
+        arguments: JSON.stringify({ api_key: rawSecret, content: jsonShapedContent, query: 'keep' }),
       }],
       metadata: { session_token: rawSecret },
     });
@@ -396,7 +397,7 @@ describe('Turn diagnostics', () => {
     });
     expect(materializeRequest(payload, 0)).toMatchObject({
       input: [{
-        arguments: JSON.stringify({ api_key: '[redacted]', query: 'keep' }),
+        arguments: JSON.stringify({ api_key: '[redacted]', content: jsonShapedContent, query: 'keep' }),
       }],
       metadata: { session_token: '[redacted]' },
     });

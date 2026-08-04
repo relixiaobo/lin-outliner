@@ -379,7 +379,14 @@ describe('Codex Memory contracts', () => {
           error: null,
           durationMs: 5,
           outputRef: null,
-          modelCall: replayableModelCall('docs__search', { query: 'canonical history' }),
+          modelCall: {
+            disposition: 'evidenceOnly',
+            identity: null,
+            providerName: 'historical_mcpToolCall',
+            redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
+            reason: 'canonicalHistoryUnavailable',
+            correction: 'Inspect current state before deriving any new tool call.',
+          },
         },
         {
           type: 'dynamicToolCall',
@@ -404,7 +411,9 @@ describe('Codex Memory contracts', () => {
 
     expect(content).toContain('"command":"npm test"');
     expect(content).toContain('"cwd":"/workspace"');
+    expect(content).toContain('"tool":"docs.search"');
     expect(content).toContain('"query":"canonical history"');
+    expect(content).not.toContain('historical_mcpToolCall');
     expect(content).toContain('"file_path":"/workspace/spec.md"');
   });
 

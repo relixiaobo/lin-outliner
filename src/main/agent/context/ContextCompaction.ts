@@ -12,7 +12,12 @@ import type {
   ThreadItemOutputReference,
   Turn,
 } from '../../../core/agent/protocol';
-import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import {
+  isCanonicalHistoryUnavailable,
+  modelCallArgumentSource,
+  toolItemInspectionArguments,
+  toolItemInspectionIdentity,
+} from '../../../core/agent/modelCallHistory';
 import { reduceSkillContext } from './SkillContextReducer';
 import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
@@ -383,12 +388,13 @@ function replaceEntries<K, V>(
 
 function observationIdentities(
   item: HistoryToolItem,
-  resolvedArguments: CanonicalToolArgumentsResolution,
+  resolvedArguments: ToolArgumentsResolution,
 ): Array<{ key: string; tool: string; subject: string }> {
-  if (item.status !== 'completed' || item.modelCall.identity?.namespace !== null) return [];
-  if (resolvedArguments.kind !== 'canonical') return [];
+  const identity = toolItemInspectionIdentity(item);
+  if (item.status !== 'completed' || !identity || identity.namespace !== null) return [];
+  if (resolvedArguments.kind === 'summary' || resolvedArguments.kind === 'unavailable') return [];
   const args = resolvedArguments.value;
-  const tool = item.modelCall.identity.name;
+  const tool = identity.name;
   if (tool === 'file_read') {
     const path = stringArgument(args, ['file_path', 'path']);
     return path ? [{ key: `file:${path}`, tool, subject: path }] : [];
@@ -415,7 +421,7 @@ interface ObservationInvalidation {
 
 function observationInvalidation(
   item: ThreadItem,
-  resolvedArguments: CanonicalToolArgumentsResolution | null,
+  resolvedArguments: ToolArgumentsResolution | null,
 ): ObservationInvalidation {
   if (item.type === 'fileChange') {
     return {
@@ -429,11 +435,13 @@ function observationInvalidation(
       clearFileObservations: false,
     };
   }
-  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) {
+  if (item.type !== 'dynamicToolCall') {
     return noObservationInvalidation();
   }
+  const identity = toolItemInspectionIdentity(item);
+  if (!identity || identity.namespace !== null) return noObservationInvalidation();
   if (item.status !== 'completed' || item.success !== true) return noObservationInvalidation();
-  const tool = item.modelCall.identity.name;
+  const tool = identity.name;
   const args = resolvedArguments?.value ?? null;
   if (isFileMutation(tool)) {
     const path = args ? stringArgument(args, ['file_path', 'path']) : null;
@@ -455,15 +463,22 @@ function observationInvalidation(
   return noObservationInvalidation();
 }
 
-type CanonicalToolArgumentsResolution =
+type ToolArgumentsResolution =
   | { readonly kind: 'canonical'; readonly value: Record<string, unknown> }
+  | { readonly kind: 'legacyInspection'; readonly value: Record<string, unknown> }
   | { readonly kind: 'summary'; readonly value: Record<string, unknown> }
   | { readonly kind: 'unavailable'; readonly value: null };
 
 async function canonicalToolArguments(
   item: HistoryToolItem,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<CanonicalToolArgumentsResolution> {
+): Promise<ToolArgumentsResolution> {
+  if (isCanonicalHistoryUnavailable(item.modelCall)) {
+    const value = toolItemInspectionArguments(item);
+    return isRecord(value)
+      ? { kind: 'legacyInspection', value }
+      : { kind: 'unavailable', value: null };
+  }
   if (item.modelCall.disposition === 'evidenceOnly') {
     return isRecord(item.modelCall.redactedArgumentsSummary)
       ? { kind: 'summary', value: item.modelCall.redactedArgumentsSummary }
@@ -596,8 +611,10 @@ function isNodeMutation(tool: string): boolean {
 }
 
 function needsObservationArguments(item: ThreadItem): item is HistoryToolItem {
-  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) return false;
-  const tool = item.modelCall.identity.name;
+  if (item.type !== 'dynamicToolCall') return false;
+  const identity = toolItemInspectionIdentity(item);
+  if (!identity || identity.namespace !== null) return false;
+  const tool = identity.name;
   return tool === 'file_read'
     || tool === 'node_read'
     || tool === 'outline_undo_stack'

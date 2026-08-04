@@ -158,6 +158,93 @@ describe('ThreadItemView tool output disclosure', () => {
     expect(argumentsSection?.textContent).not.toContain('storedArguments');
     expect(argumentsSection?.textContent).not.toContain('bounded command preview');
   });
+
+  test('bounds payload-backed arguments before they enter the code renderer', async () => {
+    const ref = {
+      id: 'c'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 1_000_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic({
+        id: 'large-payload-tool',
+        namespace: 'plugin',
+        tool: 'write_fixture',
+        args: { path: '/workspace/large.json' },
+      }),
+      modelCall: {
+        ...replayableModelCall('plugin__write_fixture', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies ThreadToolItem;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => ({ command: 'x'.repeat(1_000_000) }),
+    });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('"truncated"');
+    expect(argumentsSection?.textContent.length).toBeLessThan(33_000);
+  });
+
+  test('bounds inline arguments by their formatted display length', async () => {
+    const item = dynamic({
+      id: 'large-inline-tool',
+      namespace: 'plugin',
+      tool: 'inspect_values',
+      args: { values: Array.from({ length: 8_000 }, () => 0) },
+    });
+    const rendered = renderItem(item, { expanded: true });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('"truncated"');
+    expect(argumentsSection?.textContent.length).toBeLessThan(32_100);
+  });
+
+  test('renders legacy Item arguments instead of the canonical-history-unavailable stub', async () => {
+    const item = {
+      ...base('legacy-mcp'),
+      type: 'mcpToolCall' as const,
+      server: 'docs',
+      tool: 'search',
+      status: 'completed' as const,
+      outputRef: null,
+      arguments: { query: 'legacy canonical history' },
+      pluginId: null,
+      result: { matches: 2 },
+      error: null,
+      durationMs: 5,
+      modelCall: {
+        disposition: 'evidenceOnly' as const,
+        identity: null,
+        providerName: 'historical_mcpToolCall',
+        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
+        reason: 'canonicalHistoryUnavailable' as const,
+        correction: 'Inspect current state before deriving any new tool call.',
+      },
+    } satisfies ThreadItem;
+    let reads = 0;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => {
+        reads += 1;
+        return null;
+      },
+    });
+
+    await flush();
+
+    expect(reads).toBe(0);
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('legacy canonical history');
+    expect(argumentsSection?.textContent).not.toContain('canonical model-call history');
+  });
 });
 
 describe('ThreadItemView tool row status presentation', () => {

@@ -53,7 +53,16 @@ describe('agent secret redaction', () => {
       private_key: secret,
       api_keys: [secret],
       APIKey: secret,
+      apikey: secret,
+      APIKEY: secret,
+      authtoken: secret,
+      accesstoken: secret,
+      api_token: secret,
+      oauthToken: secret,
       authorizationHeader: secret,
+      authorization_url: 'https://example.test/oauth/authorize',
+      passwordPolicy: 'at least twelve characters',
+      secretPolicy: 'rotate every ninety days',
       token_budget: 200_000,
       max_total_tokens: 80_000,
     });
@@ -66,7 +75,16 @@ describe('agent secret redaction', () => {
       private_key: '[redacted]',
       api_keys: ['[redacted]'],
       APIKey: '[redacted]',
+      apikey: '[redacted]',
+      APIKEY: '[redacted]',
+      authtoken: '[redacted]',
+      accesstoken: '[redacted]',
+      api_token: '[redacted]',
+      oauthToken: '[redacted]',
       authorizationHeader: '[redacted]',
+      authorization_url: 'https://example.test/oauth/authorize',
+      passwordPolicy: 'at least twelve characters',
+      secretPolicy: 'rotate every ninety days',
       token_budget: 200_000,
       max_total_tokens: 80_000,
     });
@@ -78,6 +96,12 @@ describe('agent secret redaction', () => {
       '/private_key',
       '/api_keys',
       '/APIKey',
+      '/apikey',
+      '/APIKEY',
+      '/authtoken',
+      '/accesstoken',
+      '/api_token',
+      '/oauthToken',
       '/authorizationHeader',
     ]);
   });
@@ -93,10 +117,18 @@ describe('agent secret redaction', () => {
     });
   });
 
-  test('redacts secret keys inside JSON-encoded provider arguments', () => {
-    const encoded = JSON.stringify({ api_key: 'generic-model-secret', query: 'keep' });
-    expect(redactSecretLikeJson({ arguments: encoded }).value).toEqual({
-      arguments: JSON.stringify({ api_key: '[redacted]', query: 'keep' }),
+  test('keeps JSON-shaped source strings byte-exact instead of treating them as structured arguments', () => {
+    const encoded = [
+      '{',
+      '  "token": "placeholder1234",',
+      '  "authorization_url": "https://example.test/oauth",',
+      '  "passwordPolicy": "at least twelve characters"',
+      '}',
+    ].join('\n');
+
+    expect(redactSecretLikeJson({ content: encoded })).toEqual({
+      value: { content: encoded },
+      redactedPaths: [],
     });
   });
 
@@ -105,6 +137,13 @@ describe('agent secret redaction', () => {
 
     expect(redactSecretLikeJson({ arguments: encoded })).toEqual({
       value: { arguments: encoded },
+      redactedPaths: [],
+    });
+  });
+
+  test('reports a redaction path only when the persisted value changes', () => {
+    expect(redactSecretLikeJson({ secret: false, authorization: null, token: 0 })).toEqual({
+      value: { secret: false, authorization: null, token: 0 },
       redactedPaths: [],
     });
   });

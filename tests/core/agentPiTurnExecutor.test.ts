@@ -2662,7 +2662,7 @@ describe('PiTurnExecutor provider payload', () => {
     expect(JSON.stringify(providerContexts[1])).not.toContain('[Reasoning]');
   });
 
-  test('reattaches signed thinking to every assistant segment around rejected-call evidence', async () => {
+  test('keeps one signed assistant batch and emits rejected-call evidence after its results', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];
     const signature = openAIReasoningSignature('rs_mixed_evidence');
@@ -2701,14 +2701,18 @@ describe('PiTurnExecutor provider payload', () => {
     const assistantSegments = replay.filter((message): message is AssistantMessage => (
       message.role === 'assistant' && message.content.some((part) => part.type === 'toolCall')
     ));
-    expect(assistantSegments).toHaveLength(2);
+    expect(assistantSegments).toHaveLength(1);
     expect(assistantSegments.map((message) => outboundThinkingSignatures([message]))).toEqual([
-      [signature],
       [signature],
     ]);
     expect(assistantSegments.map((message) => message.content.flatMap((part) => (
       part.type === 'toolCall' ? [part.name] : []
-    )))).toEqual([['first_tool'], ['third_tool']]);
+    )))).toEqual([['first_tool', 'third_tool']]);
+    const evidenceIndex = replay.findIndex((message) => JSON.stringify(message).includes('unresolvedTool'));
+    const lastToolResultIndex = replay.reduce((last, message, index) => (
+      message.role === 'toolResult' ? index : last
+    ), -1);
+    expect(evidenceIndex).toBeGreaterThan(lastToolResultIndex);
     expect(JSON.stringify(replay)).toContain('unresolvedTool');
   });
 

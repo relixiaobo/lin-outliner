@@ -7,7 +7,6 @@ import type {
   ThreadContextPayloadReference,
   Turn,
 } from '../../../core/agent/protocol';
-import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { selectEffectiveContext } from './ContextEpoch';
 import { readInheritedContextPayload } from './InheritedContext';
 
@@ -217,14 +216,8 @@ export async function planSkillCatalogEvidence(input: {
   };
 }
 
-export async function observedSkillFilePaths(
-  turns: readonly Turn[],
-  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<string[]> {
+export function observedSkillFilePaths(turns: readonly Turn[]): string[] {
   const paths = new Set<string>();
-  const payloadBackedCalls: Array<{
-    readonly ref: ThreadContextPayloadReference;
-  }> = [];
   for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type === 'fileChange' && item.status === 'completed') {
@@ -237,24 +230,11 @@ export async function observedSkillFilePaths(
         item.type !== 'dynamicToolCall'
         || item.status !== 'completed'
         || item.success !== true
-        || item.modelCall.disposition === 'evidenceOnly'
-        || item.modelCall.identity.namespace !== null
-        || !CORE_FILE_PATH_TOOLS.has(item.modelCall.identity.name)
+        || item.namespace !== null
+        || !CORE_FILE_PATH_TOOLS.has(item.tool)
       ) continue;
-      const source = modelCallArgumentSource(item.modelCall);
-      if (source.storage === 'payload') {
-        payloadBackedCalls.push({ ref: source.ref });
-        continue;
-      }
-      addObservedFilePath(paths, source.value);
+      addObservedFilePath(paths, item.arguments);
     }
-  }
-  const refs = [...new Map(payloadBackedCalls.map(({ ref }) => [ref.id, ref])).values()];
-  const payloads = await Promise.all(refs.map(async (ref) => (
-    readContext(ref).catch(() => null)
-  )));
-  for (const payload of payloads) {
-    if (payload?.kind === 'toolCallArguments') addObservedFilePath(paths, payload.value);
   }
   return [...paths].sort(compareStableText);
 }

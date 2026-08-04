@@ -54,7 +54,10 @@ later Turns, restart, fork, and compaction use only the frozen envelope.
 Persisted pre-envelope tool Items do not gain reconstructed calls during decode. They
 open as `evidenceOnly` with `canonicalHistoryUnavailable`, preserving the visible Item
 and outcome while preventing replay of guessed arguments. This is a read-path
-degradation, not a format migration or legacy replay authority.
+degradation, not a format migration or legacy replay authority. An inspection-only
+helper may read those Items' own bounded presentation fields for rows, transcripts,
+Memory evidence, Skill path observation, and compaction invalidation. The provider
+projector never imports that helper or promotes its output into a call.
 
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
@@ -89,6 +92,9 @@ boundary. Skill and Role reducers record one catalog baseline per context epoch,
 only changed entries, restore validated compaction checkpoints, and start a new baseline
 after `contextReset`. A newly discovered Skill or Role can therefore join an existing
 Thread without rebuilding or rewriting its earlier provider prefix.
+Path-triggered Skill observation reads the bounded path already carried by successful
+Core file Items; it never decodes historical argument payloads at Turn acceptance,
+resume, or runtime preparation.
 
 The effective context begins after the latest `contextReset`. Within that epoch, the
 latest valid `contextCompaction` replaces only its exact covered range with the recorded
@@ -390,8 +396,12 @@ references them. Execution-time context publication writes the payload and its I
 under the Thread mutex; failed publication and Turn terminalization prune any context
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
-than truncation. Secret-like model arguments are structurally redacted before either
-the Item or payload becomes durable. Redacted replay compatibility is decided once
+than truncation. Secret-bearing structured object fields and high-confidence credential
+formats in opaque strings are redacted before either the Item or payload becomes durable;
+model-authored opaque strings are never parsed or reformatted as nested JSON. At the
+separate diagnostic boundary, a provider adapter's explicitly serialized function-call
+argument field is decoded and structurally redacted before the diagnostic copy is stored;
+that copy never becomes Item or replay data. Redacted replay compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
@@ -429,7 +439,10 @@ replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
 path. New tool Items always write the required envelope. Decode of a pre-envelope
 tool Item synthesizes only `canonicalHistoryUnavailable` evidence in memory; it does
-not migrate storage, reconstruct arguments, or introduce a legacy replay path.
+not migrate storage, reconstruct arguments, or introduce a legacy replay path. Its
+bounded Item fields remain available to inspection-only consumers so existing rows,
+transcripts, Memory evidence, Skills, and observation invalidation do not lose visible
+facts.
 
 ## Transport
 
