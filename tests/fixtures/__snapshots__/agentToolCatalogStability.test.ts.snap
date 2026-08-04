@@ -453,7 +453,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "generate_image",
-    "description": "Generate or edit raster images with an enabled image-capable provider. Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion. Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned markdownImage exactly where each image belongs in the final answer.",
+    "description": "Generate or edit raster images with an enabled image-capable provider. Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion. Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. Generated images are shown to the user automatically. Use each returned path when an image must be copied or edited.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -475,11 +475,11 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "image_paths": {
           "type": "array",
           "maxItems": 4,
-          "description": "Optional local image paths for edits or transformations. Use path values or markdownImage values returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.",
+          "description": "Optional local image paths for edits or transformations. Use path values returned by earlier tool results, absolute paths, workspace-relative paths, file:^ targets, or [[file:...]] markers. Omit for text-to-image.",
           "items": {
             "type": "string",
             "minLength": 1,
-            "description": "Readable local image path, file:^... target, Markdown image, or [[file:...]] marker to use as an edit/reference input."
+            "description": "Readable local image path, file:^... target, or [[file:...]] marker to use as an edit/reference input."
           }
         },
         "count": {

@@ -8,11 +8,31 @@ import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEn
 import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
-const GENERATED_IMAGE_PATH = 'generated-images/run-a/image-0.png';
+const GENERATED_IMAGE_PATH = '/scratch/agent-attachments/turn/image-0.png';
+const GENERATED_IMAGE_REF = {
+  id: 'a'.repeat(64),
+  mimeType: 'image/png',
+  byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
+  fileName: 'image-0.png',
+};
+
+function generatedOutputRuntime(): Pick<
+  AgentImageGenerationRuntime,
+  'admitToolOutputImage' | 'resolveResourceObservationPath'
+> {
+  return {
+    admitToolOutputImage: async () => ({
+      ok: true,
+      ref: GENERATED_IMAGE_REF,
+      byteLength: GENERATED_IMAGE_REF.byteLength,
+      mimeType: GENERATED_IMAGE_REF.mimeType,
+    }),
+    resolveResourceObservationPath: async () => GENERATED_IMAGE_PATH,
+  };
+}
 
 describe('generate_image tool', () => {
-  test('returns generated image paths without embedding image bytes in the tool result', async () => {
-    const writtenPaths: string[] = [];
+  test('returns a Thread observation path and emits image content without embedding bytes in JSON', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -23,11 +43,7 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async ({ index }) => {
-        const path = `generated-images/run-a/image-${index}.png`;
-        writtenPaths.push(path);
-        return { path };
-      },
+      ...generatedOutputRuntime(),
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
         provider: 'openai',
@@ -48,29 +64,128 @@ describe('generate_image tool', () => {
     expect(details.data?.modelId).toBe('gpt-image-2');
     expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
-    expect(details.data?.images[0]?.path).toBe('generated-images/run-a/image-0.png');
-    expect(details.data?.images[0]?.markdownImage).toBe(`![Generated image 1](${formatLocalFileReferenceUrl('generated-images/run-a/image-0.png')})`);
-    expect(writtenPaths).toEqual(['generated-images/run-a/image-0.png']);
+    expect(details.data?.images[0]?.path).toBe(GENERATED_IMAGE_PATH);
 
     const text = result.content.find((part) => part.type === 'text');
     const image = result.content.find((part) => part.type === 'image');
-    expect(image).toBeUndefined();
+    expect(image).toEqual({ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' });
     if (!text || text.type !== 'text') throw new Error('Expected text result');
     expect(text.text).not.toContain(ONE_PIXEL_PNG_BASE64);
     expect(JSON.parse(text.text)).toEqual({
       ok: true,
       data: {
         images: [{
-          path: 'generated-images/run-a/image-0.png',
-          markdownImage: `![Generated image 1](${formatLocalFileReferenceUrl('generated-images/run-a/image-0.png')})`,
+          path: GENERATED_IMAGE_PATH,
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
           width: 1,
           height: 1,
         }],
       },
-      instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or markdownImage in image_paths for follow-up edits.',
+      instructions: 'The image is saved in this conversation and already shown to the user; there is no need to render it again in the final answer. Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.',
     });
+  });
+
+  test('keeps admitted images and reports per-image admission failures as partial', async () => {
+    let rejectAll = false;
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text', 'image'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      readLocalImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
+      admitToolOutputImage: async ({ imageIndex }) => !rejectAll && imageIndex === 0
+        ? {
+            ok: true,
+            ref: GENERATED_IMAGE_REF,
+            byteLength: GENERATED_IMAGE_REF.byteLength,
+            mimeType: GENERATED_IMAGE_REF.mimeType,
+          }
+        : { ok: false, reason: 'imageByteLimit' },
+      generateImages: async ({ modelId }) => ({
+        api: 'openai-images',
+        provider: 'openai',
+        model: modelId,
+        output: [
+          { type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' },
+          { type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' },
+        ],
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const result = await createGenerateImageTool(runtime).execute('call-partial', {
+      prompt: 'Two small squares',
+      count: 2,
+    });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+
+    expect(details).toMatchObject({
+      ok: true,
+      status: 'partial',
+      data: { images: [{ path: GENERATED_IMAGE_PATH }] },
+      warnings: [expect.stringContaining('10 MB per-image limit')],
+    });
+    expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
+
+    rejectAll = true;
+    const rejected = await createGenerateImageTool(runtime).execute('call-all-rejected', {
+      prompt: 'Two small squares',
+      count: 2,
+    });
+    expect(rejected.details).toMatchObject({
+      ok: true,
+      status: 'partial',
+      data: { images: [] },
+      instructions: 'No generated image was saved. Follow the warnings before retrying.',
+    });
+    expect(rejected.content.filter((part) => part.type === 'image')).toHaveLength(0);
+  });
+
+  test('keeps the image when its working path cannot be materialized', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      readLocalImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
+      resolveResourceObservationPath: async () => {
+        throw new Error('scratch unavailable');
+      },
+      generateImages: async ({ modelId }) => ({
+        api: 'openai-images',
+        provider: 'openai',
+        model: modelId,
+        output: [{ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' }],
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const result = await createGenerateImageTool(runtime).execute('call-no-observation', {
+      prompt: 'A small red square',
+    });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+
+    expect(details).toMatchObject({
+      ok: true,
+      status: 'partial',
+      data: { images: [] },
+      warnings: [expect.stringContaining('working path could not be materialized')],
+      metrics: { outputBytes: GENERATED_IMAGE_REF.byteLength },
+    });
+    expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
   });
 
   test('treats model auto as the default selection', async () => {
@@ -90,7 +205,7 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'google',
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
+      ...generatedOutputRuntime(),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -128,7 +243,7 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       getDefaultModel: async () => 'google/gemini-3.1-flash-image',
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
+      ...generatedOutputRuntime(),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -160,7 +275,7 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       getDefaultModel: async () => 'google/gemini-3.1-flash-image',
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
+      ...generatedOutputRuntime(),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -200,7 +315,7 @@ describe('generate_image tool', () => {
           : null
       ),
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
       generateImages: async () => { throw new Error('provider should not be called'); },
     };
 
@@ -225,7 +340,7 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
         provider: 'openai',
@@ -249,7 +364,7 @@ describe('generate_image tool', () => {
     expect(visible.instructions).toContain('switch the default image model');
   });
 
-  test('returns a recoverable error when an input image path is missing', async () => {
+  test('does not unwrap a legacy Markdown image when an input path is missing', async () => {
     let attemptedPath = '';
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
@@ -264,15 +379,16 @@ describe('generate_image tool', () => {
         attemptedPath = filePath;
         throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
       },
-      writeGeneratedImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
       generateImages: async () => { throw new Error('provider should not be called'); },
     };
 
     const tool = createGenerateImageTool(runtime);
-    const missingPath = 'generated-images/run-a/missing.png';
+    const missingTarget = '/missing/input.png';
+    const missingPath = `![Missing](${formatLocalFileReferenceUrl(missingTarget)})`;
     const result = await tool.execute('call-missing-input', {
       prompt: 'Edit this image',
-      image_paths: [`![Missing](${formatLocalFileReferenceUrl(missingPath)})`],
+      image_paths: [missingPath],
     });
     const details = result.details as ToolEnvelope<GenerateImageData>;
     const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');

@@ -652,21 +652,43 @@ describe('canonical context projection', () => {
       durationMs: 1,
       modelCall: projectionModelCall('visual__render', {}),
     };
-    const resources = projectionResources(payloads, new Map([
-      [managedRef.id, Buffer.from('chart')],
-      [localSnapshotRef.id, Buffer.from('raw')],
-    ]));
+    const resources = {
+      ...projectionResources(payloads, new Map([
+        [managedRef.id, Buffer.from('chart')],
+        [localSnapshotRef.id, Buffer.from('raw')],
+      ])),
+      resolveDetachedResourceObservationPath: async () => '/scratch/detached/chart.png',
+    };
 
     const messages = await new CanonicalContextProjector(model, resources).projectTurns([
       turn(1, [userItem('user-images', 1_720_000_000_123, 'Render both.'), tool], true),
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
     expect(result?.content).toEqual([
-      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes]' },
+      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes, readable_path="/scratch/detached/chart.png"]' },
       { type: 'image', data: Buffer.from('chart').toString('base64'), mimeType: 'image/png' },
       { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
+
+    const degradedMessages = await new CanonicalContextProjector(model, {
+      ...resources,
+      resolveDetachedResourceObservationPath: async () => {
+        throw new Error('scratch unavailable');
+      },
+    }).projectTurns([
+      turn(1, [userItem('user-images', 1_720_000_000_123, 'Render both.'), tool], true),
+    ]);
+    const degradedResult = degradedMessages.find((message) => message.role === 'toolResult');
+    expect(degradedResult?.content).toContainEqual({
+      type: 'text',
+      text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes]',
+    });
+    expect(degradedResult?.content).toContainEqual({
+      type: 'image',
+      data: Buffer.from('chart').toString('base64'),
+      mimeType: 'image/png',
+    });
   });
 
   test('replays exact canonical bash arguments without deriving fields from presentation metadata', async () => {
@@ -1787,6 +1809,7 @@ function projectionResources(
     readOutput: async (ref: { readonly id: string }) => outputs.get(ref.id) ?? null,
     readResource: async (ref: ThreadResourceReference) => resources.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveDetachedResourceObservationPath: async () => null,
   };
 }
 

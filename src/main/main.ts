@@ -3,8 +3,8 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, posix, resolve } from 'node:path';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
@@ -49,7 +49,6 @@ import {
   type AgentLocalWorkspaceContext,
 } from './agent/capabilities/agentLocalTools';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
-import { resolveGeneratedImageReadPath } from './generatedImagePaths';
 import {
   piFindImageModel,
   piGenerateImages,
@@ -221,9 +220,7 @@ import {
   MAX_PROMPT_IMAGE_BYTES,
   MAX_PROMPT_IMAGE_DIMENSION,
 } from '../core/agentAttachmentLimits';
-import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
-  AGENT_GENERATED_IMAGE_DIR,
   isPathInside,
   pruneAgentScratch,
 } from './agent/capabilities/agentAttachmentMaterialization';
@@ -798,8 +795,9 @@ toolRuntime = new ToolRuntime(threadService, {
   },
   skillRuntime: prepareSkillRuntimeForTurn,
   imageGeneration: (context) => createThreadImageGenerationRuntime(
-    context.turn.id,
     localWorkspaceForTurn(context),
+    context.admitToolOutputImage,
+    context.resolveResourceObservationPath,
   ),
   dynamicTools: () => [createAutomationTool(automationService)],
 });
@@ -818,8 +816,9 @@ automationService.subscribe((notification) => {
 });
 
 function createThreadImageGenerationRuntime(
-  turnId: string,
   workspace: AgentLocalWorkspaceContext,
+  admitToolOutputImage: AgentImageGenerationRuntime['admitToolOutputImage'],
+  resolveResourceObservationPath: AgentImageGenerationRuntime['resolveResourceObservationPath'],
 ): AgentImageGenerationRuntime {
   return {
     listModels: async () => {
@@ -851,22 +850,14 @@ function createThreadImageGenerationRuntime(
     validateOptions: ({ providerId, modelId, options }) => (
       validateImageGenerationOptions(providerId, modelId, options)
     ),
+    admitToolOutputImage,
+    resolveResourceObservationPath,
     readLocalImage: async ({ filePath }) => {
-      const resolvedPath = await resolveGeneratedImageReadPath(workspace, filePath)
-        ?? resolveAgentLocalReadPath(workspace, filePath);
+      const resolvedPath = resolveAgentLocalReadPath(workspace, filePath);
       const data = await readFile(resolvedPath);
       const mimeType = sniffMimeType(data, resolvedPath);
       if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
       return { data, mimeType, label: basename(resolvedPath) };
-    },
-    writeGeneratedImage: async ({ toolCallId, index, data, mimeType }) => {
-      const turnPart = shortGeneratedImagePathPart(turnId, 'turn');
-      const directory = join(workspace.scratchRoot, AGENT_GENERATED_IMAGE_DIR, turnPart);
-      await mkdir(directory, { recursive: true });
-      const callDigest = createHash('sha256').update(toolCallId).digest('hex').slice(0, 6);
-      const fileName = `image-${index}-${callDigest}${generatedImageExtension(mimeType)}`;
-      await writeFile(join(directory, fileName), data);
-      return { path: posix.join(AGENT_GENERATED_IMAGE_DIR, turnPart, fileName) };
     },
     generateImages: async ({ providerId, modelId, context, options }) => {
       const model = piFindImageModel(providerId, modelId);
@@ -881,20 +872,6 @@ function createThreadImageGenerationRuntime(
 function imageProviderPriority(priority: readonly string[], providerId: string): number {
   const index = priority.indexOf(providerId);
   return index >= 0 ? index : priority.length;
-}
-
-function shortGeneratedImagePathPart(value: string, fallback: string): string {
-  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
-  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
-  return `${safe}-${digest}`;
-}
-
-function generatedImageExtension(mimeType: string): string {
-  const normalized = mimeType.toLowerCase();
-  if (normalized === 'image/jpeg') return '.jpg';
-  if (normalized === 'image/webp') return '.webp';
-  if (normalized === 'image/gif') return '.gif';
-  return '.png';
 }
 
 const previewTranslationCache = new PreviewTranslationCacheStore(
@@ -1963,12 +1940,6 @@ function configChildWindowParent(excluded: BrowserWindow | null = null): Browser
   return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
 }
 
-function trustedLocalFileReferenceOptions() {
-  return {
-    relativeGeneratedImageRoots: [agentScratchRoot],
-  };
-}
-
 interface LocalFileOperationInput {
   readonly path?: unknown;
   readonly threadId?: unknown;
@@ -1988,7 +1959,6 @@ async function resolveLocalFileOperation(
     return resolveTrustedLocalFileReference(
       raw?.path,
       [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
     );
   }
   const attachment = await threadService.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
@@ -1997,7 +1967,6 @@ async function resolveLocalFileOperation(
     return resolveTrustedLocalFileReference(
       raw?.path,
       [attachment.path],
-      trustedLocalFileReferenceOptions(),
     );
   }
   if (allowAttachmentPathHint) {
@@ -2086,7 +2055,6 @@ function registerIpc() {
         assertMainRenderer(event, 'Preview');
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
-          agentGeneratedImageRoots: [agentScratchRoot],
           assetService,
           assetFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
@@ -2654,7 +2622,6 @@ async function handleAssetCommand(
       const file = await resolveTrustedLocalFileReference(
         (args as { path?: unknown }).path,
         [agentLocalFileRoot, agentScratchRoot],
-        trustedLocalFileReferenceOptions(),
       );
       if (!file || file.entryKind !== 'file') return null;
       return assetService.ingest({ kind: 'path', path: file.path });

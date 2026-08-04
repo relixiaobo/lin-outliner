@@ -4,7 +4,6 @@ import path from 'node:path';
 import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
-export const AGENT_GENERATED_IMAGE_DIR = 'generated-images';
 export const AGENT_SCRATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ManagedAttachmentObservation {
@@ -93,10 +92,7 @@ export async function pruneAgentScratch(
     if (isNodeError(error) && error.code === 'ENOENT') return;
     throw error;
   }
-  await Promise.all(subdirs.map((entry) => {
-    if (entry === AGENT_GENERATED_IMAGE_DIR) return undefined;
-    return pruneDirEntriesByTtl(path.join(root, entry), now, ttlMs);
-  }));
+  await Promise.all(subdirs.map((entry) => pruneDirEntriesByTtl(path.join(root, entry), now, ttlMs)));
 }
 
 async function pruneDirEntriesByTtl(dir: string, now: number, ttlMs: number): Promise<void> {

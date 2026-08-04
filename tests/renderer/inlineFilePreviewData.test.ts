@@ -33,7 +33,7 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
   });
 
   test('a model-visible file:^ target parses as a local file reference', () => {
-    const path = 'generated-images/run-a/image-0.png';
+    const path = '/scratch/agent-attachments/turn/image-0.png';
     expect(localFileReferenceFromHref(formatLocalFileReferenceUrl(path))).toEqual({ entryKind: 'file', path });
   });
 

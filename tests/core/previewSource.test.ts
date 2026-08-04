@@ -48,46 +48,6 @@ describe('preview source commands', () => {
     expect(outside.source).toBeNull();
   });
 
-  test('resolves relative generated image paths under scratch roots', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'lin-preview-scratch-test-'));
-    try {
-      const workspaceGeneratedDir = join(root, 'generated-images', 'run-a');
-      const generatedDir = join(scratch, 'generated-images', 'run-a');
-      await mkdir(workspaceGeneratedDir, { recursive: true });
-      await mkdir(generatedDir, { recursive: true });
-      await writeFile(join(workspaceGeneratedDir, 'image-0.png'), 'workspace-bytes');
-      const generatedPath = join(generatedDir, 'image-0.png');
-      await writeFile(generatedPath, 'png-bytes');
-      const targetPath = 'generated-images/run-a/image-0.png';
-
-      const context = previewContext({
-        agentLocalFileRoots: [root, scratch],
-        agentGeneratedImageRoots: [scratch],
-      });
-      const resolved = await handlePreviewCommand('preview_resolve_source', {
-        target: { kind: 'local-file', path: targetPath, entryKind: 'file' },
-      }, context) as PreviewResolveSourceResult;
-
-      expect(resolved.source).toMatchObject({
-        kind: 'file',
-        sourceKind: 'local-file',
-        name: 'image-0.png',
-        target: {
-          kind: 'local-file',
-          path: await realpath(generatedPath),
-          entryKind: 'file',
-        },
-      });
-
-      const text = await handlePreviewCommand('preview_read_text', {
-        target: { kind: 'local-file', path: targetPath, entryKind: 'file' },
-      }, context) as PreviewReadTextResult;
-      expect(text.text).toBe('png-bytes');
-    } finally {
-      await rm(scratch, { recursive: true, force: true });
-    }
-  });
-
   test('authorizes one external attachment without widening the trusted roots', async () => {
     const externalRoot = await mkdtemp(join(tmpdir(), 'lin-preview-attachment-test-'));
     try {
@@ -332,7 +292,6 @@ describe('preview source commands', () => {
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
       agentLocalFileRoots: [root],
-      agentGeneratedImageRoots: [],
       assetService: {
         lookup: async () => null,
         pathFor: async () => null,

@@ -19,7 +19,6 @@ import {
 import {
   resolveTrustedLocalFileReference,
   type TrustedLocalFileReference,
-  type TrustedLocalFileReferenceOptions,
 } from './localFileReferenceSecurity';
 
 export interface LocalFilePreviewMetadata {
@@ -39,12 +38,9 @@ export interface ThreadAttachmentPreviewFile extends TrustedLocalFileReference {
 }
 
 export interface PreviewCommandContext {
-  // The app-owned roots a local-file preview may resolve under: the agent workdir and its
-  // scratch sibling (web-fetch outputs and generated preview artifacts live in scratch).
+  // The app-owned roots an absolute local-file preview may resolve under: the agent workdir
+  // and its scratch sibling (web-fetch and managed-resource observations live in scratch).
   agentLocalFileRoots: readonly string[];
-  // Relative generated-image references are model-authored shortcuts for files
-  // created by the app, so they resolve only under the generated-image roots.
-  agentGeneratedImageRoots: readonly string[];
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
   assetFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   inferMimeType: (filePath: string) => string;
@@ -244,7 +240,6 @@ async function previewDirectoryEntriesForTarget(
     const child = await resolveTrustedLocalFileReference(
       join(file.path, dirent.name),
       target.threadId && (target.attachmentId || target.resourceRef) ? [file.path] : context.agentLocalFileRoots,
-      localFileReferenceOptions(context),
     );
     if (!child) continue;
     const mimeType = child.entryKind === 'directory' ? 'inode/directory' : context.inferMimeType(child.path);
@@ -278,7 +273,6 @@ async function resolveLocalFileTarget(
     return resolveTrustedLocalFileReference(
       target.path,
       context.agentLocalFileRoots,
-      localFileReferenceOptions(context),
     );
   }
   if (target.resourceRef) {
@@ -297,14 +291,7 @@ async function resolveLocalFileTarget(
   return resolveTrustedLocalFileReference(
     target.path,
     [attachment.path],
-    localFileReferenceOptions(context),
   );
-}
-
-function localFileReferenceOptions(context: PreviewCommandContext): TrustedLocalFileReferenceOptions {
-  return {
-    relativeGeneratedImageRoots: context.agentGeneratedImageRoots,
-  };
 }
 
 function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {

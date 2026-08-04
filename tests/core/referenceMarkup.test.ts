@@ -103,9 +103,9 @@ describe('reference markup', () => {
     const url = formatLocalFileReferenceUrl(path);
     expect(url).toBe('file:^%2FUsers%2Fme%2FDesign%20%5E%20notes%2F%5Bdraft%5D%0Areport.pdf');
     expect(parseLocalFileReferenceUrl(url)).toEqual({ entryKind: 'file', path });
-    expect(parseLocalFileReferenceUrl('file:%5Egenerated-images%2Frun-a%2Fimage.png')).toEqual({
+    expect(parseLocalFileReferenceUrl('file:%5Eexports%2Frun-a%2Fimage.png')).toEqual({
       entryKind: 'file',
-      path: 'generated-images/run-a/image.png',
+      path: 'exports/run-a/image.png',
     });
     expect(parseLocalFileReferenceUrl(formatLocalFileReferenceUrl('/Users/me/Projects', 'directory'))).toEqual({
       entryKind: 'directory',

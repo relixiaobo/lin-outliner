@@ -15,6 +15,7 @@ import type { ExtensionRegistry } from '../ExtensionRegistry';
 import { cappedChildPoolId,requestPoolIdForTurn,type SubagentRequestLedger,type SubagentRequestMember,type SubagentRequestPool,type SubagentRequestPoolId } from '../persistence/SubagentRequestLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
+import { createToolOutputImageAdmission } from '../runtime/ToolOutputImageAdmission';
 import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
 import { SubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
 import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
@@ -969,6 +970,12 @@ export class TurnLifecycle {
       const hidden = this.core.hiddenEphemeralThreads.has(active.threadId);
       const resourceObservation = this.resourceOps.createResourceObservation(active.threadId, true);
       const createdOutputResources: ThreadResourceReference[] = [];
+      const persistOutputImage = async (dataBase64: string, mimeType: string) => {
+        const written = await this.core.payloads.writeImageWithStatus(active.threadId, dataBase64, mimeType);
+        if (written.created) createdOutputResources.push(written.ref);
+        return written.ref;
+      };
+      const admitToolOutputImage = createToolOutputImageAdmission(persistOutputImage);
       try {
         result = await this.executor.execute({
           thread,
@@ -980,12 +987,12 @@ export class TurnLifecycle {
           readContext: (ref) => this.core.payloads.readContext(active.threadId, ref),
           readOutput: (ref) => this.core.payloads.readTextReference(active.threadId, ref),
           resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
+          resolveDetachedResourceObservationPath: (ref) => (
+            this.resourceOps.resolveDetachedResourceObservationPath(active.threadId, ref)
+          ),
           readResource: (ref) => this.core.payloads.readResource(active.threadId, ref),
-          persistOutputImage: async (dataBase64, mimeType) => {
-            const written = await this.core.payloads.writeImageWithStatus(active.threadId, dataBase64, mimeType);
-            if (written.created) createdOutputResources.push(written.ref);
-            return written.ref;
-          },
+          persistOutputImage,
+          admitToolOutputImage,
           persistOutputText: (itemId, text, mimeType, summary) => this.core.payloads.writeText(
             active.threadId,
             itemId,

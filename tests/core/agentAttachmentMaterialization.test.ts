@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  AGENT_GENERATED_IMAGE_DIR,
   AGENT_SCRATCH_TTL_MS,
   createManagedAttachmentObservation,
   isPathInside,
@@ -47,19 +46,20 @@ describe('agent scratch lifecycle', () => {
     }
   });
 
-  test('keeps generated image artifacts out of generic scratch TTL pruning', async () => {
+  test('prunes expired generated image leftovers like every other scratch area', async () => {
     const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
     const now = Date.now();
     const expiredSeconds = (now - AGENT_SCRATCH_TTL_MS - 1000) / 1000;
-    const generatedDir = path.join(scratchRoot, AGENT_GENERATED_IMAGE_DIR, 'run-1');
+    const generatedDir = path.join(scratchRoot, 'generated-images', 'run-1');
     await mkdir(generatedDir, { recursive: true });
     const generatedPath = path.join(generatedDir, 'image.png');
     await writeFile(generatedPath, 'image bytes');
     await utimes(generatedPath, expiredSeconds, expiredSeconds);
+    await utimes(path.dirname(generatedPath), expiredSeconds, expiredSeconds);
 
     await pruneAgentScratch(scratchRoot, now);
 
-    expect(await readdir(generatedDir)).toEqual(['image.png']);
+    await expect(readdir(generatedDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   test('pruneAgentScratch is a no-op when the scratch root does not exist', async () => {

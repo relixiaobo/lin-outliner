@@ -65,11 +65,10 @@ import {
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
-import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
 import {
-  MAX_TOOL_PAYLOAD_IMAGE_BYTES,
-  measureToolPayloadImage,
-} from '../persistence/ToolPayloadStore';
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../capabilities/agentToolResultPersistence';
 import {
   piExternalProviderId,
   piCompleteSimple,
@@ -87,11 +86,18 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
+import {
+  TOOL_OUTPUT_IMAGE_LIMITS,
+  type ToolOutputImageOmissionReason,
+} from './ToolOutputImageAdmission';
+
+export {
+  MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
+  MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
+} from './ToolOutputImageAdmission';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
-export const MAX_PERSISTED_TOOL_OUTPUT_IMAGES = 16;
-export const MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_PERSISTED_TOOL_STRING_CHARS = 8_000;
 const MAX_PERSISTED_WEB_RESULTS = 50;
 export const MAX_THREAD_NAME_CHARS = 80;
@@ -1282,14 +1288,17 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  if (!output.text) return null;
+  const text = item.type === 'dynamicToolCall'
+    ? persistedToolResultText({ toolName: item.tool, text: output.text })
+    : output.text;
+  if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
-  const normalized = output.text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/\s+/g, ' ').trim();
   const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
   return context.persistOutputText(
     item.id,
-    output.text,
+    text,
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
@@ -1447,9 +1456,7 @@ async function dynamicOutput(
   const content: DynamicToolOutputContent[] = [];
   let remainingText = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
   let imageIndex = 0;
-  let persistedImages = 0;
-  let persistedImageBytes = 0;
-  const omittedImages: Record<ImageOmissionReason, number> = {
+  const omittedImages: Record<ToolOutputImageOmissionReason, number> = {
     countLimit: 0,
     invalidBase64: 0,
     invalidMimeType: 0,
@@ -1460,51 +1467,35 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const text = boundedText(part.text, remainingText);
+      const persisted = persistedToolResultText({ toolName: item.tool, text: part.text });
+      const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
     }
     if (part.type === 'image' && typeof part.data === 'string') {
       const sourceImageIndex = imageIndex;
       imageIndex += 1;
-      if (persistedImages >= MAX_PERSISTED_TOOL_OUTPUT_IMAGES) {
-        omittedImages.countLimit += 1;
-        continue;
-      }
-      const measurement = measureToolPayloadImage(part.data);
-      if (!measurement.ok) {
-        omittedImages[measurement.reason] += 1;
-        continue;
-      }
-      if (persistedImageBytes + measurement.byteLength > MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES) {
-        omittedImages.callByteLimit += 1;
-        continue;
-      }
-      const mimeType = dynamicImageMimeType(part.mimeType);
-      if (!mimeType) {
-        omittedImages.invalidMimeType += 1;
+      const admission = await context.admitToolOutputImage({
+        toolCallId: item.id,
+        imageIndex: sourceImageIndex,
+        role: 'normalizer',
+        dataBase64: part.data,
+        mimeType: part.mimeType,
+      });
+      if (!admission.ok) {
+        omittedImages[admission.reason] += 1;
         continue;
       }
       const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
-        if (isThreadResourceQuotaError(error)) return null;
-        throw error;
-      });
-      if (!promptImage) {
-        omittedImages.quotaExceeded += 1;
-        continue;
-      }
-      persistedImageBytes += measurement.byteLength;
       if (existingPath) {
         content.push({
           type: 'image',
           source: { kind: 'localFile', path: existingPath },
-          promptImage,
+          promptImage: admission.ref,
         });
       } else {
-        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
+        content.push({ type: 'image', source: { kind: 'threadPayload', ref: admission.ref } });
       }
-      persistedImages += 1;
     }
   }
   const omittedImageCount = Object.values(omittedImages).reduce((total, count) => total + count, 0);
@@ -1514,11 +1505,7 @@ async function dynamicOutput(
       value: {
         imagesOmitted: omittedImageCount,
         reasons: Object.fromEntries(Object.entries(omittedImages).filter(([, count]) => count > 0)),
-        limits: {
-          maxImages: MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
-          maxImageBytes: MAX_TOOL_PAYLOAD_IMAGE_BYTES,
-          maxCallBytes: MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
-        },
+        limits: TOOL_OUTPUT_IMAGE_LIMITS,
       },
     });
   }
@@ -1531,25 +1518,6 @@ async function dynamicOutput(
   return content;
 }
 
-type ImageOmissionReason =
-  | 'countLimit'
-  | 'invalidBase64'
-  | 'invalidMimeType'
-  | 'imageByteLimit'
-  | 'callByteLimit'
-  | 'quotaExceeded';
-
-function dynamicImageMimeType(value: unknown): string | null {
-  if (value === undefined) return 'image/png';
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
-}
-
-function isThreadResourceQuotaError(error: unknown): boolean {
-  return error instanceof Error && /\bquota\b/iu.test(error.message);
-}
-
 function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
   const details = toolDetails(result);
   if (!isRecord(details) || !isRecord(details.data)) return null;
@@ -1557,10 +1525,6 @@ function toolImagePath(toolName: string, result: Record<string, unknown>, imageI
     if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
       return details.data.file.filePath;
     }
-  }
-  if (toolName === 'generate_image' && Array.isArray(details.data.images)) {
-    const image = details.data.images[imageIndex];
-    if (isRecord(image) && typeof image.path === 'string') return image.path;
   }
   return null;
 }

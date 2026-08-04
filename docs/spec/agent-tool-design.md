@@ -119,6 +119,24 @@ the model.
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
 
+`generate_image` persists each admitted provider image as a Thread-owned managed tool
+image before returning its result. It resolves a Turn-scoped absolute observation path
+for immediate file operations and emits the same bytes as image content, which makes the
+image visible to both the model and Thread UI and records the resource dependency on the
+tool Item. The normalizer's second persistence pass reuses the content-addressed ref. On
+later Turns the projector materializes a detached observation and publishes a fresh
+`readable_path`; persisted tool text never carries the expired Turn path. Observation
+materialization failure degrades only the working path, never the admitted image.
+
+Generated images are displayed automatically, so the tool returns no Markdown image
+syntax and does not ask the model to repeat an image in its final answer. The returned
+absolute path is a working copy for the current Turn. When the user names a destination,
+the model copies that path with the ordinary shell and leaves the working copy in place.
+Admission failures degrade per image: accepted images remain in a `partial` result, while
+warnings name the count, byte, MIME, base64, or Thread quota refusal and a remedy. The
+tool writes no dedicated `generated-images` scratch area; all scratch subdirectories obey
+the same TTL cleanup rule.
+
 Import commit requires a matching, unexpired preview identity. It writes one
 staging subtree through the Outliner host and verifies the materialized counts.
 The write carries the executing Item's causation.

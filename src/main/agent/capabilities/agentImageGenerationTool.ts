@@ -13,11 +13,17 @@ import {
 } from './agentToolEnvelope';
 import { readAgentImageDimensions } from './agentLocalTools';
 import {
-  formatLocalFileReferenceUrl,
   parseLocalFileReferenceUrl,
   splitFileReferenceMarkers,
   type FileReferenceSegment,
 } from '../../../core/referenceMarkup';
+import {
+  TOOL_OUTPUT_IMAGE_LIMITS,
+  type ToolOutputImageAdmission,
+  type ToolOutputImageAdmissionInput,
+  type ToolOutputImageOmissionReason,
+} from '../runtime/ToolOutputImageAdmission';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 
@@ -49,15 +55,8 @@ export interface AgentImageGenerationRuntime {
     options: GenerateImageRuntimeOptions;
   }): AgentImageGenerationOptionValidationIssue | null;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
-  writeGeneratedImage(input: {
-    toolCallId: string;
-    index: number;
-    providerId: string;
-    modelId: string;
-    data: Buffer;
-    mimeType: string;
-    prompt: string;
-  }): Promise<{ path: string }>;
+  admitToolOutputImage(input: ToolOutputImageAdmissionInput): Promise<ToolOutputImageAdmission>;
+  resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   generateImages(input: {
     providerId: string;
     modelId: string;
@@ -94,7 +93,6 @@ export interface GenerateImageData {
 
 export interface GeneratedImageResult {
   path: string;
-  markdownImage: string;
   mimeType: string;
   byteLength: number;
   width?: number;
@@ -120,7 +118,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
     description: [
       'Generate or edit raster images with an enabled image-capable provider.',
       'Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion.',
-      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned markdownImage exactly where each image belongs in the final answer.',
+      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. Generated images are shown to the user automatically. Use each returned path when an image must be copied or edited.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -141,8 +139,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         image_paths: {
           type: 'array',
           maxItems: MAX_IMAGE_PATHS,
-          description: 'Optional local image paths for edits or transformations. Use path values or markdownImage values returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.',
-          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, Markdown image, or [[file:...]] marker to use as an edit/reference input.' },
+          description: 'Optional local image paths for edits or transformations. Use path values returned by earlier tool results, absolute paths, workspace-relative paths, file:^ targets, or [[file:...]] markers. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, or [[file:...]] marker to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -274,26 +272,39 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           }));
         }
 
-        const images = await Promise.all(imageOutputs.map(async (image, index): Promise<GeneratedImageResult> => {
-          const data = Buffer.from(stripDataUrlPrefix(image.data), 'base64');
-          const dimensions = readAgentImageDimensions(data, image.mimeType);
-          const saved = await runtime.writeGeneratedImage({
+        const images: GeneratedImageResult[] = [];
+        const extraContent: PiImageContent[] = [];
+        const warnings: string[] = [];
+        let admittedOutputBytes = 0;
+        for (const [index, image] of imageOutputs.entries()) {
+          const dataBase64 = stripDataUrlPrefix(image.data);
+          const admission = await runtime.admitToolOutputImage({
             toolCallId,
-            index,
-            providerId: selected.providerId,
-            modelId: selected.id,
-            data,
+            imageIndex: index,
+            role: 'producer',
+            dataBase64,
             mimeType: image.mimeType,
-            prompt: params.prompt,
           });
-          return {
-            path: saved.path,
-            markdownImage: `![${generatedImageAlt(index)}](${formatLocalFileReferenceUrl(saved.path)})`,
-            mimeType: image.mimeType,
-            byteLength: data.byteLength,
+          if (!admission.ok) {
+            warnings.push(generatedImageAdmissionWarning(index, admission.reason));
+            continue;
+          }
+          admittedOutputBytes += admission.byteLength;
+          extraContent.push({ type: 'image', data: dataBase64, mimeType: admission.mimeType });
+          const path = await runtime.resolveResourceObservationPath(admission.ref).catch(() => null);
+          if (!path) {
+            warnings.push(`Generated image ${index + 1} was saved but its working path could not be materialized. Retry the file operation in a later turn.`);
+            continue;
+          }
+          const data = Buffer.from(dataBase64, 'base64');
+          const dimensions = readAgentImageDimensions(data, admission.mimeType);
+          images.push({
+            path,
+            mimeType: admission.mimeType,
+            byteLength: admission.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
-          };
-        }));
+          });
+        }
 
         const data: GenerateImageData = {
           providerId: selected.providerId,
@@ -305,13 +316,16 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         };
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
-            instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or markdownImage in image_paths for follow-up edits.',
+            status: warnings.length > 0 ? 'partial' : 'success',
+            instructions: generatedImageInstructions(extraContent.length),
+            ...(warnings.length > 0 ? { warnings } : {}),
             metrics: {
               durationMs: elapsed(startedAt),
-              outputBytes: images.reduce((total, image) => total + image.byteLength, 0),
+              outputBytes: admittedOutputBytes,
             },
           }),
           modelVisibleGenerateImageData(data),
+          extraContent,
         );
       } catch (error) {
         return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'image_generation_failed', errorMessage(error), {
@@ -447,7 +461,6 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
     images: data.images.map((image) => ({
       path: image.path,
-      markdownImage: image.markdownImage,
       mimeType: image.mimeType,
       byteLength: image.byteLength,
       ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
@@ -459,11 +472,6 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
 function normalizeImagePathValue(value: string): string {
   const fileUrl = parseLocalFileReferenceUrl(value);
   if (fileUrl?.entryKind === 'file') return fileUrl.path;
-  const markdownTarget = markdownImageTarget(value);
-  if (markdownTarget) {
-    const markdownFileUrl = parseLocalFileReferenceUrl(markdownTarget);
-    if (markdownFileUrl?.entryKind === 'file') return markdownFileUrl.path;
-  }
   const segments = splitFileReferenceMarkers(value);
   const files = segments.filter((segment): segment is FileReferenceSegment => segment.type === 'file');
   if (files.length !== 1) return value;
@@ -475,13 +483,36 @@ function normalizeImagePathValue(value: string): string {
   return value;
 }
 
-function markdownImageTarget(value: string): string | null {
-  const match = value.match(/^!\[[^\]\r\n]*\]\(([^()\s]+)\)$/u);
-  return match?.[1] ?? null;
+function generatedImageAdmissionWarning(
+  index: number,
+  reason: ToolOutputImageOmissionReason,
+): string {
+  const prefix = `Generated image ${index + 1} was not saved`;
+  switch (reason) {
+    case 'countLimit':
+      return `${prefix}: this tool result accepts at most ${TOOL_OUTPUT_IMAGE_LIMITS.maxImages} images. Request fewer images.`;
+    case 'invalidBase64':
+      return `${prefix}: the provider returned invalid base64 image data. Retry once or switch image models.`;
+    case 'invalidMimeType':
+      return `${prefix}: the provider returned an invalid image MIME type. Retry once or switch image models.`;
+    case 'imageByteLimit':
+      return `${prefix}: it exceeds the ${formatMegabytes(TOOL_OUTPUT_IMAGE_LIMITS.maxImageBytes)} per-image limit. Request a smaller size or lower quality.`;
+    case 'callByteLimit':
+      return `${prefix}: accepted images in this call would exceed the ${formatMegabytes(TOOL_OUTPUT_IMAGE_LIMITS.maxCallBytes)} total limit. Request fewer images, a smaller size, or lower quality.`;
+    case 'quotaExceeded':
+      return `${prefix}: the Thread resource quota is exhausted. Remove unneeded conversation resources or start a new Thread, then retry.`;
+  }
 }
 
-function generatedImageAlt(index: number): string {
-  return `Generated image ${index + 1}`;
+function generatedImageInstructions(imageCount: number): string {
+  if (imageCount === 0) return 'No generated image was saved. Follow the warnings before retrying.';
+  const subject = imageCount === 1 ? 'The image is' : 'The images are';
+  const object = imageCount === 1 ? 'it' : 'them';
+  return `${subject} saved in this conversation and already shown to the user; there is no need to render ${object} again in the final answer. Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.`;
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${bytes / (1024 * 1024)} MB`;
 }
 
 function stringParam(value: unknown): string | undefined {

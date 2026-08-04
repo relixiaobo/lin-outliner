@@ -53,6 +53,7 @@ import {
   TEST_TOOL_SCHEMA_DIGEST,
   toolAdmissionEvent,
 } from '../fixtures/agentToolCallHistory';
+import { createToolOutputImageAdmission } from '../../src/main/agent/runtime/ToolOutputImageAdmission';
 
 const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
   new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
@@ -2068,12 +2069,15 @@ describe('PiTurnExecutor event normalization', () => {
     let persistedImage: Buffer | null = null;
     let listener: ((event: AgentEvent) => void | Promise<void>) | null = null;
     const providerContexts: Message[][] = [];
+    const persistOutputImage = async (dataBase64: string) => {
+      persistedImage = Buffer.from(dataBase64, 'base64');
+      return imageRef;
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async (dataBase64) => {
-        persistedImage = Buffer.from(dataBase64, 'base64');
-        return imageRef;
-      },
+      persistOutputImage,
+      admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
+      resolveDetachedResourceObservationPath: async () => '/scratch/detached/tool-output.png',
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
@@ -2136,6 +2140,90 @@ describe('PiTurnExecutor event normalization', () => {
       data: imageBase64,
       mimeType: 'image/png',
     }]));
+  });
+
+  test('records compacted generated images as managed sources and strips their Turn path', async () => {
+    const fixture = createContext();
+    const imageBase64 = Buffer.from('generated-image').toString('base64');
+    const admitToolOutputImage = createToolOutputImageAdmission(fixture.context.persistOutputImage);
+    expect(await admitToolOutputImage({
+      toolCallId: 'call-generate-image',
+      imageIndex: 0,
+      role: 'producer',
+      dataBase64: '***',
+      mimeType: 'image/png',
+    })).toEqual({ ok: false, reason: 'invalidBase64' });
+    const produced = await admitToolOutputImage({
+      toolCallId: 'call-generate-image',
+      imageIndex: 1,
+      role: 'producer',
+      dataBase64: imageBase64,
+      mimeType: 'image/png',
+    });
+    if (!produced.ok) throw new Error('Expected the second generated image to be admitted');
+    const normalizer = new PiEventNormalizer({
+      ...fixture.context,
+      admitToolOutputImage,
+    });
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-generate-image',
+      toolName: 'generate_image',
+      args: { prompt: 'A red square' },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-generate-image',
+      toolName: 'generate_image',
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            data: {
+              images: [{
+                path: '/scratch/agent-attachments/turn/image.png',
+                mimeType: 'image/png',
+                byteLength: Buffer.from(imageBase64, 'base64').byteLength,
+              }],
+            },
+          }),
+        }, {
+          type: 'image',
+          data: imageBase64,
+          mimeType: 'image/png',
+        }],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          version: 1,
+          status: 'success',
+          data: {
+            providerId: 'openai',
+            modelId: 'gpt-image-2',
+            modelName: 'GPT Image 2',
+            images: [{
+              path: '/scratch/agent-attachments/turn/image.png',
+              mimeType: 'image/png',
+              byteLength: Buffer.from(imageBase64, 'base64').byteLength,
+            }],
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      tool: 'generate_image',
+      contentItems: expect.arrayContaining([{
+        type: 'image',
+        source: { kind: 'threadPayload', ref: expect.objectContaining({ id: produced.ref.id }) },
+      }]),
+    });
+    expect(JSON.stringify(item)).not.toContain('/scratch/agent-attachments/turn/image.png');
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -2430,7 +2518,7 @@ describe('PiTurnExecutor event normalization', () => {
         {
           type: 'image',
           source: { kind: 'localFile', path: '/workspace/large.png' },
-          promptImage: { id: 'b'.repeat(64) },
+          promptImage: { id: expect.any(String) },
         },
       ],
     });
@@ -2516,11 +2604,13 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const imageBase64 = Buffer.from('small-image-bytes').toString('base64');
     let completeOutput = '';
+    const persistOutputImage = async () => {
+      throw new Error('Managed attachment exceeds the Thread storage quota.');
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async () => {
-        throw new Error('Managed attachment exceeds the Thread storage quota.');
-      },
+      persistOutputImage,
+      admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
       persistOutputText: async (_itemId, text, mimeType, summary) => {
         completeOutput = text;
         return {
@@ -3449,6 +3539,12 @@ function createContext(): {
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
+  const persistOutputImage = async (dataBase64: string, mimeType: string) => ({
+    id: createHash('sha256').update(dataBase64).digest('hex'),
+    mimeType,
+    byteLength: Buffer.from(dataBase64, 'base64').byteLength,
+    fileName: 'tool-output.png',
+  });
   const context: TurnExecutionContext = {
     thread,
     turn,
@@ -3468,13 +3564,10 @@ function createContext(): {
     readContext: async () => null,
     readOutput: async (ref) => outputPayloads.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveDetachedResourceObservationPath: async () => null,
     readResource: async () => null,
-    persistOutputImage: async () => ({
-      id: 'b'.repeat(64),
-      mimeType: 'image/png',
-      byteLength: 12,
-      fileName: 'tool-output.png',
-    }),
+    persistOutputImage,
+    admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
     persistOutputText: async (_itemId, text, mimeType, summary) => {
       const id = createHash('sha256').update(text).digest('hex');
       outputPayloads.set(id, text);

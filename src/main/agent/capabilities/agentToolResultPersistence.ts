@@ -20,8 +20,6 @@ export interface PersistedGeneratedImageDetailsData {
 }
 
 export interface PersistedGeneratedImageDetailsImage {
-  path: string;
-  markdownImage?: string;
   mimeType?: string;
   byteLength?: number;
   width?: number;
@@ -33,6 +31,37 @@ export function persistedToolResultDetails(input: PersistedToolResultDetailsInpu
   if (!isToolEnvelope(details)) return undefined;
   if (input.toolName !== GENERATE_IMAGE_TOOL_NAME || details.tool !== GENERATE_IMAGE_TOOL_NAME) return undefined;
   return persistedGenerateImageDetails(details);
+}
+
+export function persistedToolResultText(input: {
+  readonly toolName: string;
+  readonly text: string;
+}): string {
+  if (input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  try {
+    const visible = JSON.parse(input.text) as unknown;
+    if (
+      !isRecord(visible)
+      || visible.ok !== true
+      || !isRecord(visible.data)
+      || !Array.isArray(visible.data.images)
+    ) {
+      return input.text;
+    }
+    return JSON.stringify({
+      ...visible,
+      data: {
+        ...visible.data,
+        images: visible.data.images.flatMap((image): PersistedGeneratedImageDetailsImage[] => {
+          const persisted = persistedGeneratedImage(image);
+          return persisted ? [persisted] : [];
+        }),
+      },
+      instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use an adjacent readable_path for file operations when available.',
+    }, null, 2);
+  } catch {
+    return input.text;
+  }
 }
 
 function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<PersistedGeneratedImageDetailsData> | undefined {
@@ -64,16 +93,12 @@ function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<Pers
 
 function persistedGeneratedImage(image: unknown): PersistedGeneratedImageDetailsImage | null {
   if (!isRecord(image)) return null;
-  const path = requiredString(image.path);
-  if (!path) return null;
-  const markdownImage = optionalString(image.markdownImage);
   const mimeType = optionalString(image.mimeType);
   const byteLength = optionalPositiveNumber(image.byteLength);
   const width = optionalPositiveNumber(image.width);
   const height = optionalPositiveNumber(image.height);
+  if (!mimeType && byteLength === undefined && width === undefined && height === undefined) return null;
   return {
-    path,
-    ...(markdownImage ? { markdownImage } : {}),
     ...(mimeType ? { mimeType } : {}),
     ...(byteLength !== undefined ? { byteLength } : {}),
     ...(width !== undefined ? { width } : {}),

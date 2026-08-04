@@ -125,6 +125,17 @@ Fork and child ownership copy those content-addressed resources without rewritin
 private payload, so provider-visible bytes and digests remain cache-stable after source
 Thread deletion.
 
+Every tool-output image passes one call-scoped admission controller before it becomes a
+managed source. The controller applies the 16-image count limit, strict base64 and 10 MiB
+per-image limit, 20 MiB per-call limit, image MIME validation, and Thread resource quota,
+then records the ref or refusal by tool-call id and image index. A producer that needs an
+immediate path and the event normalizer therefore consult the same verdict instead of
+charging the image twice. Because refused producer images are absent from result content,
+the normalizer's compact indexes map to the producer's accepted-image sequence. Repeating
+an accepted persistence write is a content-addressed no-op. Refused images are omitted
+individually and recorded with their exact reason and limits; accepted siblings remain
+usable.
+
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
 usage, continuation deferrals, and timestamps. Goal updates emit canonical Goal
@@ -427,7 +438,12 @@ resource is returned, so same-length replacement cannot bypass integrity checks.
 Canonical managed-resource paths stay private to the payload store. Consumers
 that need a filesystem path receive an independent scratch observation: model
 execution owns a Turn-scoped copy, while Preview/Open/Reveal share a stable
-detached copy per attachment or resource identity, reclaimed by scratch TTL. Resource garbage
+detached copy per attachment or resource identity, reclaimed by scratch TTL. Historical
+`threadPayload` tool images use that detached observation too: the projector adds its
+current absolute `readable_path` beside the immutable image bytes on every replay. If
+scratch materialization is unavailable, replay keeps the image and omits only the path. A
+Turn-scoped path returned by the producing tool is removed at the persistence boundary,
+so later Turns never inherit an expired path from the old envelope. Resource garbage
 collection uses the physical key (content hash plus safe filename), independently
 of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which

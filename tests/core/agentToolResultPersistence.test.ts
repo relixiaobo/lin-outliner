@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { TOOL_RESULT_VERSION } from '../../src/main/agent/capabilities/agentToolEnvelope';
-import { persistedToolResultDetails } from '../../src/main/agent/capabilities/agentToolResultPersistence';
+import {
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../../src/main/agent/capabilities/agentToolResultPersistence';
 
 describe('agent tool result persistence', () => {
   test('does not persist generic tool runtime envelopes', () => {
@@ -37,8 +40,7 @@ describe('agent tool result persistence', () => {
           promptPreview: 'secret prompt details',
           text: ['provider side text'],
           images: [{
-            path: 'generated-images/run-a/image-0.png',
-            markdownImage: '![Generated image](file:^generated-images%2Frun-a%2Fimage-0.png)',
+            path: '/scratch/agent-attachments/turn/image-0.png',
             mimeType: 'image/png',
             byteLength: 123,
             width: 1024,
@@ -62,8 +64,6 @@ describe('agent tool result persistence', () => {
         modelId: 'gpt-image-2',
         modelName: 'GPT Image 2',
         images: [{
-          path: 'generated-images/run-a/image-0.png',
-          markdownImage: '![Generated image](file:^generated-images%2Frun-a%2Fimage-0.png)',
           mimeType: 'image/png',
           byteLength: 123,
           width: 1024,
@@ -74,6 +74,39 @@ describe('agent tool result persistence', () => {
     expect(JSON.stringify(details)).not.toContain('base64-image-bytes');
     expect(JSON.stringify(details)).not.toContain('original file content');
     expect(JSON.stringify(details)).not.toContain('secret prompt details');
+  });
+
+  test('removes turn-scoped paths from persisted model-visible image output', () => {
+    const persisted = persistedToolResultText({
+      toolName: 'generate_image',
+      text: JSON.stringify({
+        ok: true,
+        data: {
+          images: [{
+            path: '/scratch/agent-attachments/turn/image-0.png',
+            mimeType: 'image/png',
+            byteLength: 123,
+          }],
+        },
+        instructions: 'Use the returned path.',
+      }),
+    });
+
+    expect(JSON.parse(persisted)).toEqual({
+      ok: true,
+      data: { images: [{ mimeType: 'image/png', byteLength: 123 }] },
+      instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use an adjacent readable_path for file operations when available.',
+    });
+    expect(persisted).not.toContain('/scratch/agent-attachments');
+  });
+
+  test('does not rewrite failed image output instructions', () => {
+    const text = JSON.stringify({
+      ok: false,
+      data: { images: [] },
+      error: { code: 'no_image_output', message: 'The provider returned no image output.' },
+    });
+    expect(persistedToolResultText({ toolName: 'generate_image', text })).toBe(text);
   });
 
   test('does not persist mismatched or failed generated image details', () => {
@@ -88,7 +121,7 @@ describe('agent tool result persistence', () => {
           providerId: 'openai',
           modelId: 'gpt-image-2',
           modelName: 'GPT Image 2',
-          images: [{ path: 'generated-images/run-a/image-0.png' }],
+          images: [{ path: '/scratch/agent-attachments/turn/image-0.png' }],
         },
       },
     })).toBeUndefined();
