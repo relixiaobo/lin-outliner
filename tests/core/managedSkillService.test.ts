@@ -107,6 +107,11 @@ describe('managed skill service', () => {
     });
     expect(rolledBack.active.contentHash).toBe(installed.active.contentHash);
     expect(rolledBack.diagnostic).toMatchObject({ code: 'rolled_back' });
+    // A rollback must not advertise an update. It used to record the commit the
+    // user had just abandoned as `updateCommit`, so the rail grew a badge and the
+    // row offered "Preview update" for exactly the version they backed out of.
+    expect(rolledBack.updateCommit).toBeUndefined();
+    expect(rolledBack.status).not.toBe('update-available');
     expect(changes).toBeGreaterThanOrEqual(4);
   });
 
@@ -130,7 +135,12 @@ describe('managed skill service', () => {
     expect((await service.list())[0]?.active.contentHash).toBe(installed.active.contentHash);
     await service.assertInvocable(installed.id, installed.active.contentHash);
     const [checked] = await service.checkUpdates(installed.id);
-    expect(checked?.status).toBe('failed');
+    // A check that could not reach GitHub says nothing is wrong with the Skill,
+    // and agent-skills.md requires it to stay quiet — one offline launch would
+    // otherwise flag every managed Skill at once, while each row's own diagnostic
+    // line stayed deliberately muted. The Skill keeps working and the failure is
+    // reported as a diagnostic, not as a status.
+    expect(checked?.status).toBe('enabled');
     expect(checked?.active.contentHash).toBe(installed.active.contentHash);
     expect(checked?.diagnostic).toEqual({ code: 'unexpected_error' });
   });

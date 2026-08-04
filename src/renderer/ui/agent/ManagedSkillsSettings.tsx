@@ -191,6 +191,17 @@ export function ManagedSkillsSettings({
             wrap
           />
         </InsetGroup>
+          {/* Inside the dialog, because outside it is behind the backdrop. Every
+              failure of the GitHub flow — bad URL, rate limit, timeout, repo too
+              large, no SKILL.md — rendered into page flow under a dimming
+              overlay, so the primary error path of this panel was invisible and
+              the button simply returned from "Resolving…" to "Add". */}
+          {error && !installReview && !updatePreview && !confirmAction ? (
+            <div className="agent-settings-alert" role="alert">
+              <WarningIcon size={ICON_SIZE.menu} />
+              <span>{managedSkillErrorMessage(error, t)}</span>
+            </div>
+          ) : null}
           {/* Installing is not "confirming" this panel — each entry commits
               through its own review dialog — so the only action here is to
               dismiss it. Without a visible one, the panel could be left only by
@@ -203,7 +214,7 @@ export function ManagedSkillsSettings({
         </Dialog>
       ) : null}
 
-      {error && !installReview && !updatePreview && !confirmAction ? (
+      {error && !open && !installReview && !updatePreview && !confirmAction ? (
         <div className="agent-settings-alert" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
           <span>{managedSkillErrorMessage(error, t)}</span>

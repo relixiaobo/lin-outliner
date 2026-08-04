@@ -606,7 +606,13 @@ export class ManagedSkillService {
         ...record,
         active: record.previous,
         previous: record.active,
-        updateCommit: record.active.commit,
+        // No updateCommit. Setting it to the commit just abandoned made the app
+        // advertise an update pointing at the version the user had deliberately
+        // rejected — a badge on the rail and a "Preview update" row action that
+        // would re-apply exactly what they backed out of. A rollback leaves the
+        // Skill at a known version with nothing pending; the next check-updates
+        // finds a genuine newer commit if one exists.
+        updateCommit: undefined,
         diagnostic: {
           code: 'rolled_back',
           message: `Rolled back from ${record.active.commit.slice(0, 12)}.`,
@@ -946,9 +952,16 @@ function discoveryView(session: DiscoverySession): ManagedSkillDiscoveryView {
 function managedSkillView(record: ManagedSkillRecord, appVersion: string): ManagedSkillView {
   const compatibility = currentCompatibility(record.active, appVersion);
   const diagnostic = managedSkillDiagnosticView(record, compatibility);
+  // `update_failed` is deliberately NOT a failure state. It means a check could
+  // not reach GitHub, which says nothing is wrong with the Skill —
+  // agent-skills.md is explicit that it "stays quiet", and one offline launch
+  // produces it for every managed Skill at once. Painting them all "Needs
+  // attention" while the row's own diagnostic line stays muted made each row both
+  // shout and whisper. A name conflict or an incompatible version is a real
+  // problem with the Skill, so those remain.
   const status = record.diagnostic?.code === 'modified'
     ? 'modified'
-    : record.diagnostic?.code === 'update_failed' || record.diagnostic?.code === 'name_conflict' || compatibility.error
+    : record.diagnostic?.code === 'name_conflict' || compatibility.error
       ? 'failed'
       : record.updateCommit
         ? 'update-available'

@@ -78,6 +78,8 @@ interface LibraryRow {
   key: string;
   name: string;
   displayName: string;
+  /** Whether typing `/name` in the composer actually invokes it. */
+  userInvocable: boolean;
   description: string;
   /** The chip that names where this Skill came from. */
   sourceChip: string;
@@ -334,6 +336,10 @@ export function SettingsSkillLibrarySection({
       key: `managed:${skill.id}`,
       name: skill.name,
       displayName: skill.name,
+      // Managed Skills come through the managed index, which does not carry the
+      // frontmatter flag; they are user-invocable unless the unified list says
+      // otherwise.
+      userInvocable: true,
       // The description always survives. A failed update check is produced for
       // every installed Skill by an offline launch, from an action the user
       // never requested, so it must not repaint the library; but it still has
@@ -426,6 +432,7 @@ export function SettingsSkillLibrarySection({
         key: `skill:${skill.name}`,
         name: skill.name,
         displayName: skill.displayName || skill.name,
+        userInvocable: skill.userInvocable,
         description: skill.description,
         sourceChip: localDirectory ? t.settings.skills.sourceLocal : sourceChipLabel(skill.source),
         chips,
@@ -555,7 +562,10 @@ export function SettingsSkillLibrarySection({
               key={row.key}
               label={(
                 <>
-                  /{row.displayName}
+                  {/* The slash form only where typing it does something. A Skill
+                      declaring `user-invocable: false` was still displayed as
+                      `/foo`, advertising a command the composer filters out. */}
+                  {row.userInvocable ? `/${row.displayName}` : row.displayName}
                   <span className="settings-chip">{row.sourceChip}</span>
                   {row.chips.map((chip) => (
                     <span className="settings-chip" key={chip}>{chip}</span>

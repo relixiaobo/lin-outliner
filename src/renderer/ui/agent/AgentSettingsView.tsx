@@ -150,6 +150,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // concurrent toggles cannot each write a whole array from the same stale read.
   const latestDisabledSkillsRef = useRef<readonly string[]>([]);
   const skillDisableQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Provider writes serialize on their own queue for the reason the Skill writes
+  // needed one: each sends a whole settings object built from what it read, so two
+  // overlapping writes let the second silently undo the first. Instant-apply makes
+  // that easy to trigger — a slow keychain write looks like nothing happened, and
+  // the natural response is to click again.
+  const providerMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const settingsRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
   const t = useT();
@@ -428,6 +434,16 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial = false,
+  ) {
+    const run = providerMutationQueueRef.current.then(() => runProviderMutationStep(action, successNotice, resetToInitial));
+    providerMutationQueueRef.current = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async function runProviderMutationStep(
+    action: () => Promise<AgentProviderSettingsView>,
+    successNotice: string,
+    resetToInitial: boolean,
   ) {
     const requestId = beginRequest('mutation');
     setSaving(true);

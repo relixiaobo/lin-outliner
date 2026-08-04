@@ -144,6 +144,34 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(4);
   });
 
+  // Every failure of the GitHub flow rendered into page flow, underneath the
+  // acquire dialog's dimming backdrop, so the primary error path of the panel was
+  // invisible: the button returned from "Resolving…" to "Add" and nothing else
+  // happened. The alert belongs inside whichever surface is on top.
+  test('shows a discovery failure inside the acquire dialog, not behind it', async () => {
+    const rendered = renderComponent(async (command) => {
+      if (command === 'agent_managed_skill_catalog') return catalog(false);
+      if (command === 'agent_managed_skill_list') return [];
+      if (command === 'agent_managed_skill_discover') return managedFailure('github_not_found');
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    // Catalog Install resolves through the same discovery call the GitHub field
+    // uses, so it exercises the identical failure path without driving an input.
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const dialogAlert = rendered.document.querySelector('.skill-acquire-dialog [role="alert"]');
+    expect(dialogAlert?.textContent).toContain('The GitHub repository, ref, or skill path was not found.');
+  });
+
   test('shows install validation failures inside the active review dialog', async () => {
     const rendered = renderComponent(async (command) => {
       if (command === 'agent_managed_skill_catalog') return catalog(false);
