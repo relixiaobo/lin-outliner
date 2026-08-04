@@ -62,9 +62,14 @@ Run at plan time, re-run at review (2026-08-04):
   that section builds after #480 lands. Nothing else in the plan depends on it.
 - No overlap on `src/renderer/ui/agent/**`, `src/core/settingsWindow.ts`, or the
   settings stylesheets — the bulk of the diff.
-- `src/core/types.ts` is touched (see §6 and §11) and is an
+- `src/core/types.ts` is touched in **three** places and is an
   infrastructure-ownership file; the exact shapes are stated here so the other
-  clones can read them without opening the diff.
+  clones can read them without opening the diff:
+  **added** `connectionCheck` on `AgentProviderConfigView` (§6);
+  **added** `skillBody` / `skillBodyTruncated` on
+  `ManagedSkillDiscoveryCandidateView` (§10, defect 6);
+  **removed** `ratified` / `accepted` from `SkillDefinition` (§11) — a removal,
+  not an additive change.
 
 ## Design
 
@@ -260,7 +265,11 @@ changes protocol state, so it gets its own rules.
 some gateways expose `/models` unauthenticated, so listing alone does not prove a
 credential — issues a **1-token completion** (`maxTokens: 1`) against a
 discovered or catalog model. Negligible per call, but non-zero and provider-side.
-Everything below follows from that: **Tenon never probes silently.**
+Everything below follows from that. The rule, stated as it actually is: **Tenon
+probes only on an explicit user write or an explicit Test — never on open, on a
+schedule, or in the background.** Saving a credential does fire a probe the user
+did not separately ask for; that is intended, and worth saying plainly rather
+than hiding behind "never silently".
 
 - **Save does not block on the network.** Saving commits the credential
   immediately — that is the user's intent — and the probe runs after, updating
@@ -296,8 +305,16 @@ connectionCheck?: {
 };
 ```
 
-It maps directly from what `testProviderConnection` already returns
-(`{ success, message, statusCode }`); no existing field changes shape.
+**The mapping is conservative, because `statusCode` is inferred rather than
+read.** `agentSettings.ts:1270-1279` derives it by substring-sniffing the
+redacted error text (`errMsg.includes('401')`, `'unauthorized'`, `'forbidden'`),
+which is fine for a transient banner and thin for a **durable** verdict — a 500
+whose body happens to contain "unauthorized" would be written down as *Key
+rejected*, relocating the libel §6 exists to prevent and making it permanent. So:
+`rejected` **only** on a confidently derived 401/403; everything else, including
+any unclassified failure, falls to `unreachable`. The field is populated from
+what `testProviderConnection` returns (`{ success, message, statusCode }`), with
+that narrowing applied; no existing field changes shape.
 
 ### 7. Feedback surfaces
 
@@ -357,21 +374,54 @@ It maps directly from what `testProviderConnection` already returns
    notice gets fixed (§7), but the behavior is the actual defect: **installing a
    Skill now enables it** (PM, 2026-08-04).
 
-   Nothing in the safety argument depended on the old default. The spec's case
-   for installing from an arbitrary public repository is **inertness** — "a Skill
-   install runs nothing… fetches, validates, and writes bytes, then re-checks
-   that no installed file carries an executable bit… a boundary, not an
-   omission" (`agent-skills.md:172-176`) — and the activation flag carries no part
-   of it. The consent moment is the review dialog, which shows source, commit,
-   scripts, and changed files. Requiring a second toggle after that re-asks a
-   question the user already answered, which is the same approval instinct §11
-   deletes from the trust gate, and which #410's Full Access posture rules out.
+   **The inertness boundary does not cover this, and must not be borrowed for
+   it.** `agent-skills.md:172-176` says an install "runs nothing" and re-checks
+   that no file carries an executable bit — true, and about **execution**.
+   Enabling is about **instruction**: `buildSkillCatalogSnapshot`
+   (`agentSkills.ts:360-378`) folds every enabled Skill's name and *description*
+   into the model's catalog context, and invoking one feeds its body. Auto-enable
+   therefore admits third-party text from an arbitrary public repository into the
+   agent's context at install time. That is a prompt-injection surface, and no
+   executable-bit check touches it.
+
+   **So the consent moment has to show what is being consented to.** Today it
+   does not: the install review dialog renders `ManagedSkillDetails` only —
+   repository, commit, subdirectory, compatibility, version, script *filenames*,
+   recommended/unverified (`ManagedSkillsSettings.tsx:323-333`). The **update**
+   dialog, by contrast, shows `changedPaths` and the full `skillDiff` in a `<pre>`
+   (`:372-383`). Applying an update shows you the text; the initial install shows
+   you a file list. That asymmetry was survivable while a second deliberate toggle
+   stood between the bytes and the model. Auto-enable removes that step, so the
+   asymmetry becomes the thing to fix.
+
+   **Scope, therefore:** the install review dialog shows the candidate's
+   description and its SKILL.md body, reusing the `<pre className="managed-skill-diff">`
+   treatment the update path already ships. `description` is already on
+   `ManagedSkillDiscoveryCandidateView` (`types.ts:891`) and merely unrendered;
+   the body needs one additive field (below). Install-enables is then safe
+   because **the user read it**, not because nothing executed — which is the
+   argument that actually holds, and the one a future reader should inherit.
+
+   No second tier. "Recommended catalog auto-enables, arbitrary URL does not"
+   would be the approval reflex returning through a side door, which is what this
+   plan removes.
 
    `agent-skills.md:269-274` is not a conflict: it says the two-store split makes
    "install, but do not enable yet" *possible*, describing a capability the
    architecture keeps rather than a mandated default. That capability survives —
    the flag is still per-record and still participates in rollback and uninstall —
    so only the default changes, and the spec sentence is reworded to say so.
+
+   The body field, additive and bounded, on `ManagedSkillDiscoveryCandidateView`:
+
+   ```ts
+   skillBody?: string;      // SKILL.md text, bounded like skillDiff
+   skillBodyTruncated?: boolean;
+   ```
+
+   `skillBodyTruncated` exists because defect 12 is the same mistake in the
+   update path — a capped payload presented as complete — and shipping a second
+   unmarked cap while fixing the first would be indefensible.
 7. One offline update check paints every managed row "Needs attention",
    contradicting the row's own muted diagnostic and `agent-skills.md`.
 8. Provider enable toggles have no write serialization (§3).
@@ -501,6 +551,8 @@ Order matters, because two changes have real semantics and no safety net today:
 - [ ] Primitives: drill-down affordance, EmptyState, one data-maintenance row
 - [ ] Visual + a11y corrections; two new guards
 - [ ] Twelve defects fixed, including installing a Skill now enables it
+- [ ] Install review dialog shows the candidate's description and SKILL.md body,
+      with truncation marked — the consent moment auto-enable depends on
 - [ ] Skill trust model deleted end to end; Undo last agent edit still works
 - [ ] Notification switch and its preference removed
 - [ ] Specs rewritten, including agent-skills and agent-tool-permissions
