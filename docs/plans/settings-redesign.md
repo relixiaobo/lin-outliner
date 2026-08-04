@@ -351,7 +351,27 @@ It maps directly from what `testProviderConnection` already returns
 4. Rollback sets `updateCommit` to the abandoned commit, so the app reports a
    fake available update and inflates the rail badge.
 5. Acquisition errors and notices render behind the dialog backdrop.
-6. Install leaves the Skill disabled and the only notice saying so is hidden.
+6. **Install leaves the Skill disabled** (`managedSkillService.ts:270`), and the
+   only notice saying so renders behind the dialog — so the user installs a
+   Skill, sees an "Installed" chip, closes the panel, and it does nothing. The
+   notice gets fixed (§7), but the behavior is the actual defect: **installing a
+   Skill now enables it** (PM, 2026-08-04).
+
+   Nothing in the safety argument depended on the old default. The spec's case
+   for installing from an arbitrary public repository is **inertness** — "a Skill
+   install runs nothing… fetches, validates, and writes bytes, then re-checks
+   that no installed file carries an executable bit… a boundary, not an
+   omission" (`agent-skills.md:172-176`) — and the activation flag carries no part
+   of it. The consent moment is the review dialog, which shows source, commit,
+   scripts, and changed files. Requiring a second toggle after that re-asks a
+   question the user already answered, which is the same approval instinct §11
+   deletes from the trust gate, and which #410's Full Access posture rules out.
+
+   `agent-skills.md:269-274` is not a conflict: it says the two-store split makes
+   "install, but do not enable yet" *possible*, describing a capability the
+   architecture keeps rather than a mandated default. That capability survives —
+   the flag is still per-record and still participates in rollback and uninstall —
+   so only the default changes, and the spec sentence is reworded to say so.
 7. One offline update check paints every managed row "Needs attention",
    contradicting the row's own muted diagnostic and `agent-skills.md`.
 8. Provider enable toggles have no write serialization (§3).
@@ -419,7 +439,10 @@ controls it no longer contains and lists a `CheckboxControl` with zero consumers
 own those decisions; the `docs/spec/design-system.md` implementation index is
 missing 8 of 14 settings files.
 
-`docs/spec/agent-skills.md` loses its acceptance language — "Authoring And Trust"
+`docs/spec/agent-skills.md` also has its `:269-274` note reworded so it describes
+the two-store split as *permitting* "install without enabling" rather than
+implying it is the default, and its acquisition section states that installing
+enables (defect 6). It loses its acceptance language — "Authoring And Trust"
 is rewritten to describe provenance as what it will be, an agent-edit record
 backing Undo — and the row-action table drops accept / revoke acceptance. Its
 `/name` mandate at `:227` becomes conditional on `userInvocable` (defect 11).
@@ -477,7 +500,7 @@ Order matters, because two changes have real semantics and no safety net today:
 - [ ] Feedback relocated to the row; one confirmation idiom; typed error copy
 - [ ] Primitives: drill-down affordance, EmptyState, one data-maintenance row
 - [ ] Visual + a11y corrections; two new guards
-- [ ] Twelve defects fixed
+- [ ] Twelve defects fixed, including installing a Skill now enables it
 - [ ] Skill trust model deleted end to end; Undo last agent edit still works
 - [ ] Notification switch and its preference removed
 - [ ] Specs rewritten, including agent-skills and agent-tool-permissions
