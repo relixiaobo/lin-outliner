@@ -252,8 +252,15 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
     await expect(configured).toContainText('CC Switch');
     // On-row status rides the row's accessible name (avatar + name + status).
+    // "Add key" and "Needs key" collapsed into one state: they differed only by
+    // whether a config row had been materialized, which is not a fact about the
+    // user's situation.
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Anthropic, Needs key' })).toBeVisible();
+    // And the status is now readable, not only announced: until this pane shared
+    // one status model with the config window, which connection was Active was
+    // visible in that window and nowhere else.
+    await expect(configured.getByText('Active')).toBeVisible();
   });
 
   test('shows the row actions menu only when there is more than one action', async ({ page }) => {
@@ -352,7 +359,7 @@ test.describe('agent settings window', () => {
     const settings = await openSettings(page);
     // The lone "Configure" action is a real trailing button (the macOS Wi-Fi
     // "Connect" idiom), revealed on row hover — not just decorative hint text.
-    await settings.getByRole('button', { name: 'Anthropic, Add key' }).hover();
+    await settings.getByRole('button', { name: 'Anthropic, Needs key' }).hover();
     const configure = settings.getByRole('button', { name: 'Configure Anthropic' });
     await expect(configure).toBeVisible();
     await configure.click();

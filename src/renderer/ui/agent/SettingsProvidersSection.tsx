@@ -13,10 +13,10 @@ import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
   buildImageModelMenu,
   buildProviderChoices,
-  providerStatusLabel,
   type ProviderChoice,
   type ProviderRowHandlers,
 } from './settingsProviderModel';
+import { providerStatusSentence, resolveProviderStatus } from './providerStatus';
 
 // A single provider row in the inset grouped list. Configured rows expose an
 // enable switch plus details/removal actions. Unconfigured catalog rows usually
@@ -90,16 +90,25 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       {t.settings.providers.configure}
     </Button>
   );
+  const status = resolveProviderStatus(provider);
+  const statusSentence = providerStatusSentence(status, t);
+  // The row states its status only when the status is worth stating. Labelling
+  // every healthy row "Ready" is noise that buries the two rows that need the
+  // user — and until now the list said nothing at all, so which connection was
+  // Active was visible in the detail window and nowhere else. A provider-supplied
+  // explanation wins when there is one: "CC Switch has no direct-runnable
+  // registry provider" tells the user more than "Unavailable" does.
+  const unremarkable = status.state === 'ready' && !status.uncheckable;
   return (
     <InsetRow
-      ariaLabel={t.settings.providers.rowAriaLabel({ name, status: providerStatusLabel(provider, t) })}
+      ariaLabel={t.settings.providers.rowAriaLabel({ name, status: statusSentence })}
       dimmed={(provider.configured || quickEnable) && !provider.enabled}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
-      sublabel={provider.connectionStatusMessage ?? (!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined)}
+      sublabel={provider.connectionStatusMessage ?? (unremarkable ? undefined : statusSentence)}
       trailing={trailing}
     />
   );

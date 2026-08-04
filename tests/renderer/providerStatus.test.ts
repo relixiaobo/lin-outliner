@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { getMessages } from '../../src/core/i18n';
-import { providerStatusLabel, type ProviderChoice } from '../../src/renderer/ui/agent/settingsProviderModel';
+import type { ProviderChoice } from '../../src/renderer/ui/agent/settingsProviderModel';
 import { resolveProviderStatus, providerStatusSentence } from '../../src/renderer/ui/agent/providerStatus';
 
 /**
@@ -116,15 +116,11 @@ const CASES: Case[] = [
   },
 ];
 
-describe('provider status — the legacy ladder said what this table claims', () => {
-  // Deleted together with `providerStatusLabel`; until then it is the half that
-  // makes the mapping checkable rather than asserted.
-  for (const testCase of CASES) {
-    test(testCase.name, () => {
-      expect(providerStatusLabel(testCase.input, en)).toBe(testCase.legacyLabel);
-    });
-  }
-});
+// The legacy half of this table asserted `providerStatusLabel(input) === legacyLabel`
+// for every row, and ran green in the commit that introduced the typed model
+// alongside it. It is gone with that function; `legacyLabel` stays as the record
+// of what each row used to say, which is what makes a future reader able to
+// check that no state quietly changed meaning here.
 
 describe('provider status — the typed model', () => {
   for (const testCase of CASES) {
