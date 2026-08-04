@@ -171,3 +171,24 @@
     gap: var(--space-1);
   }
 }
+
+/* Install review: the description and the SKILL.md body the user is consenting
+   to. Installing enables, and enabling is what puts this text in front of the
+   model, so the review has to show it rather than a file list. */
+.managed-skill-review-description {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+
+.managed-skill-review-body-label {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+
+.managed-skill-review-truncated {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-tertiary);
+}

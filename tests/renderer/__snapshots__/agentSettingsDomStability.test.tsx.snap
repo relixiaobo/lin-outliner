@@ -816,3 +816,979 @@ exports[`settings page DOM renders the skills category byte-stably 1`] = `
 </div>
 </main>"
 `;
+
+exports[`settings page DOM renders the agent category byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">Agent</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle r="3" cy="12" cx="12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+              <path d="M22 10v6" />
+              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <ellipse ry="3" rx="9" cy="5" cx="12" />
+              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+              <path d="M3 12A9 3 0 0 0 21 12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="Agent" class="agent-settings-section">
+        <div data-settings-anchor="capabilities" class="inset-group">
+          <div role="list" class="inset-card" aria-label="Agent capabilities">
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Model services</span>
+                  <span class="inset-row-sublabel">No model service connected</span>
+                </span>
+                <span aria-hidden="true" class="settings-drilldown-chevron">
+                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </span>
+              </button>
+            </div>
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Skills</span>
+                  <span class="inset-row-sublabel">5 skills</span>
+                </span>
+                <span aria-hidden="true" class="settings-drilldown-chevron">
+                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="inset-group">
+          <div class="inset-group-header">Memory</div>
+          <div role="list" class="inset-card" aria-label="Memory">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Use Memory</span>
+                  <span class="inset-row-sublabel">Use and update durable Memory stored as editable Nodes in Daily Notes.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" role="switch" aria-label="Use Memory" aria-checked="false">
+                  <span aria-hidden="true" class="switch-mark">
+                    <span class="switch-mark-thumb">
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Timeline Memory</span>
+                  <span class="inset-row-sublabel">Ready. New durable Memory is extracted after eligible Threads become idle.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" class="button button-secondary button-md">Open Memory</button>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Reset Memory</span>
+                  <span class="inset-row-sublabel">Permanently delete canonical Memory containers and every descendant inside them. Notes outside those containers and stray tagged Nodes are preserved.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" class="button button-danger button-md">Reset Memory</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <section aria-label="Security" class="agent-settings-section settings-security-section">
+          <div class="inset-group">
+            <div class="inset-group-header">Agent Access</div>
+            <div role="list" class="inset-card" aria-label="Agent access">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Filesystem</span>
+                    <span class="inset-row-sublabel">Processes and file tools can read and modify everything available to your macOS account.</span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">Full Access</div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">Your Blocks</div>
+            <div role="list" class="inset-card" aria-label="Your blocks">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Block rule</span>
+                    <span class="inset-row-sublabel">
+                      <span class="inset-row-code">rm -rf /</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <button type="button" class="button button-ghost button-sm">Remove</button>
+                </div>
+              </div>
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Block rule</span>
+                    <span class="inset-row-sublabel">
+                      <span class="inset-row-code">curl * | sh</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <button type="button" class="button button-ghost button-sm">Remove</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">System Boundary</div>
+            <div role="list" class="inset-card" aria-label="System boundary">
+              <div role="listitem" class="inset-row settings-system-boundary-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">macOS account</span>
+                    <span class="inset-row-sublabel">The agent has the same filesystem access as Tenon, including Tenon data and stored provider credentials.</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <p class="inset-group-footnote">Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.</p>
+          </div>
+        </section>
+      </section>
+    </div>
+  </div>
+</main>"
+`;
+
+exports[`settings page DOM renders the preview category byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">Preview</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle r="3" cy="12" cx="12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+              <path d="M22 10v6" />
+              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <ellipse ry="3" rx="9" cy="5" cx="12" />
+              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+              <path d="M3 12A9 3 0 0 0 21 12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="Preview" class="agent-settings-section">
+        <div data-settings-anchor="translation" class="inset-group">
+          <div class="inset-group-header">Translation</div>
+          <div role="list" class="inset-card" aria-label="Translation preferences">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Translate to</span>
+                  <span class="inset-row-sublabel">The language webpages, captions, and books are translated into.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <span class="select-popup">
+                  <select class="select-popup-input" aria-label="Translate to">
+                    <option value="en">English</option>
+                    <option value="zh-Hans">简体中文</option>
+                    <option value="zh-Hant">繁體中文</option>
+                    <option value="es">Español</option>
+                    <option selected value="ja">日本語</option>
+                    <option value="ko">한국어</option>
+                    <option value="fr">Français</option>
+                    <option value="de">Deutsch</option>
+                    <option value="pt">Português</option>
+                    <option value="it">Italiano</option>
+                    <option value="ru">Русский</option>
+                    <option value="ar">العربية</option>
+                    <option value="hi">हिन्दी</option>
+                    <option value="bn">বাংলা</option>
+                    <option value="ur">اردو</option>
+                    <option value="id">Bahasa Indonesia</option>
+                    <option value="ms">Bahasa Melayu</option>
+                    <option value="vi">Tiếng Việt</option>
+                    <option value="th">ไทย</option>
+                    <option value="tr">Türkçe</option>
+                    <option value="pl">Polski</option>
+                    <option value="nl">Nederlands</option>
+                    <option value="uk">Українська</option>
+                    <option value="fa">فارسی</option>
+                    <option value="he">עברית</option>
+                    <option value="sv">Svenska</option>
+                    <option value="nb">Norsk bokmål</option>
+                    <option value="da">Dansk</option>
+                    <option value="fi">Suomi</option>
+                    <option value="el">Ελληνικά</option>
+                    <option value="cs">Čeština</option>
+                    <option value="ro">Română</option>
+                    <option value="hu">Magyar</option>
+                    <option value="sk">Slovenčina</option>
+                    <option value="bg">Български</option>
+                    <option value="hr">Hrvatski</option>
+                    <option value="sr">Српски</option>
+                    <option value="sl">Slovenščina</option>
+                    <option value="lt">Lietuvių</option>
+                    <option value="lv">Latviešu</option>
+                    <option value="et">Eesti</option>
+                    <option value="ca">Català</option>
+                    <option value="fil">Filipino</option>
+                    <option value="sw">Kiswahili</option>
+                    <option value="ta">தமிழ்</option>
+                    <option value="te">తెలుగు</option>
+                    <option value="mr">मराठी</option>
+                    <option value="gu">ગુજરાતી</option>
+                    <option value="kn">ಕನ್ನಡ</option>
+                    <option value="ml">മലയാളം</option>
+                    <option value="pa">ਪੰਜਾਬੀ</option>
+                    <option value="ne">नेपाली</option>
+                    <option value="si">සිංහල</option>
+                    <option value="my">မြန်မာ</option>
+                  </select>
+                  <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </span>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Translate webpages automatically</span>
+                  <span class="inset-row-sublabel">Translate every webpage preview as it opens, without asking.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" role="switch" aria-label="Translate webpages automatically" aria-checked="false">
+                  <span aria-hidden="true" class="switch-mark">
+                    <span class="switch-mark-thumb">
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Translate books automatically</span>
+                  <span class="inset-row-sublabel">Translate EPUB books as you read them. Separate from webpages, because a book is sent to a provider a chapter at a time.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" role="switch" aria-label="Translate books automatically" aria-checked="false">
+                  <span aria-hidden="true" class="switch-mark">
+                    <span class="switch-mark-thumb">
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Translation model</span>
+                  <span class="inset-row-sublabel">Which model translates. Follows the Agent’s model unless you pick one.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <span class="select-popup">
+                  <select class="select-popup-input" aria-label="Translation model">
+                    <option selected value="">Agent model</option>
+                  </select>
+                  <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </span>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Saved translations</span>
+                  <span class="inset-row-sublabel">Translations saved locally for webpages, captions, and EPUB books.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" class="button button-secondary button-md">Clear…</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-settings-anchor="websites" class="inset-group">
+          <div class="inset-group-header">Websites</div>
+          <div role="list" class="inset-card" aria-label="Website data">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Website data</span>
+                  <span class="inset-row-sublabel">Cookies, cache, and site storage used by URL Preview.</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" class="button button-secondary button-md">Clear…</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>"
+`;
+
+exports[`settings page DOM renders the services page byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">Model services</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle r="3" cy="12" cx="12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+              <path d="M22 10v6" />
+              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <ellipse ry="3" rx="9" cy="5" cx="12" />
+              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+              <path d="M3 12A9 3 0 0 0 21 12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="Model services" class="agent-settings-section settings-providers-section">
+        <div class="settings-provider-groups">
+          <div class="inset-group">
+            <div class="inset-group-header">Image generation</div>
+            <div role="list" class="inset-card" aria-label="Image generation settings">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Default model</span>
+                    <span class="inset-row-sublabel">Used when generate_image does not name a model.</span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <span class="select-popup settings-image-model-select">
+                    <select class="select-popup-input" aria-label="Default model">
+                      <option selected value="">Auto</option>
+                    </select>
+                    <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">Configured</div>
+            <div role="list" class="inset-card" aria-label="Configured providers">
+              <div role="listitem" class="inset-row">
+                <button type="button" class="inset-row-main" aria-label="Anthropic, Needs key">
+                  <span class="inset-row-leading">
+                    <span aria-hidden="true" class="settings-provider-avatar has-logo">
+                      <span class="settings-provider-logo">
+                        <svg data-fixture-logo="anthropic" />
+                      </span>
+                    </span>
+                  </span>
+                  <span class="inset-row-text">
+                    <span class="inset-row-label">Anthropic</span>
+                    <span class="inset-row-sublabel">Needs key</span>
+                  </span>
+                </button>
+                <div class="inset-row-trailing">
+                  <div class="settings-provider-row-actions">
+                    <button type="button" role="switch" aria-label="Enable or disable Anthropic" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" class="settings-row-menu-trigger" aria-label="Anthropic actions" aria-haspopup="menu" aria-expanded="false">
+                      <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                        <circle r="1" cy="12" cx="12" />
+                        <circle r="1" cy="12" cx="19" />
+                        <circle r="1" cy="12" cx="5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div role="listitem" class="inset-row is-disabled">
+                <button type="button" class="inset-row-main" aria-label="OpenAI, Disabled">
+                  <span class="inset-row-leading">
+                    <span aria-hidden="true" class="settings-provider-avatar has-logo">
+                      <span class="settings-provider-logo">
+                        <svg data-fixture-logo="openai" />
+                      </span>
+                    </span>
+                  </span>
+                  <span class="inset-row-text">
+                    <span class="inset-row-label">OpenAI</span>
+                    <span class="inset-row-sublabel">Disabled</span>
+                  </span>
+                </button>
+                <div class="inset-row-trailing">
+                  <div class="settings-provider-row-actions">
+                    <button type="button" role="switch" aria-label="Enable or disable OpenAI" aria-checked="false">
+                      <span aria-hidden="true" class="switch-mark">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" class="settings-row-menu-trigger" aria-label="OpenAI actions" aria-haspopup="menu" aria-expanded="false">
+                      <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                        <circle r="1" cy="12" cx="12" />
+                        <circle r="1" cy="12" cx="19" />
+                        <circle r="1" cy="12" cx="5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">Add Providers</div>
+            <div role="list" class="inset-card" aria-label="Providers to add">
+              <div role="listitem" class="inset-row">
+                <button type="button" class="inset-row-main" aria-label="Add custom provider">
+                  <span class="inset-row-leading">
+                    <span aria-hidden="true" class="settings-provider-add-leading">
+                      <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M5 12h14" />
+                        <path d="M12 5v14" />
+                      </svg>
+                    </span>
+                  </span>
+                  <span class="inset-row-text">
+                    <span class="inset-row-label">Add custom provider</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>"
+`;
+
+exports[`settings page DOM renders the skills page byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">Skills</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle r="3" cy="12" cx="12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+              <path d="M22 10v6" />
+              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <ellipse ry="3" rx="9" cy="5" cx="12" />
+              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+              <path d="M3 12A9 3 0 0 0 21 12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="Skills" class="agent-settings-section settings-skills-section">
+        <div class="inset-group">
+          <div class="inset-group-header has-action">
+            <span class="inset-group-header-label">Skills</span>
+            <span class="inset-group-header-action">
+              <button type="button" title="Check managed skills for updates" class="icon-button icon-button-chrome rail-toggle" aria-label="Check managed skills for updates">
+                <svg aria-hidden="true" class="lucide lucide-refresh-cw" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                  <path d="M8 16H3v5" />
+                </svg>
+              </button>
+              <button type="button" title="Add a skill" class="icon-button icon-button-chrome rail-toggle" aria-label="Add a skill" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M5 12h14" />
+                  <path d="M12 5v14" />
+                </svg>
+              </button>
+            </span>
+          </div>
+          <div role="list" class="inset-card" aria-label="Installed skills">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">/pdf<span class="settings-chip">managed</span>
+                  <span class="settings-chip">Recommended</span>
+                  <span class="settings-chip">Enabled</span>
+                </span>
+                <span class="inset-row-sublabel">
+                  <span title="Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts." class="settings-skill-description">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
+                </span>
+              </span>
+            </div>
+            <div class="inset-row-trailing">
+              <button type="button" class="settings-row-menu-trigger" aria-label="pdf actions" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                  <circle r="1" cy="12" cx="12" />
+                  <circle r="1" cy="12" cx="19" />
+                  <circle r="1" cy="12" cx="5" />
+                </svg>
+              </button>
+              <button type="button" role="switch" aria-label="Enable pdf" aria-checked="true">
+                <span aria-hidden="true" class="switch-mark checked">
+                  <span class="switch-mark-thumb">
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <div role="listitem" class="inset-row is-disabled">
+            <div class="inset-row-main is-static">
+              <span class="inset-row-text is-wrap">
+                <span class="inset-row-label">/project-lint<span class="settings-chip">project</span>
+                <span class="settings-chip">Workspace · not accepted</span>
+              </span>
+              <span class="inset-row-sublabel">
+                <span title="Fixture skill project-lint." class="settings-skill-description">Fixture skill project-lint.</span>
+              </span>
+            </span>
+          </div>
+          <div class="inset-row-trailing">
+            <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-lint for automatic use">Accept</button>
+            <button type="button" class="settings-row-menu-trigger" aria-label="project-lint actions" aria-haspopup="menu" aria-expanded="false">
+              <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                <circle r="1" cy="12" cx="12" />
+                <circle r="1" cy="12" cx="19" />
+                <circle r="1" cy="12" cx="5" />
+              </svg>
+            </button>
+            <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
+              <span aria-hidden="true" class="switch-mark">
+                <span class="switch-mark-thumb">
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
+        <div role="listitem" class="inset-row">
+          <div class="inset-row-main is-static">
+            <span class="inset-row-text is-wrap">
+              <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
+              <span class="settings-chip">Workspace · not accepted</span>
+            </span>
+            <span class="inset-row-sublabel">
+              <span title="Fixture skill project-unratified." class="settings-skill-description">Fixture skill project-unratified.</span>
+            </span>
+          </span>
+        </div>
+        <div class="inset-row-trailing">
+          <button type="button" class="button button-secondary button-sm settings-skill-accept" aria-label="Accept project-unratified for automatic use">Accept</button>
+          <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
+            <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <circle r="1" cy="12" cx="12" />
+              <circle r="1" cy="12" cx="19" />
+              <circle r="1" cy="12" cx="5" />
+            </svg>
+          </button>
+          <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
+            <span aria-hidden="true" class="switch-mark checked">
+              <span class="switch-mark-thumb">
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+      <div role="listitem" class="inset-row">
+        <div class="inset-row-main is-static">
+          <span class="inset-row-text is-wrap">
+            <span class="inset-row-label">/skillify<span class="settings-chip">built-in</span>
+          </span>
+          <span class="inset-row-sublabel">
+            <span title="Fixture skill skillify." class="settings-skill-description">Fixture skill skillify.</span>
+          </span>
+        </span>
+      </div>
+      <div class="inset-row-trailing">
+        <button type="button" class="settings-row-menu-trigger" aria-label="skillify actions" aria-haspopup="menu" aria-expanded="false">
+          <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+            <circle r="1" cy="12" cx="12" />
+            <circle r="1" cy="12" cx="19" />
+            <circle r="1" cy="12" cx="5" />
+          </svg>
+        </button>
+        <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
+          <span aria-hidden="true" class="switch-mark checked">
+            <span class="switch-mark-thumb">
+            </span>
+          </span>
+        </button>
+      </div>
+    </div>
+    <div role="listitem" class="inset-row">
+      <div class="inset-row-main is-static">
+        <span class="inset-row-text is-wrap">
+          <span class="inset-row-label">/user-notes<span class="settings-chip">user</span>
+          <span class="settings-chip">Accepted</span>
+        </span>
+        <span class="inset-row-sublabel">
+          <span title="Fixture skill user-notes." class="settings-skill-description">Fixture skill user-notes.</span>
+        </span>
+      </span>
+    </div>
+    <div class="inset-row-trailing">
+      <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
+        <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+          <circle r="1" cy="12" cx="12" />
+          <circle r="1" cy="12" cx="19" />
+          <circle r="1" cy="12" cx="5" />
+        </svg>
+      </button>
+      <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
+        <span aria-hidden="true" class="switch-mark checked">
+          <span class="switch-mark-thumb">
+          </span>
+        </span>
+      </button>
+    </div>
+  </div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</main>"
+`;
+
+exports[`settings page DOM renders the about page byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">About</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle r="3" cy="12" cx="12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+              <path d="M22 10v6" />
+              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+              <ellipse ry="3" rx="9" cy="5" cx="12" />
+              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+              <path d="M3 12A9 3 0 0 0 21 12" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="About" class="agent-settings-section">
+        <div data-settings-anchor="version" class="inset-group">
+          <div role="list" class="inset-card" aria-label="About">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-settings-anchor="support" class="inset-group">
+          <div class="inset-group-header">Support</div>
+          <div role="list" class="inset-card" aria-label="Support">
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Tenon Help</span>
+                </span>
+              </button>
+              <div class="inset-row-trailing">
+                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14 21 3" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
+              </div>
+            </div>
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Report an issue</span>
+                </span>
+              </button>
+              <div class="inset-row-trailing">
+                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14 21 3" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-settings-anchor="legal" class="inset-group">
+          <div class="inset-group-header">Legal</div>
+          <div role="list" class="inset-card" aria-label="Legal">
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Open-source acknowledgements</span>
+                </span>
+              </button>
+              <div class="inset-row-trailing">
+                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14 21 3" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
+              </div>
+            </div>
+          </div>
+          <p class="inset-group-footnote">Diagnostics stay on this Mac. Tenon never uploads them.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>"
+`;

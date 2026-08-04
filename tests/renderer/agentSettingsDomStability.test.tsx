@@ -17,7 +17,7 @@ import type {
   ManagedSkillView,
   SkillDefinition,
 } from '../../src/renderer/api/types';
-import type { SettingsCategoryTarget } from '../../src/core/settingsWindow';
+import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
 
 // Imported dynamically, after the mock above: a static import would hoist above
 // mock.module and pull in the real provider-icon module before it is stubbed.
@@ -217,22 +217,34 @@ const INVOKE_RESULTS: Record<string, unknown> = {
   },
 };
 
-const CATEGORIES: SettingsCategoryTarget[] = ['general', 'providers', 'security', 'skills'];
+// Every destination the rail and its drill-downs can reach. The pages are here
+// for the same reason the categories are: a sub-page is a real route now, so a
+// refactor that quietly restructures one has to show up in this diff too.
+const ROUTES: SettingsOpenTarget[] = [
+  { category: 'general' },
+  { category: 'agent' },
+  { category: 'preview' },
+  { page: 'services' },
+  { page: 'skills' },
+  { page: 'about' },
+];
 
 describe('settings page DOM', () => {
-  for (const category of CATEGORIES) {
-    test(`renders the ${category} category byte-stably`, async () => {
-      const rendered = await renderCategory(category);
+  for (const route of ROUTES) {
+    const name = route.page ? `${route.page} page` : `${route.category} category`;
+    test(`renders the ${name} byte-stably`, async () => {
+      const rendered = await renderCategory(route);
       const root = rendered.document.querySelector('.settings-window');
       if (!root) throw new Error('Missing .settings-window');
       expect(formatMarkup(root.outerHTML)).toMatchSnapshot();
     });
   }
 
-  test('badges the Skills nav row when managed updates are waiting', async () => {
+  test('badges the Agent nav row when managed updates are waiting', async () => {
     // The badge lives in the shell, not the library, so it must show while a
-    // different category is on screen — here, General.
-    const rendered = await renderCategory('general', [
+    // different category is on screen — here, General. Skills is a page inside
+    // Agent now, so the count surfaces on the Agent row.
+    const rendered = await renderCategory({ category: 'general' }, [
       { ...MANAGED_SKILLS[0]!, updateCommit: 'f'.repeat(40) },
     ]);
 
@@ -242,13 +254,13 @@ describe('settings page DOM', () => {
   });
 
   test('shows no badge when nothing has an update', async () => {
-    const rendered = await renderCategory('general');
+    const rendered = await renderCategory({ category: 'general' });
     expect(rendered.document.querySelector('.settings-nav-badge')).toBeNull();
   });
 });
 
 async function renderCategory(
-  category: SettingsCategoryTarget,
+  target: SettingsOpenTarget,
   managedSkills: ManagedSkillView[] = MANAGED_SKILLS,
 ): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -284,7 +296,7 @@ async function renderCategory(
   await act(async () => {
     root.render(
       <AgentSettingsView
-        initialTarget={{ category }}
+        initialTarget={target}
         onApplied={async () => undefined}
         onClose={() => undefined}
       />,

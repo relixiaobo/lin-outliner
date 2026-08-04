@@ -267,7 +267,13 @@ export class ManagedSkillService {
         recommended: session.recommended,
         ...(session.catalogId ? { catalogId: session.catalogId } : {}),
         ...(session.catalogCompatibilityRange ? { catalogCompatibilityRange: session.catalogCompatibilityRange } : {}),
-        enabled: false,
+        // Installing enables. A Skill that installs into a do-nothing state reads
+        // as broken — the user chose it, saw an "Installed" chip, and nothing
+        // happened — and the second toggle was an approval step for something
+        // already approved in the review dialog, which is the posture #410 ruled
+        // out. The dialog now shows the SKILL.md body, so what is consented to is
+        // the instruction itself, not just where it came from.
+        enabled: true,
         active,
       };
       try {

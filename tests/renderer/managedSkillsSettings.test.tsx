@@ -61,21 +61,22 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
   });
 
-  test('reviews a recommended pinned commit, installs disabled, and enables separately', async () => {
+  // The premise of this case changed, not its selectors: installing used to leave
+  // the Skill off and say so only in a notice rendered behind the still-open
+  // dialog, so a user installed something, saw "Installed", and found it did
+  // nothing. Installing now enables — and because enabling is what puts a Skill's
+  // text into the model's context, the review shows that text rather than a file
+  // list.
+  test('reviews a recommended pinned commit, shows what it will tell the model, and installs enabled', async () => {
     let installed = false;
-    let enabled = false;
     const calls: string[] = [];
     const rendered = renderComponent(async (command) => {
       calls.push(command);
       if (command === 'agent_managed_skill_catalog') return catalog(installed);
-      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(enabled)] : [];
+      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(true)] : [];
       if (command === 'agent_managed_skill_discover') return discovery();
       if (command === 'agent_managed_skill_install') {
         installed = true;
-        return managedSkill(false);
-      }
-      if (command === 'agent_managed_skill_set_enabled') {
-        enabled = true;
         return managedSkill(true);
       }
       throw new Error(`Unexpected command: ${command}`);
@@ -94,6 +95,10 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.body.textContent).toContain('aaaaaaaaaaaa');
     expect(rendered.document.body.textContent).toContain('scripts/run.py');
     expect(rendered.document.body.textContent).toContain('Recommended');
+    // The consent moment shows the instruction, which is what install-enables
+    // rests on — the executable-bit boundary is about execution, not this.
+    expect(rendered.document.body.textContent).toContain('What this skill tells the model');
+    expect(rendered.document.body.textContent).toContain('Read a PDF and summarize it.');
 
     const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
     if (!reviewInstall) throw new Error('Missing reviewed install button');
@@ -103,18 +108,12 @@ describe('Skill library — managed sources', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(rendered.document.body.textContent).toContain('Disabled');
-    expect(rendered.document.body.textContent).toContain('demo-skill installed disabled');
-
-    const enableSwitch = rendered.document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Enable demo-skill"]');
-    if (!enableSwitch) throw new Error('Missing managed skill enable switch');
-    expect(enableSwitch.getAttribute('aria-checked')).toBe('false');
-    await act(async () => {
-      enableSwitch.click();
-      await Promise.resolve();
-    });
-    expect(calls).toContain('agent_managed_skill_set_enabled');
-    expect(rendered.document.querySelector('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(rendered.document.body.textContent).toContain('demo-skill installed and enabled.');
+    // No second toggle stands between the install and the model.
+    expect(calls).not.toContain('agent_managed_skill_set_enabled');
+    expect(
+      rendered.document.querySelector('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked'),
+    ).toBe('true');
   });
 
   test('renders update-available, modified, recommended, and unverified states without collapsing rows', async () => {
@@ -391,6 +390,7 @@ function discovery(): ManagedSkillDiscoveryView {
       subdirectory: 'skills/demo-skill',
       compatibility: { status: 'unknown', appVersion: '0.1.0' },
       scripts: ['scripts/run.py'],
+      skillBody: '---\nname: demo-skill\n---\n\nRead a PDF and summarize it.',
     }],
   };
 }

@@ -893,6 +893,16 @@ export interface ManagedSkillDiscoveryCandidateView {
   version?: string;
   compatibility: ManagedSkillCompatibilityView;
   scripts: string[];
+  /**
+   * The SKILL.md text, so the install review can show what the Skill will tell
+   * the model to do. Installing now enables, which puts this text into the
+   * agent's context — the inertness boundary covers execution, not instruction,
+   * so consent has to be given to the words themselves. Bounded like a diff.
+   */
+  skillBody?: string;
+  /** Set when `skillBody` was cut short, because a capped payload presented as
+   *  complete is the same defect as an unmarked truncated diff. */
+  skillBodyTruncated?: boolean;
 }
 
 export interface ManagedSkillDiscoveryView {

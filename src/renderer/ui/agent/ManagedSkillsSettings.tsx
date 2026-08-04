@@ -330,6 +330,23 @@ function InstallReviewDialog({
         trust={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={review.candidate.version}
       />
+      {/* What the Skill will tell the model, shown because installing enables and
+          enabling puts this text into the agent's context. The update path has
+          always shown its diff; only the initial install asked people to consent
+          to a file list, which was survivable while a second toggle stood between
+          the bytes and the model and is not now. */}
+      {review.candidate.description ? (
+        <p className="managed-skill-review-description">{review.candidate.description}</p>
+      ) : null}
+      {review.candidate.skillBody ? (
+        <>
+          <p className="managed-skill-review-body-label">{t.settings.skills.managedSkillBodyLabel}</p>
+          <pre className="managed-skill-diff">{review.candidate.skillBody}</pre>
+          {review.candidate.skillBodyTruncated ? (
+            <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
+          ) : null}
+        </>
+      ) : null}
       <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
@@ -381,6 +398,11 @@ function UpdatePreviewDialog({
         <span>{preview.changedPaths.join(', ') || t.settings.skills.managedNoFileChanges}</span>
       </div>
       <pre className="managed-skill-diff">{preview.skillDiff}</pre>
+      {/* `diffTruncated` was produced and never read, so a review gate that exists
+          to let the user consent to specific bytes could silently hide the rest. */}
+      {preview.diffTruncated ? (
+        <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
+      ) : null}
       <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>

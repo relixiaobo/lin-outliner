@@ -30,7 +30,7 @@ describe('managed skill service', () => {
     expect(managedSkillErrorView(new Error('internal path and token'))).toEqual({ code: 'unexpected_error' });
   });
 
-  test('installs disabled, enables explicitly, discovers updates without activation, then applies and rolls back', async () => {
+  test('installs enabled, toggles off and on, discovers updates without activation, then applies and rolls back', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
     let changes = 0;
@@ -49,7 +49,24 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    expect(installed).toMatchObject({ status: 'installed-disabled', enabled: false });
+    // Installing enables. Leaving it off made the model unable to invoke a Skill
+    // the user had just chosen, with the only explanation rendered behind the
+    // dialog that was still open; the consent moment is the review, which now
+    // shows the SKILL.md body rather than a file list.
+    expect(installed).toMatchObject({ status: 'enabled', enabled: true });
+    expect((await service.activeRuntimeRoots())[0]).toMatchObject({
+      id: installed.id,
+      contentHash: installed.active.contentHash,
+    });
+
+    // Turning it off and on again still works, and is still a per-record flag —
+    // only the default moved.
+    const disabled = await service.setEnabled({
+      skillId: installed.id,
+      enabled: false,
+      expectedActiveHash: installed.active.contentHash,
+    });
+    expect(disabled.status).toBe('installed-disabled');
     expect(await service.activeRuntimeRoots()).toEqual([]);
 
     const enabled = await service.setEnabled({
@@ -58,10 +75,6 @@ describe('managed skill service', () => {
       expectedActiveHash: installed.active.contentHash,
     });
     expect(enabled.status).toBe('enabled');
-    expect((await service.activeRuntimeRoots())[0]).toMatchObject({
-      id: installed.id,
-      contentHash: installed.active.contentHash,
-    });
     await service.assertInvocable(installed.id, installed.active.contentHash);
 
     github.version = 2;
