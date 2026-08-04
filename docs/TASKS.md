@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (authored `generated-image-resources` #489, plan only — implementation unclaimed; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
@@ -31,6 +31,28 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`generated-image-resources` plan merged (#489, cc-2, 2026-08-04)** — design only, no product
+code; the board item is under Agent capabilities and implementation is unclaimed. **Gate: four
+review rounds on the plan itself, all `file:line`-verified against `origin/main`.** The
+carry-forward is about how a plan earns its central claim. v1 asserted generated images "bypass
+the Thread resource system" and proposed routing them through `resourceRefs`; both were checked
+and neither held — `resourceRefs` does not exist on tool items (only `contextEvidence` /
+`contextCompaction`), so following the sentence literally meant a `protocol.ts` change colliding
+with #483 for no benefit. The gate's own counter-claim was **also** wrong: the bytes looked
+already-persisted because `persistOutputImage` sits in the executor's image branch — but that
+branch never runs for this tool, since `agentToolResult`'s `extraContent` defaults to `[]` and
+`generate_image` passes two arguments. Both readings were plausible from a call graph; only
+reading the third parameter's default settled it. **A mechanism cited as "already exists" has to
+be traced to the call that would actually run, not to the function that would run it** — and the
+same trace turned up `toolImagePath`'s `generate_image` branch as unreachable dead code, and the
+real headline defect nobody had named: the model has never been able to see its own generated
+image. Three more findings survived that way: `resolveThreadResourceFile` returns `null` during
+the producing call (it gates on a committed Item), fail-closed admission read A12 backwards (its
+clause is scoped to *corrupt* data; turn execution is named among the paths that must degrade),
+and scoping only the *budget* would leave two per-part gates behind in the executor — enough to
+orphan a resource whose path was already handed to the model. Cost of the rounds: four
+revisions before any code, against a design that now touches no protocol surface.
 
 **`pi-ai-0.83-upgrade` shipped (#487, codex-4, 2026-08-03)** and is archived `done`
 (`docs/plans/archive/pi-ai-0.83-upgrade.md`). `@earendil-works/pi-ai` `0.80.6 → 0.83.0`: the removed
@@ -794,6 +816,34 @@ see *Recently completed*.
   system, plus a per-Turn output root. That is worth having and is **not browser-specific**;
   filing it inside a browser plan is part of why it never started. If it is wanted, board it
   as a tool-agnostic item rather than reviving this one.
+- **generated-image-resources** (P2, `draft`, plan merged #489, implementation pending) — the
+  tool-agnostic boarding the entry above asked for, with generated images as its first complete
+  consumer. `generate_image` writes bytes into agent scratch and returns a path relative to a root
+  the model is never told about, which produces three defects at once: the model **never sees its
+  own output** (the tool passes no `extraContent`, so no image content item is ever created —
+  which also makes `toolImagePath`'s `generate_image` branch unreachable dead code), it **cannot
+  act on that output** ("put it in Downloads" fails), and history holds a durable reference into
+  a directory declared ephemeral (hence `pruneAgentScratch`'s `generated-images` exemption). Fix:
+  the producer persists → resolves a turn observation path → emits the bytes as `extraContent`,
+  exactly as `file_read` does; the executor's second write is a content-addressed no-op. **No
+  `protocol.ts` / `codec.ts` change and no `referenceMarkup.ts` contact** — dependency tracking
+  already flows through `contentItems`, and `markdownImage` is retired rather than re-schemed.
+  The one piece of real plumbing is moving all **five** image gates (count, per-image 10 MB,
+  per-call 20 MB, mime shape, thread quota) behind a single call-scoped admission call both sides
+  consult, so an image cannot be admitted tool-side and then dropped executor-side, leaving an
+  orphaned resource and a dead path. Caps **degrade** (persist what fits, report the rest via
+  `status`/`warnings`) rather than fail closed — A12's fail-closed clause is scoped to corrupt
+  data, and turn execution is named among the paths that must degrade. Success signal: the
+  `pruneAgentScratch` special case disappears. **Sequencing: land after #483 or rebase onto it**
+  (it changes the tool-call protocol/codec). Shared-surface contacts, both deliberate:
+  `PiTurnExecutor`'s tool-output image branch and `createThreadImageGenerationRuntime`'s
+  signature. **Two gate refinements to fold in while building**, agreed at the plan gate and
+  recorded in [#489's review](https://github.com/relixiaobo/lin-outliner/pull/489#issuecomment-5174369261):
+  name which observation the projector re-materializes with on replay (the detached one, which the
+  plan's stated cost model requires — the wired `ProjectionResources` call is the turn-scoped one
+  and would re-copy every historical image per projection), and disclose that the identity-line
+  change reaches **every** `threadPayload`-sourced tool image, not only generated ones.
+  See `docs/plans/generated-image-resources.md`.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,

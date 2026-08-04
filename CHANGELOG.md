@@ -12,6 +12,39 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Generated images as durable Thread resources plan (PR #489, cc-2, plan-only)**
+  — boards the tool-agnostic artifact work `agent-browser-control` left behind
+  when it closed as `superseded`, with generated images as the first complete
+  consumer. `generate_image` writes bytes into the agent scratch root and returns
+  a path relative to a root the model is never told about, which produces three
+  defects from one cause: the model **never sees its own output** (the tool
+  passes no tool-result `extraContent`, so no image content item is ever created
+  — and `toolImagePath`'s `generate_image` branch, which only runs inside the
+  branch that image would have triggered, is therefore unreachable dead code);
+  the model **cannot act on that output**, because `file_write` is text-only
+  while `file_read` and `bash` resolve relative paths against the workdir, so
+  "generate an image and put it in Downloads" fails — and worse, sometimes
+  half-works by stumbling into `../agent-scratch/…` until `LIN_AGENT_LOCAL_ROOT`
+  moves the workdir; and history holds a durable reference into a directory the
+  code itself declares ephemeral, which is why `pruneAgentScratch` carries a
+  `generated-images` exemption. The plan has the producer persist → resolve a
+  turn-scoped observation path → emit the bytes as `extraContent`, exactly as
+  `file_read` does, with the executor's second write a content-addressed no-op.
+  Dependency tracking already flows through `contentItems`, so **no
+  `protocol.ts` / `codec.ts` change**; `markdownImage` is retired rather than
+  re-schemed, keeping `referenceMarkup.ts` out entirely. Its one piece of real
+  plumbing moves all five image gates — count, per-image 10 MB, per-call 20 MB,
+  mime shape, thread quota — behind a single call-scoped admission call both
+  sides consult, so an image cannot be admitted producer-side, published to the
+  model, and then dropped executor-side into an orphaned resource with a dead
+  path. Caps degrade (persist what fits, report the rest) rather than fail
+  closed. Four gate rounds, every claim traced to the call that actually runs:
+  the first version routed through a `resourceRefs` field tool items do not
+  have, and the gate's own counter — that the bytes were already persisted —
+  was equally wrong, because the executor branch holding that write never fires
+  for this tool. Success signal at implementation: the `pruneAgentScratch`
+  special case disappears. Lands after PR #483.
+
 - **Canonical tool-call history plan (PR #482, codex-3, plan-only)** — boards the
   fix for a defect that made the agent teach itself to fail. Tool history is
   currently reverse-engineered from the presentation Item rather than recorded:
