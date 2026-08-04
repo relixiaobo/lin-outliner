@@ -583,7 +583,7 @@ on its *first* request, so main would have no evidence a confirmation happened a
 all — and the threat model right above explicitly includes a compromised launcher
 renderer, which could then name *Delete forever* and assert it.
 
-So the flow has two legs and main owns both:
+**Flow A (renderer dialog) has two legs and main owns both:**
 
 1. A request **without** a challenge for an action carrying `confirm` returns a
    `ChallengeToken` — **single-use, short-lived, and bound to
@@ -594,21 +594,22 @@ So the flow has two legs and main owns both:
    nodes cannot commit against thirty. Any failure revokes the challenge and returns
    the record to `live`.
 
-**And the security claim is stated exactly, because a challenge alone does not
-prove a human saw anything.** A compromised renderer that *receives* a challenge can
-redeem it silently. The challenge closes first-request commits, replay, and operand
-substitution between the phases — not "the user consented".
+**The security claim for flow A is stated exactly, because a challenge alone does
+not prove a human saw anything.** A compromised renderer that *receives* a challenge
+can redeem it silently. The challenge closes first-request commits, replay, and
+operand substitution between the legs — not "the user consented".
 
-For the two actions that are **outside `Cmd+Z`** — *Delete forever* and *Empty
-Trash* — that gap is not acceptable once a second, locked-down renderer can name
-them, so **main raises a native dialog** (`dialog.showMessageBox`) and mints the
-challenge only on the user's actual acceptance. No renderer can fabricate that.
-Reversible confirmations keep a renderer dialog, where the challenge's
-replay/substitution guarantees are enough.
+**Flow B (native) exists because that is not enough for the two actions outside
+`Cmd+Z`** — *Delete forever* and *Empty Trash* — once a second, locked-down renderer
+can name them. It is **not flow A with a different dialog**: it has **no legs and no
+token**.
 
-**The native flow mints no token at all** (flow B above). Handing one back would put
-the deciding artefact in a renderer's hands, which is the bypass the sheet exists to
-prevent; main raises the sheet, main observes the acceptance, main executes.
+Main raises the sheet (`dialog.showMessageBox`), and **main's accepted sheet
+revalidates the operands and atomically claims `confirming → executing` without ever
+creating a `ChallengeToken`.** Nothing is minted, so nothing can be handed to a
+renderer, so nothing can be redeemed by one — which is the whole point: a token
+would put the deciding artefact back in the hands the sheet exists to bypass. Main
+raises it, main observes the acceptance, main executes.
 
 **That change lands with PR 2, not PR 1.** The context menu ships an in-app
 `ConfirmDialog` today (`NodeContextMenu.tsx:589-598`), and replacing it with a
@@ -1216,6 +1217,11 @@ file**, which is what keeps it clear of #486.
 **PR 2 — overlaps, re-derived 2026-08-04 with `gh pr list` + `gh api …/files
 --paginate`.** (The `--paginate` matters: the default page returns 30 files, which
 is why an earlier sweep read #483 as touching only `ThreadView`.)
+
+**The snapshot below is evidence, not the contract — open PRs move.** (#483 and
+#488 both advanced within the hour it was taken.) The binding instruction is the
+*ordering*: PR 2 lands after both, and the inventory is re-derived at implementation
+start.
 
 | PR | Overlaps | Handling |
 |---|---|---|
