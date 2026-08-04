@@ -18,7 +18,6 @@ import {
 } from '../icons';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
 import { useT } from '../../i18n/I18nProvider';
-import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { resolveUsableActiveProvider } from './providerCatalog';
@@ -40,9 +39,10 @@ type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'mutation';
 
 /**
- * The draft is split by category, along the same seam as the components: the
- * provider slice belongs to Providers, the skill slice to the Skill library. The
- * parent holds both because one footer Save commits them together.
+ * Not a draft in the commit sense — nothing here waits for a Save. `ProviderDraft`
+ * is which provider the Providers pane treats as selected; `SkillDraft` mirrors
+ * the persisted disabled set so a toggle can move optimistically and be put back
+ * if the write fails.
  */
 interface ProviderDraft {
   providerId: string;
@@ -95,14 +95,16 @@ function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
 
 /**
  * The settings shell. It owns what every category shares — navigation history,
- * the loaded settings, the draft the footer Save commits, and the single
- * error/notice surface — and renders exactly one category component beneath it.
- * Category-local state lives in that category's component.
+ * the loaded settings, and the single error/notice surface — and renders exactly
+ * one category component beneath it. Category-local state lives in that
+ * category's component.
+ *
+ * Every control commits where it sits. There is no footer, no draft, and so no
+ * way for closing the window or switching category to discard work.
  */
 export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [capabilitySettings, setCapabilitySettings] = useState<AgentCapabilitySettingsView | null>(null);
-  const [capabilityDraft, setCapabilityDraft] = useState<AgentCapabilitySettingsView | null>(null);
   const [providerDraft, setProviderDraft] = useState<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
   const [skillDraft, setSkillDraft] = useState<SkillDraft>(EMPTY_SKILL_DRAFT);
   // Route navigation history for macOS System Settings-style back/forward chrome.
@@ -114,7 +116,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const category = routeCategory(route);
   const canGoBack = nav.index > 0;
   const canGoForward = nav.index < nav.stack.length - 1;
-  const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -159,7 +160,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
 
   useEffect(() => window.lin?.onSettingsNavigate?.((target) => {
     setNav(navFromOpenTarget(target));
-    setCreatingCustom(false);
     setError(null);
     setNotice(null);
   }), []);
@@ -216,7 +216,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     setError(null);
     setNotice(null);
     setNav(navFromOpenTarget(initialTarget));
-    setCreatingCustom(false);
 
     void Promise.all([
       api.agentGetProviderSettings(),
@@ -225,7 +224,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       .then(([next, nextCapabilities]) => {
         if (!isCurrentRequest('settings', requestId)) return;
         setCapabilitySettings(nextCapabilities);
-        setCapabilityDraft(nextCapabilities);
         applyLoadedSettings(next);
       })
       .catch((caught) => {
@@ -252,25 +250,37 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return off;
   }, []);
 
-  const capabilityBlocks = capabilityDraft?.blocks ?? capabilitySettings?.blocks ?? [];
-  const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(skillDraft, settings) : false;
-  const capabilityPatch = capabilitySettings && capabilityDraft
-    ? capabilitySettingsRemovalPatch(capabilitySettings, capabilityDraft)
-    : null;
-  const capabilityDraftDirty = Boolean(
-    capabilityPatch
-    && capabilityPatch.removeBlocks.length > 0,
-  );
-  const showFooterActions = category === 'security'
-    ? capabilityDraftDirty || runtimeDraftDirty
-    : category === 'skills' && runtimeDraftDirty;
+  const capabilityBlocks = capabilitySettings?.blocks ?? [];
 
-  function removeCapabilityBlock(rule: string) {
-    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
-    setCapabilityDraft({
+  /**
+   * Removing a block commits on the row, like every other control in this window.
+   *
+   * It used to stage into a draft that a footer Save committed — a footer whose
+   * visibility was keyed to the current category while the draft was global, so
+   * navigating away hid a pending removal with no indication it still existed,
+   * and pressing Save from another pane committed it blind.
+   */
+  async function removeCapabilityBlock(rule: string) {
+    const base = capabilitySettings ?? emptyCapabilitySettings();
+    const patch = capabilitySettingsRemovalPatch(base, {
       ...base,
       blocks: base.blocks.filter((candidate) => candidate !== rule),
     });
+    const requestId = beginRequest('mutation');
+    // Optimistic: the row leaves at once because that is what the user asked for.
+    setCapabilitySettings({ ...base, blocks: base.blocks.filter((candidate) => candidate !== rule) });
+    try {
+      const next = await api.agentApplyCapabilitySettingsPatch(patch);
+      if (isCurrentRequest('mutation', requestId)) setCapabilitySettings(next);
+      await onApplied();
+    } catch (caught) {
+      // Put it back. A row that vanished and stayed vanished would tell the user
+      // the rule is gone while the agent still enforces it.
+      if (isCurrentRequest('mutation', requestId)) {
+        setCapabilitySettings(base);
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    }
   }
 
   /**
@@ -305,15 +315,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * model could not invoke it and the row would come back off with no
    * explanation. One user action, one commit model.
    *
-   * The write is derived from the PERSISTED list, not the draft, so it cannot
-   * smuggle a user's other pending toggles onto disk; the draft is then adjusted
-   * by the same single change so it will not re-add the name on the next Save.
-   */
-  /**
-   * Serializes the writes. Two toggles inside one IPC round trip both read the
-   * same settings state and each wrote a whole array, so the second silently
-   * undid the first: the Skill's activation had succeeded and its notice said
-   * so, but the row came back off and the model could not invoke it, with no
+   * The write is derived from the PERSISTED list, never from view state, so a
+   * queued write cannot smuggle another row's in-flight change onto disk.
+   *
+   * Serialized for the same reason. Two toggles inside one IPC round trip both
+   * read the same settings state and each wrote a whole array, so the second
+   * silently undid the first: the Skill's activation had succeeded and its notice
+   * said so, but the row came back off and the model could not invoke it, with no
    * error anywhere. Chaining makes the second read the result of the first.
    */
   async function persistSkillDisabled(skillName: string, disabled: boolean): Promise<boolean> {
@@ -332,11 +340,8 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         latestDisabledSkillsRef.current = updated.agent.disabledSkills ?? [];
         if (isCurrentRequest('mutation', requestId)) {
           setSettings(updated);
-          // Adjusted by the same SINGLE change, never overwritten wholesale.
-          // Replacing the draft with the persisted list discarded the user's
-          // other pending toggles: flipping a managed Skill on made an
-          // unrelated row that had been switched off snap back on and the
-          // footer Save vanish, with no error and no notice.
+          // Adjusted by the same SINGLE change, never overwritten wholesale, so a
+          // reply arriving while another row is mid-flight cannot revert it.
           setSkillDraft((current) => ({
             disabledSkills: disabled
               ? [...new Set([...current.disabledSkills, skillName])]
@@ -346,10 +351,15 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         await onApplied();
         return true;
       } catch (caught) {
-        // Without this the rejection escapes unhandled: no error is shown, the
-        // row re-renders from the unchanged prop and snaps back off, and the
-        // caller's success notice stays up — the split state this call exists
-        // to prevent, moved onto the failure path.
+        // Revert the optimistic flip: a switch that stayed where the user put it
+        // after the write failed would claim a state the model does not see.
+        if (isCurrentRequest('mutation', requestId)) {
+          setSkillDraft((current) => ({
+            disabledSkills: disabled
+              ? current.disabledSkills.filter((name) => name !== skillName)
+              : [...new Set([...current.disabledSkills, skillName])],
+          }));
+        }
         setError(caught instanceof Error ? caught.message : String(caught));
         setNotice(null);
         return false;
@@ -361,49 +371,27 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return run;
   }
 
+  /**
+   * The non-managed half of the Skill toggle. It used to stage into a draft while
+   * the managed half committed immediately, so two identical-looking switches in
+   * one list meant different things and Cancel reverted only one of them. Both
+   * now take the same path.
+   */
   function toggleSkill(skillName: string) {
-    setSkillDraft((current) => {
-      const disabled = current.disabledSkills.includes(skillName)
-        ? current.disabledSkills.filter((n) => n !== skillName)
-        : [...current.disabledSkills, skillName];
-      return { ...current, disabledSkills: disabled };
-    });
+    const disabled = !skillDraft.disabledSkills.includes(skillName);
+    // Optimistic: the switch moves now, and `persistSkillDisabled` puts it back
+    // if the write fails.
+    setSkillDraft((current) => ({
+      disabledSkills: disabled
+        ? [...new Set([...current.disabledSkills, skillName])]
+        : current.disabledSkills.filter((name) => name !== skillName),
+    }));
+    void persistSkillDisabled(skillName, disabled);
   }
 
-  // The footer Save persists only skill runtime settings and explicit blocks.
-  // It never creates or edits a provider row: row
-  // creation lives solely in the per-provider config window and the OAuth login
-  // (provider-config-cleanup A1). Materializing a keyless row here for whatever
-  // provider the draft happened to default to was the root of the "Add key" yet
-  // "Remove provider" contradiction.
-  async function save() {
-    const requestId = beginRequest('mutation');
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api.agentUpdateRuntimeSettings({
-        disabledSkills: skillDraft.disabledSkills,
-      });
-      const nextCapabilities = capabilityDraftDirty && capabilityPatch
-        ? await api.agentApplyCapabilitySettingsPatch(capabilityPatch)
-        : await api.agentGetCapabilitySettings();
-
-      const next = await api.agentGetProviderSettings();
-      if (isCurrentRequest('mutation', requestId)) {
-        setCapabilitySettings(nextCapabilities);
-        setCapabilityDraft(nextCapabilities);
-        applyLoadedSettings(next);
-        setCreatingCustom(false);
-        setNotice(t.settings.footer.savedNotice);
-      }
-      await onApplied();
-    } catch (caught) {
-      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest('mutation', requestId)) setSaving(false);
-    }
-  }
+  // There is no `save()`. Every control in this window commits where it is, so
+  // there is nothing left for a footer to collect — and with no draft to lose,
+  // closing the window, switching category, or ⌘W can no longer discard work.
 
   // Per-row ⋯ actions operate on an explicit providerId (independent of the draft
   // selection); they share one refetch/notice/error envelope.
@@ -424,7 +412,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
           ? resolveInitialProviderDraft(next)
           : resolveProviderDraftFor(next, providerDraft.providerId));
         setSkillDraft(resolveSkillDraft(next));
-        if (resetToInitial) setCreatingCustom(false);
         setNotice(successNotice);
       }
       await onApplied();
@@ -551,23 +538,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
             ) : null}
             {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
-            {/* Providers commit per-provider through their own sheet (Cancel/Save)
-                and the General pane applies instantly (no draft), like native
-                Settings — so the global footer is only for runtime/capability
-                categories that batch a draft into one Save. */}
-            {showFooterActions ? (
-              <footer className="agent-settings-footer">
-                <span />
-                <div className="agent-settings-footer-actions">
-                  <Button onClick={onClose} variant="ghost">
-                    {t.settings.footer.cancel}
-                  </Button>
-                  <Button disabled={saving} onClick={save} variant="primary">
-                    {saving ? t.settings.footer.saving : t.settings.footer.save}
-                  </Button>
-                </div>
-              </footer>
-            ) : null}
           </div>
         </div>
     </main>
@@ -611,12 +581,4 @@ function providerToDraft(provider: AgentProviderConfigView): ProviderDraft {
   };
 }
 
-function hasRuntimeDraftChanged(draft: SkillDraft, settings: AgentProviderSettingsView): boolean {
-  return !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? []);
-}
 
-function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightSet = new Set(right);
-  return left.every((value) => rightSet.has(value));
-}

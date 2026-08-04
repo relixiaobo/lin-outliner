@@ -186,7 +186,12 @@ describe('skill library list', () => {
     expect(drafted).toEqual([]);
   });
 
-  test('a non-managed toggle stays a draft the footer Save commits', async () => {
+  // The premise of this case changed rather than its selectors: a non-managed
+  // toggle used to stage into a draft that a footer Save committed, while the
+  // managed toggle beside it wrote immediately — two identical switches, two
+  // meanings. Both now commit on the row; the library still routes them through
+  // different callbacks, and this asserts that routing.
+  test('a non-managed toggle reports through onToggleSkill, which commits it', async () => {
     const persisted: Array<[string, boolean]> = [];
     const drafted: string[] = [];
     const rendered = await render({

@@ -1708,11 +1708,17 @@ function settingsWindowSearch(target: SettingsOpenTarget = {}): string {
 }
 
 function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
-  if (settingsWindow) {
-    if (settingsWindow.isMinimized()) settingsWindow.restore();
-    settingsWindow.show();
-    settingsWindow.focus();
-    settingsWindow.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
+  // `liveWindow`, not a truthiness check: `settingsWindow` is cleared on 'closed',
+  // so a ⌘, landing between 'close' and 'closed' found a destroyed window and threw
+  // inside the ipcMain handler — an unhandled rejection, and no window opened.
+  const existing = liveWindow(settingsWindow);
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    // A navigate with no category must not yank a user who is already somewhere
+    // else back to the default pane; only an explicitly targeted open navigates.
+    if (openTarget.category) existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
     return;
   }
   // A utilitarian Preferences window: opaque content, no OS material (unlike the
@@ -2160,7 +2166,13 @@ function registerIpc() {
   });
 
   ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
-  ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  // Only the settings surface may close the settings window. Every sibling
+  // privileged handler checks its sender; this one did not, so any renderer could
+  // close it.
+  ipcMain.handle('lin:close-settings', (event) => {
+    const window = liveWindow(settingsWindow);
+    if (window && BrowserWindow.fromWebContents(event.sender) === window) window.close();
+  });
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
   // Launcher window IPC (the prewarmed global launcher).
@@ -2344,11 +2356,20 @@ function registerIpc() {
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
   // A provider setting changed in the settings window or its config child.
-  // Tell BOTH the main window (stale provider state) and the settings window (its
-  // list reflects the new configured provider row) to re-fetch.
-  ipcMain.handle('lin:settings-changed', () => {
-    liveWindow(mainWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
-    liveWindow(settingsWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+  // Tell the main window (stale provider state) and the settings window (its list
+  // reflects the new configured provider row) to re-fetch — but never the window
+  // that just wrote.
+  //
+  // Fanning it back to the sender was a real defect, not just waste: the settings
+  // window's listener refetches and reapplies wholesale, so a write made there
+  // reverted the user's other pending toggles. Deleting the draft removed the
+  // damage; excluding the sender removes the cause, and with it a full settings
+  // round-trip plus a list re-render on every instant toggle.
+  ipcMain.handle('lin:settings-changed', (event) => {
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
+      if (target && target !== sender) target.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+    }
   });
 
   ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {

@@ -231,11 +231,14 @@ test.describe('agent settings window', () => {
     const blocks = settings.getByRole('list', { name: 'Your blocks' });
     await expect(blocks).toContainText('Command(git push origin main)');
 
+    // Removal commits on the row. There is no footer Save anywhere in this window
+    // any more: the drafts it collected are gone, and with them the footer that
+    // appeared per-category while the draft it committed was global.
     await blocks.locator('.inset-row', { hasText: 'Command(git push origin main)' }).getByRole('button', { name: 'Remove' }).click();
     await expect(blocks).not.toContainText('Command(git push origin main)');
     await expect(blocks).toContainText('Action(git.publish_remote)');
+    await expect(settings.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
 
-    await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
       const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_apply_capability_settings_patch');
       return updateCall?.args.patch;
