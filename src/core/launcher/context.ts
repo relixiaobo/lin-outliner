@@ -3,10 +3,12 @@
 // These are the stable, serializable enums/shapes the capture pipeline agrees
 // on: provider ids, permission requirements, capture warnings, and the live
 // "what is the user looking at right now" contract (ExternalContext). Capture is
-// basic-info-only today (app + tab + classification); richer in-page extraction
-// is deferred to a future unified extension/CDP backend (A7).
+// basic-info-only today (app + tab + classification); richer extraction is
+// deferred to an explicit main-process page reader, invoked only after the user
+// picks an action — never on the hotkey path. No extension, no CDP (A7).
 //
-// Plan: docs/plans/lazy-like-global-launcher.md.
+// Plan: docs/plans/unified-command-surface.md (surface + capture loop);
+// the shipped behavior is docs/spec/launcher.md.
 
 import type { SourceDraft } from './sources';
 
@@ -74,8 +76,9 @@ export interface ContextWarning {
  *
  * Capture is basic-info-only today: app + browser tab (URL/title) +
  * provider classification. In-page content/selection/media extraction was
- * intentionally removed in favor of a future unified extension/CDP backend —
- * see docs/plans/browser-extension-integration.md.
+ * intentionally removed; the approved rich-extraction backend is a main-process
+ * explicit page reader (docs/plans/unified-command-surface.md), not an extension
+ * and not the ambient capture seam.
  */
 export interface ExternalContext {
   id: string;

@@ -199,5 +199,8 @@ focused E2E coverage, docs check, and diff check before marking either PR ready.
 - Which maintained PPTX parser meets the archive-limit and no-script contract?
 - Should XLSX display formulas as source text, cached values, or both? Formula
   execution is out of scope regardless.
-- Is the static URL reader still valuable beside the persistent hardened
-  webview, and which single remote-image policy should it use?
+- Which single remote-image policy should the static URL reader use? (Whether the
+  reader is valuable beside the hardened webview is **settled: yes** — it gained a
+  second consumer when `unified-command-surface.md` made explicit page reading the
+  approved path for capture and agent context. It is invoked there through
+  `ExplicitPageReader`, never from the ambient hotkey capture seam.)
