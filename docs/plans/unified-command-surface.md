@@ -268,27 +268,39 @@ interface ActionEffectPlan {
   completion: 'restoreInvoker' | 'stayAtDestination';   // D9 focus policy, per action
 }
 
-// Which commands PRODUCE a bindable result, and what they guarantee.
-interface BindableCommandResults {
-  ensure_date_node: { focusNodeId: NodeId };
-  create_tag:       { focusNodeId: NodeId };
-}
-type BindableCommand = keyof BindableCommandResults;
+// ONE value-level descriptor. Types are derived from it, and the codec and the
+// executor read the same object — an `interface` could do neither, because
+// TypeScript erases it.
+export const ACTION_BINDINGS = {
+  // PRODUCERS: which commands yield a bindable value, and WHERE it lives in the
+  // real `CommandResult`. Commands return `focus?: FocusHint` (`types.ts:653-661`)
+  // — there is no `result.focusNodeId` anywhere, so the extraction path is stated
+  // rather than assumed. `create_tag` returns `focus(id)` (`core.ts:1918-1924`) and
+  // `documentService` forwards `result.focus`.
+  produces: {
+    ensure_date_node: { focusNodeId: 'focus.nodeId' },
+    create_tag:       { focusNodeId: 'focus.nodeId' },
+  },
+  // CONSUMERS: which arg fields may hold a step reference. Explicit, because
+  // `NodeId` IS `string` (`types.ts:30-33`) — no structural rule can tell
+  // `apply_tag.tagId` from `create_tag.name`, and a name heuristic would be a
+  // guess wearing a type.
+  consumes: {
+    apply_tag:       ['tagId'],
+    batch_apply_tag: ['tagId'],
+    // …one line per consumer; everything unlisted stays literal.
+  },
+} as const;
+
+type BindableCommand = keyof typeof ACTION_BINDINGS.produces;
+type BindableField<K extends CommandName> =
+  K extends keyof typeof ACTION_BINDINGS.consumes
+    ? typeof ACTION_BINDINGS.consumes[K][number] : never;
 type Bound<T> = T | { fromStep: StepRef; field: 'focusNodeId' };
 
-// Which arg fields may CONSUME one. Explicit, because `NodeId` IS `string`
-// (`types.ts:30-33`) — so no structural rule can tell `apply_tag.tagId` from
-// `create_tag.name`, and a name heuristic would be a guess wearing a type.
-interface BindableArgFields {
-  apply_tag:       'tagId';
-  batch_apply_tag: 'tagId';
-  // …one line per consumer; everything unlisted stays literal.
-}
 type BoundCommandArgs<K extends CommandName> = {
   [F in keyof CommandArgs[K]]:
-    F extends (K extends keyof BindableArgFields ? BindableArgFields[K] : never)
-      ? Bound<CommandArgs[K][F]>
-      : CommandArgs[K][F];
+    F extends BindableField<K> ? Bound<CommandArgs[K][F]> : CommandArgs[K][F];
 };
 
 // Mapped union: args are correlated WITH the command name, and `bindAs` exists only
@@ -470,10 +482,23 @@ A missing or invalid binding at use is an executor failure
 rule**, because `NodeId` is literally `string` (`types.ts:30-33`). "Replace every
 `NodeId` with `Bound<NodeId>`" would also open `create_tag.name`, and a
 property-name heuristic would be a guess wearing a type — wrong the first time two
-ids play different roles. So `BindableArgFields` names the consumers one line at a
-time (`apply_tag.tagId`, `batch_apply_tag.tagId`, …) and everything unlisted stays
-literal. The codec and the executor read the same map, so the type and the runtime
-cannot drift.
+ids play different roles. So the allow-list names consumers one line at a time.
+
+**It is a `const` value, not an `interface`, and that is load-bearing.** TypeScript
+erases interfaces, so a codec or executor cannot read one; a second value-level copy
+would recreate exactly the drift this is supposed to prevent. `ACTION_BINDINGS` is
+the single object: the types derive from `typeof` it, and the runtime reads the same
+thing.
+
+**The producer path is stated, not assumed.** Commands do not return a
+`focusNodeId`. They return `CommandResult` with `focus?: FocusHint`
+(`types.ts:653-661`); `create_tag` yields `focus(id)` (`core.ts:1918-1924`) and
+`documentService` forwards `result.focus` — which is why the shipped consumer reads
+`created.focus?.nodeId` (`NodeContextMenu.tsx:264`). An executor that stored the
+result and looked for `result.focusNodeId` would hit `bindingUnresolved` on this
+plan's own *Go to Today* and *Add tag → Create*, and a hand-written `focus.nodeId`
+special case would be an undocumented second schema. So the descriptor names the
+extraction (`'focus.nodeId'`) and the executor follows it.
 
 That is also what makes the negative fixture mean something: the counterexample is
 **`create_tag.name`** — same underlying type as `apply_tag.tagId`, and it must
@@ -1271,7 +1296,10 @@ and a differential test can judge them instead.
   compile-time **negative** fixture: wrong args for a command, `bindAs` on a
   non-bindable step, and a step ref in **`create_tag.name`** — the
   same-underlying-type counterexample to `apply_tag.tagId` — must each **fail**
-  type-checking, while the `tagId` case compiles. Plus a runtime `ensure_date_node → navigate(bound focus
+  type-checking, while the `tagId` case compiles. **Runtime coverage for both bound
+  flows**: `ensure_date_node → navigate(bound focus node)` and the user-visible
+  `create_tag → apply_tag(bound tagId)`, each asserting the value was extracted
+  through `ACTION_BINDINGS.produces`, not a special case. Plus a runtime `ensure_date_node → navigate(bound focus
   node)` proving *Go to Today* is expressible, and a `bindingUnresolved` case.
 - **Lifecycle round-trip (D1b).** The actual response sequence, not just the phases:
   request → `confirmationRequired` + challenge → dialog → challenge-bearing request →
