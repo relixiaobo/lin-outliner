@@ -5,34 +5,25 @@ import {
   type GenerateImageData,
 } from '../../src/main/agent/capabilities/agentImageGenerationTool';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { MAX_TOOL_PAYLOAD_IMAGE_BYTES } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
-const GENERATED_IMAGE_PATH = '/scratch/agent-attachments/turn/image-0.png';
-const GENERATED_IMAGE_REF = {
-  id: 'a'.repeat(64),
-  mimeType: 'image/png',
-  byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
-  fileName: 'image-0.png',
-};
+const GENERATED_IMAGE_PATH = '/scratch/generated-images/turn/image-0.png';
+const ONE_PIXEL_PNG_BYTES = Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64');
 
 function generatedOutputRuntime(): Pick<
   AgentImageGenerationRuntime,
-  'admitToolOutputImage' | 'resolveResourceObservationPath'
+  'writeGeneratedImage' | 'preparePromptImage'
 > {
   return {
-    admitToolOutputImage: async () => ({
-      ok: true,
-      ref: GENERATED_IMAGE_REF,
-      byteLength: GENERATED_IMAGE_REF.byteLength,
-      mimeType: GENERATED_IMAGE_REF.mimeType,
-    }),
-    resolveResourceObservationPath: async () => GENERATED_IMAGE_PATH,
+    writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
+    preparePromptImage: async () => ({ data: ONE_PIXEL_PNG_BYTES, mimeType: 'image/png' }),
   };
 }
 
 describe('generate_image tool', () => {
-  test('returns a Thread observation path and emits image content without embedding bytes in JSON', async () => {
+  test('returns an absolute original path and emits a bounded preview without embedding bytes in JSON', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -84,12 +75,11 @@ describe('generate_image tool', () => {
           height: 1,
         }],
       },
-      instructions: 'The image is saved in this conversation and already shown to the user; there is no need to render it again in the final answer. Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.',
+      instructions: 'The generated image is saved at the returned local path. Available previews are already shown to the user; do not render them again in the final answer. Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.',
     });
   });
 
-  test('keeps admitted images and reports per-image admission failures as partial', async () => {
-    let rejectAll = false;
+  test('keeps saved siblings and provider indexes when one original write fails', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -101,14 +91,10 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      admitToolOutputImage: async ({ imageIndex }) => !rejectAll && imageIndex === 1
-        ? {
-            ok: true,
-            ref: GENERATED_IMAGE_REF,
-            byteLength: GENERATED_IMAGE_REF.byteLength,
-            mimeType: GENERATED_IMAGE_REF.mimeType,
-          }
-        : { ok: false, reason: 'imageByteLimit' },
+      writeGeneratedImage: async ({ index }) => {
+        if (index === 0) throw new Error('disk write failed');
+        return { path: GENERATED_IMAGE_PATH };
+      },
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
         provider: 'openai',
@@ -132,25 +118,62 @@ describe('generate_image tool', () => {
       ok: true,
       status: 'partial',
       data: { images: [{ providerIndex: 2, path: GENERATED_IMAGE_PATH }] },
-      warnings: [expect.stringContaining('10 MB per-image limit')],
+      warnings: [expect.stringContaining('disk write failed')],
     });
     expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
-
-    rejectAll = true;
-    const rejected = await createGenerateImageTool(runtime).execute('call-all-rejected', {
-      prompt: 'Two small squares',
-      count: 2,
-    });
-    expect(rejected.details).toMatchObject({
-      ok: true,
-      status: 'partial',
-      data: { images: [] },
-      instructions: 'No generated image was saved. Follow the warnings before retrying.',
-    });
-    expect(rejected.content.filter((part) => part.type === 'image')).toHaveLength(0);
   });
 
-  test('keeps the image when its working path cannot be materialized', async () => {
+  test('saves a large original above the generic 10 MiB preview admission limit', async () => {
+    const original = Buffer.alloc(MAX_TOOL_PAYLOAD_IMAGE_BYTES + 1, 0xab);
+    let saved: Buffer | null = null;
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'google',
+        id: 'gemini-3.1-pro-image',
+        name: 'Nano Banana Pro',
+        input: ['text'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'google',
+      readLocalImage: async () => { throw new Error('not used'); },
+      ...generatedOutputRuntime(),
+      writeGeneratedImage: async ({ data }) => {
+        saved = data;
+        return { path: GENERATED_IMAGE_PATH };
+      },
+      generateImages: async ({ modelId }) => ({
+        api: 'google-images',
+        provider: 'google',
+        model: modelId,
+        output: [{ type: 'image', data: original.toString('base64'), mimeType: 'image/png' }],
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const result = await createGenerateImageTool(runtime).execute('call-large', {
+      prompt: 'A detailed 4K scene',
+      size: '4K',
+    });
+    expect(result.details).toMatchObject({
+      ok: true,
+      status: 'success',
+      data: {
+        images: [{
+          providerIndex: 1,
+          path: GENERATED_IMAGE_PATH,
+          byteLength: original.byteLength,
+        }],
+      },
+      metrics: { outputBytes: original.byteLength },
+    });
+    expect(saved?.byteLength).toBe(original.byteLength);
+    expect(result.content.filter((part) => part.type === 'image')).toEqual([
+      { type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' },
+    ]);
+  });
+
+  test('keeps the original path when its bounded model preview cannot be prepared', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -162,8 +185,8 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      resolveResourceObservationPath: async () => {
-        throw new Error('scratch unavailable');
+      preparePromptImage: async () => {
+        throw new Error('image decode failed');
       },
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
@@ -186,15 +209,16 @@ describe('generate_image tool', () => {
       data: {
         images: [{
           providerIndex: 1,
+          path: GENERATED_IMAGE_PATH,
           mimeType: 'image/png',
-          byteLength: GENERATED_IMAGE_REF.byteLength,
+          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
         }],
       },
-      warnings: [expect.stringContaining('working path could not be materialized')],
-      instructions: 'The image is saved in this conversation and already shown to the user; there is no need to render it again in the final answer. No working path is available in this turn. Do not invent one; retry the file operation in a later turn.',
-      metrics: { outputBytes: GENERATED_IMAGE_REF.byteLength },
+      warnings: [expect.stringContaining('model preview is unavailable')],
+      instructions: 'The generated image is saved at the returned local path. No model preview is available; do not claim to have inspected the image. Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.',
+      metrics: { outputBytes: ONE_PIXEL_PNG_BYTES.byteLength },
     });
-    expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
+    expect(result.content.filter((part) => part.type === 'image')).toHaveLength(0);
   });
 
   test('treats model auto as the default selection', async () => {

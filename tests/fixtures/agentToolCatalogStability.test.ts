@@ -33,8 +33,8 @@ const imageGeneration = {
   listModels: async () => [],
   getActiveProviderId: async () => null,
   readLocalImage: async () => { throw new Error('catalog test does not read images'); },
-  admitToolOutputImage: async () => { throw new Error('catalog test does not admit images'); },
-  resolveResourceObservationPath: async () => { throw new Error('catalog test does not resolve images'); },
+  writeGeneratedImage: async () => { throw new Error('catalog test does not write images'); },
+  preparePromptImage: async () => { throw new Error('catalog test does not prepare images'); },
   generateImages: async () => { throw new Error('catalog test does not generate images'); },
 } satisfies AgentImageGenerationRuntime;
 

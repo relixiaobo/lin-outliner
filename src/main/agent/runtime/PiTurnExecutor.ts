@@ -65,10 +65,12 @@ import {
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
+import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
 import {
-  persistedToolResultDetails,
-  persistedToolResultText,
-} from '../capabilities/agentToolResultPersistence';
+  MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
+  measureToolPayloadImage,
+} from '../persistence/ToolPayloadStore';
 import {
   piExternalProviderId,
   piCompleteSimple,
@@ -86,18 +88,11 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
-import {
-  TOOL_OUTPUT_IMAGE_LIMITS,
-  type ToolOutputImageOmissionReason,
-} from './ToolOutputImageAdmission';
-
-export {
-  MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
-  MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
-} from './ToolOutputImageAdmission';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
+export const MAX_PERSISTED_TOOL_OUTPUT_IMAGES = 16;
+export const MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_PERSISTED_TOOL_STRING_CHARS = 8_000;
 const MAX_PERSISTED_WEB_RESULTS = 50;
 export const MAX_THREAD_NAME_CHARS = 80;
@@ -936,20 +931,16 @@ export class PiEventNormalizer {
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
     const active = this.toolItems.get(callId);
     if (!active) return;
-    try {
-      const completed = await this.context.recorder.completed(await completedToolItem(
-        this.context,
-        active.item,
-        result,
-        isError,
-        Math.max(0, Date.now() - active.startedAt),
-      ));
-      await persistCompletedToolContext(this.context, completed, result, isError);
-      this.toolItems.delete(callId);
-      this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
-    } finally {
-      this.context.admitToolOutputImage.release?.(active.item.id);
-    }
+    const completed = await this.context.recorder.completed(await completedToolItem(
+      this.context,
+      active.item,
+      result,
+      isError,
+      Math.max(0, Date.now() - active.startedAt),
+    ));
+    await persistCompletedToolContext(this.context, completed, result, isError);
+    this.toolItems.delete(callId);
+    this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
   }
 }
 
@@ -1292,17 +1283,14 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  const text = item.type === 'dynamicToolCall'
-    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
-    : output.text;
-  if (!text) return null;
+  if (!output.text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = output.text.replace(/\s+/g, ' ').trim();
   const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
   return context.persistOutputText(
     item.id,
-    text,
+    output.text,
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
@@ -1460,7 +1448,9 @@ async function dynamicOutput(
   const content: DynamicToolOutputContent[] = [];
   let remainingText = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
   let imageIndex = 0;
-  const omittedImages: Record<ToolOutputImageOmissionReason, number> = {
+  let persistedImages = 0;
+  let persistedImageBytes = 0;
+  const omittedImages: Record<ImageOmissionReason, number> = {
     countLimit: 0,
     invalidBase64: 0,
     invalidMimeType: 0,
@@ -1471,39 +1461,51 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const persisted = persistedToolResultText({
-        toolNamespace: item.namespace,
-        toolName: item.tool,
-        text: part.text,
-      });
-      const text = boundedText(persisted, remainingText);
+      const text = boundedText(part.text, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
     }
     if (part.type === 'image' && typeof part.data === 'string') {
       const sourceImageIndex = imageIndex;
       imageIndex += 1;
-      const admission = await context.admitToolOutputImage({
-        toolCallId: item.id,
-        imageIndex: sourceImageIndex,
-        role: 'normalizer',
-        dataBase64: part.data,
-        mimeType: part.mimeType,
-      });
-      if (!admission.ok) {
-        omittedImages[admission.reason] += 1;
+      if (persistedImages >= MAX_PERSISTED_TOOL_OUTPUT_IMAGES) {
+        omittedImages.countLimit += 1;
         continue;
       }
-      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
+      const measurement = measureToolPayloadImage(part.data);
+      if (!measurement.ok) {
+        omittedImages[measurement.reason] += 1;
+        continue;
+      }
+      if (persistedImageBytes + measurement.byteLength > MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES) {
+        omittedImages.callByteLimit += 1;
+        continue;
+      }
+      const mimeType = dynamicImageMimeType(part.mimeType);
+      if (!mimeType) {
+        omittedImages.invalidMimeType += 1;
+        continue;
+      }
+      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
+        if (error instanceof ThreadResourceQuotaError) return null;
+        throw error;
+      });
+      if (!promptImage) {
+        omittedImages.quotaExceeded += 1;
+        continue;
+      }
+      persistedImageBytes += measurement.byteLength;
+      const existingPath = toolImagePath(item.namespace, item.tool, result, sourceImageIndex);
       if (existingPath) {
         content.push({
           type: 'image',
           source: { kind: 'localFile', path: existingPath },
-          promptImage: admission.ref,
+          promptImage,
         });
       } else {
-        content.push({ type: 'image', source: { kind: 'threadPayload', ref: admission.ref } });
+        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
       }
+      persistedImages += 1;
     }
   }
   const omittedImageCount = Object.values(omittedImages).reduce((total, count) => total + count, 0);
@@ -1513,7 +1515,11 @@ async function dynamicOutput(
       value: {
         imagesOmitted: omittedImageCount,
         reasons: Object.fromEntries(Object.entries(omittedImages).filter(([, count]) => count > 0)),
-        limits: TOOL_OUTPUT_IMAGE_LIMITS,
+        limits: {
+          maxImages: MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
+          maxImageBytes: MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+          maxCallBytes: MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
+        },
       },
     });
   }
@@ -1530,15 +1536,41 @@ async function dynamicOutput(
   return content;
 }
 
-function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
+function toolImagePath(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  imageIndex: number,
+): string | null {
   const details = toolDetails(result);
   if (!isRecord(details) || !isRecord(details.data)) return null;
-  if (toolName === 'file_read' && isRecord(details.data.file)) {
+  if (toolNamespace === null && toolName === 'file_read' && isRecord(details.data.file)) {
     if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
       return details.data.file.filePath;
     }
   }
+  if (toolNamespace === null && toolName === 'generate_image' && Array.isArray(details.data.images)) {
+    const image = details.data.images.find((candidate) => (
+      isRecord(candidate) && candidate.previewIndex === imageIndex
+    ));
+    if (isRecord(image) && typeof image.path === 'string') return image.path;
+  }
   return null;
+}
+
+type ImageOmissionReason =
+  | 'countLimit'
+  | 'invalidBase64'
+  | 'invalidMimeType'
+  | 'imageByteLimit'
+  | 'callByteLimit'
+  | 'quotaExceeded';
+
+function dynamicImageMimeType(value: unknown): string | null {
+  if (value === undefined) return 'image/png';
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
 }
 
 function boundedJsonValue(

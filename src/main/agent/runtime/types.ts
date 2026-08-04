@@ -22,9 +22,6 @@ import type {
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
 import type { TokenBudgetUsage } from './kernel/types';
-import type {
-  ToolOutputImageAdmissionHandler,
-} from './ToolOutputImageAdmission';
 
 export interface SteeredTurnInput {
   readonly items: readonly ThreadItem[];
@@ -52,7 +49,6 @@ export interface TurnExecutionContext {
     dataBase64: string,
     mimeType: string,
   ): Promise<ThreadResourceReference>;
-  readonly admitToolOutputImage: ToolOutputImageAdmissionHandler;
   persistOutputText(
     itemId: string,
     text: string,

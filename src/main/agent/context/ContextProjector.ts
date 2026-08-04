@@ -1214,7 +1214,7 @@ async function historyTool(
   timestamp: number,
   resources: Pick<
     ProjectionResources,
-    'readContext' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath'
+    'readContext' | 'readOutput' | 'readResource'
   >,
   projection: ToolOutputProjectionContextPayload | null,
   projectionUnavailable: boolean,
@@ -1322,10 +1322,7 @@ async function historicalToolEvidence(
 
 async function historyToolResultContent(
   item: HistoryToolItem,
-  resources: Pick<
-    ProjectionResources,
-    'readOutput' | 'readResource' | 'resolveResourceObservationPath'
-  >,
+  resources: Pick<ProjectionResources, 'readOutput' | 'readResource'>,
   projection: ToolOutputProjectionContextPayload | null,
 ): Promise<Array<TextContent | ImageContent>> {
   const projectedText = await projectedToolOutputText(projection, resources);
@@ -1344,12 +1341,7 @@ async function historyToolResultContent(
           content.push({ type: 'text', text: dynamicToolImageUnavailableIdentity(part, ref) });
           continue;
         }
-        const readablePath = item.namespace === null
-          && item.tool === 'generate_image'
-          && part.source.kind === 'threadPayload'
-          ? await resources.resolveResourceObservationPath(ref).catch(() => null)
-          : null;
-        content.push({ type: 'text', text: dynamicToolImageIdentity(part, ref, readablePath) });
+        content.push({ type: 'text', text: dynamicToolImageIdentity(part, ref) });
         content.push({ type: 'image', data: bytes.toString('base64'), mimeType: ref.mimeType });
       }
     }
@@ -1372,11 +1364,9 @@ async function projectedToolOutputText(
 export function dynamicToolImageIdentity(
   part: DynamicToolImageContent,
   ref: ThreadResourceReference,
-  readablePath: string | null = null,
 ): string {
   const label = dynamicToolImageLabel(part);
-  const path = readablePath ? `, readable_path=${JSON.stringify(readablePath)}` : '';
-  return `[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes${path}]`;
+  return `[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes]`;
 }
 
 function dynamicToolImageUnavailableIdentity(

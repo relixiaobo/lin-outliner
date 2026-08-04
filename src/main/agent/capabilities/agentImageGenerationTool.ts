@@ -17,13 +17,8 @@ import {
   splitFileReferenceMarkers,
   type FileReferenceSegment,
 } from '../../../core/referenceMarkup';
-import {
-  TOOL_OUTPUT_IMAGE_LIMITS,
-  type ToolOutputImageAdmission,
-  type ToolOutputImageAdmissionInput,
-  type ToolOutputImageOmissionReason,
-} from '../runtime/ToolOutputImageAdmission';
-import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../../core/agentAttachmentLimits';
+import { measureToolPayloadImage } from '../persistence/ToolPayloadStore';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 
@@ -55,8 +50,19 @@ export interface AgentImageGenerationRuntime {
     options: GenerateImageRuntimeOptions;
   }): AgentImageGenerationOptionValidationIssue | null;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
-  admitToolOutputImage(input: ToolOutputImageAdmissionInput): Promise<ToolOutputImageAdmission>;
-  resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
+  writeGeneratedImage(input: {
+    toolCallId: string;
+    index: number;
+    providerId: string;
+    modelId: string;
+    data: Buffer;
+    mimeType: string;
+    prompt: string;
+  }): Promise<{ path: string }>;
+  preparePromptImage(input: {
+    filePath: string;
+    signal?: AbortSignal;
+  }): Promise<AgentImageGenerationInputImage>;
   generateImages(input: {
     providerId: string;
     modelId: string;
@@ -93,11 +99,12 @@ export interface GenerateImageData {
 
 export interface GeneratedImageResult {
   providerIndex: number;
-  path?: string;
+  path: string;
   mimeType: string;
   byteLength: number;
   width?: number;
   height?: number;
+  previewIndex?: number;
 }
 
 interface NormalizedGenerateImageParams {
@@ -276,35 +283,66 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         const images: GeneratedImageResult[] = [];
         const extraContent: PiImageContent[] = [];
         const warnings: string[] = [];
-        let admittedOutputBytes = 0;
+        let savedOutputBytes = 0;
         for (const [index, image] of imageOutputs.entries()) {
-          const dataBase64 = stripDataUrlPrefix(image.data);
-          const admission = await runtime.admitToolOutputImage({
-            toolCallId,
-            imageIndex: index,
-            role: 'producer',
-            dataBase64,
-            mimeType: image.mimeType,
-          });
-          if (!admission.ok) {
-            warnings.push(generatedImageAdmissionWarning(index, admission.reason));
+          if (index >= MAX_GENERATED_IMAGES) {
+            warnings.push(`Generated image ${index + 1} was not saved: the provider returned more than ${MAX_GENERATED_IMAGES} images.`);
             continue;
           }
-          admittedOutputBytes += admission.byteLength;
-          extraContent.push({ type: 'image', data: dataBase64, mimeType: admission.mimeType });
-          const path = await runtime.resolveResourceObservationPath(admission.ref).catch(() => null);
-          if (!path) {
-            warnings.push(`Generated image ${index + 1} was saved but its working path could not be materialized. Retry the file operation in a later turn.`);
+          const dataBase64 = stripDataUrlPrefix(image.data);
+          const mimeType = generatedImageMimeType(image.mimeType);
+          if (!mimeType) {
+            warnings.push(generatedImageSourceWarning(index, 'invalidMimeType'));
+            continue;
+          }
+          const measurement = measureToolPayloadImage(dataBase64, MAX_IMAGE_ATTACHMENT_SOURCE_BYTES);
+          if (!measurement.ok) {
+            warnings.push(generatedImageSourceWarning(index, measurement.reason));
+            continue;
           }
           const data = Buffer.from(dataBase64, 'base64');
-          const dimensions = readAgentImageDimensions(data, admission.mimeType);
-          images.push({
+          if (data.byteLength !== measurement.byteLength) {
+            warnings.push(generatedImageSourceWarning(index, 'invalidBase64'));
+            continue;
+          }
+          let saved: { path: string };
+          try {
+            saved = await runtime.writeGeneratedImage({
+              toolCallId,
+              index,
+              providerId: selected.providerId,
+              modelId: selected.id,
+              data,
+              mimeType,
+              prompt: params.prompt,
+            });
+          } catch (error) {
+            signal?.throwIfAborted();
+            warnings.push(`Generated image ${index + 1} could not be saved: ${errorMessage(error)}`);
+            continue;
+          }
+          savedOutputBytes += data.byteLength;
+          const dimensions = readAgentImageDimensions(data, mimeType);
+          const generated: GeneratedImageResult = {
             providerIndex: index + 1,
-            ...(path ? { path } : {}),
-            mimeType: admission.mimeType,
-            byteLength: admission.byteLength,
+            path: saved.path,
+            mimeType,
+            byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
-          });
+          };
+          try {
+            const preview = await runtime.preparePromptImage({ filePath: saved.path, signal });
+            generated.previewIndex = extraContent.length;
+            extraContent.push({
+              type: 'image',
+              data: preview.data.toString('base64'),
+              mimeType: preview.mimeType,
+            });
+          } catch (error) {
+            signal?.throwIfAborted();
+            warnings.push(`Generated image ${index + 1} was saved at ${saved.path}, but its model preview is unavailable: ${errorMessage(error)}`);
+          }
+          images.push(generated);
         }
 
         const data: GenerateImageData = {
@@ -318,14 +356,11 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
             status: warnings.length > 0 ? 'partial' : 'success',
-            instructions: generatedImageInstructions(
-              images.length,
-              images.filter((image) => image.path !== undefined).length,
-            ),
+            instructions: generatedImageInstructions(images.length, extraContent.length),
             ...(warnings.length > 0 ? { warnings } : {}),
             metrics: {
               durationMs: elapsed(startedAt),
-              outputBytes: admittedOutputBytes,
+              outputBytes: savedOutputBytes,
             },
           }),
           modelVisibleGenerateImageData(data),
@@ -488,36 +523,35 @@ function normalizeImagePathValue(value: string): string {
   return value;
 }
 
-function generatedImageAdmissionWarning(
+function generatedImageSourceWarning(
   index: number,
-  reason: ToolOutputImageOmissionReason,
+  reason: 'invalidBase64' | 'invalidMimeType' | 'imageByteLimit',
 ): string {
   const prefix = `Generated image ${index + 1} was not saved`;
   switch (reason) {
-    case 'countLimit':
-      return `${prefix}: this tool result accepts at most ${TOOL_OUTPUT_IMAGE_LIMITS.maxImages} images. Request fewer images.`;
     case 'invalidBase64':
       return `${prefix}: the provider returned invalid base64 image data. Retry once or switch image models.`;
     case 'invalidMimeType':
       return `${prefix}: the provider returned an invalid image MIME type. Retry once or switch image models.`;
     case 'imageByteLimit':
-      return `${prefix}: it exceeds the ${formatMegabytes(TOOL_OUTPUT_IMAGE_LIMITS.maxImageBytes)} per-image limit. Request a smaller size or lower quality.`;
-    case 'callByteLimit':
-      return `${prefix}: accepted images in this call would exceed the ${formatMegabytes(TOOL_OUTPUT_IMAGE_LIMITS.maxCallBytes)} total limit. Request fewer images, a smaller size, or lower quality.`;
-    case 'quotaExceeded':
-      return `${prefix}: the Thread resource quota is exhausted. Remove unneeded conversation resources or start a new Thread, then retry.`;
+      return `${prefix}: it exceeds the ${formatMegabytes(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} source-image safety limit.`;
   }
 }
 
-function generatedImageInstructions(imageCount: number, pathCount: number): string {
+function generatedImageMimeType(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
+}
+
+function generatedImageInstructions(imageCount: number, previewCount: number): string {
   if (imageCount === 0) return 'No generated image was saved. Follow the warnings before retrying.';
-  const subject = imageCount === 1 ? 'The image is' : 'The images are';
-  const object = imageCount === 1 ? 'it' : 'them';
-  const saved = `${subject} saved in this conversation and already shown to the user; there is no need to render ${object} again in the final answer.`;
-  if (pathCount === 0) {
-    return `${saved} No working path is available in this turn. Do not invent one; retry the file operation in a later turn.`;
-  }
-  return `${saved} Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.`;
+  const subject = imageCount === 1 ? 'The generated image is' : 'The generated images are';
+  const location = imageCount === 1 ? 'the returned local path' : 'the returned local paths';
+  const previews = previewCount > 0
+    ? 'Available previews are already shown to the user; do not render them again in the final answer.'
+    : 'No model preview is available; do not claim to have inspected the image.';
+  return `${subject} saved at ${location}. ${previews} Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.`;
 }
 
 function formatMegabytes(bytes: number): string {

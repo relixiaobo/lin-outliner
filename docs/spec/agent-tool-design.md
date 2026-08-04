@@ -119,30 +119,34 @@ the model.
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
 
-`generate_image` persists each admitted provider image as a Thread-owned managed tool
-image before returning its result. It resolves a Turn-scoped absolute observation path
-for immediate file operations and emits the same bytes as image content, which makes the
-image visible to both the model and Thread UI and records the resource dependency on the
-tool Item. Producer and normalizer consult one call-scoped admission memo: it matches
-compacted image output by MIME and digest, returns the already-persisted ref without a
-second write, retains no base64 payload, and releases its state after the call is
-normalized. On later Turns the projector materializes built-in generated images through
-the current Turn observation and publishes a fresh `readable_path`; persisted tool text
-never carries the expired Turn path. Observation materialization failure degrades only
-the working path, while a missing or corrupt resource degrades to an unavailable image
-identity instead of failing context projection.
+`generate_image` separates the provider's original artifact from the bounded image shown
+to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
+boundary, writes the original under the app-owned `generated-images` scratch area, and
+returns its absolute path plus one-based provider index and original metadata. The generic
+10 MiB per-image and 20 MiB per-call tool-output limits do not decide whether that source
+survives, so detailed 4K originals remain intact.
 
-Generated images are displayed automatically, so the tool returns no Markdown image
-syntax and does not ask the model to repeat an image in its final answer. The returned
-absolute path is a working copy for the current Turn. When the user names a destination,
-the model copies that path with the ordinary shell and leaves the working copy in place.
-Admission failures degrade per image: accepted images remain in a `partial` result, while
-warnings name the count, byte, MIME, base64, or Thread quota refusal and a remedy. The
-result preserves each admitted image's one-based provider index even when refused images
-compact the returned array. A typed Thread-resource quota error, including filesystem
-capacity exhaustion, is the only storage error classified as `quotaExceeded`. The
-tool writes no dedicated `generated-images` scratch area; all scratch subdirectories obey
-the same TTL cleanup rule.
+After the original write, the host normalizes a preview to the ordinary model-input
+budget (at most 2000 px per edge and 4.5 MiB). Successful previews are emitted as image
+content and persist as the existing dynamic-tool `localFile + promptImage` shape: the
+weak local path identifies the operable original, while the Thread resource reproduces
+the bounded provider-visible snapshot. An explicit preview index maps compact image
+content back to sparse provider results, so a failed sibling cannot select the wrong
+path. Preview failure keeps the original path and produces a partial warning; original
+write failure omits only that output. Typed Thread-resource quota and filesystem-capacity
+errors degrade preview persistence to `quotaExceeded`; unrelated storage errors retain
+their identity.
+
+Generated local images are displayed automatically, so the tool returns no Markdown image
+syntax and does not ask the model to repeat them. When the user names a destination, the
+model copies the returned original path with the ordinary shell. The Thread preview and
+outline-ingest surfaces also use that trusted local path, preserving original resolution
+instead of copying the bounded model snapshot. Persisted result text
+and slim details retain that weak path. Historical projection reads the bounded preview
+without rematerializing the original; a missing source behaves like any deleted local
+file, and a missing preview resource produces an unavailable identity instead of failing
+the Thread. Generated originals follow the same seven-day scratch TTL as every other
+scratch area, with no cleanup exemption.
 
 Import commit requires a matching, unexpired preview identity. It writes one
 staging subtree through the Outliner host and verifies the materialized counts.

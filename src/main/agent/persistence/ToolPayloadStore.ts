@@ -965,9 +965,15 @@ export class ToolPayloadStore {
   }
 }
 
-export function measureToolPayloadImage(dataBase64: string): ToolPayloadImageMeasurement {
+export function measureToolPayloadImage(
+  dataBase64: string,
+  maxBytes = MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+): ToolPayloadImageMeasurement {
   if (dataBase64.length === 0) return { ok: false, reason: 'invalidBase64' };
-  if (dataBase64.length > MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS) {
+  const maxBase64Chars = maxBytes === MAX_TOOL_PAYLOAD_IMAGE_BYTES
+    ? MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS
+    : Math.ceil(maxBytes / 3) * 4;
+  if (dataBase64.length > maxBase64Chars) {
     return { ok: false, reason: 'imageByteLimit' };
   }
   const padding = dataBase64.endsWith('==') ? 2 : dataBase64.endsWith('=') ? 1 : 0;
@@ -977,7 +983,7 @@ export function measureToolPayloadImage(dataBase64: string): ToolPayloadImageMea
     return { ok: false, reason: 'invalidBase64' };
   }
   const byteLength = Math.floor(bodyLength * 3 / 4);
-  return byteLength <= MAX_TOOL_PAYLOAD_IMAGE_BYTES
+  return byteLength <= maxBytes
     ? { ok: true, byteLength }
     : { ok: false, reason: 'imageByteLimit' };
 }

@@ -54,7 +54,6 @@ import {
   TEST_TOOL_SCHEMA_DIGEST,
   toolAdmissionEvent,
 } from '../fixtures/agentToolCallHistory';
-import { createToolOutputImageAdmission } from '../../src/main/agent/runtime/ToolOutputImageAdmission';
 
 const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
   new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
@@ -2077,7 +2076,6 @@ describe('PiTurnExecutor event normalization', () => {
     const context: TurnExecutionContext = {
       ...fixture.context,
       persistOutputImage,
-      admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
@@ -2142,29 +2140,24 @@ describe('PiTurnExecutor event normalization', () => {
     }]));
   });
 
-  test('records compacted generated images as managed sources and strips their Turn path', async () => {
+  test('records generated originals as weak local paths matched by explicit preview index', async () => {
     const fixture = createContext();
-    const imageBase64 = Buffer.from('generated-image').toString('base64');
-    const admitToolOutputImage = createToolOutputImageAdmission(fixture.context.persistOutputImage);
-    expect(await admitToolOutputImage({
-      toolCallId: 'call-generate-image',
-      imageIndex: 0,
-      role: 'producer',
-      dataBase64: '***',
+    const imageBase64 = Buffer.from('bounded-preview').toString('base64');
+    const missingPreviewPath = '/scratch/generated-images/turn/image-0.png';
+    const previewedPath = '/scratch/generated-images/turn/image-1.png';
+    const images = [{
+      providerIndex: 1,
+      path: missingPreviewPath,
       mimeType: 'image/png',
-    })).toEqual({ ok: false, reason: 'invalidBase64' });
-    const produced = await admitToolOutputImage({
-      toolCallId: 'call-generate-image',
-      imageIndex: 1,
-      role: 'producer',
-      dataBase64: imageBase64,
+      byteLength: 12_000_000,
+    }, {
+      providerIndex: 2,
+      path: previewedPath,
       mimeType: 'image/png',
-    });
-    if (!produced.ok) throw new Error('Expected the second generated image to be admitted');
-    const normalizer = new PiEventNormalizer({
-      ...fixture.context,
-      admitToolOutputImage,
-    });
+      byteLength: 13_000_000,
+      previewIndex: 0,
+    }];
+    const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle({
       type: 'tool_execution_start',
       toolCallId: 'call-generate-image',
@@ -2180,14 +2173,7 @@ describe('PiTurnExecutor event normalization', () => {
           type: 'text',
           text: JSON.stringify({
             ok: true,
-            data: {
-              images: [{
-                providerIndex: 2,
-                path: '/scratch/agent-attachments/turn/image.png',
-                mimeType: 'image/png',
-                byteLength: Buffer.from(imageBase64, 'base64').byteLength,
-              }],
-            },
+            data: { images },
           }),
         }, {
           type: 'image',
@@ -2203,12 +2189,7 @@ describe('PiTurnExecutor event normalization', () => {
             providerId: 'openai',
             modelId: 'gpt-image-2',
             modelName: 'GPT Image 2',
-            images: [{
-              providerIndex: 2,
-              path: '/scratch/agent-attachments/turn/image.png',
-              mimeType: 'image/png',
-              byteLength: Buffer.from(imageBase64, 'base64').byteLength,
-            }],
+            images,
           },
         },
       },
@@ -2217,25 +2198,23 @@ describe('PiTurnExecutor event normalization', () => {
     await normalizer.flush();
 
     const item = fixture.recorder.orderedItems()[0];
+    const persistedItem = JSON.stringify(item);
+    expect(persistedItem).toContain(missingPreviewPath);
+    expect(persistedItem).toContain(previewedPath);
     expect(item).toMatchObject({
       type: 'dynamicToolCall',
       tool: 'generate_image',
       contentItems: expect.arrayContaining([{
         type: 'image',
-        source: { kind: 'threadPayload', ref: expect.objectContaining({ id: produced.ref.id }) },
+        source: { kind: 'localFile', path: previewedPath },
+        promptImage: expect.objectContaining({ id: expect.any(String) }),
       }]),
     });
-    expect(JSON.stringify(item)).not.toContain('/scratch/agent-attachments/turn/image.png');
   });
 
   test('preserves namespaced generate_image text at both persistence boundaries', async () => {
     const fixture = createContext();
-    const releasedCallIds: string[] = [];
-    const releaseAdmission = fixture.context.admitToolOutputImage.release;
-    fixture.context.admitToolOutputImage.release = (toolCallId) => {
-      releasedCallIds.push(toolCallId);
-      releaseAdmission?.(toolCallId);
-    };
+    const pluginPreview = Buffer.from('plugin-preview').toString('base64');
     const pluginText = JSON.stringify({
       ok: true,
       data: {
@@ -2259,25 +2238,41 @@ describe('PiTurnExecutor event normalization', () => {
       toolCallId: 'call-plugin-image',
       toolName: 'myplugin__generate_image',
       result: {
-        content: [{ type: 'text', text: pluginText }],
-        details: { ok: true, tool: 'generate_image', data: { images: [{ id: 'plugin-image-1' }] } },
+        content: [
+          { type: 'text', text: pluginText },
+          { type: 'image', data: pluginPreview, mimeType: 'image/png' },
+        ],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          data: {
+            images: [{
+              id: 'plugin-image-1',
+              path: '/plugin-owned/path.png',
+              previewIndex: 0,
+            }],
+          },
+        },
       },
       isError: false,
     });
     await normalizer.flush();
 
     const item = fixture.recorder.orderedItems()[0];
+    expect(JSON.stringify(item)).not.toContain('/plugin-owned/path.png');
     expect(item).toMatchObject({
       type: 'dynamicToolCall',
       namespace: 'myplugin',
       tool: 'generate_image',
-      contentItems: [{ type: 'text', text: pluginText }],
+      contentItems: [
+        { type: 'text', text: pluginText },
+        { type: 'image', source: { kind: 'threadPayload' } },
+      ],
     });
     if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
       throw new Error('Expected namespaced image output reference');
     }
-    expect(await fixture.context.readOutput(item.outputRef)).toBe(pluginText);
-    expect(releasedCallIds).toEqual(['call-plugin-image']);
+    expect(await fixture.context.readOutput(item.outputRef)).toContain(pluginText);
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -2664,7 +2659,6 @@ describe('PiTurnExecutor event normalization', () => {
     const context: TurnExecutionContext = {
       ...fixture.context,
       persistOutputImage,
-      admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
       persistOutputText: async (_itemId, text, mimeType, summary) => {
         completeOutput = text;
         return {
@@ -3620,7 +3614,6 @@ function createContext(): {
     resolveResourceObservationPath: async () => null,
     readResource: async () => null,
     persistOutputImage,
-    admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
     persistOutputText: async (_itemId, text, mimeType, summary) => {
       const id = createHash('sha256').update(text).digest('hex');
       outputPayloads.set(id, text);

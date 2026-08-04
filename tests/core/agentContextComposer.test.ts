@@ -609,7 +609,7 @@ describe('canonical context projection', () => {
     expect(await new CanonicalContextProjector(model, resources).projectTurns([terminal])).toEqual(projected);
   });
 
-  test('keeps image identity adjacent to bytes and adds Turn paths only for built-in generated images', async () => {
+  test('keeps weak local image paths adjacent to bounded history previews without rematerializing originals', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const managedRef: ThreadResourceReference = {
       id: 'd'.repeat(64),
@@ -639,7 +639,8 @@ describe('canonical context projection', () => {
       contentItems: [
         {
           type: 'image',
-          source: { kind: 'threadPayload', ref: managedRef },
+          source: { kind: 'localFile', path: '/scratch/generated-images/turn/chart.png' },
+          promptImage: managedRef,
           alt: 'Rendered chart',
         },
         {
@@ -652,12 +653,16 @@ describe('canonical context projection', () => {
       durationMs: 1,
       modelCall: projectionModelCall('visual__render', {}),
     };
+    let pathResolutions = 0;
     const resources = {
       ...projectionResources(payloads, new Map([
         [managedRef.id, Buffer.from('chart')],
         [localSnapshotRef.id, Buffer.from('raw')],
       ])),
-      resolveResourceObservationPath: async () => '/scratch/turn/chart.png',
+      resolveResourceObservationPath: async () => {
+        pathResolutions += 1;
+        return '/scratch/turn/unused.png';
+      },
     };
 
     const messages = await new CanonicalContextProjector(model, resources).projectTurns([
@@ -665,55 +670,12 @@ describe('canonical context projection', () => {
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
     expect(result?.content).toEqual([
-      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes, readable_path="/scratch/turn/chart.png"]' },
+      { type: 'text', text: '[Image output: Rendered chart (/scratch/generated-images/turn/chart.png), image/png, 5 bytes]' },
       { type: 'image', data: Buffer.from('chart').toString('base64'), mimeType: 'image/png' },
       { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
-
-    const degradedMessages = await new CanonicalContextProjector(model, {
-      ...resources,
-      resolveResourceObservationPath: async () => {
-        throw new Error('scratch unavailable');
-      },
-    }).projectTurns([
-      turn(1, [userItem('user-images', 1_720_000_000_123, 'Render both.'), tool], true),
-    ]);
-    const degradedResult = degradedMessages.find((message) => message.role === 'toolResult');
-    expect(degradedResult?.content).toContainEqual({
-      type: 'text',
-      text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes]',
-    });
-    expect(degradedResult?.content).toContainEqual({
-      type: 'image',
-      data: Buffer.from('chart').toString('base64'),
-      mimeType: 'image/png',
-    });
-
-    let unrelatedPathResolutions = 0;
-    const unrelatedTool: ThreadItem = {
-      ...tool,
-      id: 'tool-images-unrelated',
-      provenance: {
-        ...tool.provenance,
-        originItemId: 'tool-images-unrelated',
-      },
-      namespace: 'visual',
-      tool: 'render',
-      contentItems: [tool.contentItems![0]!],
-    };
-    const unrelatedMessages = await new CanonicalContextProjector(model, {
-      ...resources,
-      resolveResourceObservationPath: async () => {
-        unrelatedPathResolutions += 1;
-        return '/scratch/turn/unused.png';
-      },
-    }).projectTurns([
-      turn(1, [userItem('user-images-unrelated', 1_720_000_000_124, 'Render one.'), unrelatedTool], true),
-    ]);
-    expect(unrelatedPathResolutions).toBe(0);
-    expect(messageText(unrelatedMessages.find((message) => message.role === 'toolResult')!))
-      .not.toContain('readable_path');
+    expect(pathResolutions).toBe(0);
 
     const unavailableMessages = await new CanonicalContextProjector(
       model,
@@ -723,7 +685,7 @@ describe('canonical context projection', () => {
     ]);
     const unavailableResult = unavailableMessages.find((message) => message.role === 'toolResult');
     expect(unavailableResult?.content).toEqual([
-      { type: 'text', text: '[Image output unavailable or corrupt: Rendered chart (chart.png), image/png, 5 bytes]' },
+      { type: 'text', text: '[Image output unavailable or corrupt: Rendered chart (/scratch/generated-images/turn/chart.png), image/png, 5 bytes]' },
       { type: 'text', text: '[Image output unavailable or corrupt: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
     ]);
   });

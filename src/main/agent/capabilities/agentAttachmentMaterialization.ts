@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
+export const AGENT_GENERATED_IMAGE_DIR = 'generated-images';
 export const AGENT_SCRATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ManagedAttachmentObservation {
@@ -75,7 +76,7 @@ function safeWorkspaceKey(value: string): string {
 }
 
 // Bound the whole scratch root by age. Scratch is app-owned ephemeral data (attachment
-// observations, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
+// observations, generated images, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
 // so anything untouched past the TTL is removed. Pruning the entries WITHIN each scratch subdir
 // (by per-entry mtime) rather than the subdirs themselves keeps actively-written areas intact
 // while still reclaiming stale files. Best-effort; called once at startup.
