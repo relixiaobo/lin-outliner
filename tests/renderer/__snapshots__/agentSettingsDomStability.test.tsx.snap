@@ -300,7 +300,9 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                     <span class="inset-row-sublabel">Processes and file tools can read and modify everything available to your macOS account.</span>
                   </span>
                 </div>
-                <div class="inset-row-trailing">Full Access</div>
+                <div class="inset-row-trailing">
+                  <span class="inset-row-value">Full Access</span>
+                </div>
               </div>
             </div>
           </div>

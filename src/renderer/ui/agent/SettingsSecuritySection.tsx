@@ -47,7 +47,7 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
         <InsetRow
           label={t.settings.security.accessModeLabel}
           sublabel={t.settings.security.fullAccessSublabel}
-          trailing={t.settings.security.fullAccessLabel}
+          trailing={<span className="inset-row-value">{t.settings.security.fullAccessLabel}</span>}
           wrap
         />
       </InsetGroup>

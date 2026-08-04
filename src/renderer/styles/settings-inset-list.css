@@ -154,6 +154,10 @@
 
 .inset-row-text {
   display: flex;
+  /* Grows, so anything after it inside the row button — a chevron, a badge — is
+     pushed to the row's trailing edge instead of sitting against the end of the
+     label, which read as punctuation rather than as an affordance. */
+  flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-hairline);
@@ -228,6 +232,27 @@
   align-items: center;
   gap: var(--space-2);
   padding-right: var(--space-4);
+}
+
+/* A destructive row action keeps the shape of every other row action and says
+   what it is with colour alone. Red bare text beside a filled sibling read as two
+   different kinds of control — and as a link, which on this surface means the one
+   native blue, not red. */
+.inset-row-trailing .button-danger {
+  background: var(--fill-1);
+}
+
+.inset-row-trailing .button-danger:hover:not(:disabled),
+.inset-row-trailing .button-danger:active:not(:disabled) {
+  background: var(--fill-2);
+}
+
+.inset-row-value {
+  /* A value stated as text rather than a control. Without a type token it
+     inherited the root 16px and rendered LARGER than the 13px label it annotates;
+     it also reads as a value, not a title, so it sits on the secondary rung. */
+  font-size: var(--font-ui-sm);
+  color: var(--text-secondary);
 }
 
 .settings-drilldown-chevron {
