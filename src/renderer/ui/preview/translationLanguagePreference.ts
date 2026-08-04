@@ -57,3 +57,15 @@ export function setTranslationLanguagePreference(language: TranslationLanguage):
     void window.lin?.setTranslationLanguage?.(language);
   }
 }
+
+/**
+ * Drop the module-level cache. The seeded language is read once and kept, so a
+ * test that renders under one bridge leaves it set for whatever renders next —
+ * the sibling preference store already needed this for the same reason.
+ */
+export function resetTranslationLanguagePreferenceForTests(): void {
+  currentLanguage = null;
+  bridgeUnsubscribe?.();
+  bridgeUnsubscribe = null;
+  listeners.clear();
+}

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
@@ -18,6 +18,8 @@ import type {
   SkillDefinition,
 } from '../../src/renderer/api/types';
 import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
+import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
+import { resetTranslationLanguagePreferenceForTests } from '../../src/renderer/ui/preview/translationLanguagePreference';
 
 // Imported dynamically, after the mock above: a static import would hoist above
 // mock.module and pull in the real provider-icon module before it is stubbed.
@@ -228,6 +230,15 @@ const ROUTES: SettingsOpenTarget[] = [
   { page: 'skills' },
   { page: 'about' },
 ];
+
+// The Preview pane reads the same module-level translation stores the preview
+// panel does — which is the point of that pane, but it means a sibling test
+// leaving a preference set changes this markup. Reset before each render so the
+// snapshot describes the pane, not the suite's running order.
+beforeEach(() => {
+  resetUrlPageTranslationPreferencesForTests();
+  resetTranslationLanguagePreferenceForTests();
+});
 
 describe('settings page DOM', () => {
   for (const route of ROUTES) {
