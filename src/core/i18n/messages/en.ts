@@ -170,6 +170,10 @@ export const en = {
         unsupported: 'Unsupported',
         notDetected: 'Not detected',
         active: 'Active',
+        keyRejected: 'Key rejected',
+        // Qualifies a good state rather than replacing it: a probe that could not
+        // reach the provider says nothing about the credential.
+        uncheckableSuffix: ({ status }: { status: string }) => `${status}, couldn't check`,
       },
     },
     security: {

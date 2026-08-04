@@ -1009,6 +1009,34 @@ export interface AgentProviderConfigView {
    * collapse into `auth.credentialed`/`auth.hasStoredKey`.
    */
   auth?: ProviderAuthView;
+  /**
+   * The last connection probe's verdict, if one has ever run. Absent means
+   * unverified — which is honest, and is also the state a credential write
+   * restores, so a rotated key never inherits the old key's verdict.
+   *
+   * It exists because "has a credential" and "works" are different facts and the
+   * settings list could only ever report the first. `outcome` is deliberately
+   * three-valued: a probe that failed for a reason unrelated to the credential
+   * (offline, timeout, 429, 5xx) must not be recorded as a rejection. Tenon
+   * probes only on an explicit user write or an explicit Test — never on open,
+   * on a schedule, or in the background — because the probe bills a 1-token
+   * completion against the provider.
+   */
+  connectionCheck?: ProviderConnectionCheckView;
+}
+
+export interface ProviderConnectionCheckView {
+  outcome: 'ok' | 'rejected' | 'unreachable';
+  /** Epoch ms, so the surface can say when rather than implying "now". */
+  at: number;
+  /**
+   * Inferred, not read: main derives it by matching the redacted error text, so
+   * only a confident 401/403 may produce `rejected`. Anything else — including
+   * an unclassified failure — is `unreachable`.
+   */
+  statusCode?: number;
+  /** Already passed through `redactProviderErrorMessage` before it is stored. */
+  message?: string;
 }
 
 export interface OAuthLoginSelectOption {

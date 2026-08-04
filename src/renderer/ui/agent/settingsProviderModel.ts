@@ -1,5 +1,6 @@
 import type {
   AgentProviderCapabilityModelOption,
+  AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
 } from '../../api/types';
@@ -26,6 +27,7 @@ export interface ProviderChoice {
   quickEnable?: boolean;
   defaultBaseUrl?: string;
   canRefreshModels?: boolean;
+  connectionCheck?: AgentProviderConfigView['connectionCheck'];
 }
 
 export interface ProviderRowHandlers {

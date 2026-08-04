@@ -141,6 +141,8 @@ export const zhHans: PartialMessages = {
         unsupported: '暂不支持',
         notDetected: '未检测到',
         active: '当前',
+        keyRejected: '密钥被拒绝',
+        uncheckableSuffix: ({ status }: { status: string }) => `${status}（无法检查）`,
       },
     },
     security: {
