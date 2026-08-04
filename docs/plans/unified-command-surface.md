@@ -217,11 +217,16 @@ interface ActionRequest {
 // 4b. INVOCATION RECORD — main-owned. The ref is an opaque handle to this.
 interface InvocationRecord {
   invocation: ActionInvocation;
-  attestedBy: 'mainRenderer';       // who supplied the facts (sender-checked)
-  consumableBy: RendererId;         // who may submit against it
-  openSeq: number;                  // launcher open-sequence, for invalidation
+  origin: 'main' | 'mainRenderer';  // main-origin records are first-class, not a fiction
+  // Present IFF the envelope carries `panel` or `workspace`. Those are the only
+  // parts a renderer can attest; anchor / page / app facts main derives itself.
+  attestation?: { webContentsId: number; renderGeneration: number };
+  consumableBy: RendererId;
+  openSeq: number | null;           // null when not bound to a launcher opening
+  phase: InvocationPhase;           // atomic; see D1b
   expiresAt: number;
 }
+type InvocationPhase = 'live' | 'confirming' | 'readyToCommit' | 'executing' | 'spent';
 
 // 5. EFFECT — produced by main, never accepted from a renderer. An ORDERED PLAN,
 //    because real actions cross executors: `Filter / Sort / Group / Display` runs
@@ -247,11 +252,13 @@ type EffectStep = EffectStepBase & (
 
 type ActionExecutionResult =
   | { status: 'completed' }
-  | { status: 'failed'; atStep: number; reason: ExecutionFailure };
+  | { status: 'failed'; atStep: number; reason: ExecutionFailure }
+  // A missing ack does NOT prove the step did not run — see D9.
+  | { status: 'indeterminate'; atStep: number; reason: 'ackTimeout' | 'rendererGone' };
 type ExecutionFailure =
-  | { kind: 'commandRejected'; code: string }
-  | { kind: 'rendererReported'; code: string }
-  | { kind: 'ackTimeout' }          // every renderer step is bounded; see D9
+  | { kind: 'commandRejected'; code: string }   // main knows it did not run
+  | { kind: 'rendererReported'; code: string }  // the renderer said so
+  | { kind: 'notDelivered' }                    // never left main; provably did not run
   | { kind: 'invocationStale' };
 ```
 
@@ -424,29 +431,67 @@ before it reaches durable storage. The registry follows it exactly:
 So `ActionEffect` only ever travels **main → renderer**, which is the trusted
 direction. A stale or forged request fails re-evaluation instead of mutating.
 
-**`InvocationRef` needs two identities and a lifetime, or the rule above is not
-implementable.** In the command-surface path the renderer that *sends* the request
-is always the launcher — the main renderer only *pushed the context* (D4). So
-"the invoking surface is the main renderer" cannot key off `event.sender`: doing so
-makes the toolbar permanently absent from the searchable surface, while letting the
-launcher supply `workspace` erases the fence entirely. The record therefore
-separates them:
+**`InvocationRef` needs an origin, a per-part attestation, and a phase — or the rule
+above is not implementable.** In the command-surface path the renderer that *sends*
+the request is always the launcher; the main renderer only *pushed the context*
+(D4). So "the invoking surface is the main renderer" cannot key off `event.sender`:
+that makes the toolbar permanently absent from the searchable surface, while letting
+the launcher supply `workspace` erases the fence.
 
-- **`attestedBy`** — main mints the record from a **sender-checked main-renderer
-  IPC** and binds the `workspace` facts to that origin. The launcher can never
-  supply or upgrade them.
+**Most invocations are main-origin, and an earlier draft could not represent them.**
+Out of app, main captures the page and owns its `ExternalContext`, main returns the
+node matches, and the empty launcher offers app-scoped navigation with no
+renderer-supplied operand at all — and the main renderer may not even exist, since
+its macOS window can be closed while the prewarmed launcher and the global hotkey
+live on. Requiring `attestedBy: 'mainRenderer'` on every record would have forced a
+choice between inventing provenance and deleting the plan's headline surface.
+
+So provenance attaches to the **parts that need it**, not to the envelope:
+
+- **`origin: 'main' | 'mainRenderer'`** — main-origin records are first-class.
+- **`attestation`** — present *iff* the envelope carries `panel` or `workspace`,
+  minted from a **sender-checked main-renderer IPC**, and carrying
+  `webContentsId` + `renderGeneration` so a **reload invalidates it** rather than
+  leaving a stale bit admissible. The launcher can never supply or upgrade these
+  parts; an attempt is rejected, not merged.
 - **`consumableBy`** — main hands a launcher-consumable ref to the *current*
-  launcher opening. Submitting against a ref you were not handed fails.
+  opening. Submitting against a ref you were not handed fails.
 
-The attestation survives the hand-off, so the toolbar exception holds in the
-searchable surface **when and only when** the main renderer attested the bit.
+Admission then reads: an action needing `panel`/`workspace` requires a **current**
+attestation; an action needing only anchor / page / app facts requires none. The
+toolbar exception therefore holds in the searchable surface **iff** the main
+renderer attested the bit — and *Go to Today* works with no main window at all.
 
-**Invalidation is enumerated, not implied.** A ref dies on: TTL expiry; launcher
-dismissal or a superseding open (it binds the existing `launcherOpenSeq`, the same
-counter that already drops stale captures); operand chip removal; attesting-renderer
-reload; and completion of a mutating plan (single-use). Tests: replay a spent ref,
-submit from the wrong sender, submit after dismissal, submit against a superseded
-open.
+**Phases are atomic, because "single-use" was not exclusion.** A record with only
+identity and expiry lets two concurrent requests both observe it live and both
+dispatch, and lets two challenge-less requests each mint their own individually
+single-use token — so *Duplicate*, *Move*, or create-and-apply could run twice. The
+renderer's `runningRef` is not an admission boundary, least of all under the
+compromised-launcher threat model. Main therefore owns a phase machine:
+
+```
+live ──▶ confirming ──▶ readyToCommit ──▶ executing ──▶ spent
+  ▲            │                │
+  └── cancel ──┴────────────────┘        (at most ONE active challenge per record)
+```
+
+The invocation is **claimed at the transition into `executing`, before step 0 is
+dispatched** — not at completion. A second submit against a claimed record is
+rejected. Cancelling a confirmation returns to `live`; nothing else does.
+
+**Every explicit dismiss path is phase-aware.** Today Esc goes straight to
+`launcher.hide()` (`LauncherApp.tsx:170-175`) and every hide bumps `launcherOpenSeq`
+(`main.ts:1585-1595`) — which, mid-plan, would either invalidate the ref between two
+steps or destroy the only surface that was going to report the outcome. So while a
+record is `executing`, Esc and the global toggle **mark dismiss-after-settlement**
+rather than hiding, alongside the blur guard that is already armed. Before
+`executing`, they invalidate and hide as they do today.
+
+Tests: two simultaneous submits, two simultaneous first-leg confirmations, Esc and
+global-hotkey dismissal while step 0 is pending, dismissal between two steps, spent-ref
+replay, wrong sender, superseded open, a launcher attempt to add `panel`/`workspace`,
+attestation invalidated by a main-renderer reload, and a global app action plus a
+node-result action **with the main window closed**.
 
 **Two admissions for renderer-owned facts, both bounded.**
 
@@ -493,10 +538,23 @@ redeem it silently. The challenge closes first-request commits, replay, and oper
 substitution between the phases — not "the user consented".
 
 For the two actions that are **outside `Cmd+Z`** — *Delete forever* and *Empty
-Trash* — that gap is not acceptable, so **main raises a native dialog**
-(`dialog.showMessageBox`) and mints the challenge only on the user's actual
-acceptance. No renderer can fabricate that. Reversible confirmations may keep a
-renderer dialog, where the challenge's replay/substitution guarantees are enough. *Delete forever* and *Empty Trash* are outside
+Trash* — that gap is not acceptable once a second, locked-down renderer can name
+them, so **main raises a native dialog** (`dialog.showMessageBox`) and mints the
+challenge only on the user's actual acceptance. No renderer can fabricate that.
+Reversible confirmations keep a renderer dialog, where the challenge's
+replay/substitution guarantees are enough.
+
+**That change lands with PR 2, not PR 1.** The context menu ships an in-app
+`ConfirmDialog` today (`NodeContextMenu.tsx:589-598`), and replacing it with a
+native sheet changes presentation, focus, keyboard behaviour and window modality —
+which PR 1 cannot do while claiming zero behaviour change, and which its differential
+proof could not verify (comparing "did a confirmation appear" is exactly the
+weakening that would hide it). The timing is not a compromise either: **the threat
+that motivates the native dialog is a compromised launcher renderer, and the
+launcher path arrives in PR 2.** So PR 1 keeps the shipped dialog and the challenge
+protocol behind it; PR 2 introduces the native dialog for the two irreversible
+actions in both views, as a **declared user-visible change** with light/dark and
+focus/keyboard verification. *Delete forever* and *Empty Trash* are outside
 `Cmd+Z`'s reach — which is why they were given a dialog, and why D9's
 fire-to-commit rule applies only *after* this point.
 
@@ -789,9 +847,27 @@ signal exists for. The lifecycle is therefore explicit:
    (`launcherWindow.ts:108-114`) and destroy the panel before its outcome could be
    rendered. The guard is main-owned because that handler is.
 2. The guard is **held through settlement**, then the panel shows the outcome for a
-   bounded dwell. **Every renderer step's acknowledgement is bounded by a timeout**;
-   expiry settles the plan as `failed` with `{ kind: 'ackTimeout' }` rather than
-   hanging the guard forever.
+   bounded dwell.
+
+**Delivery has two bounded phases and a third outcome, because a missing ack is not
+evidence of failure.** The main renderer can perform `openSplitPane`, navigate, pin
+or stage the composer and *then* reload before its ack reaches main; calling that
+`failed` would be a lie, and a retry could duplicate a visible effect. So:
+
+- **Readiness** is bounded. A step for a not-yet-loaded renderer queues on
+  `did-finish-load` (the shipped `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` pattern), but
+  the queue entry is **keyed by `executionId` and cancelled on expiry**, so timed-out
+  work can never apply later. Expiring here yields `failed { notDelivered }` —
+  main knows it never left.
+- **Post-delivery acknowledgement** is bounded separately. Expiring here yields
+  **`indeterminate { ackTimeout }`**, never `failed`.
+- Every dispatched step carries **`executionId + stepIndex`**, and the renderer
+  **dedupes on it**, so a redelivered step is a no-op rather than a second effect.
+
+`indeterminate` has its own honest treatment: the dwell says the action **may have
+completed**, focus goes to the **invoker** (the safe default when no arrival is
+proven), and **nothing retries automatically** — a retry is a fresh invocation the
+user starts, because only the user can see whether it happened.
 3. At the end of the dwell the panel dismisses **itself**, and **focus goes where
    the action's `completion` policy says** — never unconditionally back to the
    invoker. **Focus moves at dismissal, not at commit.**
@@ -818,13 +894,17 @@ reports its outcome. On `{ status: 'failed' }`, regardless of `completion`:
 
 - the panel **stays** for the dwell and shows the failure reason from
   `ActionExecutionResult`;
-- focus goes to the **invoker**, because no destination was reached — a failed
-  navigation must not strand the user somewhere neither surface promised;
+- focus goes to the **invoker**, because no destination was proven reached — a
+  failed *or indeterminate* navigation must not strand the user somewhere neither
+  surface promised;
 - E2E covers, alongside the three success shapes: a **step-0 main command failure**
-  (nothing committed, guard still armed, reason shown), an **explicit failed
-  renderer ack**, a **missing ack that hits the timeout**, and the **blur ordering**
-  — a destination step focuses the main window and the panel must still survive to
-  render its outcome.
+  (nothing committed, guard still armed, reason shown), an **explicit failed renderer
+  ack**, a **missing ack that hits the timeout** (reported `indeterminate`, not
+  `failed`), **effect applied then renderer reloads before acking** (also
+  `indeterminate`; the effect must not be undone or repeated), a **closed or still
+  loading main window** (queued, then cancelled on expiry — and the cancelled item
+  must not apply afterwards), and the **blur ordering** — a destination step focuses
+  the main window and the panel must still survive to render its outcome.
 
 E2E covers all three shapes: a background mutation (dwell visible for its duration,
 prior app refocused, in that order), `Go to node` from another app (Tenon focused at
@@ -916,7 +996,10 @@ only because it builds on a foundation PR 1 has already proven.
 
 ### PR 1 — the context menu becomes a view of a core registry
 
-Zero behaviour change, mechanically proven, plus one bug fix.
+Zero behaviour change, mechanically proven, plus one bug fix. **The confirmation UI
+is not touched here** — the shipped `ConfirmDialog` stays, and the native sheet
+lands with PR 2, whose threat model is what motivates it (D1b). A PR that claims a
+strict differential proof cannot also swap a dialog.
 
 1. **Contracts in `src/core/actions/`** (D1a) as compiling TypeScript with codec
    tests — invocation, evaluation, presentation, request, effect — and the
@@ -951,6 +1034,11 @@ which carried a 4,700-line move to zero review findings.
    result signal (D9).
 7. Capture loop: confirmation, optional tag, send-to-agent action with its
    `PendingComposerContext` (D9).
+7b. **Declared user-visible change:** replace the in-app `ConfirmDialog` with a
+   main-owned native sheet for *Delete forever* and *Empty Trash* in **both** views
+   (D1b). It belongs here rather than in PR 1 because the threat it answers — a
+   locked-down renderer naming an action that `Cmd+Z` cannot reach — arrives with
+   this PR. Verified light + dark, with focus and keyboard behaviour.
 8. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
    — the keystroke lives on inside the panel as *Actions*), and the stale `/`-menu
    hint. **The old menu oracle is not deleted here — PR 1's final step already
@@ -987,9 +1075,12 @@ and a differential test can judge them instead.
 - **Scope filtering (D2).** Assert no `app`-scoped action reaches the context menu
   (the failure mode the navigation entries introduce) and that every `panel`-scoped
   menu item still does.
-- **Confirmation parity (D1 `confirm`).** Assert *Delete forever* and *Empty Trash*
-  still raise a confirmation from **both** views, and that no effect exists before
-  it resolves.
+- **Confirmation parity (D1 `confirm`).** In PR 1 the assertion is **strict**: the
+  shipped `ConfirmDialog` still appears, with the same copy and the same operand
+  set, and no effect exists before it resolves — no weakening to "some confirmation
+  appeared", which is what would have hidden a swapped dialog. PR 2 replaces it with
+  the native sheet for the two irreversible actions and re-verifies focus and
+  keyboard behaviour in both themes.
 - **Applicability (D7).** Property test: every rendered action either applies, or
   is rendered with its rejection reason. Nothing silently inapplicable.
 - **Action result signal (D9).** E2E: fire a mutating action from the panel with
@@ -1063,7 +1154,7 @@ file**, which is what keeps it clear of #486.
 |---|---|---|
 | [#486](https://github.com/relixiaobo/lin-outliner/pull/486) *(merged)* | `ThreadView` · `ThreadDock` · `ThreadComposerEditor` · both locales | already in `main`; PR 2 rebases onto it |
 | [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`** — the file `PendingComposerContext` threads through | PR 2 lands **after** it; rebase, do not run in parallel |
-| [#487](https://github.com/relixiaobo/lin-outliner/pull/487) *(open)* | **both locale catalogs** and **`src/main/main.ts`**, which this branch also edits | PR 2 lands **after** it; this branch's `main.ts` edit is comment-only, so a rebase conflict is textual at worst |
+| [#487](https://github.com/relixiaobo/lin-outliner/pull/487) *(merged)* | both locale catalogs and `src/main/main.ts`, which this branch also edits | already in `main`; this branch's `main.ts` edit is comment-only, so the rebase is textual at worst |
 
 [#480](https://github.com/relixiaobo/lin-outliner/pull/480) (release pipeline) has
 no file overlap.
