@@ -132,6 +132,17 @@
   margin-top: calc(var(--chrome-height) + var(--space-lg));
   padding-bottom: var(--space-6);
   overflow-y: auto;
+  /* The scrollport reaches into the window's right padding and puts that inset
+     back as its own, so the overlay scrollbar has a lane of its own. Without it
+     the scrollport ended where the cards did, and macOS draws overlay scrollbars
+     ON TOP of content — invisible while the window was wider than
+     --settings-content-max-width and the cards were capped short of the edge,
+     but at the default 760px width the cards fill the scrollport and the
+     scrollbar sat across their right edge.
+     `scrollbar-gutter` cannot solve this: it reserves nothing for overlay
+     scrollbars, which is exactly the kind this surface gets. */
+  margin-right: calc(-1 * var(--layout-gap));
+  padding-right: max(var(--layout-gap), var(--scrollbar-lane));
   scrollbar-gutter: stable;
 }
 

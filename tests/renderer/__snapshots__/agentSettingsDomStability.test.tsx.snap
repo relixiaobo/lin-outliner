@@ -291,7 +291,7 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
         </div>
         <section aria-label="Security" class="agent-settings-section settings-security-section">
           <div class="inset-group">
-            <div class="inset-group-header">Agent Access</div>
+            <div class="inset-group-header">Agent access</div>
             <div role="list" class="inset-card" aria-label="Agent access">
               <div role="listitem" class="inset-row">
                 <div class="inset-row-main is-static">
@@ -305,7 +305,7 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
             </div>
           </div>
           <div class="inset-group">
-            <div class="inset-group-header">Your Blocks</div>
+            <div class="inset-group-header">Your blocks</div>
             <div role="list" class="inset-card" aria-label="Your blocks">
               <div role="listitem" class="inset-row">
                 <div class="inset-row-main is-static">
@@ -336,7 +336,7 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
             </div>
           </div>
           <div class="inset-group">
-            <div class="inset-group-header">System Boundary</div>
+            <div class="inset-group-header">System boundary</div>
             <div role="list" class="inset-card" aria-label="System boundary">
               <div role="listitem" class="inset-row settings-system-boundary-row">
                 <div class="inset-row-main is-static">
@@ -737,7 +737,7 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
             </div>
           </div>
           <div class="inset-group">
-            <div class="inset-group-header">Add Providers</div>
+            <div class="inset-group-header">Add providers</div>
             <div role="list" class="inset-card" aria-label="Providers to add">
               <div role="listitem" class="inset-row">
                 <button type="button" class="inset-row-main" aria-label="Add custom provider">

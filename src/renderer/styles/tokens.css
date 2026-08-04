@@ -395,6 +395,9 @@
      wider utility cap for two-column control grids. */
   --reading-max: 720px;
   --settings-content-max-width: 920px;
+  /* Width an overlay scrollbar needs to sit beside content instead of over it.
+     macOS draws it ~9px idle and wider while hovered. */
+  --scrollbar-lane: 14px;
   --panel-content-max: var(--reading-max);
   --resize-cursor: ew-resize;
   --resize-cursor-y: ns-resize;
