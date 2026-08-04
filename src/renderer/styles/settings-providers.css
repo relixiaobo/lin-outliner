@@ -129,7 +129,12 @@
      padding: padding scrolls away and lets dense rows pass under the history
      capsule/title. This structural exclusion keeps the opaque content layer from
      bleeding through the chrome controls. */
-  margin-top: calc(var(--chrome-height) + var(--space-lg));
+  /* `--chrome-height` is measured from the WINDOW's top edge, but this margin
+     applies inside `.settings-window`'s padding, so adding the two counted that
+     padding twice and pushed the first card 32px below the toolbar where the
+     ladder rung is 24px. Subtracting the inset puts the gap where it was meant
+     to be. */
+  margin-top: calc(var(--chrome-height) - var(--layout-gap) + var(--space-lg));
   padding-bottom: var(--space-6);
   overflow-y: auto;
   /* The scrollport reaches into the window's right padding and puts that inset
