@@ -282,20 +282,61 @@ selected category title. History controls reuse the main chrome control family
 inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
-**Category rail and content.** The left rail lists categories: General,
-Providers, Security, Skills, Configuration Profiles. The content pane is a flat opaque
-Preferences base with constrained grouped content (`--settings-content-max-width`,
-920px). There is no permanent detail pane; per-provider config opens a native
-child window. Categories, not providers, are top-level rail rows. The rail,
+**Category rail and content.** The left rail lists three categories — General,
+Agent, Preview — cut along what a user is trying to affect rather than which
+subsystem implements it. The content pane is a flat opaque Preferences base with
+constrained grouped content (`--settings-content-max-width`, 920px). The rail,
 toolbar, and selected category surface render immediately; provider/runtime data
 loads into the pane asynchronously instead of replacing the window with a loading
 page.
 
-**General.** General owns app-wide preferences: Theme and Language. Theme uses
-`SegmentedControl` (System / Light / Dark) with neutral selected state, ARIA
-`radiogroup`, roving tabindex, arrow-key navigation, and neutral focus. Language
-uses `SelectControl variant="popup"`. Both apply immediately across windows
-without a save footer.
+**Pages.** Three second-level pages hang off the categories: Model services and
+Skills under Agent, About under General. The rule is about what the group holds,
+not how large it is: a collection the user installs or connects — unbounded, with
+its own lifecycle — becomes a page; a bounded set of settings stays inline on its
+category. A row that opens one carries a chevron, so a door does not look like a
+statement. Per-provider config remains a native child window, giving a depth of
+two pages plus a dialog.
+
+Because pages are real routes, the toolbar's history capsule has something to
+walk. It is not the reason for the structure — the reason is the IA — but it is
+why the arrows stopped being permanently disabled chrome duplicating the rail
+beside them.
+
+**Deep links.** `category=general|agent|preview`, plus a page in path form
+(`agent/services`, `agent/skills`, `general/about`) and an optional `anchor` that
+scrolls to and briefly highlights a group. A page claimed by the wrong category
+does not route. The retired ids (`providers`, `security`, `skills`) are gone
+rather than aliased.
+
+**Commit model.** Every control in this window applies immediately. There is no
+footer, no draft, and therefore no way for closing the window or switching
+category to discard work. Writes are optimistic: the control moves at once and
+reverts if the write fails, with the failure reported in the pane's pinned
+feedback strip. Writes that share a key are serialized, so two fast toggles
+cannot each persist a whole object built from the same stale read. The
+per-provider connection form is the one exception and keeps Cancel/Save, because
+it edits one object as a modal dialog.
+
+**General.** Appearance (Theme, Language), Diagnostics, and a row into About.
+Theme uses `SegmentedControl` (System / Light / Dark) with neutral selected
+state, ARIA `radiogroup`, roving tabindex, arrow-key navigation, and neutral
+focus. Language uses `SelectControl variant="popup"`.
+
+**Agent.** Model services and Skills as pages, then Memory and Permissions
+inline. Permissions states the Full Access boundary and lists the user's explicit
+blocks; removing one commits on the row.
+
+**Preview.** Translation — target language, automatic translation for webpages
+and for EPUBs, the translating model, and clearing saved translations — and
+Websites, which clears the URL-preview session data. The four translation
+preferences are the same cross-window store the preview's Languages popover
+writes, so the two surfaces cannot disagree.
+
+**About.** Identity and version with a copy action, what's new (the per-version
+`CHANGELOG` section, minus the `Internal` category), support links, and legal.
+The native About menu item opens this page rather than the OS panel, so there is
+one About rather than two.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in
 [components.md → Inset Groups And Rows](./components.md#inset-groups-and-rows).

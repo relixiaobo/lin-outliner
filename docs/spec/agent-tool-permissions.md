@@ -14,6 +14,13 @@ Tenon does not add an agent filesystem sandbox, permission mode, approval policy
 or pause/resume authorization flow. `request_user_input` gathers missing product
 input only and must never be used as a risk confirmation prompt.
 
+That extends to Skills. There is no per-Skill ratification gate: a Skill does not
+have to be accepted before the model may invoke it, and installing one enables it.
+An accept-before-use step is an approval policy by another name. Consent to a
+third-party Skill is given once, in the install review, which shows what the Skill
+tells the model — a Skill install executes nothing, but enabling one puts its text
+into the agent's context, and that is what the review covers.
+
 Creating or resuming an Automation is standing authorization for its future
 occurrences under this same Full Access boundary. It introduces no separate
 approval mode; schedule and dispatch behavior is owned by

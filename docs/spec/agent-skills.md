@@ -154,10 +154,12 @@ are labeled as partial evidence rather than being described as completed.
 
 ## Authoring And Trust
 
-Mutable Skill edits are ordinary file mutations. Provenance records accepted
-content hashes separately from current bytes. A later model edit clears the
-accepted hash; a user edit remains usable but no longer claims the prior accepted
-version.
+Mutable Skill edits are ordinary file mutations. Provenance records which bytes
+the agent wrote and the one version preceding that write, so a model edit can be
+undone; it records nothing about approval. There is no accept-before-use gate: a
+per-Skill ratification step is an approval policy, which
+[agent-tool-permissions.md](./agent-tool-permissions.md) states Tenon does not
+have. A Skill is usable as soon as it exists and is enabled.
 
 Undo restores only the version immediately preceding the latest model write and
 is refused after a subsequent user edit. Built-ins and configured immutable
@@ -224,12 +226,15 @@ The Skills category is **one list over every source** — `built-in`, `user`,
 `project`, a bound local directory, and `managed` — sorted by the name the user
 reads. Provenance is an attribute of a row (a source chip), never a section: a
 user thinks "my Skills", so the page is not split by where a Skill came from.
-Each row carries the `/name`, the description, a source chip, its trust or status
-chips, an enable toggle, and its source-specific actions in the row disclosure:
+Each row carries its name, the description, a source chip, its status chips, an
+enable toggle, and its source-specific actions in the row disclosure. The name
+takes the `/name` slash form only where typing it works — a Skill declaring
+`user-invocable: false` is model-only, and showing the slash form advertises a
+command the composer filters out:
 
 | Source | Row actions |
 |---|---|
-| `user`, `project`, local | show in Finder, accept, revoke acceptance, undo agent edit |
+| `user`, `project`, local | show in Finder, undo agent edit, unbind directory |
 | local directory | unbind directory |
 | `managed` | check update, preview update, apply, rollback, uninstall |
 | `built-in` | enable toggle only, plus Finder when resource-backed |
@@ -268,8 +273,13 @@ activation flag alone.
 
 The two **stores** stay separate on purpose. `disabledSkills` is a user setting
 keyed by name; the activation flag is per-installed-record and participates in
-install / rollback / uninstall, which is what makes "install, but do not enable
-yet" possible. Merging them would put managed lifecycle state into settings, or
+install / rollback / uninstall, which is what makes "installed but switched off" a
+state the record can hold at all. It is not the default: installing a Skill
+enables it, because a Skill that installs into a do-nothing state reads as broken,
+and the review dialog — which shows the source, the commit, the scripts, the
+description and the SKILL.md body — is where consent is given. Consent covers the
+instruction because enabling is what puts a Skill's text in front of the model;
+the inertness boundary below is about execution and does not reach it. Merging them would put managed lifecycle state into settings, or
 settings into an index that does not own the Skills they describe. The toggle
 routes by source; what it *means* never branches on source.
 
