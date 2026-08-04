@@ -226,7 +226,7 @@ interface InvocationRecord {
   phase: InvocationPhase;           // atomic; see D1b
   expiresAt: number;
 }
-type InvocationPhase = 'live' | 'confirming' | 'readyToCommit' | 'executing' | 'spent';
+type InvocationPhase = 'live' | 'confirming' | 'executing' | 'spent';
 
 // 4c. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
 //     NAME a transition; main decides whether it is legal in the current phase.
@@ -476,20 +476,48 @@ renderer's `runningRef` is not an admission boundary, least of all under the
 compromised-launcher threat model. Main therefore owns a phase machine:
 
 Every transition has a named event, because a diagram with an unreachable arrow is
-worse than no diagram — a `Cancel` the renderer never reports leaves the record
-stuck in `confirming`, and the *next* Copy or Move from that same menu opening is
-rejected instead of behaving as it does today:
+worse than no diagram. **Confirmation has two flows and they must not share rows** —
+one is renderer-driven, the other exists precisely because a renderer cannot be
+trusted with it.
+
+**Flow A — renderer-dialog confirmation.** Every confirmed action in PR 1, and
+reversible confirmations thereafter.
 
 | from | event | to |
 |---|---|---|
 | `live` | request, action has no `confirm` | `executing` |
-| `live` | request, action has `confirm` | `confirming` (mints **the one** challenge) |
-| `confirming` | user accepted (renderer dialog, or the native sheet in PR 2) | `readyToCommit` |
-| `confirming` | **`confirmationCancelled`** | `live` — challenge revoked in the same atomic step |
-| `confirming` · `readyToCommit` | challenge TTL expiry | `live` — challenge revoked |
-| `readyToCommit` | commit redeems; operands re-resolve **equal** | `executing` |
-| `readyToCommit` | operand mismatch on redemption | `live` — challenge revoked, presentation re-issued |
-| any phase before `executing` | **`abandoned`**, chip removal, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
+| `live` | request, action has `confirm` | `confirming` — mints **the one** challenge and returns it |
+| `confirming` | **the challenge-bearing request — this *is* acceptance** | `executing`, atomically, after token + operand validation |
+| `confirming` | `confirmationCancelled` | `live` — challenge revoked in the same atomic step |
+| `confirming` | challenge TTL expiry | `live` — challenge revoked |
+| `confirming` | operand mismatch on redemption | `live` — challenge revoked, presentation re-issued |
+
+There is deliberately **no separate "accepted" event**: the accepting request is the
+acceptance. An earlier draft split them, which made the normal path unreachable —
+the record sat in `confirming` while redemption demanded a phase nothing could enter.
+
+**Flow B — native confirmation** (PR 2; the two actions outside `Cmd+Z`).
+
+| from | event | to |
+|---|---|---|
+| `live` | request, `confirm` is native | `confirming` — **no token minted and none exposed**; main raises its own sheet |
+| `confirming` | **main's own sheet acceptance** — not a renderer message | `executing` |
+| `confirming` | sheet cancelled or dismissed | `live` |
+
+**No renderer-supplied "accepted" event exists for this flow**, because one would
+recreate exactly the consent bypass the sheet exists to prevent. A launcher attempt
+to advance a native confirmation is rejected, not merged. Main revalidates operands
+at acceptance, the same as flow A.
+
+This is also why `readyToCommit` is gone: both flows commit straight from
+`confirming` — flow A on the redeeming request, flow B on main's own acceptance —
+so a fourth phase existed only to be transited through.
+
+**Shared rows, both flows:**
+
+| from | event | to |
+|---|---|---|
+| any phase before `executing` | `abandoned`, chip removal, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
 | `executing` | settlement — `completed` / `failed` / `indeterminate` | `spent` |
 | `executing` | dismissal · superseding open · reload | **`executing`** — UI lifetime events must never invalidate an in-flight plan |
 
@@ -520,7 +548,8 @@ Tests: two simultaneous submits, two simultaneous first-leg confirmations, Esc a
 global-hotkey dismissal while step 0 is pending, dismissal between two steps,
 **cancel then run a different action from the same menu opening**, **redeem after
 cancel**, **redeem after challenge expiry**, **submit through a ref whose chip was
-removed**, spent-ref replay, wrong sender, superseded open, a launcher attempt to add
+removed**, **PR 1 Confirm-to-effect end to end**, **native Cancel with no token ever
+minted**, **a launcher attempt to advance a native confirmation** (rejected), spent-ref replay, wrong sender, superseded open, a launcher attempt to add
 `panel`/`workspace`, attestation invalidated by a main-renderer reload, and a global
 app action plus a node-result action **with the main window closed**.
 
@@ -559,11 +588,11 @@ So the flow has two legs and main owns both:
 1. A request **without** a challenge for an action carrying `confirm` returns a
    `ChallengeToken` — **single-use, short-lived, and bound to
    `(actionId, invocationRef, hash(resolved operands))`**.
-2. The commit request **redeems** it. Main revalidates: token unspent and unexpired,
-   the record in **`readyToCommit`** (not merely "live" — the first leg has already
-   moved it out of `live`), and **the operands re-resolve to the same set** — so a
-   dialog shown for three nodes cannot commit against thirty. Any failure revokes
-   the challenge and returns the record to `live`.
+2. **The challenge-bearing request is the acceptance**, and it commits atomically.
+   Main revalidates: token unspent and unexpired, the record in **`confirming`**,
+   and **the operands re-resolve to the same set** — so a dialog shown for three
+   nodes cannot commit against thirty. Any failure revokes the challenge and returns
+   the record to `live`.
 
 **And the security claim is stated exactly, because a challenge alone does not
 prove a human saw anything.** A compromised renderer that *receives* a challenge can
@@ -576,6 +605,10 @@ them, so **main raises a native dialog** (`dialog.showMessageBox`) and mints the
 challenge only on the user's actual acceptance. No renderer can fabricate that.
 Reversible confirmations keep a renderer dialog, where the challenge's
 replay/substitution guarantees are enough.
+
+**The native flow mints no token at all** (flow B above). Handing one back would put
+the deciding artefact in a renderer's hands, which is the bypass the sheet exists to
+prevent; main raises the sheet, main observes the acceptance, main executes.
 
 **That change lands with PR 2, not PR 1.** The context menu ships an in-app
 `ConfirmDialog` today (`NodeContextMenu.tsx:589-598`), and replacing it with a
