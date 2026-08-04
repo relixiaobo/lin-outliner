@@ -19,18 +19,38 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
+| Claude Code | `lin-outliner-cc/` | — | idle (authored `unified-command-surface` #485, plan only — both implementation PRs unclaimed; shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (authored `generated-image-resources` #489, plan only — implementation unclaimed; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465, pi-ai-0.83-upgrade #487) |
 | Anti | `lin-outliner-anti/` | — | idle |
-| *(unidentified)* | ? | ? | **building `unified-command-surface`** — the PM assigned it 2026-08-03; which clone is doing it was never recorded, and no Draft PR exists, so nobody can tell whether a second claimant would collide. Whoever it is: open the Draft PR. |
 
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`unified-command-surface` design merged (#485, cc, 2026-08-04)** — plan and
+comment/spec alignment only; no product behaviour changed. The old `Target × Verb`
+design is replaced by one core action registry and **two independent complete
+implementation PRs split at the proof boundary**. PR 1 makes the full node context
+menu a differentially-proven view of compiling core contracts and fixes the
+unranked *Move to* picker; PR 2 renders that registry as the searchable command
+surface, adds the capture/agent handoff loop, and retires the old global `Cmd+K`
+palette. Both are unclaimed. The capture direction is now explicit too: Today is
+the destination, no browser extension or screenshot tier, and rich page reading is
+a separate user-chosen main API rather than a network implementation hidden behind
+the ambient hotkey seam. **Gate: fifteen review rounds on the design contract.**
+They moved the security boundary to main-owned invocation/admission and atomic
+lifecycle state, separated renderer and native confirmation flows, made renderer
+delivery acknowledge what it can actually prove, turned `ACTION_BINDINGS` into the
+single value-level runtime/type source using the real `CommandResult.focus.nodeId`
+path, and required filtering before retrieval limits. Final head `a60298ec` had no
+reportable findings; `docs:check`, typecheck, diff check, and the strict binding type
+probe passed. Implementation still has to earn those contracts through the listed
+compiler fixtures, differential oracle, runtime lifecycle/binding tests, E2E, and
+light/dark verification.
 
 **`generated-image-resources` plan merged (#489, cc-2, 2026-08-04)** — design only, no product
 code; the board item is under Agent capabilities and implementation is unclaimed. **Gate: four
@@ -471,11 +491,13 @@ unassigned — future dev is not pre-committed to any clone.
 **Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
-1. **`unified-command-surface`** (P2, **CLAIMED — a dev started it 2026-08-03 at the PM's
-   direction**; no Draft PR yet, so it is invisible on the radar until one is opened) — the
-   largest remaining product item; design ratified (D1–D8), retrieval dep shipped (#111). It is
-   at the dev-drafted build one-pager step (phases / file-scope / tests) → PM ratify → build.
-   **Do not pick this up.**
+1. **`unified-command-surface`** (P2, **design contract merged #485; implementation
+   unclaimed**) — the largest remaining product item. Shape (b) is two independent
+   complete features: PR 1 makes the node context menu a view of the core action
+   registry and fixes *Move to* retrieval; PR 2 builds the searchable command
+   surface and capture loop on that proven foundation. The retrieval dependency
+   shipped in #111. Re-derive the open-PR inventory before either implementation;
+   PR 2 follows the ordering constraints recorded in the plan.
 2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
@@ -531,17 +553,17 @@ the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-a
 into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **unified-command-surface** (P2, **in-progress — claimed by a dev 2026-08-03; at the
-  dev-drafted build one-pager step**) — collapse cmd+k and the launcher into **one** context-aware
-  command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
-  attachment, `Target × Verb`). The full ratified design (D1–D8: Enter contract,
-  context-forward + habit-adaptive default-highlight, reversibility tier B, chip
-  rail, Ask AI → agent panel, phased out-of-app fidelity, slash boundary, one-engine
-  invariant) lives in `docs/plans/unified-command-surface.md`. Its retrieval
-  dependency (`search-retrieval-stack` node-path unification) shipped in #111; a dev
-  agent now drafts the build one-pager (phases/file-scope/tests) and the PM ratifies
-  before code. Supersedes the earlier "launcher absorbs cmd+k" framing; reuses #109's
-  no-provider guard.
+- **unified-command-surface** (P2, **in-progress — design contract merged #485;
+  implementation unclaimed**) — put **one core action registry** behind every
+  outline-node action. The context menu becomes its filtered anchored view; the
+  launcher becomes its searchable view and the only globally summoned command
+  surface. Shape (b) ships as two independent complete features: PR 1 proves the
+  existing menu against the registry and fixes *Move to* retrieval, then PR 2 adds
+  the command/capture surface, agent handoff, and declared native-confirmation
+  change. The full contract, security/lifecycle state machines, verification, and
+  build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
+  dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
+  learning, and reversibility-tier framing rather than extending it.
 - **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command

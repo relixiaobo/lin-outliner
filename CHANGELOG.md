@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **The unified command surface now starts from one action registry (PR #485, cc,
+  plan-only)** — replaces the former `Target × Verb`, habit-learning, and
+  reversibility-tier design with two independently complete implementation PRs
+  split where the compiler and a differential test can judge the contract. PR 1
+  moves the full node context menu onto compiling core invocation/evaluation/
+  presentation/request/effect contracts, preserves its behaviour against the old
+  path as an oracle, and fixes the *Move to* picker that currently limits unranked
+  document-order matches. PR 2 renders the registry as the searchable command
+  surface, adds capture and agent handoff, and retires the old global `Cmd+K`
+  palette. Main owns action admission, confirmation/execution phases, replay and
+  delivery outcomes; renderers may name an action but cannot author its effects.
+  Capture lands in Today, there is no browser extension or screenshot tier, and a
+  future rich-page reader is an explicit post-choice main API rather than a network
+  implementation on the ambient hotkey path. Fifteen review rounds closed the
+  cross-renderer lifecycle, confirmation, result-delivery, retrieval-order, and
+  runtime-binding contradictions before implementation; both feature PRs remain
+  unclaimed. The source edits in this plan are comment-only and do not change
+  behaviour.
+
 - **Generated images as durable Thread resources plan (PR #489, cc-2, plan-only)**
   — boards the tool-agnostic artifact work `agent-browser-control` left behind
   when it closed as `superseded`, with generated images as the first complete
