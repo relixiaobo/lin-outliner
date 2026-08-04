@@ -228,6 +228,20 @@ interface InvocationRecord {
 }
 type InvocationPhase = 'live' | 'confirming' | 'executing' | 'spent';
 
+// 4bis. CREATION — the ref every request needs has to come from somewhere, and a
+//    renderer must not be able to author the parts main is supposed to attest.
+type InvocationSeed =
+  // main-renderer only; SENDER-CHECKED. Carries renderer-owned FACTS, never a
+  // finished ActionInvocation: main validates the ids, resolves reference targets
+  // and selection roots, and mints origin / attestation / lifetime / consumer.
+  | { from: 'mainRenderer'; anchorNodeId: NodeId; visualRowId: NodeId;
+      selectedIds: readonly NodeId[]; panelId: string;
+      isPinned: boolean; rowExpanded: boolean }
+  // Main-origin invocations are built INSIDE main and never arrive over IPC:
+  // captured page, node-search result, app-scoped entry.
+  ;
+interface InvocationOpened { invocationRef: InvocationRef; presentations: readonly ActionPresentation[] }
+
 // 4c. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
 //     NAME a transition; main decides whether it is legal in the current phase.
 type InvocationEvent =
@@ -242,19 +256,39 @@ interface ActionEffectPlan {
   completion: 'restoreInvoker' | 'stayAtDestination';   // D9 focus policy, per action
 }
 
-interface EffectStepBase {
-  bindAs?: StepRef;                   // name this step's result…
+// Only these commands may be bound, and this is what they guarantee. Declared in
+// src/core/actions/ over EXISTING command names — no commands.ts change.
+interface BindableCommandResults {
+  ensure_date_node: { focusNodeId: NodeId };
+  create_tag:       { focusNodeId: NodeId };
 }
-type StepInput<T> = T | { fromStep: StepRef; field: 'focusNodeId' };  // …and read it later
+type BindableCommand = keyof BindableCommandResults;
+type Bound<T> = T | { fromStep: StepRef; field: 'focusNodeId' };
 
-type EffectStep = EffectStepBase & (
-  | { on: 'main';     kind: 'command'; command: CommandName; args: CommandArgs<StepInput<NodeId>> }
-  | { on: 'mainRenderer'; kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
+// Mapped union: args are correlated WITH the command name, and `bindAs` exists only
+// where a result exists to bind.
+type CommandStep = {
+  [K in CommandName]: {
+    on: 'main'; kind: 'command'; command: K; args: BoundArgs<CommandArgs[K]>;
+  } & (K extends BindableCommand ? { bindAs?: StepRef } : { bindAs?: never })
+}[CommandName];
+
+type EffectStep =
+  | CommandStep
+  // `Bound<NodeId>` wherever a consumer legitimately reads a previous step's result.
+  | { on: 'mainRenderer'; kind: 'navigate'; nodeId: Bound<NodeId>; inPlace: boolean }
   | { on: 'mainRenderer'; kind: 'reveal'; surface: RevealTarget }
-  | { on: 'mainRenderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
+  | { on: 'mainRenderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: Bound<NodeId> }
   | { on: 'main';     kind: 'clipboard'; text: string }   // main resolves + writes it
-  | { on: 'mainRenderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string }
-);
+  | { on: 'mainRenderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string };
+
+// 5b. REQUEST RESULT — what an ActionRequest returns. The first Flow-A leg is a
+//    response, not a side effect, so it needs a branch that can carry the token.
+type ActionRequestResult =
+  | { status: 'confirmationRequired'; challenge: ChallengeToken; confirm: ConfirmationSpec;
+      presentation: ActionPresentation }        // authoritative copy + operands for the dialog
+  | { status: 'reEvaluated'; presentation: ActionPresentation }   // stale operands; try again
+  | ActionExecutionResult;
 
 type ActionExecutionResult =
   | { status: 'completed' }
@@ -265,6 +299,7 @@ type ExecutionFailure =
   | { kind: 'commandRejected'; code: string }   // main knows it did not run
   | { kind: 'rendererReported'; code: string }  // the renderer said so
   | { kind: 'notDelivered' }                    // never left main; provably did not run
+  | { kind: 'bindingUnresolved'; step: number } // a bound result was missing at use
   | { kind: 'invocationStale' };
 ```
 
@@ -390,6 +425,27 @@ command.
   it main cannot know a renderer step failed and the promised failure semantics are
   untestable.
 
+**The command step is a mapped union, or the compiler proof is a fiction.** A
+`command: CommandName` beside a loose `args` is not correlated — the wrong args pair
+with a command and still compile — and `documentService` accepts a `DocumentCommand`
+plus `Record<string, unknown>`, so there is no existing correlation to inherit. The
+registry is where it gets created, as a type-level map over **existing** command
+names in `src/core/actions/` (still no `commands.ts` change). Two more fences come
+with it: `bindAs` exists **only on commands that declare a bindable result**, so a
+`clipboard` or `reveal` step cannot pretend to produce a `focusNodeId`; and
+`Bound<NodeId>` appears in **every consumer field that legitimately reads one** —
+including `navigate.nodeId`, without which the plan's own *Go to Today* is
+inexpressible, since it must run `ensure_date_node` and navigate to the id that
+command returns through `focus` (`core.ts:2774-2776`, `CommandPalette.tsx:83-86`).
+A missing or invalid binding at use is an executor failure
+(`{ kind: 'bindingUnresolved' }`), not undefined behaviour.
+
+PR 1 therefore carries a **compile-time negative fixture** — wrong args for a
+command, `bindAs` on a non-bindable step, a step ref in a field that does not accept
+one, each expected to fail type-checking — alongside a runtime
+`ensure_date_node → navigate(bound focus node)` test. Without those the phrase "the
+compiler decides" is decoration.
+
 **Parameter** is what makes half the set expressible at all: *Move to* needs a
 destination, *Add tag* a tag.
 
@@ -428,7 +484,20 @@ The shipped code already demonstrates the correct pattern:
 the authoritative `ExternalContext`**, and the intent is validated at the seam
 before it reaches durable storage. The registry follows it exactly:
 
-1. A view asks main to evaluate an invocation → main returns `ActionPresentation[]`.
+0. **The ref has to be created before anything can name it, and that is the
+   security boundary.** Main cannot infer which visual row was right-clicked, the
+   live selection, panel identity, `rowExpanded` or `isPinned` from the projection —
+   those are renderer facts today (`NodeContextMenu.tsx:63-80`,
+   `OutlinerItem.tsx:2500-2516`). But letting a renderer post a finished
+   `ActionInvocation` would let it author the very fields main is supposed to
+   attest. So the main renderer sends an **`InvocationSeed`** — raw facts only, on a
+   **sender-checked** channel — and **main** validates the ids, resolves reference
+   targets and selection roots, and mints `origin`, `attestation`, lifetime and
+   consumer. Page / node-search / app invocations are **constructed inside main** and
+   never arrive over IPC at all. The launcher can neither submit a seed nor upgrade
+   one; wrong-sender and forged-selection/`workspace` attempts are rejected, and
+   both are tested.
+1. Main returns `{ invocationRef, presentations }`.
 2. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
    ref, typed parameter**. Nothing else.
 3. **Main re-evaluates** that action against the *latest* projection and its own
@@ -585,9 +654,15 @@ renderer, which could then name *Delete forever* and assert it.
 
 **Flow A (renderer dialog) has two legs and main owns both:**
 
-1. A request **without** a challenge for an action carrying `confirm` returns a
-   `ChallengeToken` — **single-use, short-lived, and bound to
-   `(actionId, invocationRef, hash(resolved operands))`**.
+1. A request **without** a challenge for an action carrying `confirm` responds
+   `{ status: 'confirmationRequired', challenge, confirm, presentation }` — the
+   token is **single-use, short-lived, and bound to
+   `(actionId, invocationRef, hash(resolved operands))`**, and the response carries
+   the authoritative copy and operand set the dialog must show, so the dialog cannot
+   describe one thing while the token authorises another. This is why
+   `ActionRequestResult` is a union: the first leg is a *response*, and a contract
+   with only inbound requests and terminal outcomes had no way to carry it across
+   preload/IPC.
 2. **The challenge-bearing request is the acceptance**, and it commits atomically.
    Main revalidates: token unspent and unexpired, the record in **`confirming`**,
    and **the operands re-resolve to the same set** — so a dialog shown for three
@@ -1142,6 +1217,15 @@ and a differential test can judge them instead.
 - **Scope filtering (D2).** Assert no `app`-scoped action reaches the context menu
   (the failure mode the navigation entries introduce) and that every `panel`-scoped
   menu item still does.
+- **Contract correlation (D1a), the reason these types live in PR 1 at all.** A
+  compile-time **negative** fixture: wrong args for a command, `bindAs` on a
+  non-bindable step, and a step ref in a field that does not accept one must each
+  **fail** type-checking. Plus a runtime `ensure_date_node → navigate(bound focus
+  node)` proving *Go to Today* is expressible, and a `bindingUnresolved` case.
+- **Lifecycle round-trip (D1b).** The actual response sequence, not just the phases:
+  request → `confirmationRequired` + challenge → dialog → challenge-bearing request →
+  execution result. Plus wrong-sender and forged-seed rejection at invocation
+  creation.
 - **Confirmation parity (D1 `confirm`).** In PR 1 the assertion is **strict**: the
   shipped `ConfirmDialog` still appears, with the same copy and the same operand
   set, and no effect exists before it resolves — no weakening to "some confirmation
