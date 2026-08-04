@@ -130,10 +130,20 @@ Traced to the bottom, it is one:
   (`state/selectableRows.ts:252-292`). No view config, no expansion state, no UI
   state. `SelectableRowsOptions.expanded` is needed to *list visible rows*, never to
   decide what one row permits.
-- **`panelRootId` is consumed by exactly one predicate**:
-  `idsAllowedForStructuralOutdentBatch` returns `row.parentId !== panelRootId` —
-  you cannot outdent out of the panel's own root. Everywhere else it is threaded
-  through and never read.
+- **`panelRootId` is read by exactly one predicate — whose action is not in the set
+  PR 1 migrates.** `idsAllowedForStructuralOutdentBatch` returns
+  `row.parentId !== panelRootId`, but **Outdent is not a context-menu entry at
+  all**: it and Indent are keyboard-only selection shortcuts (`Shift+Tab` / `Tab`,
+  `shortcutRegistry.ts:108-109`). The menu proves it by what it passes — a
+  *synthesized* `actionPanelRootId = activeNodeIds[0] ?? node.parentId ?? node.id`
+  (`NodeContextMenu.tsx:142`), which is not a pane root and would be wrong if
+  anything read it.
+
+  So **PR 1's contract carries no pane root**, and the seed does not try to supply
+  one. That is not a convenience: the authoritative value is renderer-owned
+  (`WorkspacePanelState.view.rootId`, threaded as `selectionRootId`), the same node
+  can appear under different pane roots, and main cannot recover the renderer's
+  chosen one from the projection. Inventing a value would be worse than omitting it.
 
 **So the registry and its predicates live in `src/core/`.** Evaluation reads
 exactly two things — the document, and what the user is acting from:
@@ -145,7 +155,7 @@ interface ActionContext {
 }
 ```
 
-`panelRootId` lives inside `invocation.panel` rather than beside the projection,
+Panel identity lives inside `invocation.panel` rather than beside the projection,
 because it is a fact about *where the user is acting*, not about the document.
 There is one shape, not two.
 
@@ -160,11 +170,11 @@ Applying it to the current set:
 | Absent out of app | Why |
 |---|---|
 | every `panel`-scoped entry — *View as*, *Filter/Sort/Group/Display*, *Show/Hide view toolbar* | no `invocation.panel` |
-| *Outdent* | reads `panelRootId` (`idsAllowedForStructuralOutdentBatch`) |
 | *Pin* / *Unpin* | read `workspace.isPinned` |
 
 Everything else — including *Open in split pane*, which consumes neither part —
-resolves identically in both views. **This is not a lesser build**: each entry is
+resolves identically in both views. (*Outdent* was listed here in an earlier draft.
+It is not in the migrated set at all — see D1 — so it has no row.) **This is not a lesser build**: each entry is
 defined relative to a workspace or panel that genuinely is not there, which is D7
 doing its job. Earlier drafts said "exactly two", which was wrong in both directions;
 the rule is the contract and the table is its consequence.
@@ -184,7 +194,7 @@ the compiler decides whether they hold.
 interface ActionInvocation {
   anchor?:    { nodeId: NodeId; targetId: NodeId };
   selection?: { nodeIds: readonly NodeId[] };          // live multi-selection, if any
-  panel?:     { panelId: string; panelRootId: NodeId };
+  panel?:     { panelId: string };   // no pane root: nothing in PR 1's set reads one
   page?:      { contextId: ExternalContextId };        // main holds the ExternalContext
   // ATTESTED by the main renderer only (sender-checked; see D1b). Never suppliable
   // by the launcher. Its absence is what makes the entries in D1's table resolve
@@ -237,6 +247,8 @@ type InvocationSeed =
   | { from: 'mainRenderer'; anchorNodeId: NodeId; visualRowId: NodeId;
       selectedIds: readonly NodeId[]; panelId: string;
       isPinned: boolean; rowExpanded: boolean }
+  // NOTE: no pane root. See D1 — the only predicate that reads one belongs to an
+  // action that is NOT in the menu PR 1 migrates.
   // Main-origin invocations are built INSIDE main and never arrive over IPC:
   // captured page, node-search result, app-scoped entry.
   ;
@@ -256,8 +268,7 @@ interface ActionEffectPlan {
   completion: 'restoreInvoker' | 'stayAtDestination';   // D9 focus policy, per action
 }
 
-// Only these commands may be bound, and this is what they guarantee. Declared in
-// src/core/actions/ over EXISTING command names — no commands.ts change.
+// Which commands PRODUCE a bindable result, and what they guarantee.
 interface BindableCommandResults {
   ensure_date_node: { focusNodeId: NodeId };
   create_tag:       { focusNodeId: NodeId };
@@ -265,11 +276,26 @@ interface BindableCommandResults {
 type BindableCommand = keyof BindableCommandResults;
 type Bound<T> = T | { fromStep: StepRef; field: 'focusNodeId' };
 
+// Which arg fields may CONSUME one. Explicit, because `NodeId` IS `string`
+// (`types.ts:30-33`) — so no structural rule can tell `apply_tag.tagId` from
+// `create_tag.name`, and a name heuristic would be a guess wearing a type.
+interface BindableArgFields {
+  apply_tag:       'tagId';
+  batch_apply_tag: 'tagId';
+  // …one line per consumer; everything unlisted stays literal.
+}
+type BoundCommandArgs<K extends CommandName> = {
+  [F in keyof CommandArgs[K]]:
+    F extends (K extends keyof BindableArgFields ? BindableArgFields[K] : never)
+      ? Bound<CommandArgs[K][F]>
+      : CommandArgs[K][F];
+};
+
 // Mapped union: args are correlated WITH the command name, and `bindAs` exists only
 // where a result exists to bind.
 type CommandStep = {
   [K in CommandName]: {
-    on: 'main'; kind: 'command'; command: K; args: BoundArgs<CommandArgs[K]>;
+    on: 'main'; kind: 'command'; command: K; args: BoundCommandArgs<K>;
   } & (K extends BindableCommand ? { bindAs?: StepRef } : { bindAs?: never })
 }[CommandName];
 
@@ -439,6 +465,20 @@ inexpressible, since it must run `ensure_date_node` and navigate to the id that
 command returns through `focus` (`core.ts:2774-2776`, `CommandPalette.tsx:83-86`).
 A missing or invalid binding at use is an executor failure
 (`{ kind: 'bindingUnresolved' }`), not undefined behaviour.
+
+**Which *fields* accept a reference is an explicit allow-list, not a structural
+rule**, because `NodeId` is literally `string` (`types.ts:30-33`). "Replace every
+`NodeId` with `Bound<NodeId>`" would also open `create_tag.name`, and a
+property-name heuristic would be a guess wearing a type — wrong the first time two
+ids play different roles. So `BindableArgFields` names the consumers one line at a
+time (`apply_tag.tagId`, `batch_apply_tag.tagId`, …) and everything unlisted stays
+literal. The codec and the executor read the same map, so the type and the runtime
+cannot drift.
+
+That is also what makes the negative fixture mean something: the counterexample is
+**`create_tag.name`** — same underlying type as `apply_tag.tagId`, and it must
+**fail** while `tagId` compiles. A fixture using an unrelated numeric field would
+have proved nothing.
 
 PR 1 therefore carries a **compile-time negative fixture** — wrong args for a
 command, `bindAs` on a non-bindable step, a step ref in a field that does not accept
@@ -1149,7 +1189,7 @@ strict differential proof cannot also swap a dialog.
 2. **Predicates move to core** (D1). The stage-0 spike, done before approval,
    found no renderer dependency that survives tracing: `rowMap` is a cache with an
    existing derivation fallback, `actionPolicy` derives from the projection, and
-   `panelRootId` is read by exactly one predicate.
+   the one predicate reading a pane root belongs to an action outside the migrated set.
 3. **Populate the registry with the entire existing node-menu action set.** This is
    the point of PR 1: the compiler, not a document, decides whether the contracts
    can express *Pin* (workspace chrome), *Copy* (clipboard), *View as* (panel),
@@ -1181,6 +1221,16 @@ which carried a 4,700-line move to zero review findings.
    (D1b). It belongs here rather than in PR 1 because the threat it answers — a
    locked-down renderer naming an action that `Cmd+Z` cannot reach — arrives with
    this PR. Verified light + dark, with focus and keyboard behaviour.
+7c. **If searchable *Indent* / *Outdent* are wanted, they are a declared PR 2
+   addition, not a side effect.** They are keyboard-only today, so exposing them
+   requires: a **surface-exposure rule** so they appear in the searchable view
+   without leaking into the context menu (which would break PR 1's differential
+   after the fact); carrying and attesting the renderer's **`selectionRootId`**,
+   since main cannot recover the chosen pane root; and encoding the shipped
+   keyboard behaviour — selection restoration and expansion adjustment
+   (`useWorkspaceKeyboard.ts:521-565`) — which a command-only effect does not
+   preserve. Tests must cover nested and transcluded panes. **Not in scope unless
+   explicitly ratified**; the plan does not smuggle it in through a field.
 8. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
    — the keystroke lives on inside the panel as *Actions*), and the stale `/`-menu
    hint. **The old menu oracle is not deleted here — PR 1's final step already
@@ -1219,8 +1269,9 @@ and a differential test can judge them instead.
   menu item still does.
 - **Contract correlation (D1a), the reason these types live in PR 1 at all.** A
   compile-time **negative** fixture: wrong args for a command, `bindAs` on a
-  non-bindable step, and a step ref in a field that does not accept one must each
-  **fail** type-checking. Plus a runtime `ensure_date_node → navigate(bound focus
+  non-bindable step, and a step ref in **`create_tag.name`** — the
+  same-underlying-type counterexample to `apply_tag.tagId` — must each **fail**
+  type-checking, while the `tagId` case compiles. Plus a runtime `ensure_date_node → navigate(bound focus
   node)` proving *Go to Today* is expressible, and a `bindingUnresolved` case.
 - **Lifecycle round-trip (D1b).** The actual response sequence, not just the phases:
   request → `confirmationRequired` + challenge → dialog → challenge-bearing request →
