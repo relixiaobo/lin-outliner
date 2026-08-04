@@ -98,7 +98,7 @@ export function ManagedSkillsSettings({
           <h2 className="confirm-dialog-title" id={acquireTitleId}>{t.settings.skills.acquireTitle}</h2>
           <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
         {loading && !catalog ? (
-          <InsetRow disabled label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
+          <InsetRow empty label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
         ) : catalog?.status === 'unavailable' ? (
           <InsetRow
             label={t.settings.skills.managedCatalogUnavailable}
@@ -139,7 +139,7 @@ export function ManagedSkillsSettings({
             />
           );
         }) : (
-          <InsetRow disabled label={t.settings.skills.managedCatalogEmpty} />
+          <InsetRow empty label={t.settings.skills.managedCatalogEmpty} />
         )}
         {catalog?.status === 'cached' ? (
           <InsetRow

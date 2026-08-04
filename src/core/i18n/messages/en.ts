@@ -223,6 +223,9 @@ export const en = {
       // "Unbind", never "remove"/"delete": Tenon points at the directory, so
       // this drops the pointer and leaves the user's files untouched.
       localUnbind: 'Unbind directory',
+      localUnbindConfirmTitle: 'Unbind this directory?',
+      localUnbindConfirmMessage: ({ directory, count }: { directory: string; count: number }) =>
+        `${count === 1 ? '1 skill' : `${count} skills`} from ${directory} will disappear from your library. The files themselves are not touched.`,
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `Unbound ${directory}. Its files were not changed.`,
       localDirectoryEmpty: 'No skills found in this directory.',

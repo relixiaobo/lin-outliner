@@ -188,6 +188,9 @@ export const zhHans: PartialMessages = {
       revealInFinder: '在访达中显示',
       // 「解绑」而非「移除/删除」：Tenon 只是指向该目录，解绑仅去掉指针，不动用户的文件。
       localUnbind: '解绑目录',
+      localUnbindConfirmTitle: '要解绑这个目录吗？',
+      localUnbindConfirmMessage: ({ directory, count }: { directory: string; count: number }) =>
+        `来自 ${directory} 的 ${count} 个技能会从技能库中消失。目录中的文件不会被改动。`,
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `已解绑 ${directory}，其中的文件未作改动。`,
       localDirectoryEmpty: '该目录中未找到技能。',

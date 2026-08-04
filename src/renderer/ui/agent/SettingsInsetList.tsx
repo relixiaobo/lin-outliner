@@ -74,6 +74,14 @@ interface InsetRowProps {
    *  to turn it back on (e.g. a disabled agent, whose enable toggle lives in the
    *  detail view it links to). Distinct from `disabled`, which blocks the click. */
   dimmed?: boolean;
+  /**
+   * The row states an absence ("No blocks", "No skills yet") rather than being a
+   * row that is switched off. `disabled` was standing in for this, which gates
+   * nothing on a non-interactive row and only greyed it — so an absence read as a
+   * disabled entry named after itself, beside `dimmed` rows that mean something
+   * else entirely.
+   */
+  empty?: boolean;
   /** When provided, the row's main area is a button; otherwise it is static
    *  (for rows whose only interactive control lives in `trailing`). */
   onSelect?: () => void;
@@ -103,6 +111,7 @@ export const InsetRow = memo(function InsetRow({
   selected = false,
   disabled = false,
   dimmed = false,
+  empty = false,
   onSelect,
   drillsDown = false,
   badge,
@@ -133,7 +142,7 @@ export const InsetRow = memo(function InsetRow({
 
   return (
     <div
-      className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', className)}
+      className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', empty && 'is-empty', className)}
       role="listitem"
     >
       {onSelect ? (

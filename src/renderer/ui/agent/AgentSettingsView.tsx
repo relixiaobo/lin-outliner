@@ -134,6 +134,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Notices are transient. A stale "Unbound /x" that lingers until some unrelated
+  // action happens to clear it reads as a report on whatever the user did next.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   // How many managed Skills have an update waiting. The shell reads this once so
   // the badge is right while the user is in some other category — the library is
   // not mounted then. Whenever the library IS mounted it owns the list, so it
@@ -211,6 +218,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // Navigate to a route, recording history for back / forward. Re-selecting the
   // current route is a no-op (no duplicate history entry).
   function navigateRoute(next: SettingsRoute) {
+    // An error raised in one pane used to survive into every other pane, and was
+    // cleared only by happening to pass through the Skill library, whose mount
+    // effect reset it — the same gesture produced different results depending on
+    // where you were going, which reads as flakiness.
+    setError(null);
+    setNotice(null);
     setNav((current) => {
       if (routesEqual(current.stack[current.index], next)) return current;
       const stack = [...current.stack.slice(0, current.index + 1), next];
@@ -596,13 +609,26 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               <SettingsPreviewSection onError={setError} onNotice={setNotice} />
             )}
 
-            {error ? (
-              <div className="agent-settings-alert" role="alert">
-                <WarningIcon size={ICON_SIZE.menu} />
-                <span>{error}</span>
+            {/* Pinned to the bottom of the pane rather than sitting at the end of
+                its scroll content. An export that failed used to report into a
+                block below the fold of a six-group pane, so from the user's
+                viewport the button simply did nothing. Which control failed is
+                already answered by the control itself — an optimistic write that
+                fails snaps its switch back — so this says what happened, and the
+                row says where. */}
+            {error || notice ? (
+              <div className="agent-settings-feedback">
+                {error ? (
+                  <div className="agent-settings-alert" role="alert">
+                    <WarningIcon size={ICON_SIZE.menu} />
+                    <span>{error}</span>
+                  </div>
+                ) : null}
+                {/* role=status, because a success that is never announced is a
+                    success only sighted users who are looking down get. */}
+                {notice ? <div className="agent-settings-notice" role="status">{notice}</div> : null}
               </div>
             ) : null}
-            {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
           </div>
         </div>

@@ -21,7 +21,7 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
     emptyLabel: string,
     actionLabel: string,
   ) {
-    if (rules.length === 0) return <InsetRow disabled label={emptyLabel} />;
+    if (rules.length === 0) return <InsetRow empty label={emptyLabel} />;
     return rules.map((rule) => (
       <InsetRow
         key={rule}

@@ -133,6 +133,10 @@ export function SettingsSkillLibrarySection({
   // A pick that turned out to be a Skill folder, awaiting the user's decision
   // about binding its parent instead.
   const [pendingParentBind, setPendingParentBind] = useState<{ picked: string; parent: string } | null>(null);
+  // Unbinding is not destructive to files, but it is invisible in scale: the
+  // action is offered on EVERY row that came from the directory, and one click
+  // removes all of them at once. The confirmation exists to say how many.
+  const [pendingUnbind, setPendingUnbind] = useState<{ directory: string; skillCount: number } | null>(null);
   const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
@@ -425,7 +429,10 @@ export function SettingsSkillLibrarySection({
           // pointer and leaves every file where it is. The label has to say the
           // same thing the handler does.
           label: t.settings.skills.localUnbind,
-          onSelect: () => void unbindDirectory(localDirectory),
+          onSelect: () => setPendingUnbind({
+            directory: localDirectory,
+            skillCount: allSkills.filter((candidate) => directoryContaining(candidate.rootDir, additionalSkillDirectories) === localDirectory).length,
+          }),
         });
       }
       return {
@@ -521,6 +528,23 @@ export function SettingsSkillLibrarySection({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      {pendingUnbind ? (
+        <ConfirmDialog
+          cancelLabel={t.dialog.cancel}
+          confirmLabel={t.settings.skills.localUnbind}
+          message={t.settings.skills.localUnbindConfirmMessage({
+            directory: pendingUnbind.directory,
+            count: pendingUnbind.skillCount,
+          })}
+          onCancel={() => setPendingUnbind(null)}
+          onConfirm={() => {
+            const directory = pendingUnbind.directory;
+            setPendingUnbind(null);
+            void unbindDirectory(directory);
+          }}
+          title={t.settings.skills.localUnbindConfirmTitle}
+        />
+      ) : null}
       {pendingParentBind ? (
         <ConfirmDialog
           cancelLabel={t.dialog.cancel}
@@ -554,7 +578,7 @@ export function SettingsSkillLibrarySection({
           label={t.settings.skills.installedGroup}
         >
           {rows.length === 0 && emptyDirectories.length === 0 ? (
-            <InsetRow disabled label={t.settings.skills.noneInstalled} />
+            <InsetRow empty label={t.settings.skills.noneInstalled} />
           ) : null}
           {rows.map((row) => (
             <InsetRow

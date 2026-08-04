@@ -24,18 +24,6 @@
   padding: var(--space-6);
 }
 
-.settings-sheet-icon-avatar {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--icon-size-lg) + 2 * var(--space-5));
-  height: calc(var(--icon-size-lg) + 2 * var(--space-5));
-  border-radius: var(--radius-md);
-  background: var(--fill-1);
-  color: var(--text-soft);
-}
-
 /* Head: large brand avatar + title / subtitle (native alert layout). */
 .settings-sheet-head {
   display: flex;
