@@ -39,8 +39,8 @@ import type {
 import type { ThreadGoal } from '../../../core/agent/goal';
 import {
   boundedToolArgumentsForDisplay,
-  toolItemInspectionArguments,
-  toolItemInspectionName,
+  modelCallDisplayArguments,
+  modelCallDisplayName,
 } from '../../../core/agent/modelCallHistory';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -2049,18 +2049,28 @@ export async function buildTurnCopyText(
 }
 
 function toolCopyName(item: ThreadToolItem): string {
-  return toolItemInspectionName(item);
+  return modelCallDisplayName(item.modelCall);
 }
 
 function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | null): string {
-  if (argumentsValue !== null) return jsonText(boundedToolArgumentsForDisplay(argumentsValue));
+  if (argumentsValue !== null) {
+    if (item.modelCall.disposition !== 'evidenceOnly') {
+      const source = item.modelCall.disposition === 'replayable'
+        ? item.modelCall.arguments
+        : item.modelCall.redactedArguments;
+      if (source.storage === 'payload') {
+        return jsonText(boundedToolArgumentsForDisplay(argumentsValue));
+      }
+    }
+    return jsonText(argumentsValue);
+  }
   if (item.modelCall.disposition !== 'evidenceOnly') {
     const source = item.modelCall.disposition === 'replayable'
       ? item.modelCall.arguments
       : item.modelCall.redactedArguments;
     if (source.storage === 'payload') return jsonText({ unavailable: 'stored tool arguments' });
   }
-  return jsonText(boundedToolArgumentsForDisplay(toolItemInspectionArguments(item)));
+  return jsonText(modelCallDisplayArguments(item.modelCall));
 }
 
 function projectedToolOutput(item: ThreadToolItem): string {

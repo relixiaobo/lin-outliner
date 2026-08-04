@@ -27,33 +27,70 @@ const DURABLE_STRING_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9_./+=-]{12,}/gi,
 ];
 
-const EXACT_SECRET_KEYS = new Set([
+const BENIGN_SECRET_LIKE_KEYS = new Set([
+  'authorizationendpoint',
+  'authorizationurl',
+  'authorizationuri',
+  'availabletokens',
+  'candidatestokencount',
+  'childtokencap',
+  'completiontokens',
+  'estimatedinputtokens',
+  'estimatedtokens',
+  'fixedtokens',
+  'fulltokens',
+  'inputtokenlimit',
+  'inputtokens',
+  'maxoutputtokens',
+  'maxtokens',
+  'maxtotaltokens',
+  'modelcalltokens',
+  'outputtokens',
+  'passwordpolicy',
+  'pdfpasswordprotected',
+  'prompttokencount',
+  'prompttokens',
+  'reasoningtokens',
+  'remainingfulltokens',
+  'remainingtokenbudget',
+  'reportedreasoningtokens',
+  'requiredtokens',
+  'reservedoutputtokens',
+  'retainedtokens',
+  'secretpolicy',
+  'subagenttokenbudget',
+  'tokenbudget',
+  'tokencount',
+  'tokenlimit',
+  'tokentype',
+  'tokenusage',
+  'totaltokencount',
+  'totaltokens',
+  'tokensused',
+  'waitingforauthorization',
+]);
+const SECRET_KEY_NOUNS = new Set([
   'authorization',
-  'authorizationheader',
-  'authorizationtoken',
   'bearer',
+  'credential',
+  'credentials',
   'password',
   'passwd',
   'pwd',
   'secret',
   'token',
 ]);
-const SECRET_KEY_PREFIXES = new Set(['api', 'auth', 'client', 'encryption', 'private', 'secret', 'signing']);
-const SECRET_TOKEN_PREFIXES = new Set([
-  'access',
+const SECRET_KEY_PREFIXES = new Set([
   'api',
   'auth',
-  'bearer',
-  'bot',
   'client',
-  'github',
-  'gitlab',
-  'id',
-  'oauth',
-  'refresh',
-  'session',
-  'slack',
+  'encryption',
+  'private',
+  'secret',
+  'signing',
 ]);
+const SECRET_KEY_SUBSTRING_PATTERN = /credential|password|passwd|authorization|bearer|secret|token|(?:api|auth|client|encryption|private|signing)(?:key|keys)/;
+const UNSCANNABLE_JSON_REDACTION = '[redacted unscannable JSON]';
 
 // A long unbroken token run (base64 / blob / data URI) — elided to a length note
 // so an inline image/blob can't bloat a debug payload or the cache.
@@ -139,15 +176,15 @@ function redactValuePreservingShape(value: unknown): unknown {
 
 function isSecretKey(key: string): boolean {
   const segments = secretKeySegments(key);
-  if (segments.some((segment, index) => segment === 'secret' && segments[index + 1] === 'key')) return true;
   const normalized = segments.join('');
-  if (EXACT_SECRET_KEYS.has(normalized)) return true;
-  for (const suffix of ['key', 'keys', 'secret'] as const) {
-    if (!normalized.endsWith(suffix)) continue;
-    if (SECRET_KEY_PREFIXES.has(normalized.slice(0, -suffix.length))) return true;
-  }
-  if (!normalized.endsWith('token')) return false;
-  return SECRET_TOKEN_PREFIXES.has(normalized.slice(0, -'token'.length));
+  if (BENIGN_SECRET_LIKE_KEYS.has(normalized)) return false;
+  if (segments.some((segment) => SECRET_KEY_NOUNS.has(segment))) return true;
+  if (segments.some((segment, index) => (
+    (segment === 'key' || segment === 'keys')
+    && index > 0
+    && SECRET_KEY_PREFIXES.has(segments[index - 1]!)
+  ))) return true;
+  return SECRET_KEY_SUBSTRING_PATTERN.test(normalized);
 }
 
 function secretKeySegments(key: string): string[] {
@@ -160,12 +197,136 @@ function secretKeySegments(key: string): string[] {
 }
 
 function redactDurableJsonString(content: string): string {
-  let redacted = content;
+  let redacted = redactJsonEncodedSecretValues(content);
   for (const pattern of DURABLE_STRING_REDACTION_PATTERNS) {
     pattern.lastIndex = 0;
     redacted = redacted.replace(pattern, '[redacted secret-like content]');
   }
   return redacted;
+}
+
+interface JsonReplacement {
+  readonly start: number;
+  readonly end: number;
+  readonly value: string;
+}
+
+/** Redact secret-keyed values in valid JSON while preserving all unrelated bytes. */
+export function redactJsonEncodedSecretValues(content: string): string {
+  const start = skipJsonWhitespace(content, 0);
+  if (content[start] !== '{' && content[start] !== '[') return content;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    return content;
+  }
+  if (parsed === null || typeof parsed !== 'object') return content;
+  try {
+    const replacements: JsonReplacement[] = [];
+    const end = scanJsonValue(content, start, false, replacements);
+    if (skipJsonWhitespace(content, end) !== content.length || replacements.length === 0) return content;
+    let redacted = content;
+    for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
+      redacted = redacted.slice(0, replacement.start) + replacement.value + redacted.slice(replacement.end);
+    }
+    return redacted;
+  } catch {
+    // Valid JSON must never bypass durable redaction because a pathological
+    // nesting shape exceeded the formatting-preserving scanner's call stack.
+    return UNSCANNABLE_JSON_REDACTION;
+  }
+}
+
+function scanJsonValue(
+  source: string,
+  offset: number,
+  forceRedaction: boolean,
+  replacements: JsonReplacement[],
+): number {
+  const start = skipJsonWhitespace(source, offset);
+  const token = source[start];
+  if (token === '"') {
+    const end = scanJsonString(source, start);
+    const value = JSON.parse(source.slice(start, end)) as string;
+    if (forceRedaction && value !== '[redacted]') {
+      replacements.push({ start, end, value: JSON.stringify('[redacted]') });
+    } else if (!forceRedaction) {
+      const nested = redactJsonEncodedSecretValues(value);
+      if (nested !== value) replacements.push({ start, end, value: JSON.stringify(nested) });
+    }
+    return end;
+  }
+  if (token === '{') return scanJsonObject(source, start, forceRedaction, replacements);
+  if (token === '[') return scanJsonArray(source, start, forceRedaction, replacements);
+  let end = start;
+  while (end < source.length && !/[\s,}\]]/.test(source[end]!)) end += 1;
+  if (end === start) throw new Error('Invalid JSON value');
+  if (forceRedaction) {
+    const value = JSON.parse(source.slice(start, end)) as unknown;
+    const replacement = typeof value === 'number'
+      ? value === 0 ? null : '0'
+      : value === true ? 'false' : null;
+    if (replacement !== null) replacements.push({ start, end, value: replacement });
+  }
+  return end;
+}
+
+function scanJsonObject(
+  source: string,
+  start: number,
+  forceRedaction: boolean,
+  replacements: JsonReplacement[],
+): number {
+  let offset = skipJsonWhitespace(source, start + 1);
+  if (source[offset] === '}') return offset + 1;
+  while (offset < source.length) {
+    if (source[offset] !== '"') throw new Error('Invalid JSON object key');
+    const keyEnd = scanJsonString(source, offset);
+    const key = JSON.parse(source.slice(offset, keyEnd)) as string;
+    offset = skipJsonWhitespace(source, keyEnd);
+    if (source[offset] !== ':') throw new Error('Invalid JSON object delimiter');
+    offset = scanJsonValue(source, offset + 1, forceRedaction || isSecretKey(key), replacements);
+    offset = skipJsonWhitespace(source, offset);
+    if (source[offset] === '}') return offset + 1;
+    if (source[offset] !== ',') throw new Error('Invalid JSON object separator');
+    offset = skipJsonWhitespace(source, offset + 1);
+  }
+  throw new Error('Unterminated JSON object');
+}
+
+function scanJsonArray(
+  source: string,
+  start: number,
+  forceRedaction: boolean,
+  replacements: JsonReplacement[],
+): number {
+  let offset = skipJsonWhitespace(source, start + 1);
+  if (source[offset] === ']') return offset + 1;
+  while (offset < source.length) {
+    offset = scanJsonValue(source, offset, forceRedaction, replacements);
+    offset = skipJsonWhitespace(source, offset);
+    if (source[offset] === ']') return offset + 1;
+    if (source[offset] !== ',') throw new Error('Invalid JSON array separator');
+    offset = skipJsonWhitespace(source, offset + 1);
+  }
+  throw new Error('Unterminated JSON array');
+}
+
+function scanJsonString(source: string, start: number): number {
+  let offset = start + 1;
+  while (offset < source.length) {
+    if (source[offset] === '"') return offset + 1;
+    if (source[offset] === '\\') offset += 1;
+    offset += 1;
+  }
+  throw new Error('Unterminated JSON string');
+}
+
+function skipJsonWhitespace(source: string, start: number): number {
+  let offset = start;
+  while (offset < source.length && /\s/.test(source[offset]!)) offset += 1;
+  return offset;
 }
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {

@@ -260,15 +260,17 @@ consulting the current registry or schema; the schema digest is audit evidence o
 The whole call/result pair degrades to typed evidence only when a persisted argument,
 complete output, or image dependency is unavailable. Item-specific fields are
 presentation and audit projections only; no reverse mapper may recreate model
-arguments from them.
-Existing persisted tool Items that predate the envelope decode as
-`canonicalHistoryUnavailable` evidence. No decoder reconstructs their calls from
-presentation fields. Inspection-only consumers may use the Item's bounded identity,
-arguments, path, and outcome fields for existing rows, transcripts, Memory, Skills, and
-observation bookkeeping; provider replay never imports that compatibility helper.
-Payload-backed arguments are available to renderer detail and Turn copy only through an
-Item-bound main-process read of the exact reference, and are bounded before renderer
-caching, formatting, highlighting, or copying.
+arguments from them. Fork and child inheritance treat context evidence and compaction
+payloads as strong dependencies, but a missing tool-argument payload is recoverable:
+they retain its canonical reference and the later projector performs that typed
+degradation instead of aborting the user operation.
+The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
+fallback decoder, inspection helper, or replay path; pre-release userData is reset when
+the format changes. Payload-backed arguments are available to renderer detail and Turn
+copy only through an Item-bound main-process read of the exact reference, and are bounded
+before renderer caching, formatting, highlighting, or copying. Inline arguments remain
+complete. While a payload read is pending or unavailable, the row uses its already-bounded
+presentation arguments as a display-only fallback.
 
 Secret redaction compatibility is decided once against the admission schema. A
 compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
@@ -278,12 +280,14 @@ request, but later Turns and every durable surface see only the frozen dispositi
 Cancellation stops each batch loop before it admits any remaining call, so those calls
 create neither Items nor argument payloads.
 Secret-key matching normalizes complete camelCase, snake_case, kebab-case, and
-unseparated spellings, then accepts only explicit credential-key combinations. Durable
-opaque strings, including JSON-shaped source text, are never structurally parsed or
-reformatted and redact only high-confidence credential formats. Redaction paths list
-only values that actually changed. Provider diagnostics separately recognize serialized
-function-call argument envelopes and structurally redact those known adapter fields before
-persistence; diagnostic decoding is never a replay authority.
+unseparated spellings. Credential nouns anywhere in the key are denied by default;
+an explicit whole-key allow-list preserves budget, usage, URL, and policy fields. Valid
+JSON encoded in a string is structurally redacted in place without changing unrelated
+formatting or ordering; a scanner failure redacts the whole encoded value. Other
+free-form strings redact only high-confidence credential
+formats. Redaction paths list only values that actually changed. Provider diagnostics
+apply the same formatting-preserving structural pass to serialized function-call argument
+envelopes; diagnostic decoding is never a replay authority.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID

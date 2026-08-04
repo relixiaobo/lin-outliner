@@ -11,7 +11,7 @@ import type { Thread, ThreadItem, Turn } from '../../../../core/agent/protocol';
 import { isoLocalDate } from '../../../../core/localDate';
 import { freshNodeId } from '../../../../core/nodeId';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
-import { toolItemInspectionName } from '../../../../core/agent/modelCallHistory';
+import { modelCallDisplayName } from '../../../../core/agent/modelCallHistory';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -519,7 +519,7 @@ function evidenceContent(item: ThreadItem): string | null {
     case 'commandExecution':
       return item.status === 'completed'
         ? JSON.stringify({
-            tool: toolItemInspectionName(item),
+            tool: modelCallDisplayName(item.modelCall),
             command: item.command,
             cwd: item.cwd,
             output: item.aggregatedOutput,
@@ -531,7 +531,7 @@ function evidenceContent(item: ThreadItem): string | null {
     case 'mcpToolCall':
       return item.status === 'completed'
         ? JSON.stringify({
-            tool: toolItemInspectionName(item),
+            tool: modelCallDisplayName(item.modelCall),
             arguments: item.arguments,
             result: item.result,
           })
@@ -539,7 +539,7 @@ function evidenceContent(item: ThreadItem): string | null {
     case 'dynamicToolCall':
       return item.status === 'completed'
         ? JSON.stringify({
-            tool: toolItemInspectionName(item),
+            tool: modelCallDisplayName(item.modelCall),
             arguments: item.arguments,
             result: item.contentItems,
           })

@@ -90,6 +90,36 @@ describe('canonical model tool-call admission', () => {
     });
   });
 
+  test('persists JSON-encoded request bodies with secret values redacted in place', async () => {
+    const body = [
+      '{',
+      '  "client_secret" : "9f3a2c8d5e71b04a",',
+      '  "password": "s3cr3t-value-1234",',
+      '  "query": "keep spacing"',
+      '}',
+    ].join('\n');
+    const expectedBody = body
+      .replace('"9f3a2c8d5e71b04a"', '"[redacted]"')
+      .replace('"s3cr3t-value-1234"', '"[redacted]"');
+
+    const decision = await persistToolCallAdmission(
+      admittedRequest({ body }),
+      async () => { throw new Error('Small arguments must stay inline.'); },
+    );
+
+    expect(decision).toMatchObject({
+      execute: true,
+      displayArguments: { body: expectedBody },
+      modelCall: {
+        disposition: 'redactedReplay',
+        redactedArguments: { storage: 'inline', value: { body: expectedBody } },
+        redactedPaths: ['/body'],
+      },
+    });
+    expect(JSON.stringify(decision)).not.toContain('9f3a2c8d5e71b04a');
+    expect(JSON.stringify(decision)).not.toContain('s3cr3t-value-1234');
+  });
+
   test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {
     const secret = 'abcdefghijklmnop';
     const decision = await persistToolCallAdmission(

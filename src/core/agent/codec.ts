@@ -246,7 +246,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         // `?? null` so Threads persisted before the field existed still decode.
         description: nullableString(record.description ?? null, 'item.description', true),
         commandActions: arrayValue(record.commandActions, 'item.commandActions').map(decodeCommandAction),
@@ -263,7 +263,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         changes: arrayValue(record.changes, 'item.changes').map(decodeFileChange),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
       };
       break;
     case 'mcpToolCall':
@@ -279,7 +279,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         tool: stringValue(record.tool, 'item.tool'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         pluginId: nullableString(record.pluginId, 'item.pluginId'),
         result: record.result === null ? null : jsonValue(record.result, 'item.result'),
@@ -301,7 +301,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         arguments: jsonValue(record.arguments, 'item.arguments'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         contentItems: record.contentItems === null
           ? null
           : arrayValue(record.contentItems, 'item.contentItems').map(decodeDynamicToolOutput),
@@ -342,7 +342,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         senderThreadId: uuidV7(record.senderThreadId, 'item.senderThreadId'),
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
@@ -374,7 +374,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         query: stringValue(record.query, 'item.query'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
-        modelCall: decodeThreadItemModelCall(record.modelCall, type),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         results: arrayValue(record.results, 'item.results').map((entry, index) => {
           const item = recordValue(entry, `item.results[${index}]`);
           exactKeys(item, ['title', 'url', 'snippet'], `item.results[${index}]`);
@@ -3390,26 +3390,6 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
     redactedArgumentsSummary,
     reason: enumValue(record.reason, MODEL_TOOL_CALL_EVIDENCE_REASONS, 'item.modelCall.reason'),
     correction,
-  });
-}
-
-function decodeThreadItemModelCall(
-  value: unknown,
-  itemType: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch',
-): ModelToolCallHistory {
-  if (value !== undefined) return decodeModelToolCallHistory(value);
-  const providerName = itemType === 'commandExecution'
-    ? 'bash'
-    : itemType === 'webSearch'
-      ? 'web_search'
-      : `historical_${itemType}`;
-  return decodeModelToolCallHistory({
-    disposition: 'evidenceOnly',
-    identity: null,
-    providerName,
-    redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-    reason: 'canonicalHistoryUnavailable',
-    correction: 'Inspect current state before deriving any new tool call; historical arguments are unavailable.',
   });
 }
 

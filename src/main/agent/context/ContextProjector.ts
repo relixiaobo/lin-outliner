@@ -106,6 +106,8 @@ export class CanonicalContextProjector {
   private readonly payloads = new Map<string, ThreadContextPayload>();
   private readonly toolOutputProjections = new Map<string, ToolOutputProjectionContextPayload>();
   private readonly unavailableToolOutputProjections = new Set<string>();
+  private readonly conflictingToolOutputProjections = new Set<string>();
+  private readonly unavailableToolOutputProjectionItems = new Set<string>();
 
   constructor(
     private readonly model: Model<Api>,
@@ -146,32 +148,36 @@ export class CanonicalContextProjector {
   private async prepareToolOutputProjections(turns: readonly Turn[]): Promise<void> {
     this.toolOutputProjections.clear();
     this.unavailableToolOutputProjections.clear();
+    this.conflictingToolOutputProjections.clear();
+    this.unavailableToolOutputProjectionItems.clear();
     for (const turn of turns) {
       for (const item of turn.items) {
         if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
         const declaredKeys = item.outputRefs.map(outputReferenceKey);
         const markUnavailable = () => {
           for (const key of declaredKeys) {
-            this.toolOutputProjections.delete(key);
-            this.unavailableToolOutputProjections.add(key);
+            if (!this.toolOutputProjections.has(key)) this.unavailableToolOutputProjections.add(key);
           }
         };
         const payload = await this.readEvidencePayload(item).catch(() => null);
         if (!payload || payload.kind !== 'toolOutputProjection') {
           console.warn(`[agent] Skipping unavailable tool-output projection: ${item.payloadRef.id}`);
+          this.unavailableToolOutputProjectionItems.add(item.id);
           markUnavailable();
           continue;
         }
         const key = outputReferenceKey(payload.outputRef);
+        if (this.conflictingToolOutputProjections.has(key)) continue;
         const existing = this.toolOutputProjections.get(key);
         if (existing && JSON.stringify(existing) !== JSON.stringify(payload)) {
           console.warn(`[agent] Skipping conflicting tool-output projection: ${payload.outputRef.id}`);
-          markUnavailable();
           this.toolOutputProjections.delete(key);
           this.unavailableToolOutputProjections.add(key);
+          this.conflictingToolOutputProjections.add(key);
           continue;
         }
-        if (!this.unavailableToolOutputProjections.has(key)) this.toolOutputProjections.set(key, payload);
+        this.toolOutputProjections.set(key, payload);
+        this.unavailableToolOutputProjections.delete(key);
       }
     }
   }
@@ -300,7 +306,10 @@ export class CanonicalContextProjector {
         }
         if (
           item.kind === 'toolOutputProjection'
-          && item.outputRefs.some((ref) => this.unavailableToolOutputProjections.has(outputReferenceKey(ref)))
+          && (
+            this.unavailableToolOutputProjectionItems.has(item.id)
+            || item.outputRefs.some((ref) => this.unavailableToolOutputProjections.has(outputReferenceKey(ref)))
+          )
         ) continue;
         appendContextParts(await this.projectEvidence(item));
         continue;

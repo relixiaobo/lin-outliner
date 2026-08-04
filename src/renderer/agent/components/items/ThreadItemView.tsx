@@ -72,7 +72,7 @@ import { basenameForPath } from '../../../../core/referenceMarkup';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
-  toolItemInspectionArguments,
+  modelCallDisplayArguments,
 } from '../../../../core/agent/modelCallHistory';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
@@ -659,7 +659,7 @@ function ToolItemDisclosure({
   } | null>(null);
   const argumentsLoaded = loadedArguments?.argumentRefId === argumentRefId;
   const fallbackArguments = useMemo(
-    () => boundedToolArgumentsForDisplay(toolItemInspectionArguments(item)),
+    () => fallbackToolArguments(item),
     [item],
   );
   const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
@@ -713,9 +713,7 @@ function ToolItemDisclosure({
     ? loadedArguments.value
     : fallbackArguments;
   const detail = toolDetail(item, t, onOpenThread, threadId, subagents, argumentsValue);
-  const detailInput = argumentRefId && (!argumentsLoaded || loadedArguments.value === null)
-    ? item.type === 'commandExecution' ? item.command : null
-    : detail.input;
+  const detailInput = detail.input;
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
   const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
   // A caller-authored description replaces the shell text in the label, so the
@@ -905,7 +903,7 @@ function toolDetail(
     case 'fileChange':
       return {
         ...empty,
-        input: jsonText(argumentsValue),
+        input: argumentsValue === null ? null : jsonText(argumentsValue),
         inputLanguage: 'json',
         error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
@@ -1963,6 +1961,33 @@ function toolArgumentPayloadId(item: ThreadToolItem): string | null {
   if (item.modelCall.disposition === 'evidenceOnly') return null;
   const source = modelCallArgumentSource(item.modelCall);
   return source.storage === 'payload' ? source.ref.id : null;
+}
+
+function fallbackToolArguments(item: ThreadToolItem): JsonValue {
+  const source = item.modelCall.disposition === 'evidenceOnly'
+    ? null
+    : modelCallArgumentSource(item.modelCall);
+  if (!source || source.storage === 'inline') return modelCallDisplayArguments(item.modelCall);
+  switch (item.type) {
+    case 'commandExecution':
+      return {
+        command: item.command,
+        ...(item.description ? { description: item.description } : {}),
+      };
+    case 'mcpToolCall':
+    case 'dynamicToolCall':
+      return item.arguments;
+    case 'collabAgentToolCall':
+      return {
+        prompt: item.prompt,
+        model: item.model,
+        reasoningEffort: item.reasoningEffort,
+      };
+    case 'webSearch':
+      return { query: item.query };
+    case 'fileChange':
+      return null;
+  }
 }
 
 function isJsonText(value: string): boolean {

@@ -455,7 +455,7 @@ describe('Codex Agent Core protocol codec', () => {
     expect((decoded as Extract<typeof decoded, { type: 'commandExecution' }>).description).toBeNull();
   });
 
-  test('degrades tool Items without canonical model-call history to non-replayable evidence', () => {
+  test('rejects tool Items without canonical model-call history', () => {
     const toolTypes = [
       'commandExecution',
       'fileChange',
@@ -471,13 +471,7 @@ describe('Codex Agent Core protocol codec', () => {
       )) as Record<string, unknown>;
       delete historical.modelCall;
 
-      const decoded = decodeThreadItem(historical);
-      expect('modelCall' in decoded ? decoded.modelCall : null).toMatchObject({
-        disposition: 'evidenceOnly',
-        identity: null,
-        reason: 'canonicalHistoryUnavailable',
-        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-      });
+      expect(() => decodeThreadItem(historical)).toThrow('item.modelCall');
     }
   });
 

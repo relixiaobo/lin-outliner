@@ -312,7 +312,20 @@ describe('review regressions — each of these shipped broken once', () => {
   });
 
   test('copy turn bounds a large payload-backed argument before formatting it', async () => {
-    const item = dynamic('file_write', {}, 'completed');
+    const ref = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 1_000_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic('file_write', {}, 'completed'),
+      modelCall: {
+        ...replayableModelCall('file_write', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
     const turn = {
       id: 'turn-copy-large',
       items: [item],
@@ -334,43 +347,6 @@ describe('review regressions — each of these shipped broken once', () => {
 
     expect(copied).toContain('"truncated": true');
     expect(copied.length).toBeLessThan(33_000);
-  });
-
-  test('copy turn uses legacy Item identity and arguments for inspection', async () => {
-    const item = {
-      ...dynamic('search', { query: 'legacy canonical history' }, 'completed', { namespace: 'docs' }),
-      modelCall: {
-        disposition: 'evidenceOnly' as const,
-        identity: null,
-        providerName: 'historical_dynamicToolCall',
-        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-        reason: 'canonicalHistoryUnavailable' as const,
-        correction: 'Inspect current state before deriving any new tool call.',
-      },
-    };
-    const turn = {
-      id: 'turn-copy-legacy',
-      items: [item],
-      itemsView: 'full' as const,
-      provenance: { originThreadId: 't', originTurnId: 'turn-copy-legacy', trigger: { kind: 'user' as const } },
-      status: 'completed' as const,
-      error: null,
-      startedAt: 1,
-      completedAt: 2,
-      durationMs: 1,
-    };
-
-    const copied = await buildTurnCopyText(
-      turn,
-      async () => null,
-      async () => null,
-      'Resource limit reached.',
-    );
-
-    expect(copied).toContain('```tool docs.search');
-    expect(copied).toContain('legacy canonical history');
-    expect(copied).not.toContain('historical_dynamicToolCall');
-    expect(copied).not.toContain('canonical model-call history');
   });
 
   test('a search query is never resolved as if it were a node id', () => {

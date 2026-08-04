@@ -181,8 +181,6 @@ export function evidenceCorrection(reason: ModelToolCallEvidenceReason): string 
       return 'Do not retry from this record; re-derive any later call from an authorized source.';
     case 'resultPayloadUnavailable':
       return 'Treat the historical outcome as incomplete and inspect current state before acting.';
-    case 'canonicalHistoryUnavailable':
-      return 'Inspect current state before deriving any new tool call; historical arguments are unavailable.';
   }
 }
 

@@ -2,7 +2,15 @@ import type { TSchema } from 'typebox';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
-import { contextPayloadReferenceKey,itemContextPayloadReferences,itemOutputReferences,itemResourceReferences,outputReferenceKey,resourceReferenceKey } from '../context/contextDependencies';
+import {
+  contextPayloadReferenceKey,
+  itemOutputReferences,
+  itemRequiredContextPayloadReferences,
+  itemResourceReferences,
+  itemToolArgumentPayloadReferences,
+  outputReferenceKey,
+  resourceReferenceKey,
+} from '../context/contextDependencies';
 import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
@@ -363,18 +371,29 @@ export class SubagentCollaboration {
       targetThreadId: ThreadId,
       payload: InheritedContextPayload,
     ): Promise<StagedContextEvidence> {
-      const contextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemContextPayloadReferences)
+      const requiredContextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
+        turn.items.flatMap(itemRequiredContextPayloadReferences)
       )));
+      const requiredContextKeys = new Set(requiredContextRefs.map(contextPayloadReferenceKey));
+      const toolArgumentRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
+        turn.items.flatMap(itemToolArgumentPayloadReferences)
+      )));
+      const contextRefs = uniqueContextReferences([...requiredContextRefs, ...toolArgumentRefs]);
       const resourceRefs = uniqueResourceReferences(payload.turns.flatMap((turn) => (
         turn.items.flatMap(itemResourceReferences)
       )));
       const outputRefs = uniqueOutputReferences(payload.turns.flatMap((turn) => (
         turn.items.flatMap(itemOutputReferences)
       )));
-      for (const ref of contextRefs) {
+      for (const ref of requiredContextRefs) {
         if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
           throw new Error(`Missing inherited context payload: ${ref.id}`);
+        }
+      }
+      for (const ref of toolArgumentRefs) {
+        if (requiredContextKeys.has(contextPayloadReferenceKey(ref))) continue;
+        if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
+          console.warn(`[agent] Child inherited unavailable tool-call arguments: ${ref.id}`);
         }
       }
       for (const ref of resourceRefs) {

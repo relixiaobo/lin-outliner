@@ -971,6 +971,90 @@ describe('canonical context projection', () => {
     }
   });
 
+  test('uses a later valid frozen projection after an earlier duplicate is unreadable', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const outputRef = {
+      id: '3'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 80_000,
+      summary: 'Recoverable projection',
+    };
+    const valid = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'inline', text: 'RECOVERED FROZEN OUTPUT' },
+    }, 'valid-duplicate-projection');
+    const unavailable = {
+      ...valid,
+      id: 'unavailable-duplicate-projection',
+      provenance: {
+        ...valid.provenance,
+        originItemId: 'unavailable-duplicate-projection',
+      },
+      payloadRef: {
+        ...valid.payloadRef,
+        id: '2'.repeat(64),
+      },
+    } satisfies ContextEvidenceThreadItem;
+
+    const messages = await new CanonicalContextProjector(
+      model,
+      projectionResources(payloads),
+    ).projectTurns([turn(45, [
+      userItem('recoverable-projection-user', 1_720_000_000_150, 'Inspect history.'),
+      commandToolItem('recoverable-projection-tool', outputRef, 'mutable bounded fallback'),
+      unavailable,
+      valid,
+    ], true)]);
+
+    const results = messages.filter((message) => message.role === 'toolResult');
+    expect(results).toHaveLength(1);
+    expect(messageText(results[0]!)).toBe('RECOVERED FROZEN OUTPUT');
+    expect(messages.map(messageText).join('\n')).not.toContain('resultPayloadUnavailable');
+  });
+
+  test('keeps genuinely conflicting frozen projections unavailable', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const outputRef = {
+      id: '1'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 80_000,
+      summary: 'Conflicting projection',
+    };
+    const first = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'inline', text: 'FIRST FROZEN OUTPUT' },
+    }, 'first-conflicting-projection');
+    const second = evidence(payloads, {
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'inline', text: 'SECOND FROZEN OUTPUT' },
+    }, 'second-conflicting-projection');
+    const third = {
+      ...first,
+      id: 'third-matching-projection',
+      provenance: { ...first.provenance, originItemId: 'third-matching-projection' },
+    } satisfies ContextEvidenceThreadItem;
+
+    const messages = await new CanonicalContextProjector(
+      model,
+      projectionResources(payloads),
+    ).projectTurns([turn(46, [
+      userItem('conflicting-projection-user', 1_720_000_000_151, 'Inspect history.'),
+      commandToolItem('conflicting-projection-tool', outputRef, 'mutable bounded fallback'),
+      first,
+      second,
+      third,
+    ], true)]);
+
+    expect(messages.some((message) => message.role === 'toolResult')).toBe(false);
+    expect(messages.map(messageText).join('\n')).toContain('resultPayloadUnavailable');
+  });
+
   test('bounds evidence fields without truncating away identity, reason, or correction', async () => {
     const evidenceOnly = {
       ...commandToolItem('large-evidence-call', null, 'o'.repeat(40_000)),

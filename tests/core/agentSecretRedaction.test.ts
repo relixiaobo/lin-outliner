@@ -60,11 +60,44 @@ describe('agent secret redaction', () => {
       api_token: secret,
       oauthToken: secret,
       authorizationHeader: secret,
+      'x-api-key': secret,
+      credentials: secret,
+      openai_api_key: secret,
+      anthropic_api_key: secret,
+      OPENAI_API_KEY: secret,
+      aws_secret_access_key: secret,
+      user_password: secret,
+      db_password: secret,
+      admin_password: secret,
+      basic_auth_password: secret,
+      password_hash: secret,
+      root_passwd: secret,
+      smtp_pwd: secret,
+      jwt_secret: secret,
+      webhook_secret: secret,
+      app_secret: secret,
+      shared_secret: secret,
+      oauth_secret: secret,
+      ssh_private_key: secret,
+      privateKeyPem: secret,
+      auth_key: secret,
+      clientKey: secret,
+      encryption_key: secret,
+      signingKey: secret,
+      validation_token: secret,
+      gh_token: secret,
+      npm_token: secret,
+      proxy_authorization: secret,
+      'X-Authorization': secret,
       authorization_url: 'https://example.test/oauth/authorize',
       passwordPolicy: 'at least twelve characters',
       secretPolicy: 'rotate every ninety days',
       token_budget: 200_000,
       max_total_tokens: 80_000,
+      maxTokens: 32_000,
+      totalTokens: 12_345,
+      input_tokens: 8_000,
+      outputTokens: 4_345,
     });
 
     expect(result.value).toEqual({
@@ -82,11 +115,44 @@ describe('agent secret redaction', () => {
       api_token: '[redacted]',
       oauthToken: '[redacted]',
       authorizationHeader: '[redacted]',
+      'x-api-key': '[redacted]',
+      credentials: '[redacted]',
+      openai_api_key: '[redacted]',
+      anthropic_api_key: '[redacted]',
+      OPENAI_API_KEY: '[redacted]',
+      aws_secret_access_key: '[redacted]',
+      user_password: '[redacted]',
+      db_password: '[redacted]',
+      admin_password: '[redacted]',
+      basic_auth_password: '[redacted]',
+      password_hash: '[redacted]',
+      root_passwd: '[redacted]',
+      smtp_pwd: '[redacted]',
+      jwt_secret: '[redacted]',
+      webhook_secret: '[redacted]',
+      app_secret: '[redacted]',
+      shared_secret: '[redacted]',
+      oauth_secret: '[redacted]',
+      ssh_private_key: '[redacted]',
+      privateKeyPem: '[redacted]',
+      auth_key: '[redacted]',
+      clientKey: '[redacted]',
+      encryption_key: '[redacted]',
+      signingKey: '[redacted]',
+      validation_token: '[redacted]',
+      gh_token: '[redacted]',
+      npm_token: '[redacted]',
+      proxy_authorization: '[redacted]',
+      'X-Authorization': '[redacted]',
       authorization_url: 'https://example.test/oauth/authorize',
       passwordPolicy: 'at least twelve characters',
       secretPolicy: 'rotate every ninety days',
       token_budget: 200_000,
       max_total_tokens: 80_000,
+      maxTokens: 32_000,
+      totalTokens: 12_345,
+      input_tokens: 8_000,
+      outputTokens: 4_345,
     });
     expect(result.redactedPaths).toEqual([
       '/secret_key',
@@ -103,6 +169,35 @@ describe('agent secret redaction', () => {
       '/api_token',
       '/oauthToken',
       '/authorizationHeader',
+      '/x-api-key',
+      '/credentials',
+      '/openai_api_key',
+      '/anthropic_api_key',
+      '/OPENAI_API_KEY',
+      '/aws_secret_access_key',
+      '/user_password',
+      '/db_password',
+      '/admin_password',
+      '/basic_auth_password',
+      '/password_hash',
+      '/root_passwd',
+      '/smtp_pwd',
+      '/jwt_secret',
+      '/webhook_secret',
+      '/app_secret',
+      '/shared_secret',
+      '/oauth_secret',
+      '/ssh_private_key',
+      '/privateKeyPem',
+      '/auth_key',
+      '/clientKey',
+      '/encryption_key',
+      '/signingKey',
+      '/validation_token',
+      '/gh_token',
+      '/npm_token',
+      '/proxy_authorization',
+      '/X-Authorization',
     ]);
   });
 
@@ -117,19 +212,37 @@ describe('agent secret redaction', () => {
     });
   });
 
-  test('keeps JSON-shaped source strings byte-exact instead of treating them as structured arguments', () => {
+  test('redacts secret-keyed JSON strings without reformatting unrelated bytes', () => {
     const encoded = [
       '{',
-      '  "token": "placeholder1234",',
+      '  "client_secret" : "9f3a2c8d5e71b04a",',
+      '  "password": "s3cr3t-value-1234",',
       '  "authorization_url": "https://example.test/oauth",',
-      '  "passwordPolicy": "at least twelve characters"',
+      '  "passwordPolicy": "at least twelve characters",',
+      '  "nested": { "query": "keep spacing" }',
       '}',
     ].join('\n');
+    const expected = encoded
+      .replace('"9f3a2c8d5e71b04a"', '"[redacted]"')
+      .replace('"s3cr3t-value-1234"', '"[redacted]"');
 
-    expect(redactSecretLikeJson({ content: encoded })).toEqual({
-      value: { content: encoded },
-      redactedPaths: [],
+    expect(redactSecretLikeJson({ body: encoded })).toEqual({
+      value: { body: expected },
+      redactedPaths: ['/body'],
     });
+  });
+
+  test('redacts nested JSON strings without reformatting the containing document', () => {
+    const body = '{\n  "client_secret": "nested-secret-value",\n  "safe": "keep"\n}';
+    const encoded = JSON.stringify({ body, query: 'keep' }, null, 2);
+    const result = redactSecretLikeJson({ arguments: encoded });
+
+    expect(result.redactedPaths).toEqual(['/arguments']);
+    expect(JSON.parse(result.value.arguments as string)).toEqual({
+      body: '{\n  "client_secret": "[redacted]",\n  "safe": "keep"\n}',
+      query: 'keep',
+    });
+    expect(result.value.arguments).toContain('\n  "body":');
   });
 
   test('keeps formatting in JSON-encoded strings when structural redaction is unnecessary', () => {
@@ -138,6 +251,19 @@ describe('agent secret redaction', () => {
     expect(redactSecretLikeJson({ arguments: encoded })).toEqual({
       value: { arguments: encoded },
       redactedPaths: [],
+    });
+  });
+
+  test('fails closed when valid JSON exceeds the formatting-preserving scanner depth', () => {
+    const depth = 100_000;
+    const encoded = '['.repeat(depth)
+      + '{"password":"deep-secret-value"}'
+      + ']'.repeat(depth);
+
+    expect(() => JSON.parse(encoded)).not.toThrow();
+    expect(redactSecretLikeJson({ body: encoded })).toEqual({
+      value: { body: '[redacted unscannable JSON]' },
+      redactedPaths: ['/body'],
     });
   });
 

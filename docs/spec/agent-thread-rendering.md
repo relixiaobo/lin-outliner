@@ -79,11 +79,11 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   resolved on demand by main, or bounded rejection evidence. The renderer never renders
   a payload-reference stub as if it were arguments. Expansion and Turn copy request the
   exact authorized payload, then bound its renderer-facing value to 32,000 characters
-  before caching, formatting, syntax highlighting, or copying; a missing or mismatched
-  payload remains explicitly unavailable. A pre-envelope
-  `canonicalHistoryUnavailable` Item is the inspection-only exception: its own bounded
-  presentation identity and arguments keep the existing row and copy useful, but never
-  become provider history. Host
+  before caching, formatting, syntax highlighting, or copying. Inline values that fit
+  the 32 KiB storage contract remain complete even when pretty-printed JSON is longer.
+  While a payload read is pending, missing, or mismatched, the disclosure keeps the
+  Item's already-bounded presentation arguments visible; that fallback never becomes
+  provider history. Host
   execution metadata such as command `cwd` is labelled separately and never appears as
   a model argument. Structured arguments and results render as their JSON rather than a
   second presentation model. `bash` is the deliberate exception to JSON argument rendering:
@@ -500,9 +500,8 @@ payload; it never receives a canonical payload path or gains digest-only read au
 The same IPC method may read payload-backed tool arguments only when main derives the
 requested reference from that exact Item's canonical `modelCall`; another Item or digest
 is rejected. Renderer caching keys the immutable Thread-owned payload identity and stores
-only its bounded display projection.
-New argument-bearing views consume the canonical envelope. Pre-envelope Items use their
-bounded fields for inspection only. Diagnostics and exports show
+only its bounded display projection. New argument-bearing views consume the required
+canonical envelope. Diagnostics and exports show
 only structured secret-redacted values and RFC 6901 redaction paths; they never reveal a
 raw model-authored secret or host-injected credential.
 Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.

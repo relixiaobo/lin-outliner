@@ -103,20 +103,21 @@ transaction metadata.
 Audit and diagnostics retain canonical identity, admission disposition, schema digest,
 and redacted observable arguments. Raw secret-like model values and host credentials do
 not enter Items, argument payloads, transcripts, renderer detail, or diagnostics. The
-diagnostic capture boundary structurally redacts a provider adapter's explicitly
-serialized function-call argument field; it does not treat arbitrary model-authored
-strings as JSON or promote the diagnostic copy into replay. The
+diagnostic capture boundary applies formatting-preserving structural redaction to a
+provider adapter's serialized function-call argument field without promoting that copy
+into replay. The
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
 Structured redaction normalizes complete camelCase, snake_case, kebab-case, and
-unseparated key spellings, then matches explicit credential-key combinations. Keys such
-as `secretKey`, `session_token`, `private-key`, `apikey`, and `authtoken` are covered,
-while `token_budget`, `authorization_url`, and `passwordPolicy` remain ordinary data.
-Opaque strings are never parsed or reformatted as nested JSON. Free-form command, file,
-and JSON-shaped text changes only for high-confidence credential formats; ordinary
-source/config fixtures and placeholder token assignments remain byte-identical. A JSON
-pointer is recorded only when the persisted value actually differs from its source.
+unseparated key spellings. Credential nouns anywhere in a key are secret by default, so
+forms such as `x-api-key`, `openai_api_key`, `credentials`, `user_password`,
+`privateKeyPem`, and `gh_token` are covered. An explicit whole-key allow-list keeps
+`token_budget`, `max_total_tokens`, `totalTokens`, `authorization_url`, and
+`passwordPolicy` ordinary. Valid JSON encoded in a string is structurally redacted in
+place without changing unrelated whitespace, key order, or bytes. Other free-form
+command and file text changes only for high-confidence credential formats. A JSON pointer
+is recorded only when the persisted value actually differs from its source.
 
 ## Shared Resource Concurrency
 

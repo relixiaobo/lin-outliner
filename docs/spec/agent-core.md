@@ -51,13 +51,9 @@ results, and host execution metadata never reconstruct model arguments. In parti
 of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope.
-Persisted pre-envelope tool Items do not gain reconstructed calls during decode. They
-open as `evidenceOnly` with `canonicalHistoryUnavailable`, preserving the visible Item
-and outcome while preventing replay of guessed arguments. This is a read-path
-degradation, not a format migration or legacy replay authority. An inspection-only
-helper may read those Items' own bounded presentation fields for rows, transcripts,
-Memory evidence, Skill path observation, and compaction invalidation. The provider
-projector never imports that helper or promotes its output into a call.
+The envelope is required at the codec boundary. Pre-envelope tool Items are not
+decoded, migrated, reconstructed, or routed through an alternate reader; pre-release
+userData is reset when this storage format lands.
 
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
@@ -397,11 +393,14 @@ under the Thread mutex; failed publication and Turn terminalization prune any co
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
 than truncation. Secret-bearing structured object fields and high-confidence credential
-formats in opaque strings are redacted before either the Item or payload becomes durable;
-model-authored opaque strings are never parsed or reformatted as nested JSON. At the
-separate diagnostic boundary, a provider adapter's explicitly serialized function-call
-argument field is decoded and structurally redacted before the diagnostic copy is stored;
-that copy never becomes Item or replay data. Redacted replay compatibility is decided once
+formats in non-JSON strings are redacted before either the Item or payload becomes durable.
+Valid JSON encoded in a string is structurally redacted in place, preserving unrelated
+whitespace, key order, and bytes; a scanner failure redacts the complete encoded value
+instead of failing open. Credential nouns anywhere in a normalized key are
+secret by default; an explicit whole-key allow-list preserves budget, usage, URL, and
+policy fields. Provider diagnostics use the same formatting-preserving structural pass
+at serialized function-call boundaries; the diagnostic copy never becomes Item or replay
+data. Redacted replay compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
@@ -427,7 +426,10 @@ closes. Startup and rollback remove stale staging data plus managed resources, c
 payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
 history. Forks copy only payloads referenced by inherited Items and Turn execution into
 their own directory with a distinct inode, so provenance remains shared while mutation
-and deletion remain Thread-local.
+and deletion remain Thread-local. Context evidence and compaction payloads are required
+for the copied history shape. A missing tool-argument payload is recoverable: fork and
+child inheritance retain the canonical reference, skip the unavailable copy, and let
+provider projection degrade that call/result pair to typed evidence.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.
@@ -437,12 +439,9 @@ Startup reconciles catalog and history projections from rollouts. A Turn left
 streamed or executable Item first receives its terminal completion fact. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
-path. New tool Items always write the required envelope. Decode of a pre-envelope
-tool Item synthesizes only `canonicalHistoryUnavailable` evidence in memory; it does
-not migrate storage, reconstruct arguments, or introduce a legacy replay path. Its
-bounded Item fields remain available to inspection-only consumers so existing rows,
-transcripts, Memory evidence, Skills, and observation invalidation do not lose visible
-facts.
+path. New tool Items always write the required envelope, and decode rejects a tool
+Item that lacks it. Pre-release format changes use an explicit userData reset rather
+than a compatibility reader.
 
 ## Transport
 

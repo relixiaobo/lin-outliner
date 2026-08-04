@@ -2,7 +2,13 @@ import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/co
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
 import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
-import { assertContextPayloadDependencies,itemContextPayloadReferences,itemResourceReferences } from '../context/contextDependencies';
+import {
+  assertContextPayloadDependencies,
+  contextPayloadReferenceKey,
+  itemRequiredContextPayloadReferences,
+  itemResourceReferences,
+  itemToolArgumentPayloadReferences,
+} from '../context/contextDependencies';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { decodeCursor,encodeCursor,pageLimit } from '../persistence/cursor';
 import { type RolloutEntry,type ThreadHistoryRollbackMarker } from '../persistence/RolloutStore';
@@ -391,9 +397,18 @@ export class ThreadCatalogOps {
             if (!outputCopied) throw new Error(`Missing context tool output payload: ${ref.id}`);
           }
         }
-        for (const ref of itemContextPayloadReferences(item)) {
+        const requiredContextRefs = itemRequiredContextPayloadReferences(item);
+        const requiredContextKeys = new Set(requiredContextRefs.map(contextPayloadReferenceKey));
+        for (const ref of requiredContextRefs) {
           const payloadCopied = await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
           if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
+        }
+        for (const ref of itemToolArgumentPayloadReferences(item)) {
+          if (requiredContextKeys.has(contextPayloadReferenceKey(ref))) continue;
+          const payloadCopied = await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
+          if (!payloadCopied) {
+            console.warn(`[agent] Fork retained unavailable tool-call arguments: ${ref.id}`);
+          }
         }
         if ('outputRef' in item && item.outputRef) {
           const payloadCopied = await this.core.payloads.copyTextToThread(

@@ -40,27 +40,37 @@ export function itemResourceReferences(item: ThreadItem): ThreadResourceReferenc
 }
 
 export function itemContextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
-  const toolArgumentRefs = 'modelCall' in item
-    ? modelCallContextPayloadReferences(item.modelCall)
+  return [
+    ...itemRequiredContextPayloadReferences(item),
+    ...itemToolArgumentPayloadReferences(item),
+  ];
+}
+
+export function itemRequiredContextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
+  const contextRefs = item.type === 'contextEvidence' || item.type === 'contextCompaction'
+    ? item.contextRefs.filter((ref) => ref.kind !== 'toolCallArguments')
     : [];
-  if (item.type === 'contextEvidence') return [item.payloadRef, ...item.contextRefs];
-  if (item.type !== 'contextCompaction') return toolArgumentRefs;
+  if (item.type === 'contextEvidence') return [item.payloadRef, ...contextRefs];
+  if (item.type !== 'contextCompaction') return [];
   return [
     item.summaryRef,
     item.restoredStateRef,
     ...(item.instructionsRef ? [item.instructionsRef] : []),
-    ...item.contextRefs,
+    ...contextRefs,
   ];
 }
 
-function modelCallContextPayloadReferences(
-  modelCall: Extract<ThreadItem, { readonly modelCall: unknown }>['modelCall'],
-): ThreadContextPayloadReference[] {
-  if (modelCall.disposition === 'evidenceOnly') return [];
+export function itemToolArgumentPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
+  const dependencyRefs = item.type === 'contextEvidence' || item.type === 'contextCompaction'
+    ? item.contextRefs.filter((ref) => ref.kind === 'toolCallArguments')
+    : [];
+  if (!('modelCall' in item)) return dependencyRefs;
+  const modelCall = item.modelCall;
+  if (modelCall.disposition === 'evidenceOnly') return dependencyRefs;
   const source = modelCall.disposition === 'replayable'
     ? modelCall.arguments
     : modelCall.redactedArguments;
-  return source.storage === 'payload' ? [source.ref] : [];
+  return source.storage === 'payload' ? [...dependencyRefs, source.ref] : dependencyRefs;
 }
 
 export function itemOutputReferences(item: ThreadItem): ThreadItemOutputReference[] {

@@ -22,7 +22,10 @@ import type {
   TurnDiagnosticsProviderRequest,
   TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
-import { redactSecretLikeJson } from '../capabilities/agentSecretRedaction';
+import {
+  redactJsonEncodedSecretValues,
+  redactSecretLikeJson,
+} from '../capabilities/agentSecretRedaction';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
@@ -649,14 +652,7 @@ function redactProviderSerializedArguments(value: JsonValue): JsonValue {
 }
 
 function redactSerializedProviderArguments(value: string): string {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (parsed === null || typeof parsed !== 'object') return value;
-    const redacted = redactSecretLikeJson(parsed);
-    return redacted.redactedPaths.length > 0 ? JSON.stringify(redacted.value) : value;
-  } catch {
-    return value;
-  }
+  return redactJsonEncodedSecretValues(value);
 }
 
 function directImageBase64(

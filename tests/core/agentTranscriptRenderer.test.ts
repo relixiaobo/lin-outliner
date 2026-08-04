@@ -182,38 +182,6 @@ Two files: a.ts and b.ts.
     expect(rendered).toContain('### Tool file_grep — inProgress');
   });
 
-  test('uses legacy Item fields for transcript inspection without synthesizing a tool name', async () => {
-    const legacy = {
-      type: 'mcpToolCall' as const,
-      id: 'legacy-mcp',
-      provenance: provenance('legacy-mcp'),
-      status: 'completed' as const,
-      outputRef: null,
-      server: 'docs',
-      tool: 'search',
-      arguments: { query: 'legacy canonical history' },
-      pluginId: null,
-      result: { matches: 2 },
-      error: null,
-      durationMs: 5,
-      modelCall: {
-        disposition: 'evidenceOnly' as const,
-        identity: null,
-        providerName: 'historical_mcpToolCall',
-        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-        reason: 'canonicalHistoryUnavailable' as const,
-        correction: 'Inspect current state before deriving any new tool call.',
-      },
-    };
-
-    const rendered = await renderTranscript([turnWith([legacy])], reader());
-
-    expect(rendered).toContain('### Tool docs.search — completed');
-    expect(rendered).toContain('args: {"query":"legacy canonical history"}');
-    expect(rendered).not.toContain('historical_mcpToolCall');
-    expect(rendered).not.toContain('canonical model-call history');
-  });
-
   test('records a failed Turn error and a summary-only Items view', async () => {
     const failed: Turn = {
       ...turnWith([]),

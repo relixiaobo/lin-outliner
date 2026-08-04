@@ -28,9 +28,9 @@ dynamic tools rather than special-casing `bash`.
 - Do not redesign tool rows, result envelopes, output compaction, or the tool
   catalog. Renderer changes are limited to sourcing arguments from the new
   canonical record and keeping host metadata visually distinct.
-- Do not migrate or reconstruct old Thread data. Persisted tool Items without a
-  canonical envelope decode as typed `canonicalHistoryUnavailable` evidence;
-  the old reverse-mapping reader remains deleted and no guessed call is replayed.
+- Do not migrate or reconstruct old Thread data. Pre-release userData is reset
+  when this format lands; persisted tool Items without a canonical envelope fail
+  strict decode, and no legacy reader or guessed replay path is shipped.
 
 ## Background
 
@@ -283,7 +283,6 @@ stable reason code, and actionable correction text. Reasons cover at least:
 - invalid arguments;
 - provider-truncated arguments;
 - unresolved argument persistence failures.
-- unavailable canonical history on a pre-envelope persisted Item.
 
 On the next request, typed correction evidence replaces the rejected call. The
 projector never emits the invalid tool call, never emits an orphaned tool
@@ -298,19 +297,25 @@ policy before persistence. Admitted calls whose values change use
 remain outside model calls, while shell commands and other free-form model
 arguments are explicitly treated as possible secret carriers. Structured key
 matching normalizes separated, camel-cased, and unseparated credential spellings;
-opaque strings are never parsed as nested JSON and change only for high-confidence
-credential formats. The sole structural-string exception is a provider adapter's
-explicit serialized function-call argument envelope: diagnostics decode and redact
-that known field before persistence, without feeding it back into Items or replay. A
-redaction path exists only when its value changed.
+credential nouns are denied by default, while an explicit whole-key allow-list keeps
+budget, usage, URL, and policy fields ordinary. Valid JSON encoded in a string is
+structurally redacted in place without changing unrelated whitespace, ordering, or
+bytes; if that formatting-preserving scan cannot complete, the whole encoded value is
+redacted rather than persisted unchanged. Non-JSON free-form text changes only for
+high-confidence credential formats.
+Provider diagnostics apply the same formatting-preserving parser at an adapter's
+serialized function-call boundary. A redaction path exists only when its value changed.
 
 ### Argument storage and lifecycle
 
 Small ordinary JSON arguments stay inline. Arguments above the inline bound use
 a content-addressed, Thread-owned JSON payload with an exact codec and digest;
 they are not truncated into a different value. The reference participates in
-the same dependency enumeration, fork copy, deletion, and integrity checks as
-other Thread-owned context resources.
+the same dependency enumeration and deletion lifecycle as other Thread-owned
+context resources. Fork and child inheritance copy the payload when available;
+an unavailable tool-argument payload is a weak history dependency, so the copied
+Item retains its reference and later projects typed evidence rather than aborting
+the user operation. Context evidence and compaction payloads remain strong dependencies.
 
 Before every provider submission, replay loads the frozen provider name and
 arguments and resolves every persisted call/result dependency, including argument,
@@ -332,18 +337,18 @@ Existing specialized Items remain the source for readable rows and execution
 facts. Surfaces that label data as tool arguments use the canonical envelope;
 the host-resolved `cwd` and similar values are shown only as execution context.
 Transcript export uses exact arguments, marked redacted arguments, or the
-evidence-only redacted summary, never an Item reverse mapper. For a pre-envelope
-`canonicalHistoryUnavailable` Item only, inspection consumers may show its own
-bounded presentation identity, arguments, path, and outcome. That compatibility
-helper is forbidden from provider projection. Renderer payload reads remain
+evidence-only redacted summary, never an Item reverse mapper. Inline arguments that
+fit the 32 KiB storage contract render in full. Renderer payload reads remain
 Item-bound and are reduced to a 32,000-character display value before caching,
-formatting, highlighting, or Turn copy.
+formatting, highlighting, or Turn copy; while that read is pending or unavailable,
+the row keeps its existing bounded presentation arguments visible.
 
 Diagnostics record admission phase, canonical identity, schema digest,
 replay/evidence disposition, and bounded redacted validation errors. They never
-capture raw secret-bearing values or host-only environment. Known provider
-function-call argument strings are structurally redacted at diagnostic capture;
-model-authored opaque strings remain byte-preserving. Memory extraction
+capture raw secret-bearing values or host-only environment. JSON-encoded argument
+strings are structurally redacted without reformatting, including at known provider
+function-call boundaries; non-JSON opaque strings remain byte-preserving except for
+high-confidence credential formats. Memory extraction
 may summarize completed outcomes but cannot reconstruct calls from presentation
 fields.
 
@@ -454,10 +459,13 @@ Main owns board/changelog updates at merge.
 - **AC-14:** Once cancellation is observed, sequential and parallel batch loops
   do not admit remaining calls, create their Items, or persist their argument
   payloads. Calls already admitted settle through the normal interrupted result.
-- **AC-15:** The new envelope has no legacy call reconstructor. A pre-envelope
-  persisted tool Item remains openable as `canonicalHistoryUnavailable`
-  evidence and cannot emit a guessed call/result exchange. Its own bounded fields
-  remain available to inspection, Skill path observation, and compaction invalidation.
+- **AC-15:** The new envelope has no legacy reader or call reconstructor. A tool
+  Item without `modelCall` fails strict decode; pre-release userData is wiped when
+  the format lands instead of carrying a compatibility layer.
+- **AC-16:** A missing tool-argument payload does not abort fork or child
+  inheritance. The copied Item retains the unavailable reference and provider
+  projection emits typed evidence. Inline arguments remain complete in renderer
+  detail and copy; only loaded payload-backed values use the display bound.
 
 ### Risks and mitigations
 

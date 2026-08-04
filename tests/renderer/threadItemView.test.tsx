@@ -191,7 +191,7 @@ describe('ThreadItemView tool output disclosure', () => {
     expect(argumentsSection?.textContent.length).toBeLessThan(33_000);
   });
 
-  test('bounds inline arguments by their formatted display length', async () => {
+  test('shows complete inline arguments even when pretty formatting exceeds the storage cap', async () => {
     const item = dynamic({
       id: 'large-inline-tool',
       namespace: 'plugin',
@@ -203,30 +203,34 @@ describe('ThreadItemView tool output disclosure', () => {
     await flush();
 
     const argumentsSection = rendered.document.querySelector('.thread-tool-section');
-    expect(argumentsSection?.textContent).toContain('"truncated"');
-    expect(argumentsSection?.textContent.length).toBeLessThan(32_100);
+    expect(argumentsSection?.textContent).not.toContain('"truncated"');
+    expect(argumentsSection?.textContent).toContain('"values"');
+    expect(argumentsSection?.textContent.length).toBeGreaterThan(32_768);
   });
 
-  test('renders legacy Item arguments instead of the canonical-history-unavailable stub', async () => {
+  test('keeps bounded Item arguments visible while a payload read is pending or fails', async () => {
+    const ref = {
+      id: 'd'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
     const item = {
-      ...base('legacy-mcp'),
+      ...base('payload-mcp'),
       type: 'mcpToolCall' as const,
       server: 'docs',
       tool: 'search',
       status: 'completed' as const,
       outputRef: null,
-      arguments: { query: 'legacy canonical history' },
+      arguments: { query: 'bounded canonical fallback' },
       pluginId: null,
       result: { matches: 2 },
       error: null,
       durationMs: 5,
       modelCall: {
-        disposition: 'evidenceOnly' as const,
-        identity: null,
-        providerName: 'historical_mcpToolCall',
-        redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-        reason: 'canonicalHistoryUnavailable' as const,
-        correction: 'Inspect current state before deriving any new tool call.',
+        ...replayableModelCall('docs__search', {}),
+        arguments: { storage: 'payload' as const, ref },
       },
     } satisfies ThreadItem;
     let reads = 0;
@@ -238,12 +242,14 @@ describe('ThreadItemView tool output disclosure', () => {
       },
     });
 
+    expect(rendered.document.querySelector('.thread-tool-section')?.textContent)
+      .toContain('bounded canonical fallback');
     await flush();
 
-    expect(reads).toBe(0);
+    expect(reads).toBe(1);
     const argumentsSection = rendered.document.querySelector('.thread-tool-section');
-    expect(argumentsSection?.textContent).toContain('legacy canonical history');
-    expect(argumentsSection?.textContent).not.toContain('canonical model-call history');
+    expect(argumentsSection?.textContent).toContain('bounded canonical fallback');
+    expect(argumentsSection?.textContent).not.toContain('storedArguments');
   });
 });
 

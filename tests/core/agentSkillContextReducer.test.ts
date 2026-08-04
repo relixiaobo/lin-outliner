@@ -242,17 +242,6 @@ describe('Skill context reducer', () => {
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
       },
-      {
-        ...dynamicTool('legacy-read', null, 'file_read', '/workspace/legacy.ts'),
-        modelCall: {
-          disposition: 'evidenceOnly' as const,
-          identity: null,
-          providerName: 'historical_dynamicToolCall',
-          redactedArgumentsSummary: { unavailable: 'canonical model-call history' },
-          reason: 'canonicalHistoryUnavailable' as const,
-          correction: 'Inspect current state before deriving any new tool call.',
-        },
-      },
       dynamicTool('extension-read', 'example', 'file_read', '/workspace/extension.ts'),
       dynamicTool('unknown-file-tool', null, 'file_probe', '/workspace/probe.ts'),
       dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
@@ -260,7 +249,6 @@ describe('Skill context reducer', () => {
 
     expect(observedSkillFilePaths(turns)).toEqual([
       '/workspace/core.ts',
-      '/workspace/legacy.ts',
       '/workspace/presentation-only.ts',
       '/workspace/second-presentation-only.ts',
     ]);

@@ -84,7 +84,10 @@ evidence on this runtime user path; they never throw the Turn, emit an orphan re
 derive replacement arguments from presentation fields. Evidence bounds its argument and
 outcome fields independently, so call identity, reason, and correction always survive.
 If a frozen output projection is unavailable, evidence explicitly marks that result
-unavailable and never substitutes mutable Item output text.
+unavailable and never substitutes mutable Item output text. An unreadable duplicate does
+not poison a later valid projection for the same output; the later valid payload heals
+that transient state. Two readable projections with conflicting content remain
+unavailable for the whole projection and cannot be healed by a third duplicate.
 
 Redacted replay compatibility is decided against the admission schema. A compatible
 copy freezes `redactedReplay` and later emits one indivisible marker/call/result unit;
@@ -104,6 +107,10 @@ overlay is never persisted and is unavailable to later Turns, restart, fork, or
 compaction. Once cancellation is observed, sequential and parallel batch loops stop
 before admitting any remaining call; no Item or argument payload is created for those
 unadmitted calls, while already admitted calls settle as interrupted results.
+Fork and child inheritance copy payload-backed tool arguments when available. A missing
+argument payload is recoverable inspection data rather than a hard dependency: the
+canonical reference survives, and later provider projection emits
+`argumentPayloadUnavailable` evidence instead of failing the user operation.
 
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all
