@@ -228,6 +228,12 @@ interface InvocationRecord {
 }
 type InvocationPhase = 'live' | 'confirming' | 'readyToCommit' | 'executing' | 'spent';
 
+// 4c. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
+//     NAME a transition; main decides whether it is legal in the current phase.
+type InvocationEvent =
+  | { kind: 'confirmationCancelled'; invocationRef: InvocationRef; challenge: ChallengeToken }
+  | { kind: 'abandoned'; invocationRef: InvocationRef };   // menu closed, chip removed
+
 // 5. EFFECT — produced by main, never accepted from a renderer. An ORDERED PLAN,
 //    because real actions cross executors: `Filter / Sort / Group / Display` runs
 //    setViewToolbarVisible and only THEN reveals the section.
@@ -469,15 +475,38 @@ single-use token — so *Duplicate*, *Move*, or create-and-apply could run twice
 renderer's `runningRef` is not an admission boundary, least of all under the
 compromised-launcher threat model. Main therefore owns a phase machine:
 
-```
-live ──▶ confirming ──▶ readyToCommit ──▶ executing ──▶ spent
-  ▲            │                │
-  └── cancel ──┴────────────────┘        (at most ONE active challenge per record)
-```
+Every transition has a named event, because a diagram with an unreachable arrow is
+worse than no diagram — a `Cancel` the renderer never reports leaves the record
+stuck in `confirming`, and the *next* Copy or Move from that same menu opening is
+rejected instead of behaving as it does today:
 
-The invocation is **claimed at the transition into `executing`, before step 0 is
-dispatched** — not at completion. A second submit against a claimed record is
-rejected. Cancelling a confirmation returns to `live`; nothing else does.
+| from | event | to |
+|---|---|---|
+| `live` | request, action has no `confirm` | `executing` |
+| `live` | request, action has `confirm` | `confirming` (mints **the one** challenge) |
+| `confirming` | user accepted (renderer dialog, or the native sheet in PR 2) | `readyToCommit` |
+| `confirming` | **`confirmationCancelled`** | `live` — challenge revoked in the same atomic step |
+| `confirming` · `readyToCommit` | challenge TTL expiry | `live` — challenge revoked |
+| `readyToCommit` | commit redeems; operands re-resolve **equal** | `executing` |
+| `readyToCommit` | operand mismatch on redemption | `live` — challenge revoked, presentation re-issued |
+| any phase before `executing` | **`abandoned`**, chip removal, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
+| `executing` | settlement — `completed` / `failed` / `indeterminate` | `spent` |
+| `executing` | dismissal · superseding open · reload | **`executing`** — UI lifetime events must never invalidate an in-flight plan |
+
+The invocation is **claimed on entering `executing`, before step 0 is dispatched** —
+not at completion. A second submit against a claimed record is rejected.
+
+**PR 1 has to wire the cancel event, and it is not a behaviour change.** The shipped
+`ConfirmDialog` routes Cancel, Escape and backdrop to `onCancel`
+(`ConfirmDialog.tsx:38-57`), and the menu's handler only clears local state
+(`NodeContextMenu.tsx:589-597`) — main never learns. It now also emits
+`confirmationCancelled`. Nothing the user sees changes, so the strict differential
+proof still holds; what changes is that the record returns to `live` and the
+challenge dies with it.
+
+**Chip removal is a real invalidation, not a local erase.** D4 lets the user drop an
+operand; without an `abandoned` event the old ref stays admissible with its original
+operand set — exactly the substitution the challenge binding exists to prevent.
 
 **Every explicit dismiss path is phase-aware.** Today Esc goes straight to
 `launcher.hide()` (`LauncherApp.tsx:170-175`) and every hide bumps `launcherOpenSeq`
@@ -488,10 +517,12 @@ rather than hiding, alongside the blur guard that is already armed. Before
 `executing`, they invalidate and hide as they do today.
 
 Tests: two simultaneous submits, two simultaneous first-leg confirmations, Esc and
-global-hotkey dismissal while step 0 is pending, dismissal between two steps, spent-ref
-replay, wrong sender, superseded open, a launcher attempt to add `panel`/`workspace`,
-attestation invalidated by a main-renderer reload, and a global app action plus a
-node-result action **with the main window closed**.
+global-hotkey dismissal while step 0 is pending, dismissal between two steps,
+**cancel then run a different action from the same menu opening**, **redeem after
+cancel**, **redeem after challenge expiry**, **submit through a ref whose chip was
+removed**, spent-ref replay, wrong sender, superseded open, a launcher attempt to add
+`panel`/`workspace`, attestation invalidated by a main-renderer reload, and a global
+app action plus a node-result action **with the main window closed**.
 
 **Two admissions for renderer-owned facts, both bounded.**
 
@@ -528,9 +559,11 @@ So the flow has two legs and main owns both:
 1. A request **without** a challenge for an action carrying `confirm` returns a
    `ChallengeToken` — **single-use, short-lived, and bound to
    `(actionId, invocationRef, hash(resolved operands))`**.
-2. The commit request **redeems** it. Main revalidates: token unspent, unexpired,
-   invocation still live, and **the operands re-resolve to the same set** — so a
-   dialog shown for three nodes cannot commit against thirty.
+2. The commit request **redeems** it. Main revalidates: token unspent and unexpired,
+   the record in **`readyToCommit`** (not merely "live" — the first leg has already
+   moved it out of `live`), and **the operands re-resolve to the same set** — so a
+   dialog shown for three nodes cannot commit against thirty. Any failure revokes
+   the challenge and returns the record to `live`.
 
 **And the security claim is stated exactly, because a challenge alone does not
 prove a human saw anything.** A compromised renderer that *receives* a challenge can
@@ -1147,17 +1180,20 @@ out of `src/renderer/ui/interactions/`, `src/renderer/ui/outliner/NodeContextMen
 and the main-side admission handler. **No agent, composer, launcher or locale
 file**, which is what keeps it clear of #486.
 
-**PR 2 — three overlaps, all handled by ordering.** Re-derived from `gh pr list`
-2026-08-03:
+**PR 2 — overlaps, re-derived 2026-08-04 with `gh pr list` + `gh api …/files
+--paginate`.** (The `--paginate` matters: the default page returns 30 files, which
+is why an earlier sweep read #483 as touching only `ThreadView`.)
 
 | PR | Overlaps | Handling |
 |---|---|---|
-| [#486](https://github.com/relixiaobo/lin-outliner/pull/486) *(merged)* | `ThreadView` · `ThreadDock` · `ThreadComposerEditor` · both locales | already in `main`; PR 2 rebases onto it |
-| [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`** — the file `PendingComposerContext` threads through | PR 2 lands **after** it; rebase, do not run in parallel |
-| [#487](https://github.com/relixiaobo/lin-outliner/pull/487) *(merged)* | both locale catalogs and `src/main/main.ts`, which this branch also edits | already in `main`; this branch's `main.ts` edit is comment-only, so the rebase is textual at worst |
+| [#486](https://github.com/relixiaobo/lin-outliner/pull/486) · [#487](https://github.com/relixiaobo/lin-outliner/pull/487) *(merged)* | composer files · both locales · `main.ts` | already in `main`; rebase |
+| [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`**, **`ThreadDock.tsx`**, **`threadStore.ts`**, **`src/main/main.ts`** — the whole surface `PendingComposerContext` threads through | PR 2 lands **after** it and rebases; do not run in parallel |
+| [#488](https://github.com/relixiaobo/lin-outliner/pull/488) *(open)* | **both locale catalogs**, **`src/main/main.ts`**, and **`src/core/types.ts`** (infrastructure-owned) | PR 2 lands **after** it; its `types.ts` edit is the one to watch, since neither of our PRs touches that file |
+| [#489](https://github.com/relixiaobo/lin-outliner/pull/489) · [#480](https://github.com/relixiaobo/lin-outliner/pull/480) | none (docs / release tooling) | — |
 
-[#480](https://github.com/relixiaobo/lin-outliner/pull/480) (release pipeline) has
-no file overlap.
+**PR 1's exposure is smaller but not zero**: its main-side admission wiring lands in
+`src/main/main.ts`, which #483 and #488 both touch. PR 1 rebases onto whichever
+lands first; the conflict is additive rather than semantic.
 
 PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
 `src/renderer/launcher/*`, `src/main/launcher/*`,
