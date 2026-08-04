@@ -11,6 +11,14 @@
   -webkit-line-clamp: 2;
 }
 
+/* Focus, not hover: the rest of a clamped description has to be reachable without
+   a mouse, but B7 forbids hover changing layout — and reflowing a list under the
+   pointer is exactly the thrash that rule exists to prevent. Focus is deliberate,
+   so expanding there is the affordance without the churn. */
+.inset-row:focus-within .settings-skill-description {
+  -webkit-line-clamp: unset;
+}
+
 /* Why a Skill needs attention, on its own line under the description. A fault in
    the Skill itself is the one place in the row that carries a status colour
    (B4); the description above it stays ordinary text. */
@@ -83,13 +91,16 @@
   display: grid;
   grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
   gap: var(--space-4);
-  border-bottom: var(--inset-hairline) solid var(--separator);
+  /* `--inset-hairline` is an inset box-shadow, not a length: inside a border
+     shorthand the whole declaration is invalid and the parser drops it, so these
+     rows had no separator at all in either theme. */
+  border-bottom: 1px solid var(--separator);
   padding: var(--space-3) 0;
 }
 
 .managed-skill-details dt,
 .managed-skill-changed-paths > span:first-child {
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
 }
@@ -120,7 +131,7 @@
 }
 
 .managed-skill-diff {
-  max-height: 260px;
+  max-height: var(--settings-scroll-cap);
   overflow: auto;
   margin: var(--space-4) 0 0;
   border-radius: var(--radius-sm);
@@ -173,5 +184,5 @@
 .managed-skill-review-truncated {
   margin: 0;
   font-size: var(--font-meta);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }

@@ -57,7 +57,7 @@
 
 .settings-sheet-subtitle {
   margin: 0;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -78,7 +78,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  min-height: 38px;
+  min-height: var(--settings-tile-size-lg);
   padding: var(--space-2) var(--space-4);
 }
 
@@ -136,7 +136,7 @@
 
 .settings-sheet-row-label {
   flex: 0 0 auto;
-  width: 92px;
+  width: var(--settings-field-label-width);
   color: var(--text-soft);
   font-size: var(--font-meta);
   font-weight: 600;
@@ -149,10 +149,18 @@
   min-width: 0;
   width: 100%;
   border: 0;
-  outline: none;
+  /* Scoped to non-keyboard focus. Unconditional `outline: none` sits outside the
+     focus-suppression guard's reach — it only inspects `:focus-visible` rules —
+     so this suppression was unregistered, and the keyboard ring survived only
+     because a global `[data-input-modality="keyboard"]` rule happened to win on
+     specificity. */
   background: transparent;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
+}
+
+.settings-sheet-row-input:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .settings-sheet-placeholder {
@@ -331,7 +339,7 @@
 
 .settings-sheet-oauth-countdown {
   margin: 0;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
@@ -400,7 +408,7 @@
 
 .settings-sheet-oauth-connected-sub {
   margin: 0;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

@@ -9,7 +9,12 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg-elevated);
+  /* The flat base the rail and the grouped cards float on. It used to be
+     --bg-elevated, the same token as both of them, so the two-layer model the
+     comments describe never actually rendered — only a 0.5px hairline separated a
+     "floating" card from the surface behind it. The sibling provider-config window
+     already got this right. */
+  background: var(--bg-content);
   /* Same float inset as the main shell (--layout-gap) so the rail nests
      concentrically inside the 24px native window corner — window 24 = gap 8 + rail
      16 (B9). */
@@ -122,7 +127,7 @@
 
 .agent-settings-section-header {
   display: flex;
-  min-height: 20px;
+  min-height: var(--icon-size-xl);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-6);

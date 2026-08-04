@@ -598,7 +598,10 @@ export function SettingsSkillLibrarySection({
               )}
               sublabel={(
                 <>
-                  <span className="settings-skill-description" title={row.description}>
+                  {/* Clamped to two lines, and the full text stays reachable by
+                      expanding the row rather than by hovering: a native `title`
+                      is mouse-only, undismissable, and unreliably announced. */}
+                  <span className="settings-skill-description">
                     {row.description}
                   </span>
                   {row.diagnostic ? (
