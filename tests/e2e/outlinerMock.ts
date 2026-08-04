@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
 
 export const ids = {
   workspace: 'workspace',
@@ -63,6 +64,18 @@ interface MockFixtureOptions {
   attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
+  /** Seeds the global Memory switch; defaults to enabled. */
+  memoryFeatureMode?: 'enabled' | 'disabled';
+  /** Seeds the Memory status line's freshness, backlog, error, and stray-node count. */
+  memoryLastSuccessfulRunAt?: number | null;
+  memoryLastError?: string | null;
+  memoryPendingJobs?: number;
+  memoryStrayTaggedNodeCount?: number;
+  /** Installs managed Skills; empty by default, since the pane must be right with none. */
+  managedSkills?: ManagedSkillView[];
+  /** Seeds the Linlab catalog rows and its freshness state. */
+  managedCatalogEntries?: ManagedSkillCatalogEntryView[];
+  managedCatalogStatus?: 'fresh' | 'cached' | 'unavailable';
 }
 
 type E2EWindow = Window & {
@@ -518,6 +531,29 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
+    // The Memory group polls `memory_settings_get` on an interval for as long as
+    // its pane is mounted. Without a branch for it the mock's unhandled-invoke
+    // throw became a red alert on the pane every few seconds — including in the
+    // design-system probes, which were photographing that banner rather than the
+    // pane. Deterministic: no timers, no worker, and the counters only move when
+    // a spec drives them.
+    const memorySettings = {
+      status: {
+        featureMode: options.memoryFeatureMode ?? 'enabled',
+        featureModeGeneration: 1,
+        resetEpoch: 0,
+        memoryVisibilityGeneration: 1,
+        lastSuccessfulRunAt: options.memoryLastSuccessfulRunAt ?? null,
+        lastError: options.memoryLastError ?? null,
+        pendingJobs: options.memoryPendingJobs ?? 0,
+        strayTaggedNodeCount: options.memoryStrayTaggedNodeCount ?? 0,
+      },
+      thread: null as { threadId: string; mode: string } | null,
+    };
+    // Managed Skills default to none installed and an empty catalog: the pane has
+    // to be correct in that state, and a spec that wants rows opts into them.
+    const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
+    const managedCatalogEntries = options.managedCatalogEntries ?? [];
     const agentSkills = [{
       name: 'workspace-review',
       source: 'project',
@@ -2741,6 +2777,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_get_capability_settings') {
           return clone(agentCapabilities) as T;
+        }
+        if (cmd === 'memory_settings_get') {
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_feature_mode_set') {
+          memorySettings.status.featureMode = String(args.mode ?? 'enabled');
+          memorySettings.status.featureModeGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_open') {
+          memorySettings.status.memoryVisibilityGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_reset') {
+          memorySettings.status.resetEpoch += 1;
+          memorySettings.status.lastSuccessfulRunAt = null;
+          memorySettings.status.lastError = null;
+          memorySettings.status.pendingJobs = 0;
+          memorySettings.status.strayTaggedNodeCount = 0;
+          return clone(memorySettings) as T;
+        }
+        // Managed-Skill channels. `managedCommand` unwraps an { ok, value } /
+        // { ok, error } envelope, so these return that shape rather than the view
+        // directly — a bare view would surface as `undefined` at the call site
+        // instead of failing loudly.
+        if (cmd === 'agent_managed_skill_list') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_catalog') {
+          return {
+            ok: true,
+            value: { status: options.managedCatalogStatus ?? 'fresh', entries: clone(managedCatalogEntries) },
+          } as T;
+        }
+        if (cmd === 'agent_managed_skill_check_updates') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_set_enabled') {
+          const skill = managedSkills.find((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (!skill) return { ok: false, error: { code: 'skill_missing', message: 'Managed skill is no longer installed.' } } as T;
+          skill.enabled = args.enabled === true;
+          skill.status = skill.enabled ? 'enabled' : 'installed-disabled';
+          return { ok: true, value: clone(skill) } as T;
+        }
+        if (cmd === 'agent_managed_skill_uninstall') {
+          const index = managedSkills.findIndex((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (index >= 0) managedSkills.splice(index, 1);
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_update_image_generation_settings') {
+          const settings = (args.settings ?? {}) as { defaultModel?: string | null };
+          agentSettings.imageGeneration = settings.defaultModel
+            ? { defaultModel: settings.defaultModel }
+            : {};
+          return clone(agentSettings) as T;
         }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);

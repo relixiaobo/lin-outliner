@@ -82,6 +82,21 @@ test.describe('agent settings window', () => {
     expect(scrolledContentBox!.y).toBeCloseTo(contentBox!.y, 1);
   });
 
+  // The General pane raised a red alert on every run until the mock grew the
+  // memory channels: an unhandled invoke throws, MemorySettingsGroup catches it
+  // into the shared alert, and its 5s poll re-fired it forever. Nothing asserted
+  // the pane was error-free, so it went unnoticed — including by the
+  // design-system probes, which photograph this pane and pass regardless. The
+  // wait covers the poll, so a regression cannot hide in the gap before it fires.
+  test('renders the General pane without raising an error', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'General', exact: true }).click();
+    await expect(settings.getByRole('list', { name: 'Memory' })).toBeVisible();
+    await expect(settings.getByRole('alert')).toHaveCount(0);
+    await page.waitForTimeout(5_500);
+    await expect(settings.getByRole('alert')).toHaveCount(0);
+  });
+
   test('uses a flat settings pop-up button for select controls', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'General', exact: true }).click();
