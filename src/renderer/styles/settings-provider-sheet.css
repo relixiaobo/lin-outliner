@@ -416,3 +416,41 @@
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
+
+/* The status group: what the list row says about this connection, restated here
+   so a row reading "Needs key" no longer opens a window that never mentions it.
+   The instant actions live with it — pressing one while a key sat unsaved in the
+   form used to discard the key, because they shared a button row with Save. */
+.settings-sheet-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+}
+
+.settings-sheet-status-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-sheet-status-state {
+  font-size: var(--font-ui-md);
+  color: var(--text-primary);
+}
+
+.settings-sheet-status-when {
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+
+.settings-sheet-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.settings-sheet-status-actions:empty {
+  display: none;
+}

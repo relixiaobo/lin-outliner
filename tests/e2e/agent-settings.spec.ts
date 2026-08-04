@@ -401,7 +401,12 @@ test.describe('agent settings window', () => {
 });
 
 test.describe('provider config windows', () => {
-  test('shows provider config fields before provider settings finish loading', async ({ page }) => {
+  // The skeleton used to draw an API-key field and a base URL unconditionally,
+  // then resolve into something else entirely: a managed-credential provider has
+  // no key field at all, and an OAuth provider resolves to a sign-in surface. It
+  // showed people a form that vanished. Which shape is right is not knowable
+  // until the settings land, so it names the provider and waits.
+  test('does not guess the form shape before provider settings load', async ({ page }) => {
     await installElectronMock(page, { providerSettingsDelayMs: 1_000 });
     await page.goto('/?surface=provider-config&provider=openai&mode=configure');
 
@@ -409,13 +414,16 @@ test.describe('provider config windows', () => {
     await expect(config).toBeVisible();
     await expect(config).toHaveAttribute('aria-busy', 'true');
     await expect(config.getByRole('heading', { name: 'OpenAI' })).toBeVisible();
-    await expect(config.getByLabel('API key')).toBeVisible();
-    await expect(config.getByLabel('API key')).toBeDisabled();
-    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByLabel('API key')).toHaveCount(0);
+    await expect(config.getByLabel('Base URL')).toHaveCount(0);
+    // A way out exists throughout; a Save that cannot yet know what it would
+    // commit does not.
     await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(config.getByRole('button', { name: 'Validate' })).toBeDisabled();
-    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(config.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+
+    // And it resolves into the real form rather than staying a shell.
+    await expect(config.getByLabel('API key')).toBeVisible();
   });
 
   test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {

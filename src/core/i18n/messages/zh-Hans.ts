@@ -1533,6 +1533,8 @@ commandPalette: {
 
   providerConfig: {
     activeChip: '当前',
+    statusAriaLabel: '连接状态',
+    checkedAt: ({ when }: { when: string }) => `${when}检查过`,
     learnMore: '了解更多',
     providerIdLabel: '提供方 ID',
     providerIdPlaceholder: 'my-provider',

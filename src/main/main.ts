@@ -169,6 +169,7 @@ import {
   updateImageGenerationSettings,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
+  recordProviderConnectionCheck,
   testProviderConnection,
 } from './agent/capabilities/agentSettings';
 import { validateAgentModelSelection } from './agent/capabilities/agentModelResolution';
@@ -2367,10 +2368,7 @@ function registerIpc() {
   // damage; excluding the sender removes the cause, and with it a full settings
   // round-trip plus a list re-render on every instant toggle.
   ipcMain.handle('lin:settings-changed', (event) => {
-    const sender = BrowserWindow.fromWebContents(event.sender);
-    for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
-      if (target && target !== sender) target.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
-    }
+    notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
   });
 
   ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {
@@ -2882,6 +2880,38 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
     node: process.versions.node ?? 'unknown',
     providerId,
   };
+}
+
+/**
+ * Tell the windows that read provider settings to re-fetch, skipping the one that
+ * wrote. Fanning a write back to its own sender was a real defect — the settings
+ * window reapplies wholesale, so its own write reverted the user's other pending
+ * changes — and even without a draft to lose it costs a settings round trip and a
+ * list re-render for nothing. `origin` is undefined when main itself is the
+ * writer, in which case every window hears it.
+ */
+function notifySettingsChanged(origin?: BrowserWindow | null): void {
+  for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
+    if (target && target !== origin) target.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+  }
+}
+
+/**
+ * Run the connection probe for a provider and store what it found. Failures here
+ * are not the user's problem — a probe that cannot run leaves the row unverified,
+ * which is the honest state and the one it started in.
+ */
+async function probeAndRecordConnection(providerIdInput: unknown): Promise<void> {
+  const providerId = String(providerIdInput ?? '');
+  if (!providerId) return;
+  try {
+    const result = await testProviderConnection({ providerId });
+    await recordProviderConnectionCheck(providerId, result);
+  } catch {
+    await recordProviderConnectionCheck(providerId, null).catch(() => undefined);
+    return;
+  }
+  notifySettingsChanged();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -3597,8 +3627,21 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       });
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
-    case 'agent_upsert_provider_config':
-      return withCanonicalSkillDirectories(await upsertProviderConfig(args.provider as AgentProviderConfigInput));
+    case 'agent_upsert_provider_config': {
+      const input = args.provider as AgentProviderConfigInput;
+      const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
+      // Prove the connection AFTER committing it. Saving a credential is the
+      // user's intent and must not wait on a network round trip — the window
+      // closes at once, which is also why there is no timeout to design here and
+      // no "can I close mid-probe" question to answer. The verdict lands on the
+      // row when it arrives and the broadcast refreshes whoever is looking.
+      //
+      // This is one of exactly two things that probe: an explicit write, and the
+      // explicit Test button. Nothing probes on open, on a schedule, or in the
+      // background, because the probe bills a 1-token completion.
+      void probeAndRecordConnection(input.providerId);
+      return settings;
+    }
     case 'agent_delete_provider_config':
       return withCanonicalSkillDirectories(await deleteProviderConfig(String(args.providerId)));
     case 'agent_set_active_provider':
@@ -3628,12 +3671,24 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_oauth_cancel':
       oauthLoginManager.cancel(String(args.providerId));
       return undefined;
-    case 'agent_test_provider_connection':
-      return testProviderConnection({
-        providerId: String(args.providerId),
+    case 'agent_test_provider_connection': {
+      const providerId = String(args.providerId);
+      const result = await testProviderConnection({
+        providerId,
         baseUrl: args.baseUrl ? String(args.baseUrl) : undefined,
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });
+      // An explicit Test is the other thing allowed to probe, so its answer is
+      // kept rather than thrown away the moment the dialog closes — which is how
+      // "Ready" came to mean "has a credential" instead of "works". Recorded only
+      // when it probed the STORED connection: a test against a key typed into the
+      // form but not saved is not a verdict about what is on disk.
+      if (!args.apiKey && !args.baseUrl) {
+        await recordProviderConnectionCheck(providerId, result).catch(() => undefined);
+        notifySettingsChanged();
+      }
+      return result;
+    }
     case 'agent_list_all_skills':
       return args.userInvocableOnly === true
         ? skillRuntime.listUserInvocableSkills()

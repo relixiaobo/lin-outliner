@@ -29,6 +29,7 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
+  ProviderConnectionCheckView,
   ProviderAuthView,
 } from '../../../core/types';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
@@ -95,6 +96,11 @@ interface AgentProviderConfig {
   providerId: string;
   baseUrl?: string;
   enabled: boolean;
+  /**
+   * The last probe verdict. Absent means unverified, which is what a credential
+   * write restores — a rotated key must never inherit the old key's result.
+   */
+  connectionCheck?: ProviderConnectionCheckView;
 }
 
 interface ProviderConfigFile {
@@ -298,8 +304,17 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   const config = normalizeConfig(input);
   const file = await readProviderFile();
   const index = file.providers.findIndex((provider) => provider.providerId === config.providerId);
-  if (index >= 0) file.providers[index] = config;
-  else file.providers.push(config);
+  if (index >= 0) {
+    // The endpoint is part of what a verdict was about, so changing it makes the
+    // old verdict stale rather than merely old; enabling or disabling does not.
+    const previous = file.providers[index]!;
+    const endpointUnchanged = previous.baseUrl === config.baseUrl;
+    file.providers[index] = endpointUnchanged && previous.connectionCheck
+      ? { ...config, connectionCheck: previous.connectionCheck }
+      : config;
+  } else {
+    file.providers.push(config);
+  }
   if (file.activeProviderId === config.providerId && !config.enabled) file.activeProviderId = undefined;
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
   // No auto-activation side effect (provider-config-cleanup A2): an upsert never
@@ -379,6 +394,39 @@ export async function setActiveProvider(providerIdInput: string) {
   file.activeProviderId = providerId;
   await writeProviderFile(file);
   return getProviderSettings();
+}
+
+/**
+ * Record what a probe found, or clear it.
+ *
+ * The mapping is deliberately conservative because `statusCode` is *inferred* —
+ * `testProviderConnection` derives it by matching the redacted error text — and
+ * this verdict is durable in a way a transient banner is not. A 500 whose body
+ * happens to contain "unauthorized" must not be written down forever as a
+ * rejected key, so only a confident 401/403 produces `rejected` and everything
+ * else, including an unclassified failure, is `unreachable`.
+ */
+export async function recordProviderConnectionCheck(
+  providerIdInput: string,
+  result: { success: boolean; message?: string; statusCode?: number } | null,
+): Promise<void> {
+  const providerId = normalizeProviderId(providerIdInput);
+  const file = await readProviderFile();
+  const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+  if (!provider) return;
+
+  if (!result) {
+    delete provider.connectionCheck;
+  } else {
+    const rejected = result.statusCode === 401 || result.statusCode === 403;
+    provider.connectionCheck = {
+      outcome: result.success ? 'ok' : rejected ? 'rejected' : 'unreachable',
+      at: Date.now(),
+      ...(result.statusCode ? { statusCode: result.statusCode } : {}),
+      ...(result.message ? { message: result.message } : {}),
+    };
+  }
+  await writeProviderFile(file);
 }
 
 export async function setProviderApiKey(providerIdInput: string, apiKeyInput: string): Promise<AgentProviderSecretStatus> {
@@ -515,6 +563,7 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
         hasApiKey: hasStoredKey,
         hasEnvApiKey,
         auth,
+        ...(provider.connectionCheck ? { connectionCheck: provider.connectionCheck } : {}),
       };
     })),
     availableProviders,

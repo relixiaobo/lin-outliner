@@ -1631,6 +1631,8 @@ commandPalette: {
 
   providerConfig: {
     activeChip: 'Active',
+    statusAriaLabel: 'Connection status',
+    checkedAt: ({ when }: { when: string }) => `Checked ${when}`,
     learnMore: 'Learn more',
     providerIdLabel: 'Provider ID',
     providerIdPlaceholder: 'my-provider',
