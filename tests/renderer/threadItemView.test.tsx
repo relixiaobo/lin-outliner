@@ -208,7 +208,7 @@ describe('ThreadItemView tool output disclosure', () => {
     expect(argumentsSection?.textContent.length).toBeGreaterThan(32_768);
   });
 
-  test('keeps bounded Item arguments visible while a payload read is pending or fails', async () => {
+  test('shows typed unavailable evidence instead of Item arguments when a payload read fails', async () => {
     const ref = {
       id: 'd'.repeat(64),
       mimeType: 'application/vnd.tenon.agent-context+json' as const,
@@ -243,13 +243,47 @@ describe('ThreadItemView tool output disclosure', () => {
     });
 
     expect(rendered.document.querySelector('.thread-tool-section')?.textContent)
-      .toContain('bounded canonical fallback');
+      .toContain('stored tool arguments');
     await flush();
 
     expect(reads).toBe(1);
     const argumentsSection = rendered.document.querySelector('.thread-tool-section');
-    expect(argumentsSection?.textContent).toContain('bounded canonical fallback');
+    expect(argumentsSection?.textContent).toContain('stored tool arguments');
+    expect(argumentsSection?.textContent).not.toContain('bounded canonical fallback');
     expect(argumentsSection?.textContent).not.toContain('storedArguments');
+  });
+
+  test('shows the same typed unavailable arguments for a payload-backed file change', async () => {
+    const ref = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...base('payload-file-change'),
+      type: 'fileChange' as const,
+      status: 'completed' as const,
+      outputRef: null,
+      changes: [{ path: '/workspace/presentation-only.ts', kind: 'update' as const }],
+      modelCall: {
+        ...replayableModelCall('file_edit', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies ThreadItem;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => null,
+    });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('stored tool arguments');
+    expect(argumentsSection?.textContent).not.toContain('/workspace/presentation-only.ts');
+    expect(rendered.document.querySelector('.thread-file-changes')?.textContent)
+      .toContain('presentation-only.ts');
   });
 });
 

@@ -2064,12 +2064,6 @@ function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | nul
     }
     return jsonText(argumentsValue);
   }
-  if (item.modelCall.disposition !== 'evidenceOnly') {
-    const source = item.modelCall.disposition === 'replayable'
-      ? item.modelCall.arguments
-      : item.modelCall.redactedArguments;
-    if (source.storage === 'payload') return jsonText({ unavailable: 'stored tool arguments' });
-  }
   return jsonText(modelCallDisplayArguments(item.modelCall));
 }
 

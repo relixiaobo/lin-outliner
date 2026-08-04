@@ -274,6 +274,68 @@ describe('context compaction reducer', () => {
     expect(plan?.outputRefs).toEqual(expect.arrayContaining([plainRef, jsonRef]));
   });
 
+  test('skips an unreadable frozen projection without aborting compaction', async () => {
+    const store = createPayloadStore();
+    const observed = observation(
+      store,
+      'unreadable-observation',
+      'file_read',
+      { file_path: '/workspace/unreadable.txt' },
+      'Unreadable snapshot',
+    );
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, observed.items)],
+      readContext: async (ref) => {
+        if (ref.id === observed.projectionRef.id) throw new Error('payload read failed');
+        return store.read(ref);
+      },
+    });
+
+    expect(plan).not.toBeNull();
+    expect(plan?.restoredState.activeObservations).toEqual([]);
+  });
+
+  test('keeps conflicting frozen projections unavailable after later duplicates', async () => {
+    const store = createPayloadStore();
+    const observed = observation(
+      store,
+      'conflicting-observation',
+      'file_read',
+      { file_path: '/workspace/conflicting.txt' },
+      'First frozen snapshot',
+    );
+    const conflictingRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef: observed.outputRef,
+      projection: { type: 'inline', text: 'Second frozen snapshot' },
+    });
+    const firstEvidence = observed.items[1];
+    if (!firstEvidence || firstEvidence.type !== 'contextEvidence') {
+      throw new Error('Expected the observation projection evidence.');
+    }
+    const conflictingEvidence: ContextEvidenceThreadItem = {
+      ...firstEvidence,
+      id: 'second-conflicting-projection',
+      provenance: provenance('second-conflicting-projection'),
+      payloadRef: conflictingRef,
+    };
+    const laterDuplicate: ContextEvidenceThreadItem = {
+      ...firstEvidence,
+      id: 'later-matching-projection',
+      provenance: provenance('later-matching-projection'),
+    };
+
+    const plan = await planContextCompaction({
+      turns: [turn(1, [...observed.items, conflictingEvidence, laterDuplicate])],
+      readContext: store.read,
+    });
+
+    expect(plan).not.toBeNull();
+    expect(plan?.restoredState.activeObservations).toEqual([]);
+  });
+
   test('restores the latest active Skill from the effective preserved tail', async () => {
     const store = createPayloadStore();
     const catalog = {

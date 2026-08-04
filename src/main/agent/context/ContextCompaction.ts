@@ -246,32 +246,40 @@ async function reduceActiveObservations(
 async function collectToolOutputProjectionRefs(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  projections = new Map<string, ThreadContextPayloadReference>(),
+  conflicting = new Set<string>(),
 ): Promise<Map<string, ThreadContextPayloadReference>> {
-  const projections = new Map<string, ThreadContextPayloadReference>();
   for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
-        const nested = await collectToolOutputProjectionRefs(
+        await collectToolOutputProjectionRefs(
           selectEffectiveContext(inherited.turns).turns,
           readContext,
+          projections,
+          conflicting,
         );
-        for (const [outputKey, ref] of nested) setProjectionRef(projections, outputKey, ref);
         continue;
       }
       if (item.type === 'contextCompaction') {
         const restored = await readRestoredState(item, readContext);
         for (const observation of restored.activeObservations) {
-          setProjectionRef(projections, outputReferenceKey(observation.outputRef), observation.projectionRef);
+          setProjectionRef(
+            projections,
+            conflicting,
+            outputReferenceKey(observation.outputRef),
+            observation.projectionRef,
+          );
         }
         continue;
       }
       if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
-      const payload = await readContext(item.payloadRef);
+      const payload = await readContext(item.payloadRef).catch(() => null);
       if (!payload || payload.kind !== 'toolOutputProjection') {
-        throw new Error(`Tool-output projection is unavailable: ${item.payloadRef.id}`);
+        console.warn(`[agent] Compaction skipped unavailable tool-output projection: ${item.payloadRef.id}`);
+        continue;
       }
-      setProjectionRef(projections, outputReferenceKey(payload.outputRef), item.payloadRef);
+      setProjectionRef(projections, conflicting, outputReferenceKey(payload.outputRef), item.payloadRef);
     }
   }
   return projections;
@@ -357,12 +365,17 @@ async function readRestoredState(
 
 function setProjectionRef(
   projections: Map<string, ThreadContextPayloadReference>,
+  conflicting: Set<string>,
   outputKey: string,
   ref: ThreadContextPayloadReference,
 ): void {
+  if (conflicting.has(outputKey)) return;
   const previous = projections.get(outputKey);
   if (previous && previous.id !== ref.id) {
-    throw new Error(`Tool output has conflicting frozen projections: ${outputKey}`);
+    console.warn(`[agent] Compaction skipped conflicting tool-output projections: ${outputKey}`);
+    projections.delete(outputKey);
+    conflicting.add(outputKey);
+    return;
   }
   projections.set(outputKey, ref);
 }

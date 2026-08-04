@@ -159,6 +159,10 @@ content hashes separately from current bytes. A later model edit clears the
 accepted hash; a user edit remains usable but no longer claims the prior accepted
 version.
 
+Model-authored Skill content is rejected only when a high-confidence credential
+signature or private-key header is present. Ambiguous secret-like prose passes
+unchanged so the authoring guard does not become a general content block.
+
 Undo restores only the version immediately preceding the latest model write and
 is refused after a subsequent user edit. Built-ins and configured immutable
 resource roots cannot be authoring targets.

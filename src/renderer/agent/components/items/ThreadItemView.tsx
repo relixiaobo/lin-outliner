@@ -659,8 +659,8 @@ function ToolItemDisclosure({
   } | null>(null);
   const argumentsLoaded = loadedArguments?.argumentRefId === argumentRefId;
   const fallbackArguments = useMemo(
-    () => fallbackToolArguments(item),
-    [item],
+    () => modelCallDisplayArguments(item.modelCall),
+    [item.modelCall],
   );
   const outputAnchorHoldRef = useRef<DisclosureScrollAnchorHold | null>(null);
   const holdAnchorUntilSettled = expandState.holdAnchorUntilSettled;
@@ -886,11 +886,12 @@ function toolDetail(
     body: null,
   };
   switch (item.type) {
-    case 'commandExecution':
+    case 'commandExecution': {
+      const command = canonicalCommandArgument(argumentsValue);
       return {
         ...empty,
-        input: commandDetailInput(item, argumentsValue),
-        inputLanguage: 'bash',
+        input: command ?? jsonText(argumentsValue),
+        inputLanguage: command === null ? 'json' : 'bash',
         output: item.aggregatedOutput,
         // A real non-zero code is the useful explanation; a failure that never
         // produced one says so plainly instead of borrowing "exit code 1".
@@ -900,6 +901,7 @@ function toolDetail(
             ? t.agent.thread.item.commandFailed
             : null,
       };
+    }
     case 'fileChange':
       return {
         ...empty,
@@ -1942,10 +1944,7 @@ function jsonText(value: unknown): string {
   }
 }
 
-function commandDetailInput(
-  item: Extract<ThreadItem, { readonly type: 'commandExecution' }>,
-  argumentsValue: JsonValue,
-): string {
+function canonicalCommandArgument(argumentsValue: JsonValue): string | null {
   if (
     argumentsValue !== null
     && typeof argumentsValue === 'object'
@@ -1954,40 +1953,13 @@ function commandDetailInput(
     const command = (argumentsValue as Readonly<Record<string, unknown>>).command;
     if (typeof command === 'string') return command;
   }
-  return item.command;
+  return null;
 }
 
 function toolArgumentPayloadId(item: ThreadToolItem): string | null {
   if (item.modelCall.disposition === 'evidenceOnly') return null;
   const source = modelCallArgumentSource(item.modelCall);
   return source.storage === 'payload' ? source.ref.id : null;
-}
-
-function fallbackToolArguments(item: ThreadToolItem): JsonValue {
-  const source = item.modelCall.disposition === 'evidenceOnly'
-    ? null
-    : modelCallArgumentSource(item.modelCall);
-  if (!source || source.storage === 'inline') return modelCallDisplayArguments(item.modelCall);
-  switch (item.type) {
-    case 'commandExecution':
-      return {
-        command: item.command,
-        ...(item.description ? { description: item.description } : {}),
-      };
-    case 'mcpToolCall':
-    case 'dynamicToolCall':
-      return item.arguments;
-    case 'collabAgentToolCall':
-      return {
-        prompt: item.prompt,
-        model: item.model,
-        reasoningEffort: item.reasoningEffort,
-      };
-    case 'webSearch':
-      return { query: item.query };
-    case 'fileChange':
-      return null;
-  }
 }
 
 function isJsonText(value: string): boolean {

@@ -260,17 +260,18 @@ consulting the current registry or schema; the schema digest is audit evidence o
 The whole call/result pair degrades to typed evidence only when a persisted argument,
 complete output, or image dependency is unavailable. Item-specific fields are
 presentation and audit projections only; no reverse mapper may recreate model
-arguments from them. Fork and child inheritance treat context evidence and compaction
-payloads as strong dependencies, but a missing tool-argument payload is recoverable:
-they retain its canonical reference and the later projector performs that typed
-degradation instead of aborting the user operation.
+arguments from them. Fork and child inheritance treat semantic context and compaction
+payloads as strong dependencies, but missing tool-argument and complete-output payloads
+are recoverable: they retain each canonical reference and the later projector performs
+typed degradation instead of aborting the user operation.
 The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
 fallback decoder, inspection helper, or replay path; pre-release userData is reset when
 the format changes. Payload-backed arguments are available to renderer detail and Turn
 copy only through an Item-bound main-process read of the exact reference, and are bounded
 before renderer caching, formatting, highlighting, or copying. Inline arguments remain
-complete. While a payload read is pending or unavailable, the row uses its already-bounded
-presentation arguments as a display-only fallback.
+complete. While a payload read is pending or unavailable, renderer detail and Turn copy
+use the same typed unavailable value and never reconstruct arguments from Item
+presentation fields.
 
 Secret redaction compatibility is decided once against the admission schema. A
 compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
@@ -279,15 +280,17 @@ may overlay that raw admitted call transiently for its immediate follow-up provi
 request, but later Turns and every durable surface see only the frozen disposition.
 Cancellation stops each batch loop before it admits any remaining call, so those calls
 create neither Items nor argument payloads.
-Secret-key matching normalizes complete camelCase, snake_case, kebab-case, and
-unseparated spellings. Credential nouns anywhere in the key are denied by default;
-an explicit whole-key allow-list preserves budget, usage, URL, and policy fields. Valid
-JSON encoded in a string is structurally redacted in place without changing unrelated
-formatting or ordering; a scanner failure redacts the whole encoded value. Other
-free-form strings redact only high-confidence credential
-formats. Redaction paths list only values that actually changed. Provider diagnostics
-apply the same formatting-preserving structural pass to serialized function-call argument
-envelopes; diagnostic decoding is never a replay authority.
+The recommended Secretlint scanner preset identifies known credential formats, with
+supplemental Bearer and JWT signatures. Structured redaction normalizes complete
+camelCase, snake_case, kebab-case, and unseparated credential-field spellings, but changes
+a field only when its value is a credential-candidate string. Non-string shapes, numeric
+strings, and environment placeholders pass unchanged. Ordinary command and file strings
+use only high-confidence value signatures. Provider diagnostics additionally apply a
+formatting-preserving structural pass to the outer serialized function-call arguments;
+strings nested inside that JSON are never reinterpreted as another JSON document.
+Secretlint rule exceptions, unsupported asynchronous rules, malformed JSON, and scanner
+depth failures pass through unchanged. Redaction paths list only values that actually
+changed, and diagnostic decoding is never a replay authority.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID

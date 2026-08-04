@@ -392,15 +392,16 @@ references them. Execution-time context publication writes the payload and its I
 under the Thread mutex; failed publication and Turn terminalization prune any context
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
-than truncation. Secret-bearing structured object fields and high-confidence credential
-formats in non-JSON strings are redacted before either the Item or payload becomes durable.
-Valid JSON encoded in a string is structurally redacted in place, preserving unrelated
-whitespace, key order, and bytes; a scanner failure redacts the complete encoded value
-instead of failing open. Credential nouns anywhere in a normalized key are
-secret by default; an explicit whole-key allow-list preserves budget, usage, URL, and
-policy fields. Provider diagnostics use the same formatting-preserving structural pass
-at serialized function-call boundaries; the diagnostic copy never becomes Item or replay
-data. Redacted replay compatibility is decided once
+than truncation. The recommended Secretlint preset and supplemental Bearer/JWT signatures
+redact known credential formats before either the Item or payload becomes durable.
+Structured fields change only when both the normalized terminal field name identifies a
+credential and the value is a credential-candidate string; non-string shapes, numeric
+strings, placeholders, and ambiguous free-form content pass unchanged. Provider
+diagnostics structurally scan only the outer serialized function-call arguments while
+preserving unrelated formatting and never reinterpret nested JSON strings. Rule
+exceptions, unsupported asynchronous rules, malformed JSON, and scanner depth failures
+all fail open. The diagnostic copy never becomes Item or replay data. Redacted replay
+compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
@@ -426,10 +427,10 @@ closes. Startup and rollback remove stale staging data plus managed resources, c
 payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
 history. Forks copy only payloads referenced by inherited Items and Turn execution into
 their own directory with a distinct inode, so provenance remains shared while mutation
-and deletion remain Thread-local. Context evidence and compaction payloads are required
-for the copied history shape. A missing tool-argument payload is recoverable: fork and
-child inheritance retain the canonical reference, skip the unavailable copy, and let
-provider projection degrade that call/result pair to typed evidence.
+and deletion remain Thread-local. Semantic context and compaction payloads are required
+for the copied history shape. Missing tool-argument and complete-output payloads are
+recoverable: fork and child inheritance retain the canonical references, skip unavailable
+copies, and let provider projection degrade each call/result pair to typed evidence.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.

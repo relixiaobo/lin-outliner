@@ -403,7 +403,7 @@ export class SubagentCollaboration {
       }
       for (const ref of outputRefs) {
         if (!await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited tool output: ${ref.id}`);
+          console.warn(`[agent] Child inherited unavailable tool output: ${ref.id}`);
         }
       }
       const payloadRef = await this.core.payloads.writeContext(targetThreadId, payload);

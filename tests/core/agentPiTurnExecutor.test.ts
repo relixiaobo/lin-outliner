@@ -2976,10 +2976,10 @@ describe('PiTurnExecutor provider payload', () => {
     expect(providerCalls).toBe(2);
   });
 
-  test('uses raw secret arguments only for the live Turn and redacted history afterward', async () => {
+  test('uses a raw OpenAI key only for the live Turn and redacted history afterward', async () => {
     const fixture = createContext();
-    const secret = 'abcdefghijklmnop';
-    const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
+    const secret = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
+    const command = `OPENAI_API_KEY=${secret} curl https://api.openai.com/v1/models`;
     const executions: unknown[] = [];
     const bash = {
       name: 'bash',

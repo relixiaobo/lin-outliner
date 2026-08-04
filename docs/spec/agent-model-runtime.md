@@ -586,11 +586,14 @@ renderer-reconstructed request or another context authority.
 
 Each tool execution diagnostic records its admission disposition, canonical identity,
 and schema digest when one exists. Assistant responses and tool observations pass the
-same structured secret-like redaction policy before diagnostics persistence; raw
-secret-bearing model arguments and host credentials are not diagnostic history.
+same Secretlint-backed, high-confidence redaction policy before diagnostics persistence;
+structured fields require both a credential name and a credential-candidate string, while
+ambiguous values and scanner failures pass unchanged. Raw recognized credentials and host
+credentials are not diagnostic history.
 Canonical-message snapshots and post-adapter request fragments are redacted only in the
-diagnostic copy immediately before persistence; the live provider request remains
-unchanged.
+diagnostic copy immediately before persistence. Serialized function-call arguments are
+scanned only at their outer adapter boundary and nested JSON strings are left intact. The
+live provider request remains unchanged.
 
 The post-adapter provider payload is observed after compatibility, reasoning-summary,
 and cache-breakpoint policy and immediately before provider transport. Diagnostics

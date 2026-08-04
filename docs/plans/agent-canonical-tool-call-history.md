@@ -291,20 +291,20 @@ provider assistant batch stay in one assistant message, their results follow in
 call order, and rejection evidence is appended after the complete batch. Signed
 thinking therefore remains attached once to the assistant message that owns it.
 
-Model-supplied arguments pass the existing secret-like key/value redaction
-policy before persistence. Admitted calls whose values change use
+Model-supplied arguments pass a high-confidence redaction policy before
+persistence. Admitted calls whose values change use
 `redactedReplay`; rejected calls retain only evidence. Host-injected secrets
-remain outside model calls, while shell commands and other free-form model
-arguments are explicitly treated as possible secret carriers. Structured key
-matching normalizes separated, camel-cased, and unseparated credential spellings;
-credential nouns are denied by default, while an explicit whole-key allow-list keeps
-budget, usage, URL, and policy fields ordinary. Valid JSON encoded in a string is
-structurally redacted in place without changing unrelated whitespace, ordering, or
-bytes; if that formatting-preserving scan cannot complete, the whole encoded value is
-redacted rather than persisted unchanged. Non-JSON free-form text changes only for
-high-confidence credential formats.
-Provider diagnostics apply the same formatting-preserving parser at an adapter's
-serialized function-call boundary. A redaction path exists only when its value changed.
+remain outside model calls. Secretlint's recommended scanner preset identifies known
+provider keys, private keys, and connection-string formats; supplemental Bearer and JWT
+signatures cover the durable formats the preset does not. Structured redaction requires
+both a credential field name and a credential-candidate string value. Numbers, booleans,
+nulls, objects, arrays, numeric strings, and environment placeholders pass unchanged, as
+do ambiguous free-form command and file contents. Provider diagnostics structurally scan
+only the adapter's outer serialized function-call arguments and never reinterpret a JSON
+string nested inside an ordinary value. Scanner exceptions, unsupported asynchronous
+rules, malformed JSON, and formatting-scan depth failures all pass the source through
+unchanged. Ambiguity therefore favors execution and fidelity rather than blocking or
+whole-value redaction. A redaction path exists only when its value changed.
 
 ### Argument storage and lifecycle
 
@@ -312,10 +312,11 @@ Small ordinary JSON arguments stay inline. Arguments above the inline bound use
 a content-addressed, Thread-owned JSON payload with an exact codec and digest;
 they are not truncated into a different value. The reference participates in
 the same dependency enumeration and deletion lifecycle as other Thread-owned
-context resources. Fork and child inheritance copy the payload when available;
-an unavailable tool-argument payload is a weak history dependency, so the copied
-Item retains its reference and later projects typed evidence rather than aborting
-the user operation. Context evidence and compaction payloads remain strong dependencies.
+context resources. Fork and child inheritance copy argument and complete-output payloads
+when available. An unavailable argument or output payload is a weak history dependency:
+the copied Item retains its reference and later projects typed evidence rather than
+aborting the user operation. The semantic context and compaction payloads themselves
+remain strong dependencies.
 
 Before every provider submission, replay loads the frozen provider name and
 arguments and resolves every persisted call/result dependency, including argument,
@@ -340,8 +341,9 @@ Transcript export uses exact arguments, marked redacted arguments, or the
 evidence-only redacted summary, never an Item reverse mapper. Inline arguments that
 fit the 32 KiB storage contract render in full. Renderer payload reads remain
 Item-bound and are reduced to a 32,000-character display value before caching,
-formatting, highlighting, or Turn copy; while that read is pending or unavailable,
-the row keeps its existing bounded presentation arguments visible.
+formatting, highlighting, or Turn copy. While that read is pending or unavailable, both
+the row and Turn copy show the same typed unavailable value; neither reconstructs
+arguments from presentation fields.
 
 Diagnostics record admission phase, canonical identity, schema digest,
 replay/evidence disposition, and bounded redacted validation errors. They never
@@ -359,7 +361,8 @@ redacted call survives. Rejection evidence remains an ordinary typed evidence
 unit after the owning assistant batch's complete call/results. It never splits that
 assistant message or duplicates its signed thinking. Restart, fork, current Turn tool loops, retry, and post-compaction
 projection must therefore make the same replay decision from the same persisted
-facts.
+facts. Compaction skips unreadable frozen projections and treats conflicting projections
+as permanently unavailable for that reduction instead of aborting every later Turn.
 
 ### Current, changed, and preserved behavior
 
@@ -462,10 +465,11 @@ Main owns board/changelog updates at merge.
 - **AC-15:** The new envelope has no legacy reader or call reconstructor. A tool
   Item without `modelCall` fails strict decode; pre-release userData is wiped when
   the format lands instead of carrying a compatibility layer.
-- **AC-16:** A missing tool-argument payload does not abort fork or child
-  inheritance. The copied Item retains the unavailable reference and provider
-  projection emits typed evidence. Inline arguments remain complete in renderer
-  detail and copy; only loaded payload-backed values use the display bound.
+- **AC-16:** A missing tool-argument or complete-output payload does not abort fork or
+  child inheritance. The copied Item retains the unavailable reference and provider
+  projection emits typed evidence. Inline arguments remain complete in renderer detail
+  and copy; loaded payload-backed values use the display bound, while pending or missing
+  values use one typed unavailable representation on both surfaces.
 
 ### Risks and mitigations
 

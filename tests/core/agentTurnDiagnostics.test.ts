@@ -348,7 +348,6 @@ describe('Turn diagnostics', () => {
   test('redacts structured secrets from canonical messages and post-adapter requests', () => {
     const rawSecret = 'generic-model-secret';
     const jsonShapedContent = '{\n  "token": "placeholder1234"\n}';
-    const redactedJsonShapedContent = '{\n  "token": "[redacted]"\n}';
     const toolMessage: AssistantMessage = {
       ...assistantMessage(''),
       content: [{
@@ -381,8 +380,11 @@ describe('Turn diagnostics', () => {
     });
 
     prepare(collector, [toolMessage], 0, 20);
-    collector.captureProviderRequest({
+    const providerRequest = (maxCompletionTokens: number) => ({
       model: model.id,
+      max_completion_tokens: maxCompletionTokens,
+      budget_tokens: maxCompletionTokens * 2,
+      cache_read_input_tokens: 900,
       input: [{
         type: 'function_call',
         name: 'alpha',
@@ -390,6 +392,9 @@ describe('Turn diagnostics', () => {
       }],
       metadata: { session_token: rawSecret },
     });
+    collector.captureProviderRequest(providerRequest(2_048));
+    prepare(collector, [toolMessage], 0, 20);
+    collector.captureProviderRequest(providerRequest(4_096));
 
     const payload = collector.payload();
     expect(JSON.stringify(payload)).not.toContain(rawSecret);
@@ -397,11 +402,16 @@ describe('Turn diagnostics', () => {
       content: [{ arguments: { api_key: '[redacted]', query: 'keep' } }],
     });
     expect(materializeRequest(payload, 0)).toMatchObject({
+      max_completion_tokens: 2_048,
+      budget_tokens: 4_096,
+      cache_read_input_tokens: 900,
       input: [{
-        arguments: JSON.stringify({ api_key: '[redacted]', content: redactedJsonShapedContent, query: 'keep' }),
+        arguments: JSON.stringify({ api_key: '[redacted]', content: jsonShapedContent, query: 'keep' }),
       }],
       metadata: { session_token: '[redacted]' },
     });
+    expect(payload.providerCalls[0]?.requestFingerprint)
+      .not.toBe(payload.providerCalls[1]?.requestFingerprint);
   });
 
   test('records retry, compaction, steering, and transient tools as ordered activities', () => {

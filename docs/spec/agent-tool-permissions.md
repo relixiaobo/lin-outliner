@@ -109,15 +109,15 @@ into replay. The
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
-Structured redaction normalizes complete camelCase, snake_case, kebab-case, and
-unseparated key spellings. Credential nouns anywhere in a key are secret by default, so
-forms such as `x-api-key`, `openai_api_key`, `credentials`, `user_password`,
-`privateKeyPem`, and `gh_token` are covered. An explicit whole-key allow-list keeps
-`token_budget`, `max_total_tokens`, `totalTokens`, `authorization_url`, and
-`passwordPolicy` ordinary. Valid JSON encoded in a string is structurally redacted in
-place without changing unrelated whitespace, key order, or bytes. Other free-form
-command and file text changes only for high-confidence credential formats. A JSON pointer
-is recorded only when the persisted value actually differs from its source.
+The recommended Secretlint scanner preset identifies known credential formats, with
+supplemental Bearer and JWT signatures. Structured redaction requires both a normalized
+credential field name and a credential-candidate string; numbers, booleans, nulls,
+objects, arrays, numeric strings, and placeholders remain ordinary. Free-form command and
+file text changes only for high-confidence value signatures. Provider diagnostics scan
+the outer serialized function-call arguments without recursively interpreting nested JSON
+strings. Rule, parse, and depth failures pass through unchanged, so ambiguous input does
+not become a capability denial. A JSON pointer is recorded only when the persisted value
+actually differs from its source.
 
 ## Shared Resource Concurrency
 

@@ -6,6 +6,7 @@ import type {
 } from './protocol';
 
 export const MAX_TOOL_ARGUMENT_DISPLAY_CHARS = 32_000;
+const UNAVAILABLE_STORED_TOOL_ARGUMENTS = { unavailable: 'stored tool arguments' } as const;
 
 export function modelCallArgumentSource(
   modelCall: Exclude<ModelToolCallHistory, { readonly disposition: 'evidenceOnly' }>,
@@ -23,12 +24,7 @@ export function modelCallDisplayArguments(modelCall: ModelToolCallHistory): Json
   if (modelCall.disposition === 'evidenceOnly') return modelCall.redactedArgumentsSummary;
   const source = modelCallArgumentSource(modelCall);
   if (source.storage === 'inline') return source.value;
-  return {
-    storedArguments: {
-      payloadId: source.ref.id,
-      byteLength: source.ref.byteLength,
-    },
-  };
+  return UNAVAILABLE_STORED_TOOL_ARGUMENTS;
 }
 
 export function modelCallDisplayName(modelCall: ModelToolCallHistory): string {

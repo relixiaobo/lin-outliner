@@ -349,6 +349,48 @@ describe('review regressions — each of these shipped broken once', () => {
     expect(copied.length).toBeLessThan(33_000);
   });
 
+  test('copy turn uses typed unavailable arguments for a payload-backed file change', async () => {
+    const ref = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...changes('/w/presentation-only.ts'),
+      modelCall: {
+        ...replayableModelCall('file_edit', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
+    const turn = {
+      id: 'turn-copy-unavailable-file-change',
+      items: [item],
+      itemsView: 'full' as const,
+      provenance: {
+        originThreadId: 't',
+        originTurnId: 'turn-copy-unavailable-file-change',
+        trigger: { kind: 'user' as const },
+      },
+      status: 'completed' as const,
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    const copied = await buildTurnCopyText(
+      turn,
+      async () => null,
+      async () => null,
+      'Resource limit reached.',
+    );
+
+    expect(copied).toContain('"unavailable": "stored tool arguments"');
+    expect(copied).not.toContain('/w/presentation-only.ts');
+  });
+
   test('a search query is never resolved as if it were a node id', () => {
     // `'nodeSearch'.startsWith('node')` sent queries through title resolution,
     // so a query equal to a node uuid rendered as that node's title.

@@ -47,7 +47,7 @@ describe('canonical model tool-call admission', () => {
     const secret = 'abcdefghijklmnop';
     const secretArguments = {
       command: `curl -H "Authorization: Bearer ${secret}" https://example.test`,
-      nested: { 'secret/key~name': 'do-not-persist' },
+      nested: { 'secret/key~': 'do-not-persist' },
     } as const;
     const redacted = await persistToolCallAdmission(
       admittedRequest(secretArguments),
@@ -59,14 +59,14 @@ describe('canonical model tool-call admission', () => {
         storage: 'inline',
         value: {
           command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test',
-          nested: { 'secret/key~name': '[redacted]' },
+          nested: { 'secret/key~': '[redacted]' },
         },
       },
-      redactedPaths: ['/command', '/nested/secret~1key~0name'],
+      redactedPaths: ['/command', '/nested/secret~1key~0'],
     });
     expect(JSON.stringify(redacted)).not.toContain(secret);
     expect(JSON.stringify(redacted)).not.toContain('do-not-persist');
-    expect(secretArguments.nested['secret/key~name']).toBe('do-not-persist');
+    expect(secretArguments.nested['secret/key~']).toBe('do-not-persist');
   });
 
   test('does not rewrite ambiguous token assignments in commands or file content', async () => {
@@ -90,7 +90,7 @@ describe('canonical model tool-call admission', () => {
     });
   });
 
-  test('persists JSON-encoded request bodies with secret values redacted in place', async () => {
+  test('keeps JSON-shaped body content exact instead of recursively interpreting it', async () => {
     const body = [
       '{',
       '  "client_secret" : "9f3a2c8d5e71b04a",',
@@ -98,10 +98,6 @@ describe('canonical model tool-call admission', () => {
       '  "query": "keep spacing"',
       '}',
     ].join('\n');
-    const expectedBody = body
-      .replace('"9f3a2c8d5e71b04a"', '"[redacted]"')
-      .replace('"s3cr3t-value-1234"', '"[redacted]"');
-
     const decision = await persistToolCallAdmission(
       admittedRequest({ body }),
       async () => { throw new Error('Small arguments must stay inline.'); },
@@ -109,15 +105,13 @@ describe('canonical model tool-call admission', () => {
 
     expect(decision).toMatchObject({
       execute: true,
-      displayArguments: { body: expectedBody },
+      displayArguments: { body },
       modelCall: {
-        disposition: 'redactedReplay',
-        redactedArguments: { storage: 'inline', value: { body: expectedBody } },
-        redactedPaths: ['/body'],
+        disposition: 'replayable',
+        arguments: { storage: 'inline', value: { body } },
       },
     });
-    expect(JSON.stringify(decision)).not.toContain('9f3a2c8d5e71b04a');
-    expect(JSON.stringify(decision)).not.toContain('s3cr3t-value-1234');
+    expect(decision.displayArguments).toEqual({ body });
   });
 
   test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {

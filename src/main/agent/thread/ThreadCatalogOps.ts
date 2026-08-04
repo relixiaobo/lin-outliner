@@ -8,6 +8,7 @@ import {
   itemRequiredContextPayloadReferences,
   itemResourceReferences,
   itemToolArgumentPayloadReferences,
+  outputReferenceKey,
 } from '../context/contextDependencies';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { decodeCursor,encodeCursor,pageLimit } from '../persistence/cursor';
@@ -362,6 +363,14 @@ export class ThreadCatalogOps {
       copiedTurn: Turn,
     ): Promise<Turn> {
       let diagnosticsRef = copiedTurn.execution.diagnosticsRef;
+      const copiedOutputKeys = new Set<string>();
+      const copyOutput = async (ref: Parameters<typeof outputReferenceKey>[0]): Promise<void> => {
+        const key = outputReferenceKey(ref);
+        if (copiedOutputKeys.has(key)) return;
+        copiedOutputKeys.add(key);
+        const copied = await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref);
+        if (!copied) console.warn(`[agent] Fork retained unavailable tool output: ${ref.id}`);
+      };
       if (diagnosticsRef) {
         try {
           const payload = await this.core.payloads.readTurnDiagnostics(sourceThreadId, diagnosticsRef);
@@ -393,8 +402,7 @@ export class ThreadCatalogOps {
             assertContextPayloadDependencies(item, payload);
           }
           for (const ref of item.outputRefs) {
-            const outputCopied = await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref);
-            if (!outputCopied) throw new Error(`Missing context tool output payload: ${ref.id}`);
+            await copyOutput(ref);
           }
         }
         const requiredContextRefs = itemRequiredContextPayloadReferences(item);
@@ -411,12 +419,7 @@ export class ThreadCatalogOps {
           }
         }
         if ('outputRef' in item && item.outputRef) {
-          const payloadCopied = await this.core.payloads.copyTextToThread(
-            sourceThreadId,
-            targetThreadId,
-            item.outputRef,
-          );
-          if (!payloadCopied) throw new Error(`Missing tool output payload: ${item.outputRef.id}`);
+          await copyOutput(item.outputRef);
         }
       }
       return diagnosticsRef === copiedTurn.execution.diagnosticsRef

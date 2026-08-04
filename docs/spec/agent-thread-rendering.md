@@ -81,9 +81,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   exact authorized payload, then bound its renderer-facing value to 32,000 characters
   before caching, formatting, syntax highlighting, or copying. Inline values that fit
   the 32 KiB storage contract remain complete even when pretty-printed JSON is longer.
-  While a payload read is pending, missing, or mismatched, the disclosure keeps the
-  Item's already-bounded presentation arguments visible; that fallback never becomes
-  provider history. Host
+  While a payload read is pending, missing, or mismatched, the disclosure and Turn copy
+  show the same typed unavailable value. Neither surface falls back to presentation
+  fields or a payload-reference identifier. Host
   execution metadata such as command `cwd` is labelled separately and never appears as
   a model argument. Structured arguments and results render as their JSON rather than a
   second presentation model. `bash` is the deliberate exception to JSON argument rendering:

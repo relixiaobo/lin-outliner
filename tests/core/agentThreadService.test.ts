@@ -3056,6 +3056,107 @@ describe('ThreadService', () => {
     await opened.service.close();
   });
 
+  test('forks and starts a child with typed evidence when a tool-output payload is unavailable', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const completed = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create output that will become unavailable' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const sourceContext = fixture.executor.contexts[0]!;
+    const toolId = sourceContext.recorder.createItemId();
+    const outputRef = await sourceContext.persistOutputText(
+      toolId,
+      'complete output that becomes unavailable',
+      'text/plain',
+      'Complete output',
+    );
+    await sourceContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: sourceContext.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/unavailable-output.txt' },
+      status: 'completed',
+      outputRef,
+      contentItems: [{ type: 'text', text: 'mutable fallback must not replay' }],
+      success: true,
+      durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/unavailable-output.txt' }),
+    });
+    await sourceContext.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'full' },
+    }, 'Frozen output that becomes unavailable');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    await rm(join(fixture.root, 'agent', 'payloads', root.id, `${outputRef.id}.txt`));
+    expect(await fixture.stores.payloads.readTextReference(root.id, outputRef)).toBeNull();
+
+    const fork = (await fixture.service.forkThread({
+      threadId: root.id,
+      boundary: { kind: 'afterTurn', turnId: completed.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    expect(await fixture.stores.payloads.readTextReference(fork.id, outputRef)).toBeNull();
+    const forkProjection = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(forkProjection)).toContain('resultPayloadUnavailable');
+    expect(JSON.stringify(forkProjection)).not.toContain('mutable fallback must not replay');
+
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate from recoverable history' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'missing-output-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-output-spawn',
+      taskName: 'missing_output_child',
+      message: 'Continue from recoverable history',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const inheritedItem = child.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!inheritedItem || inheritedItem.type !== 'contextEvidence') {
+      throw new Error('Expected inherited context evidence.');
+    }
+    expect(inheritedItem.outputRefs).toContainEqual(outputRef);
+    expect(await fixture.stores.payloads.readTextReference(child.thread.id, outputRef)).toBeNull();
+    const childProjection = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(childProjection)).toContain('resultPayloadUnavailable');
+    expect(JSON.stringify(childProjection)).not.toContain('mutable fallback must not replay');
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
   test('copies local tool image provider snapshots into a fork', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
