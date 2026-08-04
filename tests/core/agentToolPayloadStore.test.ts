@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
+  ThreadResourceQuotaError,
   ToolPayloadStore,
   measureToolPayloadImage,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
@@ -450,7 +451,7 @@ describe('Agent tool payload store', () => {
     expect(await store.readResource(threadId, ref)).toEqual(Buffer.from('canonical'));
   });
 
-  test('applies the Thread quota to direct resource writes', async () => {
+  test('applies a typed Thread quota error to direct resource writes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
     roots.push(root);
     const store = new ToolPayloadStore(root);
@@ -461,7 +462,7 @@ describe('Agent tool payload store', () => {
     await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 1);
 
     await expect(store.writeResource(threadId, Buffer.from('xx'), 'application/octet-stream', 'next.bin'))
-      .rejects.toThrow('Thread storage quota');
+      .rejects.toBeInstanceOf(ThreadResourceQuotaError);
   });
 
   test('serializes concurrent upload reservations against the Thread quota', async () => {

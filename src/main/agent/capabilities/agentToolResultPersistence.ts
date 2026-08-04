@@ -8,6 +8,7 @@ import {
 } from './agentToolEnvelope';
 
 export interface PersistedToolResultDetailsInput {
+  toolNamespace: string | null;
   toolName: string;
   details?: unknown;
 }
@@ -20,6 +21,7 @@ export interface PersistedGeneratedImageDetailsData {
 }
 
 export interface PersistedGeneratedImageDetailsImage {
+  providerIndex: number;
   mimeType?: string;
   byteLength?: number;
   width?: number;
@@ -29,15 +31,20 @@ export interface PersistedGeneratedImageDetailsImage {
 export function persistedToolResultDetails(input: PersistedToolResultDetailsInput): unknown | undefined {
   const details = input.details;
   if (!isToolEnvelope(details)) return undefined;
-  if (input.toolName !== GENERATE_IMAGE_TOOL_NAME || details.tool !== GENERATE_IMAGE_TOOL_NAME) return undefined;
+  if (
+    input.toolNamespace !== null
+    || input.toolName !== GENERATE_IMAGE_TOOL_NAME
+    || details.tool !== GENERATE_IMAGE_TOOL_NAME
+  ) return undefined;
   return persistedGenerateImageDetails(details);
 }
 
 export function persistedToolResultText(input: {
+  readonly toolNamespace: string | null;
   readonly toolName: string;
   readonly text: string;
 }): string {
-  if (input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  if (input.toolNamespace !== null || input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
   try {
     const visible = JSON.parse(input.text) as unknown;
     if (
@@ -48,14 +55,16 @@ export function persistedToolResultText(input: {
     ) {
       return input.text;
     }
+    const images = visible.data.images.flatMap((image): PersistedGeneratedImageDetailsImage[] => {
+      const persisted = persistedGeneratedImage(image);
+      return persisted ? [persisted] : [];
+    });
+    if (images.length === 0) return input.text;
     return JSON.stringify({
       ...visible,
       data: {
         ...visible.data,
-        images: visible.data.images.flatMap((image): PersistedGeneratedImageDetailsImage[] => {
-          const persisted = persistedGeneratedImage(image);
-          return persisted ? [persisted] : [];
-        }),
+        images,
       },
       instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use an adjacent readable_path for file operations when available.',
     }, null, 2);
@@ -93,12 +102,15 @@ function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<Pers
 
 function persistedGeneratedImage(image: unknown): PersistedGeneratedImageDetailsImage | null {
   if (!isRecord(image)) return null;
+  const providerIndex = optionalPositiveInteger(image.providerIndex);
+  if (providerIndex === undefined) return null;
   const mimeType = optionalString(image.mimeType);
   const byteLength = optionalPositiveNumber(image.byteLength);
   const width = optionalPositiveNumber(image.width);
   const height = optionalPositiveNumber(image.height);
   if (!mimeType && byteLength === undefined && width === undefined && height === undefined) return null;
   return {
+    providerIndex,
     ...(mimeType ? { mimeType } : {}),
     ...(byteLength !== undefined ? { byteLength } : {}),
     ...(width !== undefined ? { width } : {}),
@@ -116,6 +128,10 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalPositiveNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function optionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

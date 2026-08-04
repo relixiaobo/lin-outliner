@@ -92,6 +92,13 @@ export interface WrittenThreadResource {
   readonly created: boolean;
 }
 
+export class ThreadResourceQuotaError extends Error {
+  constructor(message = 'Managed attachment exceeds the Thread storage quota.') {
+    super(message);
+    this.name = 'ThreadResourceQuotaError';
+  }
+}
+
 export class ToolPayloadStore {
   private readonly pendingUploads = new Map<string, PendingResourceUpload>();
   private readonly resourceOperationTails = new Map<ThreadId, Promise<void>>();
@@ -231,35 +238,42 @@ export class ToolPayloadStore {
       byteLength: buffer.byteLength,
       fileName: safeAttachmentFileName(fileName),
     };
-    return this.withResourceLock(threadId, async () => {
-      const directory = await this.ensureManagedDirectory(threadId, RESOURCE_DIR, ref.id);
-      const target = join(directory, ref.fileName);
-      const existing = await lstat(target).catch((error: unknown) => {
-        if (isNotFound(error)) return null;
-        throw error;
-      });
-      if (existing) {
-        await this.verifyAndRememberResource(threadId, ref, target);
-        return { ref, created: false };
-      }
-      await this.assertResourceCapacity(threadId, buffer.byteLength);
-      let created = false;
-      try {
-        try {
-          await writeFile(target, buffer, { flag: 'wx' });
-          created = true;
-        } catch (error) {
-          if (!isAlreadyExists(error)) throw error;
+    try {
+      return await this.withResourceLock(threadId, async () => {
+        const directory = await this.ensureManagedDirectory(threadId, RESOURCE_DIR, ref.id);
+        const target = join(directory, ref.fileName);
+        const existing = await lstat(target).catch((error: unknown) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        });
+        if (existing) {
           await this.verifyAndRememberResource(threadId, ref, target);
           return { ref, created: false };
         }
-        await this.rememberVerifiedResource(threadId, ref, target);
-        return { ref, created: true };
-      } catch (error) {
-        if (created) await this.rollbackPublishedResource(threadId, ref, target, error);
-        throw error;
+        await this.assertResourceCapacity(threadId, buffer.byteLength);
+        let created = false;
+        try {
+          try {
+            await writeFile(target, buffer, { flag: 'wx' });
+            created = true;
+          } catch (error) {
+            if (!isAlreadyExists(error)) throw error;
+            await this.verifyAndRememberResource(threadId, ref, target);
+            return { ref, created: false };
+          }
+          await this.rememberVerifiedResource(threadId, ref, target);
+          return { ref, created: true };
+        } catch (error) {
+          if (created) await this.rollbackPublishedResource(threadId, ref, target, error);
+          throw error;
+        }
+      });
+    } catch (error) {
+      if (isFileSystemCapacityError(error)) {
+        throw new ThreadResourceQuotaError('Managed attachment storage has no remaining capacity.');
       }
-    });
+      throw error;
+    }
   }
 
   async useResourcePath<T>(
@@ -946,7 +960,7 @@ export class ToolPayloadStore {
       .reduce((total, upload) => total + upload.expectedBytes, 0);
     const storedBytes = await this.managedResourceBytes(threadId);
     if (storedBytes + activeBytes + additionalBytes > MAX_THREAD_MANAGED_ATTACHMENT_BYTES) {
-      throw new Error('Managed attachment exceeds the Thread storage quota.');
+      throw new ThreadResourceQuotaError();
     }
   }
 }
@@ -976,6 +990,12 @@ function isAlreadyExists(error: unknown): boolean {
 function isNotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && (error as { code?: unknown }).code === 'ENOENT';
+}
+
+function isFileSystemCapacityError(error: unknown): boolean {
+  if (error instanceof ThreadResourceQuotaError) return false;
+  return typeof error === 'object' && error !== null && 'code' in error
+    && ((error as { code?: unknown }).code === 'ENOSPC' || (error as { code?: unknown }).code === 'EDQUOT');
 }
 
 function isDirectoryNotEmpty(error: unknown): boolean {

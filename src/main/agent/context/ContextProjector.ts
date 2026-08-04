@@ -59,7 +59,6 @@ interface ProjectionResources {
   readOutput(ref: ToolOutputProjectionContextPayload['outputRef']): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
-  resolveDetachedResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
 }
 
 export interface LiveModelToolCall {
@@ -1196,6 +1195,10 @@ function assistantHistoryMessage(
 export type HistoryToolItem = Extract<ThreadItem, {
   type: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch';
 }>;
+type DynamicToolImageContent = Extract<
+  NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number],
+  { type: 'image' }
+>;
 
 function isToolItem(item: ThreadItem): item is HistoryToolItem {
   return item.type === 'commandExecution'
@@ -1211,7 +1214,7 @@ async function historyTool(
   timestamp: number,
   resources: Pick<
     ProjectionResources,
-    'readContext' | 'readOutput' | 'readResource' | 'resolveDetachedResourceObservationPath'
+    'readContext' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath'
   >,
   projection: ToolOutputProjectionContextPayload | null,
   projectionUnavailable: boolean,
@@ -1321,7 +1324,7 @@ async function historyToolResultContent(
   item: HistoryToolItem,
   resources: Pick<
     ProjectionResources,
-    'readOutput' | 'readResource' | 'resolveDetachedResourceObservationPath'
+    'readOutput' | 'readResource' | 'resolveResourceObservationPath'
   >,
   projection: ToolOutputProjectionContextPayload | null,
 ): Promise<Array<TextContent | ImageContent>> {
@@ -1337,9 +1340,14 @@ async function historyToolResultContent(
       } else {
         const ref = 'promptImage' in part ? part.promptImage : part.source.ref;
         const bytes = await resources.readResource(ref);
-        if (!bytes) throw new Error(`Tool image payload is unavailable or corrupt: ${ref.fileName}`);
-        const readablePath = part.source.kind === 'threadPayload'
-          ? await resources.resolveDetachedResourceObservationPath(ref).catch(() => null)
+        if (!bytes) {
+          content.push({ type: 'text', text: dynamicToolImageUnavailableIdentity(part, ref) });
+          continue;
+        }
+        const readablePath = item.namespace === null
+          && item.tool === 'generate_image'
+          && part.source.kind === 'threadPayload'
+          ? await resources.resolveResourceObservationPath(ref).catch(() => null)
           : null;
         content.push({ type: 'text', text: dynamicToolImageIdentity(part, ref, readablePath) });
         content.push({ type: 'image', data: bytes.toString('base64'), mimeType: ref.mimeType });
@@ -1362,15 +1370,28 @@ async function projectedToolOutputText(
 }
 
 export function dynamicToolImageIdentity(
-  part: Extract<NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number], { type: 'image' }>,
+  part: DynamicToolImageContent,
   ref: ThreadResourceReference,
   readablePath: string | null = null,
 ): string {
-  const source = part.source.kind === 'localFile' ? part.source.path : part.source.ref.fileName;
-  const alt = part.alt?.trim().replace(/\s+/g, ' ');
-  const label = alt && alt !== source ? `${alt} (${source})` : alt || source;
+  const label = dynamicToolImageLabel(part);
   const path = readablePath ? `, readable_path=${JSON.stringify(readablePath)}` : '';
   return `[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes${path}]`;
+}
+
+function dynamicToolImageUnavailableIdentity(
+  part: DynamicToolImageContent,
+  ref: ThreadResourceReference,
+): string {
+  return `[Image output unavailable or corrupt: ${dynamicToolImageLabel(part)}, ${ref.mimeType}, ${ref.byteLength} bytes]`;
+}
+
+function dynamicToolImageLabel(
+  part: DynamicToolImageContent,
+): string {
+  const source = part.source.kind === 'localFile' ? part.source.path : part.source.ref.fileName;
+  const alt = part.alt?.trim().replace(/\s+/g, ' ');
+  return alt && alt !== source ? `${alt} (${source})` : alt || source;
 }
 
 export function toolItemVisibleOutputText(item: HistoryToolItem): string {

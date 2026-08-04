@@ -92,7 +92,8 @@ export interface GenerateImageData {
 }
 
 export interface GeneratedImageResult {
-  path: string;
+  providerIndex: number;
+  path?: string;
   mimeType: string;
   byteLength: number;
   width?: number;
@@ -294,12 +295,12 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           const path = await runtime.resolveResourceObservationPath(admission.ref).catch(() => null);
           if (!path) {
             warnings.push(`Generated image ${index + 1} was saved but its working path could not be materialized. Retry the file operation in a later turn.`);
-            continue;
           }
           const data = Buffer.from(dataBase64, 'base64');
           const dimensions = readAgentImageDimensions(data, admission.mimeType);
           images.push({
-            path,
+            providerIndex: index + 1,
+            ...(path ? { path } : {}),
             mimeType: admission.mimeType,
             byteLength: admission.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
@@ -317,7 +318,10 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
             status: warnings.length > 0 ? 'partial' : 'success',
-            instructions: generatedImageInstructions(extraContent.length),
+            instructions: generatedImageInstructions(
+              images.length,
+              images.filter((image) => image.path !== undefined).length,
+            ),
             ...(warnings.length > 0 ? { warnings } : {}),
             metrics: {
               durationMs: elapsed(startedAt),
@@ -460,7 +464,8 @@ function noImageModelMessage(requested: string | undefined): string {
 function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
     images: data.images.map((image) => ({
-      path: image.path,
+      providerIndex: image.providerIndex,
+      ...(image.path ? { path: image.path } : {}),
       mimeType: image.mimeType,
       byteLength: image.byteLength,
       ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
@@ -504,11 +509,15 @@ function generatedImageAdmissionWarning(
   }
 }
 
-function generatedImageInstructions(imageCount: number): string {
+function generatedImageInstructions(imageCount: number, pathCount: number): string {
   if (imageCount === 0) return 'No generated image was saved. Follow the warnings before retrying.';
   const subject = imageCount === 1 ? 'The image is' : 'The images are';
   const object = imageCount === 1 ? 'it' : 'them';
-  return `${subject} saved in this conversation and already shown to the user; there is no need to render ${object} again in the final answer. Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.`;
+  const saved = `${subject} saved in this conversation and already shown to the user; there is no need to render ${object} again in the final answer.`;
+  if (pathCount === 0) {
+    return `${saved} No working path is available in this turn. Do not invent one; retry the file operation in a later turn.`;
+  }
+  return `${saved} Each returned path is a working copy for this turn. If an image belongs somewhere in particular, copy it there now; do not delete the working copy.`;
 }
 
 function formatMegabytes(bytes: number): string {

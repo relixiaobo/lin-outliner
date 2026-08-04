@@ -8,6 +8,7 @@ import {
 describe('agent tool result persistence', () => {
   test('does not persist generic tool runtime envelopes', () => {
     const details = persistedToolResultDetails({
+      toolNamespace: null,
       toolName: 'file_read',
       details: {
         ok: true,
@@ -27,6 +28,7 @@ describe('agent tool result persistence', () => {
 
   test('persists only slim generated image render metadata', () => {
     const details = persistedToolResultDetails({
+      toolNamespace: null,
       toolName: 'generate_image',
       details: {
         ok: true,
@@ -40,6 +42,7 @@ describe('agent tool result persistence', () => {
           promptPreview: 'secret prompt details',
           text: ['provider side text'],
           images: [{
+            providerIndex: 1,
             path: '/scratch/agent-attachments/turn/image-0.png',
             mimeType: 'image/png',
             byteLength: 123,
@@ -64,6 +67,7 @@ describe('agent tool result persistence', () => {
         modelId: 'gpt-image-2',
         modelName: 'GPT Image 2',
         images: [{
+          providerIndex: 1,
           mimeType: 'image/png',
           byteLength: 123,
           width: 1024,
@@ -78,11 +82,13 @@ describe('agent tool result persistence', () => {
 
   test('removes turn-scoped paths from persisted model-visible image output', () => {
     const persisted = persistedToolResultText({
+      toolNamespace: null,
       toolName: 'generate_image',
       text: JSON.stringify({
         ok: true,
         data: {
           images: [{
+            providerIndex: 1,
             path: '/scratch/agent-attachments/turn/image-0.png',
             mimeType: 'image/png',
             byteLength: 123,
@@ -94,7 +100,7 @@ describe('agent tool result persistence', () => {
 
     expect(JSON.parse(persisted)).toEqual({
       ok: true,
-      data: { images: [{ mimeType: 'image/png', byteLength: 123 }] },
+      data: { images: [{ providerIndex: 1, mimeType: 'image/png', byteLength: 123 }] },
       instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use an adjacent readable_path for file operations when available.',
     });
     expect(persisted).not.toContain('/scratch/agent-attachments');
@@ -106,11 +112,62 @@ describe('agent tool result persistence', () => {
       data: { images: [] },
       error: { code: 'no_image_output', message: 'The provider returned no image output.' },
     });
-    expect(persistedToolResultText({ toolName: 'generate_image', text })).toBe(text);
+    expect(persistedToolResultText({ toolNamespace: null, toolName: 'generate_image', text })).toBe(text);
+  });
+
+  test('preserves a successful zero-image result and its refusal instructions', () => {
+    const text = JSON.stringify({
+      ok: true,
+      status: 'partial',
+      data: { images: [] },
+      warnings: ['Generated image 1 was not saved.'],
+      instructions: 'No generated image was saved. Follow the warnings before retrying.',
+    });
+    expect(persistedToolResultText({
+      toolNamespace: null,
+      toolName: 'generate_image',
+      text,
+    })).toBe(text);
+  });
+
+  test('does not rewrite namespaced tools that share the generate_image name', () => {
+    const text = JSON.stringify({
+      ok: true,
+      data: {
+        images: [{
+          providerIndex: 1,
+          path: 'https://plugin.example/image',
+          caption: 'Plugin-owned fields',
+        }],
+      },
+      instructions: 'Plugin instructions',
+    });
+    expect(persistedToolResultText({
+      toolNamespace: 'myplugin',
+      toolName: 'generate_image',
+      text,
+    })).toBe(text);
+    expect(persistedToolResultDetails({
+      toolNamespace: 'myplugin',
+      toolName: 'generate_image',
+      details: {
+        ok: true,
+        tool: 'generate_image',
+        version: TOOL_RESULT_VERSION,
+        status: 'success',
+        data: {
+          providerId: 'plugin',
+          modelId: 'plugin-model',
+          modelName: 'Plugin Model',
+          images: [{ providerIndex: 1, caption: 'Plugin-owned fields' }],
+        },
+      },
+    })).toBeUndefined();
   });
 
   test('does not persist mismatched or failed generated image details', () => {
     expect(persistedToolResultDetails({
+      toolNamespace: null,
       toolName: 'file_read',
       details: {
         ok: true,
@@ -127,6 +184,7 @@ describe('agent tool result persistence', () => {
     })).toBeUndefined();
 
     expect(persistedToolResultDetails({
+      toolNamespace: null,
       toolName: 'generate_image',
       details: {
         ok: false,

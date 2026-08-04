@@ -609,7 +609,7 @@ describe('canonical context projection', () => {
     expect(await new CanonicalContextProjector(model, resources).projectTurns([terminal])).toEqual(projected);
   });
 
-  test('keeps ordered dynamic tool image identity adjacent to immutable image bytes', async () => {
+  test('keeps image identity adjacent to bytes and adds Turn paths only for built-in generated images', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const managedRef: ThreadResourceReference = {
       id: 'd'.repeat(64),
@@ -631,8 +631,8 @@ describe('canonical context projection', () => {
         originTurnId: uuidV7(1_720_000_100_001),
         originItemId: 'tool-images',
       },
-      namespace: 'visual',
-      tool: 'render',
+      namespace: null,
+      tool: 'generate_image',
       arguments: {},
       status: 'completed',
       outputRef: null,
@@ -657,7 +657,7 @@ describe('canonical context projection', () => {
         [managedRef.id, Buffer.from('chart')],
         [localSnapshotRef.id, Buffer.from('raw')],
       ])),
-      resolveDetachedResourceObservationPath: async () => '/scratch/detached/chart.png',
+      resolveResourceObservationPath: async () => '/scratch/turn/chart.png',
     };
 
     const messages = await new CanonicalContextProjector(model, resources).projectTurns([
@@ -665,7 +665,7 @@ describe('canonical context projection', () => {
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
     expect(result?.content).toEqual([
-      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes, readable_path="/scratch/detached/chart.png"]' },
+      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes, readable_path="/scratch/turn/chart.png"]' },
       { type: 'image', data: Buffer.from('chart').toString('base64'), mimeType: 'image/png' },
       { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
@@ -673,7 +673,7 @@ describe('canonical context projection', () => {
 
     const degradedMessages = await new CanonicalContextProjector(model, {
       ...resources,
-      resolveDetachedResourceObservationPath: async () => {
+      resolveResourceObservationPath: async () => {
         throw new Error('scratch unavailable');
       },
     }).projectTurns([
@@ -689,6 +689,43 @@ describe('canonical context projection', () => {
       data: Buffer.from('chart').toString('base64'),
       mimeType: 'image/png',
     });
+
+    let unrelatedPathResolutions = 0;
+    const unrelatedTool: ThreadItem = {
+      ...tool,
+      id: 'tool-images-unrelated',
+      provenance: {
+        ...tool.provenance,
+        originItemId: 'tool-images-unrelated',
+      },
+      namespace: 'visual',
+      tool: 'render',
+      contentItems: [tool.contentItems![0]!],
+    };
+    const unrelatedMessages = await new CanonicalContextProjector(model, {
+      ...resources,
+      resolveResourceObservationPath: async () => {
+        unrelatedPathResolutions += 1;
+        return '/scratch/turn/unused.png';
+      },
+    }).projectTurns([
+      turn(1, [userItem('user-images-unrelated', 1_720_000_000_124, 'Render one.'), unrelatedTool], true),
+    ]);
+    expect(unrelatedPathResolutions).toBe(0);
+    expect(messageText(unrelatedMessages.find((message) => message.role === 'toolResult')!))
+      .not.toContain('readable_path');
+
+    const unavailableMessages = await new CanonicalContextProjector(
+      model,
+      projectionResources(payloads),
+    ).projectTurns([
+      turn(1, [userItem('user-images-missing', 1_720_000_000_125, 'Render both.'), tool], true),
+    ]);
+    const unavailableResult = unavailableMessages.find((message) => message.role === 'toolResult');
+    expect(unavailableResult?.content).toEqual([
+      { type: 'text', text: '[Image output unavailable or corrupt: Rendered chart (chart.png), image/png, 5 bytes]' },
+      { type: 'text', text: '[Image output unavailable or corrupt: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
+    ]);
   });
 
   test('replays exact canonical bash arguments without deriving fields from presentation metadata', async () => {
@@ -1809,7 +1846,6 @@ function projectionResources(
     readOutput: async (ref: { readonly id: string }) => outputs.get(ref.id) ?? null,
     readResource: async (ref: ThreadResourceReference) => resources.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
-    resolveDetachedResourceObservationPath: async () => null,
   };
 }
 

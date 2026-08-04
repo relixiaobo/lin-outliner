@@ -987,9 +987,6 @@ export class TurnLifecycle {
           readContext: (ref) => this.core.payloads.readContext(active.threadId, ref),
           readOutput: (ref) => this.core.payloads.readTextReference(active.threadId, ref),
           resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
-          resolveDetachedResourceObservationPath: (ref) => (
-            this.resourceOps.resolveDetachedResourceObservationPath(active.threadId, ref)
-          ),
           readResource: (ref) => this.core.payloads.readResource(active.threadId, ref),
           persistOutputImage,
           admitToolOutputImage,

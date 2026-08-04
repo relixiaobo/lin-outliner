@@ -41,6 +41,7 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
@@ -2077,7 +2078,6 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context,
       persistOutputImage,
       admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),
-      resolveDetachedResourceObservationPath: async () => '/scratch/detached/tool-output.png',
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
@@ -2182,6 +2182,7 @@ describe('PiTurnExecutor event normalization', () => {
             ok: true,
             data: {
               images: [{
+                providerIndex: 2,
                 path: '/scratch/agent-attachments/turn/image.png',
                 mimeType: 'image/png',
                 byteLength: Buffer.from(imageBase64, 'base64').byteLength,
@@ -2203,6 +2204,7 @@ describe('PiTurnExecutor event normalization', () => {
             modelId: 'gpt-image-2',
             modelName: 'GPT Image 2',
             images: [{
+              providerIndex: 2,
               path: '/scratch/agent-attachments/turn/image.png',
               mimeType: 'image/png',
               byteLength: Buffer.from(imageBase64, 'base64').byteLength,
@@ -2224,6 +2226,58 @@ describe('PiTurnExecutor event normalization', () => {
       }]),
     });
     expect(JSON.stringify(item)).not.toContain('/scratch/agent-attachments/turn/image.png');
+  });
+
+  test('preserves namespaced generate_image text at both persistence boundaries', async () => {
+    const fixture = createContext();
+    const releasedCallIds: string[] = [];
+    const releaseAdmission = fixture.context.admitToolOutputImage.release;
+    fixture.context.admitToolOutputImage.release = (toolCallId) => {
+      releasedCallIds.push(toolCallId);
+      releaseAdmission?.(toolCallId);
+    };
+    const pluginText = JSON.stringify({
+      ok: true,
+      data: {
+        images: [{
+          path: 'https://plugin.example/image-1',
+          id: 'plugin-image-1',
+          caption: 'Plugin-owned caption',
+        }],
+      },
+      instructions: 'Keep plugin fields.',
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-plugin-image',
+      toolName: 'myplugin__generate_image',
+      args: { prompt: 'A plugin image' },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-plugin-image',
+      toolName: 'myplugin__generate_image',
+      result: {
+        content: [{ type: 'text', text: pluginText }],
+        details: { ok: true, tool: 'generate_image', data: { images: [{ id: 'plugin-image-1' }] } },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      namespace: 'myplugin',
+      tool: 'generate_image',
+      contentItems: [{ type: 'text', text: pluginText }],
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected namespaced image output reference');
+    }
+    expect(await fixture.context.readOutput(item.outputRef)).toBe(pluginText);
+    expect(releasedCallIds).toEqual(['call-plugin-image']);
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -2605,7 +2659,7 @@ describe('PiTurnExecutor event normalization', () => {
     const imageBase64 = Buffer.from('small-image-bytes').toString('base64');
     let completeOutput = '';
     const persistOutputImage = async () => {
-      throw new Error('Managed attachment exceeds the Thread storage quota.');
+      throw new ThreadResourceQuotaError();
     };
     const context: TurnExecutionContext = {
       ...fixture.context,
@@ -3564,7 +3618,6 @@ function createContext(): {
     readContext: async () => null,
     readOutput: async (ref) => outputPayloads.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
-    resolveDetachedResourceObservationPath: async () => null,
     readResource: async () => null,
     persistOutputImage,
     admitToolOutputImage: createToolOutputImageAdmission(persistOutputImage),

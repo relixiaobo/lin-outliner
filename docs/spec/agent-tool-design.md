@@ -123,10 +123,14 @@ the model.
 image before returning its result. It resolves a Turn-scoped absolute observation path
 for immediate file operations and emits the same bytes as image content, which makes the
 image visible to both the model and Thread UI and records the resource dependency on the
-tool Item. The normalizer's second persistence pass reuses the content-addressed ref. On
-later Turns the projector materializes a detached observation and publishes a fresh
-`readable_path`; persisted tool text never carries the expired Turn path. Observation
-materialization failure degrades only the working path, never the admitted image.
+tool Item. Producer and normalizer consult one call-scoped admission memo: it matches
+compacted image output by MIME and digest, returns the already-persisted ref without a
+second write, retains no base64 payload, and releases its state after the call is
+normalized. On later Turns the projector materializes built-in generated images through
+the current Turn observation and publishes a fresh `readable_path`; persisted tool text
+never carries the expired Turn path. Observation materialization failure degrades only
+the working path, while a missing or corrupt resource degrades to an unavailable image
+identity instead of failing context projection.
 
 Generated images are displayed automatically, so the tool returns no Markdown image
 syntax and does not ask the model to repeat an image in its final answer. The returned
@@ -134,6 +138,9 @@ absolute path is a working copy for the current Turn. When the user names a dest
 the model copies that path with the ordinary shell and leaves the working copy in place.
 Admission failures degrade per image: accepted images remain in a `partial` result, while
 warnings name the count, byte, MIME, base64, or Thread quota refusal and a remedy. The
+result preserves each admitted image's one-based provider index even when refused images
+compact the returned array. A typed Thread-resource quota error, including filesystem
+capacity exhaustion, is the only storage error classified as `quotaExceeded`. The
 tool writes no dedicated `generated-images` scratch area; all scratch subdirectories obey
 the same TTL cleanup rule.
 

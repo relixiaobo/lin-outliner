@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
+  ThreadResourceQuotaError,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import {
   MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
@@ -10,7 +11,7 @@ import {
 const SMALL_IMAGE_BASE64 = Buffer.from('small-image').toString('base64');
 
 describe('tool output image admission', () => {
-  test('reuses a verdict without charging count twice and repeats only the content-addressed write', async () => {
+  test('reuses a persisted verdict without charging or writing twice', async () => {
     let writes = 0;
     const admit = createToolOutputImageAdmission(async (dataBase64, mimeType) => {
       writes += 1;
@@ -28,7 +29,7 @@ describe('tool output image admission', () => {
       ok: false,
       reason: 'countLimit',
     });
-    expect(writes).toBe(MAX_PERSISTED_TOOL_OUTPUT_IMAGES + 1);
+    expect(writes).toBe(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
   });
 
   test('maps compacted normalizer indexes to accepted producer images', async () => {
@@ -53,7 +54,7 @@ describe('tool output image admission', () => {
     });
 
     expect(normalized).toEqual(produced);
-    expect(writes).toBe(2);
+    expect(writes).toBe(1);
   });
 
   test('records base64, byte, MIME, and quota refusals per image', async () => {
@@ -76,11 +77,32 @@ describe('tool output image admission', () => {
     let quotaWrites = 0;
     const quotaLimited = createToolOutputImageAdmission(async () => {
       quotaWrites += 1;
-      throw new Error('Managed attachment exceeds the Thread storage quota.');
+      throw new ThreadResourceQuotaError();
     });
     expect(await quotaLimited(imageInput('quota', 0))).toEqual({ ok: false, reason: 'quotaExceeded' });
     expect(await quotaLimited(imageInput('quota', 0))).toEqual({ ok: false, reason: 'quotaExceeded' });
     expect(quotaWrites).toBe(1);
+  });
+
+  test('does not classify unrelated error text as a Thread quota refusal', async () => {
+    const admitted = createToolOutputImageAdmission(async () => {
+      throw new Error('The provider quota record could not be decoded.');
+    });
+    await expect(admitted(imageInput('unrelated-quota-text', 0)))
+      .rejects.toThrow('could not be decoded');
+  });
+
+  test('releases per-call memo state after normalization completes', async () => {
+    let writes = 0;
+    const admit = createToolOutputImageAdmission(async (dataBase64, mimeType) => {
+      writes += 1;
+      return imageRef(dataBase64, mimeType);
+    });
+
+    expect(await admit(imageInput('released-call', 0))).toMatchObject({ ok: true });
+    admit.release?.('released-call');
+    expect(await admit(imageInput('released-call', 0))).toMatchObject({ ok: true });
+    expect(writes).toBe(2);
   });
 });
 

@@ -211,7 +211,7 @@ export class ThreadResourceOps {
     if (matches.some((candidate) => !attachmentSourcesEqual(candidate, attachment))) return null;
     const storedPath = attachment.source.kind === 'localFile'
       ? attachment.source.path
-      : await this.materializeDetachedResourceObservationPath(
+      : await this.detachedResourceObservationPath(
           threadId,
           `attachment:${attachmentId}`,
           attachment.source.ref,
@@ -258,7 +258,7 @@ export class ThreadResourceOps {
       return null;
     }
     const identity = `resource:${ref.id}:${ref.fileName}`;
-    const storedPath = await this.materializeDetachedResourceObservationPath(threadId, identity, ref);
+    const storedPath = await this.detachedResourceObservationPath(threadId, identity, ref);
     if (!storedPath) return null;
     const storedStats = await lstat(storedPath).catch(() => null);
     if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
@@ -278,19 +278,7 @@ export class ThreadResourceOps {
     return { entryKind: 'file', path: canonicalPath, stats: fileStats, ref };
   }
 
-  async resolveDetachedResourceObservationPath(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-  ): Promise<string | null> {
-    this.core.requireThread(threadId);
-    return this.materializeDetachedResourceObservationPath(
-      threadId,
-      `resource:${ref.id}:${ref.fileName}`,
-      ref,
-    );
-  }
-
-  private async materializeDetachedResourceObservationPath(
+  private async detachedResourceObservationPath(
     threadId: ThreadId,
     identity: string,
     ref: ThreadResourceReference,

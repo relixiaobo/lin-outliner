@@ -64,6 +64,7 @@ describe('generate_image tool', () => {
     expect(details.data?.modelId).toBe('gpt-image-2');
     expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
+    expect(details.data?.images[0]?.providerIndex).toBe(1);
     expect(details.data?.images[0]?.path).toBe(GENERATED_IMAGE_PATH);
 
     const text = result.content.find((part) => part.type === 'text');
@@ -75,6 +76,7 @@ describe('generate_image tool', () => {
       ok: true,
       data: {
         images: [{
+          providerIndex: 1,
           path: GENERATED_IMAGE_PATH,
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
@@ -99,7 +101,7 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      admitToolOutputImage: async ({ imageIndex }) => !rejectAll && imageIndex === 0
+      admitToolOutputImage: async ({ imageIndex }) => !rejectAll && imageIndex === 1
         ? {
             ok: true,
             ref: GENERATED_IMAGE_REF,
@@ -129,7 +131,7 @@ describe('generate_image tool', () => {
     expect(details).toMatchObject({
       ok: true,
       status: 'partial',
-      data: { images: [{ path: GENERATED_IMAGE_PATH }] },
+      data: { images: [{ providerIndex: 2, path: GENERATED_IMAGE_PATH }] },
       warnings: [expect.stringContaining('10 MB per-image limit')],
     });
     expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
@@ -181,8 +183,15 @@ describe('generate_image tool', () => {
     expect(details).toMatchObject({
       ok: true,
       status: 'partial',
-      data: { images: [] },
+      data: {
+        images: [{
+          providerIndex: 1,
+          mimeType: 'image/png',
+          byteLength: GENERATED_IMAGE_REF.byteLength,
+        }],
+      },
       warnings: [expect.stringContaining('working path could not be materialized')],
+      instructions: 'The image is saved in this conversation and already shown to the user; there is no need to render it again in the final answer. No working path is available in this turn. Do not invent one; retry the file operation in a later turn.',
       metrics: { outputBytes: GENERATED_IMAGE_REF.byteLength },
     });
     expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);

@@ -936,16 +936,20 @@ export class PiEventNormalizer {
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
     const active = this.toolItems.get(callId);
     if (!active) return;
-    const completed = await this.context.recorder.completed(await completedToolItem(
-      this.context,
-      active.item,
-      result,
-      isError,
-      Math.max(0, Date.now() - active.startedAt),
-    ));
-    await persistCompletedToolContext(this.context, completed, result, isError);
-    this.toolItems.delete(callId);
-    this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
+    try {
+      const completed = await this.context.recorder.completed(await completedToolItem(
+        this.context,
+        active.item,
+        result,
+        isError,
+        Math.max(0, Date.now() - active.startedAt),
+      ));
+      await persistCompletedToolContext(this.context, completed, result, isError);
+      this.toolItems.delete(callId);
+      this.executionObserver?.completed?.({ callId, failed: isError, completedAt: Date.now() });
+    } finally {
+      this.context.admitToolOutputImage.release?.(active.item.id);
+    }
   }
 }
 
@@ -1289,7 +1293,7 @@ async function persistFullToolOutput(
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
   const text = item.type === 'dynamicToolCall'
-    ? persistedToolResultText({ toolName: item.tool, text: output.text })
+    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
     : output.text;
   if (!text) return null;
   const state = isError ? 'error' : 'output';
@@ -1467,7 +1471,11 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const persisted = persistedToolResultText({ toolName: item.tool, text: part.text });
+      const persisted = persistedToolResultText({
+        toolNamespace: item.namespace,
+        toolName: item.tool,
+        text: part.text,
+      });
       const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
@@ -1509,7 +1517,11 @@ async function dynamicOutput(
       },
     });
   }
-  const persistedDetails = persistedToolResultDetails({ toolName: item.tool, details: result.details });
+  const persistedDetails = persistedToolResultDetails({
+    toolNamespace: item.namespace,
+    toolName: item.tool,
+    details: result.details,
+  });
   if (persistedDetails !== undefined) {
     content.push({ type: 'json', value: boundedJsonValue(persistedDetails, MAX_PERSISTED_TOOL_OUTPUT_CHARS) });
   } else if (content.length === 0 && result.details !== undefined) {

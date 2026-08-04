@@ -23,8 +23,7 @@ import type {
 import type { ItemRecorder } from './ItemRecorder';
 import type { TokenBudgetUsage } from './kernel/types';
 import type {
-  ToolOutputImageAdmission,
-  ToolOutputImageAdmissionInput,
+  ToolOutputImageAdmissionHandler,
 } from './ToolOutputImageAdmission';
 
 export interface SteeredTurnInput {
@@ -48,15 +47,12 @@ export interface TurnExecutionContext {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
-  resolveDetachedResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
     dataBase64: string,
     mimeType: string,
   ): Promise<ThreadResourceReference>;
-  admitToolOutputImage(
-    input: ToolOutputImageAdmissionInput,
-  ): Promise<ToolOutputImageAdmission>;
+  readonly admitToolOutputImage: ToolOutputImageAdmissionHandler;
   persistOutputText(
     itemId: string,
     text: string,

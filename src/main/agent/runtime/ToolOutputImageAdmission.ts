@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import type { ThreadResourceReference } from '../../../core/agent/protocol';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
   measureToolPayloadImage,
 } from '../persistence/ToolPayloadStore';
 
@@ -36,8 +38,8 @@ export type ToolOutputImageAdmission =
     };
 
 interface RecordedAdmission {
-  readonly input: ToolOutputImageAdmissionInput;
   readonly admission: ToolOutputImageAdmission;
+  readonly fingerprint: string | null;
 }
 
 interface ToolCallAdmissionState {
@@ -49,15 +51,20 @@ interface ToolCallAdmissionState {
   readonly acceptedProducerAdmissions: RecordedAdmission[];
 }
 
+export interface ToolOutputImageAdmissionHandler {
+  (input: ToolOutputImageAdmissionInput): Promise<ToolOutputImageAdmission>;
+  release?(toolCallId: string): void;
+}
+
 export function createToolOutputImageAdmission(
   persistOutputImage: (
     dataBase64: string,
     mimeType: string,
   ) => Promise<ThreadResourceReference>,
-): (input: ToolOutputImageAdmissionInput) => Promise<ToolOutputImageAdmission> {
+): ToolOutputImageAdmissionHandler {
   const calls = new Map<string, ToolCallAdmissionState>();
 
-  return async (input) => {
+  const admit: ToolOutputImageAdmissionHandler = async (input) => {
     const state = calls.get(input.toolCallId) ?? createCallState();
     calls.set(input.toolCallId, state);
     if (input.role === 'normalizer') {
@@ -65,7 +72,7 @@ export function createToolOutputImageAdmission(
       // indexes address the compacted sequence of accepted producer images.
       const produced = state.acceptedProducerAdmissions[input.imageIndex];
       if (produced && sameImage(produced, input)) {
-        return repeatAdmission(produced, persistOutputImage);
+        return produced.admission;
       }
     }
 
@@ -74,12 +81,15 @@ export function createToolOutputImageAdmission(
       : state.normalizerAdmissions;
     const existing = admissions.get(input.imageIndex);
     if (existing) {
-      return repeatAdmission(await existing, persistOutputImage);
+      return (await existing).admission;
     }
 
     const pending = state.tail.then(async (): Promise<RecordedAdmission> => {
       const admission = await admitFirstImage(state, input, persistOutputImage);
-      const recorded = { input, admission };
+      const recorded = {
+        admission,
+        fingerprint: admission.ok ? imageFingerprint(input.dataBase64) : null,
+      };
       if (input.role === 'producer' && admission.ok) {
         state.acceptedProducerAdmissions.push(recorded);
       }
@@ -89,6 +99,10 @@ export function createToolOutputImageAdmission(
     state.tail = pending.then(() => undefined, () => undefined);
     return (await pending).admission;
   };
+  admit.release = (toolCallId) => {
+    calls.delete(toolCallId);
+  };
+  return admit;
 }
 
 function createCallState(): ToolCallAdmissionState {
@@ -102,33 +116,14 @@ function createCallState(): ToolCallAdmissionState {
   };
 }
 
-async function repeatAdmission(
-  recorded: RecordedAdmission,
-  persistOutputImage: (
-    dataBase64: string,
-    mimeType: string,
-  ) => Promise<ThreadResourceReference>,
-): Promise<ToolOutputImageAdmission> {
-  if (!recorded.admission.ok) return recorded.admission;
-  const accepted = recorded.admission;
-
-  // The producer writes before returning its result, then the normalizer reaches
-  // the same bytes. This second content-addressed write reuses the stored ref and
-  // cannot double-charge the call budget or create a second resource.
-  const ref = await persistOutputImage(
-    recorded.input.dataBase64,
-    accepted.mimeType,
-  ).catch((error: unknown) => {
-    if (isThreadResourceQuotaError(error)) return accepted.ref;
-    throw error;
-  });
-  return { ...accepted, ref };
-}
-
 function sameImage(recorded: RecordedAdmission, input: ToolOutputImageAdmissionInput): boolean {
   return recorded.admission.ok
-    && recorded.input.dataBase64 === input.dataBase64
-    && recorded.admission.mimeType === dynamicImageMimeType(input.mimeType);
+    && recorded.admission.mimeType === dynamicImageMimeType(input.mimeType)
+    && recorded.fingerprint === imageFingerprint(input.dataBase64);
+}
+
+function imageFingerprint(dataBase64: string): string {
+  return createHash('sha256').update(dataBase64, 'base64').digest('hex');
 }
 
 async function admitFirstImage(
@@ -151,7 +146,7 @@ async function admitFirstImage(
   if (!mimeType) return { ok: false, reason: 'invalidMimeType' };
 
   const ref = await persistOutputImage(input.dataBase64, mimeType).catch((error: unknown) => {
-    if (isThreadResourceQuotaError(error)) return null;
+    if (error instanceof ThreadResourceQuotaError) return null;
     throw error;
   });
   if (!ref) return { ok: false, reason: 'quotaExceeded' };
@@ -166,10 +161,6 @@ function dynamicImageMimeType(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
-}
-
-function isThreadResourceQuotaError(error: unknown): boolean {
-  return error instanceof Error && /\bquota\b/iu.test(error.message);
 }
 
 export const TOOL_OUTPUT_IMAGE_LIMITS = {

@@ -63,7 +63,7 @@ dependency — for producers that emit an image content item:
 
 | Need | Existing mechanism |
 |---|---|
-| Durable content-addressed bytes | `context.persistOutputImage(data, mimeType)` inside the `part.type === 'image'` branch (`PiTurnExecutor.ts:~1418`) |
+| Durable content-addressed bytes | The call-scoped image admission writes the first accepted occurrence through `context.persistOutputImage(data, mimeType)` |
 | Dependency tracking | `itemResourceReferences` walks `dynamicToolCall.contentItems` and takes `promptImage` or `content.source.ref` (`contextDependencies.ts:28-36`) |
 | Typed source | `ThreadFileSource` = `localFile \| threadPayload` (`protocol.ts:458-460`) |
 | Turn-scoped filesystem path | `resolveResourceObservationPath` (`runtime/types.ts:45`), wired from the turn observation at `TurnLifecycle.ts:982` |
@@ -93,22 +93,22 @@ put in it. Letting the executor publish the path instead does not work either �
 (`ContextProjector.ts:1027-1038`), while "generate an image and put it in
 Downloads" must complete inside one turn.
 
-`TurnExecutionContext` already exposes both halves — `persistOutputImage` and
-`resolveResourceObservationPath` (`runtime/types.ts:45-49`) — and the
+`TurnExecutionContext` already exposes the storage and observation primitives,
+and the
 `imageGeneration` runtime is already built per execution context
 (`ToolRuntime.ts:74-76`, wired at `main.ts:800-803`). So per image the tool:
 
-1. `persistOutputImage(dataBase64, mimeType)` → `ThreadResourceReference`
+1. asks the call-scoped admission to validate and persist the provider output
+   → `ThreadResourceReference`
 2. `resolveResourceObservationPath(ref)` → the absolute path for the envelope (§2)
 3. emits the bytes as `extraContent`, exactly as `file_read` does
    (`agentLocalTools.ts:922-926`)
 
-The executor then persists the same bytes a second time. **That is harmless only
-because storage is content-addressed**: `writeImageWithStatus` returns the
-existing ref with `created: false`, and `TurnLifecycle.ts:984-988` pushes to
-`createdOutputResources` only when `created` — no second copy, no
-double-registration. Say this in the code, or a later reader will take the second
-write for a bug and "fix" it back into the ordering problem.
+The executor later asks the same admission to normalize the emitted image. The
+memo matches accepted producer output by MIME and SHA-256 fingerprint, including
+after refused outputs compact the emitted array, and returns the already-persisted
+ref without writing again. It retains no base64 payload and releases each call's
+memo when normalization finishes.
 
 Step 3 is not optional. The content item is what carries the resource into
 `itemResourceReferences` (`contextDependencies.ts:28-36`); without it the
@@ -130,8 +130,8 @@ tool items would collide with #483 for no benefit. Reachability GC, fork copying
 and post-deletion readability all apply because they key on the same walk.
 
 The one signature this plan changes: `createThreadImageGenerationRuntime` takes
-`(turnId, workspace)` today (`main.ts:800-803`, `:820-822`) and gains the two
-context callbacks.
+`(turnId, workspace)` today (`main.ts:800-803`, `:820-822`) and gains the
+call-scoped admission and Turn-observation callbacks.
 
 ### 2. The model gets an absolute, copyable path
 
@@ -160,17 +160,20 @@ exchange, not a corner case. Replay does not rescue it either:
 `dynamicToolImageIdentity` emits `[Image output: <label>, <mime>, <bytes>]`
 (`ContextProjector.ts:1056-1064`) and carries no path.
 
-So the identity line gains one: on replay the projector resolves a **detached**
-observation and includes it, exactly as it already does for document assets at
-`:595-604`. `detachedResourceObservationPath` (`ThreadResourceOps.ts:273-289`) is
-already shaped as rebuild-if-missing and caches per resource identity, so the
-cost is one resolve per distinct image per thread, not per turn. The model then
-never holds a stale path: the one in front of it was resolved for the turn it is
-reading.
+So the identity line gains one: on replay the projector resolves the built-in
+`generate_image` resource through the **current Turn observation** and includes
+its `readable_path`. The same observation serves production and projection,
+deduplicates a resource within the Turn, and is disposed in the existing Turn
+`finally`; replay therefore creates neither process-lifetime detached entries nor
+paths that outlive the Turn that published them. Other tools' historical images
+remain image content without filesystem copies. If resource bytes are missing or
+corrupt, projection emits an unavailable identity line and continues instead of
+failing the Thread.
 
-This is deliberately closed rather than left open. The alternative — accept
-turn-scoped — ships a known dead end on the most ordinary follow-up the feature
-invites, and the fix lives in code this plan already touches.
+This is deliberately closed rather than left open. Persisting only the original
+Turn-scoped path, without re-materializing it in each later Turn, ships a known
+dead end on the most ordinary follow-up the feature invites; the replay fix lives
+in code this plan already touches.
 
 `image_paths` needs no payload-store lookup either way: the path is absolute and
 `readLocalImage`'s `resolveAgentLocalReadPath` already handles absolute paths, so
@@ -226,8 +229,9 @@ budget, and providers routinely return PNGs past it; the observed session's imag
 was 2.1 MB, so a four-image call is well inside it while one high-resolution
 image is not.
 
-**Persist what fits; report the rest.** The envelope returns paths for the
-admitted images and carries the shortfall in `successEnvelope`'s `status` /
+**Persist what fits; report the rest.** The envelope returns one metadata entry
+per admitted image with its one-based provider index and a path when observation
+materialization succeeds. It carries the shortfall in `successEnvelope`'s `status` /
 `warnings` (`agentToolEnvelope.ts:77-90`), naming the cap that was hit and the
 remedy. Neither a scratch fallback — that reinstates the dual-store split this
 plan exists to delete — nor a silent drop.
@@ -253,6 +257,11 @@ both sides make** — not just the budget counters (`persistedImages` /
 predicates beside them. It returns ref-or-refusal; the producer publishes a path
 only for refs; the executor's later pass on the same bytes consults the recorded
 verdict instead of re-deriving one.
+
+Thread capacity is a typed `ThreadResourceQuotaError`, including filesystem
+`ENOSPC` / `EDQUOT` failures on resource writes. Admission degrades only that
+typed capacity condition to `quotaExceeded`; unrelated errors are not classified
+by message text.
 
 Scoping only the *budget* would leave `measureToolPayloadImage` and
 `dynamicImageMimeType` behind in the executor, which reinstates precisely the
@@ -328,8 +337,9 @@ tool-agnostically.
    `generate_image` branch.
 4. The envelope carries the absolute path, the working-copy instruction, and the
    per-image shortfall warning; `markdownImage` and its input parser are removed.
-5. The projector resolves a detached observation for replayed tool images and
-   includes it in the identity line (§2), so a cross-turn path is never stale.
+5. The projector resolves built-in generated images through the current Turn
+   observation and includes the path in the identity line (§2); missing images
+   degrade to an unavailable identity instead of failing projection.
 6. Delete the `pruneAgentScratch` exemption.
 7. Fold into `docs/spec/agent-core.md` (generated images join managed tool
    images) and `docs/spec/agent-tool-design.md`.
