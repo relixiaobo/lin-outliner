@@ -4734,7 +4734,9 @@ test('opens provider settings instead of creating a Thread when no provider is u
   await page.getByRole('button', { name: 'Open Providers' }).click();
 
   const calls = await commandCalls(page);
-  expect(calls).toContainEqual({ cmd: 'open_settings', args: { category: 'providers' } });
+  // Model services is a page inside Agent now, so the dock's CTA opens it
+  // directly rather than landing on a category and leaving the user to find it.
+  expect(calls).toContainEqual({ cmd: 'open_settings', args: { page: 'services' } });
   expect(calls.some((call) => call.cmd === 'thread/start')).toBe(false);
 });
 
