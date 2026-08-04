@@ -252,8 +252,6 @@ export const en = {
       managedUnverified: 'Unverified',
       managedInstalledChip: 'Installed',
       managedNameTaken: 'Already in your library',
-      managedNameTakenHint: ({ name }: { name: string }) =>
-        `You already have a skill named ${name}, so this one cannot be installed alongside it.`,
       managedInstall: 'Install',
       managedInstalling: 'Installing…',
       managedResolving: 'Resolving…',

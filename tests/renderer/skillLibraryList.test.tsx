@@ -752,7 +752,10 @@ describe('skill library list', () => {
     });
 
     expect(rendered.document.querySelector('.skill-acquire-dialog')).not.toBeNull();
-    expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
+    // The visible label is gone — the field spans its row and the group header
+    // plus the placeholder say what it takes. Its accessible name remains.
+    expect(rendered.document.querySelector('input[aria-label="Public repository or skill URL"]')).not.toBeNull();
+    expect(rendered.document.body.textContent).toContain('Install from GitHub');
   });
 });
 

@@ -126,9 +126,10 @@ export function ManagedSkillsSettings({
               trailing={installed ? (
                 <span className="settings-chip">{t.settings.skills.managedInstalledChip}</span>
               ) : nameTaken ? (
-                <span className="settings-chip" title={t.settings.skills.managedNameTakenHint({ name: entry.name })}>
-                  {t.settings.skills.managedNameTaken}
-                </span>
+                // The chip states the whole outcome, so the reason no longer hides
+                // in a mouse-only `title` — the same unreachable tooltip the
+                // clamped Skill description used to depend on.
+                <span className="settings-chip">{t.settings.skills.managedNameTaken}</span>
               ) : (
                 <Button disabled={busy !== null} onClick={() => void beginDiscovery({ catalogId: entry.id })} size="sm" variant="secondary">
                   {installing ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
@@ -157,40 +158,42 @@ export function ManagedSkillsSettings({
       </InsetGroup>
 
       <InsetGroup ariaLabel={t.settings.skills.managedGitHubAriaLabel} label={t.settings.skills.managedGitHubGroup}>
-        <InsetRow
-          label={t.settings.skills.managedGitHubLabel}
-          trailing={(
-            <div className="managed-skill-source-control">
-              <Input
-                autoCapitalize="none"
-                autoCorrect="off"
-                label={t.settings.skills.managedGitHubLabel}
-                maxLength={2_048}
-                onChange={(event) => setSourceUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' || !sourceUrl.trim() || busy !== null) return;
-                  event.preventDefault();
-                  void beginDiscovery({ sourceUrl });
-                }}
-                placeholder={t.settings.skills.managedGitHubPlaceholder}
-                spellCheck={false}
-                value={sourceUrl}
-                variant="bare"
-              />
-              <Button
-                disabled={!sourceUrl.trim() || busy !== null}
-                onClick={() => void beginDiscovery({ sourceUrl })}
-                size="sm"
-                variant="secondary"
-              >
-                {busy === 'github' ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
-                <span>{busy === 'github' ? t.settings.skills.managedResolving : t.settings.skills.managedAdd}</span>
-              </Button>
-            </div>
-          )}
-            wrap
-          />
-        </InsetGroup>
+        {/* A field is not a trailing control. As one it was pinned to a
+            viewport-relative width unrelated to the dialog's, so it took half the
+            row and wrapped the label beside it onto two lines — a label that
+            repeated the group header and the placeholder anyway. The input spans
+            the row and keeps its accessible name; what to paste is shown by the
+            placeholder, which is the example the label was describing. */}
+        <div className="inset-row managed-skill-github-row" role="listitem">
+          <div className="managed-skill-source-control">
+            <Input
+              autoCapitalize="none"
+              autoCorrect="off"
+              label={t.settings.skills.managedGitHubLabel}
+              maxLength={2_048}
+              onChange={(event) => setSourceUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || !sourceUrl.trim() || busy !== null) return;
+                event.preventDefault();
+                void beginDiscovery({ sourceUrl });
+              }}
+              placeholder={t.settings.skills.managedGitHubPlaceholder}
+              spellCheck={false}
+              value={sourceUrl}
+              variant="bare"
+            />
+            <Button
+              disabled={!sourceUrl.trim() || busy !== null}
+              onClick={() => void beginDiscovery({ sourceUrl })}
+              size="sm"
+              variant="secondary"
+            >
+              {busy === 'github' ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
+              <span>{busy === 'github' ? t.settings.skills.managedResolving : t.settings.skills.managedAdd}</span>
+            </Button>
+          </div>
+        </div>
+      </InsetGroup>
           {/* Inside the dialog, because outside it is behind the backdrop. Every
               failure of the GitHub flow — bad URL, rate limit, timeout, repo too
               large, no SKILL.md — rendered into page flow under a dimming

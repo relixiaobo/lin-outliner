@@ -217,8 +217,6 @@ export const zhHans: PartialMessages = {
       managedUnverified: '未验证',
       managedInstalledChip: '已安装',
       managedNameTaken: '已在技能库中',
-      managedNameTakenHint: ({ name }: { name: string }) =>
-        `你已经有一个名为 ${name} 的技能，无法与它并存安装。`,
       managedInstall: '安装',
       managedInstalling: '正在安装…',
       managedResolving: '正在解析…',

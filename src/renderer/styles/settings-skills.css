@@ -34,9 +34,15 @@
   color: var(--text-tertiary);
 }
 
+.managed-skill-github-row {
+  padding: var(--space-3) var(--space-5);
+}
+
 .managed-skill-source-control {
   display: flex;
-  width: min(390px, 46vw);
+  /* Spans its row. It used to be pinned to a viewport-relative width, which has
+     nothing to do with how wide the dialog holding it is. */
+  width: 100%;
   align-items: center;
   gap: var(--space-3);
 }

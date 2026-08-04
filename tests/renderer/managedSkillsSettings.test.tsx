@@ -58,7 +58,7 @@ describe('Skill library — managed sources', () => {
     // The per-group "no managed skills" state is gone: there is one list-level
     // empty state now, because managed skills are rows in the one library list.
     expect(rendered.document.body.textContent).toContain('No skills yet.');
-    expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
+    expect(rendered.document.body.textContent).toContain('Install from GitHub');
   });
 
   // The premise of this case changed, not its selectors: installing used to leave
