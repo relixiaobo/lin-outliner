@@ -251,7 +251,7 @@ export function SettingsProvidersSection({
   );
 
   return (
-    <section className="agent-settings-section settings-providers-section" aria-label={t.settings.categories.providers.label}>
+    <section className="agent-settings-section settings-providers-section" aria-label={t.settings.pages.services}>
       {/* Providers is the reference pane: flat base + grouped inset cards.
           The other panes were migrated onto this idiom. */}
       {/* No "Providers" title — the selected rail category already names

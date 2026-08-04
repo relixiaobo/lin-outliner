@@ -143,6 +143,7 @@ import {
 } from '../core/types';
 import {
   serializeUnknownError,
+  LIN_APP_INFO_CHANNEL,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
@@ -2384,6 +2385,19 @@ function registerIpc() {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  });
+
+  ipcMain.handle(LIN_APP_INFO_CHANNEL, async () => {
+    const environment = await diagnosticEnvironment();
+    return {
+      name: APP_NAME,
+      version: environment.appVersion,
+      platform: environment.platform,
+      arch: environment.arch,
+      electron: environment.electron,
+      chrome: environment.chrome,
+      node: environment.node,
+    };
   });
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {

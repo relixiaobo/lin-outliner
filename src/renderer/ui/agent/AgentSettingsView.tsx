@@ -16,7 +16,12 @@ import {
   SkillIcon,
   WarningIcon,
 } from '../icons';
-import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
+import {
+  settingsPageCategory,
+  type SettingsCategoryTarget,
+  type SettingsOpenTarget,
+  type SettingsPageTarget,
+} from '../../../core/settingsWindow';
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
@@ -24,8 +29,10 @@ import { resolveUsableActiveProvider } from './providerCatalog';
 import { PREFERRED_PROVIDER_ORDER } from './providerOrder';
 import { SettingsGeneralSection } from './SettingsGeneralSection';
 import { SettingsProvidersSection } from './SettingsProvidersSection';
-import { SettingsSecuritySection } from './SettingsSecuritySection';
 import { SettingsSkillLibrarySection } from './SettingsSkillLibrarySection';
+import { SettingsAgentSection } from './SettingsAgentSection';
+import { SettingsPreviewSection } from './SettingsPreviewSection';
+import { SettingsAboutSection } from './SettingsAboutSection';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
 
 interface AgentSettingsViewProps {
@@ -35,7 +42,13 @@ interface AgentSettingsViewProps {
 }
 
 type SettingsCategory = SettingsCategoryTarget;
-type SettingsRoute = { type: 'category'; category: SettingsCategory };
+/**
+ * A route is a category, optionally with the page open on top of it. Until now
+ * there was only ever one route type, which is why back/forward could never do
+ * anything: history could only hold categories that the rail already listed two
+ * inches to the left. With real second-level pages the arrows have work.
+ */
+type SettingsRoute = { category: SettingsCategory; page?: SettingsPageTarget };
 type RequestScope = 'settings' | 'mutation';
 
 /**
@@ -64,21 +77,22 @@ const EMPTY_SKILL_DRAFT: SkillDraft = {
   disabledSkills: [],
 };
 
-// Category rail order; the visible labels + hints are localized at render
-// (settings.categories.*).
-const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'security', 'skills'];
+// Category rail order; visible labels are localized at render.
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'agent', 'preview'];
 const SETTINGS_CATEGORY_ICONS = {
   general: SettingsIcon,
-  providers: DatabaseIcon,
-  security: PasswordIcon,
-  skills: SkillIcon,
+  agent: SkillIcon,
+  preview: DatabaseIcon,
 } satisfies Partial<Record<SettingsCategory, AppIcon>>;
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
+  if (target?.page) return { category: settingsPageCategory(target.page), page: target.page };
   if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
-    return { type: 'category', category: target.category };
+    return { category: target.category };
   }
-  return { type: 'category', category: 'providers' };
+  // General, not the first pane that needs configuring: opening Providers on every
+  // Cmd+, leaked a first-run concern onto the everyday path.
+  return { category: 'general' };
 }
 
 function navFromOpenTarget(target: SettingsOpenTarget | undefined): { stack: SettingsRoute[]; index: number } {
@@ -90,7 +104,7 @@ function routeCategory(route: SettingsRoute): SettingsCategory {
 }
 
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
-  return left.category === right.category;
+  return left.category === right.category && left.page === right.page;
 }
 
 /**
@@ -127,6 +141,10 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // would keep reporting the mount-time value, missing an update discovered
   // afterwards and still claiming one the user had just applied.
   const [skillUpdateCount, setSkillUpdateCount] = useState(0);
+  // How many Skills exist, for the Agent pane's row. Read here for the same
+  // reason as the badge: the library owns the list but is only mounted on its
+  // own page, and the row has to be right before anyone opens it.
+  const [skillCount, setSkillCount] = useState(0);
   const mountedRef = useRef(false);
   // The persisted disabledSkills as of the last completed write, and a queue so
   // concurrent toggles cannot each write a whole array from the same stale read.
@@ -135,7 +153,9 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const settingsRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
   const t = useT();
-  const categoryLabel = t.settings.categories[category].label;
+  // The toolbar names where you are, which on a sub-page is the page — the rail
+  // already shows which category owns it.
+  const categoryLabel = route.page ? t.settings.pages[route.page] : t.settings.categories[category].label;
 
   useEffect(() => {
     let active = true;
@@ -146,6 +166,9 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         if (active) setSkillUpdateCount(skills.filter((skill) => skill.updateCommit).length);
       })
       .catch(() => { /* no badge */ });
+    void api.agentListAllSkills()
+      .then((skills) => { if (active) setSkillCount(skills.length); })
+      .catch(() => { /* the row falls back to zero rather than blocking the pane */ });
     return () => { active = false; };
   }, []);
 
@@ -190,7 +213,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   }
 
   function navigateCategory(next: SettingsCategory) {
-    navigateRoute({ type: 'category', category: next });
+    navigateRoute({ category: next });
+  }
+
+  // Opening a page pushes it onto the same history the arrows walk, so Back
+  // returns to the category rather than closing the window.
+  function openPage(page: SettingsPageTarget) {
+    navigateRoute({ category: settingsPageCategory(page), page });
   }
 
   function goBack() {
@@ -490,8 +519,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                   <span className="settings-nav-copy">
                     <span className="settings-nav-label">{cat.label}</span>
                   </span>
-                  {id === 'skills' && skillUpdateCount > 0 ? (
+                  {/* Skills is a page inside Agent now, so its update count
+                      surfaces on the Agent rail row — one level up, still
+                      impossible to miss. */}
+                  {id === 'agent' && skillUpdateCount > 0 ? (
                     <span
+                      role="status"
                       aria-label={t.settings.skills.updatesAvailable({ count: skillUpdateCount })}
                       className="settings-nav-badge"
                     >
@@ -505,18 +538,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         </aside>
 
         <div className="settings-content" aria-busy={loading ? 'true' : undefined}>
-            {category === 'general' ? (
-              <SettingsGeneralSection onError={setError} onNotice={setNotice} />
-            ) : category === 'providers' ? (
-              <SettingsProvidersSection
-                draftProviderId={providerDraft.providerId}
-                runProviderMutation={runProviderMutation}
-                saving={saving}
-                settings={settings}
-              />
-            ) : category === 'security' ? (
-              <SettingsSecuritySection blocks={capabilityBlocks} onRemoveBlock={removeCapabilityBlock} />
-            ) : (
+            {route.page === 'skills' ? (
               <SettingsSkillLibrarySection
                 additionalSkillDirectories={settings?.agent.additionalSkillDirectories ?? []}
                 disabledSkills={skillDraft.disabledSkills}
@@ -528,6 +550,34 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 onToggleSkill={toggleSkill}
                 onUpdateCountChange={setSkillUpdateCount}
               />
+            ) : route.page === 'services' ? (
+              <SettingsProvidersSection
+                draftProviderId={providerDraft.providerId}
+                runProviderMutation={runProviderMutation}
+                saving={saving}
+                settings={settings}
+              />
+            ) : route.page === 'about' ? (
+              <SettingsAboutSection onError={setError} onNotice={setNotice} />
+            ) : category === 'general' ? (
+              <SettingsGeneralSection
+                onError={setError}
+                onNotice={setNotice}
+                onOpenPage={openPage}
+              />
+            ) : category === 'agent' ? (
+              <SettingsAgentSection
+                blocks={capabilityBlocks}
+                onError={setError}
+                onNotice={setNotice}
+                onOpenPage={openPage}
+                onRemoveBlock={removeCapabilityBlock}
+                settings={settings}
+                skillCount={skillCount}
+                skillUpdateCount={skillUpdateCount}
+              />
+            ) : (
+              <SettingsPreviewSection onError={setError} onNotice={setNotice} />
             )}
 
             {error ? (

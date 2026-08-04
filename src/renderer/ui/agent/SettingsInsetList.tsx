@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { ChevronRightIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { cx } from '../primitives/cx';
 
@@ -24,13 +25,18 @@ interface InsetGroupProps {
   footnote?: ReactNode;
   /** Accessible name for the list region; falls back to `label`. */
   ariaLabel?: string;
+  /**
+   * Anchor name, so a deep link can land on this group rather than at the top of
+   * a long pane. Deliberately a stable slug the link carries, not a generated id.
+   */
+  id?: string;
   className?: string;
   children: ReactNode;
 }
 
-export function InsetGroup({ label, headerAction, footnote, ariaLabel, className, children }: InsetGroupProps) {
+export function InsetGroup({ label, headerAction, footnote, ariaLabel, id, className, children }: InsetGroupProps) {
   return (
-    <div className={cx('inset-group', className)}>
+    <div className={cx('inset-group', className)} data-settings-anchor={id}>
       {/* Without an action the header keeps its original single-element shape, so
           adding this slot cannot disturb the panes that do not use it. */}
       {headerAction ? (
@@ -71,6 +77,17 @@ interface InsetRowProps {
   /** When provided, the row's main area is a button; otherwise it is static
    *  (for rows whose only interactive control lives in `trailing`). */
   onSelect?: () => void;
+  /**
+   * Marks a row that opens another page, with the chevron the design system had
+   * styled and nothing rendered. Without it a row that navigates and a row that
+   * merely states something look identical, so nothing told the user which rows
+   * are doors.
+   */
+  drillsDown?: boolean;
+  /** A count worth surfacing one level up, e.g. Skills with updates waiting. */
+  badge?: number;
+  /** What the badge means, since a bare digit announces as a bare digit. */
+  badgeLabel?: string;
   ariaLabel?: string;
   className?: string;
 }
@@ -87,6 +104,9 @@ export const InsetRow = memo(function InsetRow({
   disabled = false,
   dimmed = false,
   onSelect,
+  drillsDown = false,
+  badge,
+  badgeLabel,
   ariaLabel,
   className,
 }: InsetRowProps) {
@@ -97,6 +117,17 @@ export const InsetRow = memo(function InsetRow({
         <span className="inset-row-label">{label}</span>
         {sublabel ? <span className="inset-row-sublabel">{sublabel}</span> : null}
       </span>
+      {badge !== undefined ? (
+        // Labelled on a <span> role=status rather than via aria-label on a generic
+        // element, where ARIA forbids naming and screen readers announce the digit
+        // alone.
+        <span className="inset-row-badge" role="status" aria-label={badgeLabel}>{badge}</span>
+      ) : null}
+      {drillsDown ? (
+        <span className="settings-drilldown-chevron" aria-hidden="true">
+          <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+        </span>
+      ) : null}
     </>
   );
 

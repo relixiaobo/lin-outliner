@@ -73,6 +73,11 @@ import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
 import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
+import {
+  translationModelGroups,
+  translationModelName,
+  translationProviderName,
+} from './translationModelChoices';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 import { isProviderUsable } from '../agent/providerUsability';
 
@@ -825,48 +830,9 @@ function TranslationPopover({
   );
 }
 
-interface TranslationModelGroup {
-  providerId: string;
-  models: Array<{ label: string; value: string }>;
-}
 
-function translationModelGroups(settings: AgentProviderSettingsView | null): TranslationModelGroup[] {
-  if (!settings) return [];
-  const providers = [...settings.providers].sort((left, right) => {
-    if (left.providerId === settings.activeProviderId) return -1;
-    if (right.providerId === settings.activeProviderId) return 1;
-    return left.providerId.localeCompare(right.providerId);
-  });
-  return providers.flatMap((provider) => {
-    if (!isProviderUsable(settings, provider)) return [];
-    const models = settings.availableProviders
-      .find((entry) => entry.providerId === provider.providerId)
-      ?.models.map((model) => ({
-        label: model.name,
-        value: composeProviderQualifiedModel(provider.providerId, model.id),
-      })) ?? [];
-    return models.length > 0 ? [{ providerId: provider.providerId, models }] : [];
-  });
-}
 
-function translationModelName(model: string): string {
-  const separator = model.indexOf('/');
-  return separator >= 0 ? model.slice(separator + 1) : model;
-}
 
-function translationProviderName(providerId: string): string {
-  const tokens: Record<string, string> = {
-    ai: 'AI',
-    api: 'API',
-    github: 'GitHub',
-    openai: 'OpenAI',
-  };
-  return providerId
-    .split(/[-_]/u)
-    .filter(Boolean)
-    .map((part) => tokens[part] ?? `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(' ');
-}
 
 function translationShortcutLabel(): string {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)

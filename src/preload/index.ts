@@ -58,9 +58,11 @@ import {
 import type { ExternalContext } from '../core/launcher/context';
 import type { CaptureIntent } from '../core/launcher/sources';
 import {
+  LIN_APP_INFO_CHANNEL,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
+  type AppInfo,
   type DiagnosticsActionResult,
   type ErrorReport,
 } from '../core/errorObservability';
@@ -381,6 +383,7 @@ const api = {
   getProviderApiKey: (providerId: string) =>
     ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
+  appInfo: () => ipcRenderer.invoke(LIN_APP_INFO_CHANNEL) as Promise<AppInfo>,
   revealDiagnosticsLog: () =>
     ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
   exportDiagnostics: () =>

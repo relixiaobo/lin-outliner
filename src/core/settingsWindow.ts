@@ -7,14 +7,42 @@
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
 export type WindowSurface = 'main' | 'settings' | 'provider-config';
-export type SettingsCategoryTarget = 'general' | 'providers' | 'security' | 'skills';
+
+/**
+ * The three rail categories, cut along what a user is trying to affect rather
+ * than which subsystem implements it.
+ */
+export type SettingsCategoryTarget = 'general' | 'agent' | 'preview';
+
+/**
+ * Second-level pages. A collection the user installs or connects — unbounded and
+ * carrying its own lifecycle — gets a page; a bounded set of settings stays
+ * inline on its category. About is a page for the same reason: it is content, not
+ * controls.
+ */
+export type SettingsPageTarget = 'services' | 'skills' | 'about';
 
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
+  page?: SettingsPageTarget;
+  /**
+   * A group to scroll to and briefly highlight. Landing at the top of a long
+   * category is a downgrade for a contextual "open settings" affordance, which is
+   * what a deep link owes the user in place of the aliases this replaced.
+   */
+  anchor?: string;
 }
 
 export const SETTINGS_CATEGORY_PARAM = 'category';
+export const SETTINGS_ANCHOR_PARAM = 'anchor';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
+
+/** Which category owns each page, so a page target routes without being told twice. */
+const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
+  services: 'agent',
+  skills: 'agent',
+  about: 'general',
+};
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
@@ -24,18 +52,53 @@ export function windowSurfaceFromSearch(search: string): WindowSurface {
 }
 
 export function isSettingsCategoryTarget(value: unknown): value is SettingsCategoryTarget {
-  return value === 'general'
-    || value === 'providers'
-    || value === 'security'
-    || value === 'skills';
+  return value === 'general' || value === 'agent' || value === 'preview';
 }
 
+export function isSettingsPageTarget(value: unknown): value is SettingsPageTarget {
+  return value === 'services' || value === 'skills' || value === 'about';
+}
+
+export function settingsPageCategory(page: SettingsPageTarget): SettingsCategoryTarget {
+  return PAGE_CATEGORY[page];
+}
+
+/**
+ * Parse `category=agent`, or a page in path form: `category=agent/skills`.
+ *
+ * The retired ids (`providers`, `security`, `skills` as a category) are not
+ * aliased. Only one in-app caller ever passed a category and there are no
+ * persisted or external deep links, so an alias would be permanent weight for a
+ * migration nobody needs — the same call `permissions` got when it was replaced
+ * rather than aliased.
+ */
 export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget {
   const params = new URLSearchParams(search);
-  const category = params.get(SETTINGS_CATEGORY_PARAM);
-  return {
-    ...(isSettingsCategoryTarget(category) ? { category } : {}),
-  };
+  const raw = params.get(SETTINGS_CATEGORY_PARAM) ?? '';
+  const anchor = params.get(SETTINGS_ANCHOR_PARAM);
+  const [head, tail] = raw.split('/');
+  const target: SettingsOpenTarget = {};
+
+  if (tail !== undefined) {
+    // A pair that disagrees with itself — `general/skills` — is a malformed link,
+    // not a hint. Honouring the category half would land the user on a pane they
+    // did not ask for and looks like it worked; routing nowhere leaves them on the
+    // default pane and is at least legible as "that link is wrong".
+    if (isSettingsPageTarget(tail) && settingsPageCategory(tail) === head) {
+      target.category = head as SettingsCategoryTarget;
+      target.page = tail;
+    }
+  } else if (isSettingsCategoryTarget(head)) {
+    target.category = head;
+  }
+  if (anchor) target.anchor = anchor;
+  return target;
+}
+
+/** The inverse, for building a link: `agent` or `agent/skills`. */
+export function settingsTargetPath(target: SettingsOpenTarget): string {
+  if (target.page) return `${settingsPageCategory(target.page)}/${target.page}`;
+  return target.category ?? '';
 }
 
 // The per-provider config opens as its OWN native window (a modal child of the

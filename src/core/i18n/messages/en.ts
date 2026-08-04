@@ -361,11 +361,54 @@ export const en = {
     railTitle: 'Settings',
     loading: 'Loading...',
     categoriesAriaLabel: 'Settings categories',
+    agent: {
+      capabilitiesAriaLabel: 'Agent capabilities',
+      noServiceConnected: 'No model service connected',
+      skillCount: ({ count }: { count: number }) => (count === 1 ? '1 skill' : `${count} skills`),
+    },
+    preview: {
+      sectionAriaLabel: 'Preview',
+      translationGroup: 'Translation',
+      translationAriaLabel: 'Translation preferences',
+      // The same four preferences the Languages popover writes. Both surfaces read
+      // one store, so a change in either is a change in both.
+      targetLanguageLabel: 'Translate to',
+      targetLanguageSublabel: 'The language webpages, captions, and books are translated into.',
+      autoTranslateUrlsLabel: 'Translate webpages automatically',
+      autoTranslateUrlsSublabel: 'Translate every webpage preview as it opens, without asking.',
+      autoTranslateEpubsLabel: 'Translate books automatically',
+      autoTranslateEpubsSublabel: 'Translate EPUB books as you read them. Separate from webpages, because a book is sent to a provider a chapter at a time.',
+      modelLabel: 'Translation model',
+      modelSublabel: 'Which model translates. Follows the Agent’s model unless you pick one.',
+      websitesGroup: 'Websites',
+      websitesAriaLabel: 'Website data',
+    },
+    about: {
+      sectionAriaLabel: 'About',
+      rowLabel: 'About Tenon',
+      version: 'Version',
+      copyVersionInfo: 'Copy version info',
+      copiedNotice: 'Version info copied.',
+      whatsNewGroup: 'What’s new',
+      supportGroup: 'Support',
+      helpAction: 'Tenon Help',
+      reportIssueAction: 'Report an issue',
+      legalGroup: 'Legal',
+      privacyNote: 'Diagnostics stay on this Mac. Tenon never uploads them.',
+      acknowledgements: 'Open-source acknowledgements',
+    },
+    // `hint` is gone with the four old categories: it was defined and translated
+    // in both locales for a rail that never rendered it, and an e2e case asserted
+    // its absence.
     categories: {
-      general: { label: 'General', hint: 'Appearance & Theme' },
-      providers: { label: 'Providers', hint: 'Connections & API keys' },
-      security: { label: 'Security', hint: 'Full Access, blocks & system boundary' },
-      skills: { label: 'Skills', hint: 'Extension Capabilities' },
+      general: { label: 'General' },
+      agent: { label: 'Agent' },
+      preview: { label: 'Preview' },
+    },
+    pages: {
+      services: 'Model services',
+      skills: 'Skills',
+      about: 'About',
     },
     general: {
       appearanceGroup: 'Appearance',
