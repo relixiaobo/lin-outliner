@@ -7,10 +7,10 @@
 - The node context menu becomes a *filtered, anchored view* of the registry.
 - The command surface becomes the registry's *searchable view* — and the only
   one summoned by a hotkey, in-app and out-of-app alike.
-- The context menu is a **subset**, never a second implementation. In-app the
-  command surface covers all of it; **out of app, two entries resolve `absent`** —
-  *Pin/Unpin* and the *toolbar toggle*, both of which need main-renderer workspace
-  state that no other renderer can see (D1). Stated here rather than promised away.
+- The context menu is a **subset**, never a second implementation. **In-app the
+  command surface covers all of it.** Out of app it covers everything that does not
+  need a fact only the main renderer can attest — one rule, from which the exact
+  inventory follows (D1). Stated here rather than promised away.
 
 The user-visible promise: **one action, one habit.** Multiple entry points are
 fine; multiple implementations are not.
@@ -149,11 +149,25 @@ interface ActionContext {
 because it is a fact about *where the user is acting*, not about the document.
 There is one shape, not two.
 
-**There is no degrading contingency, and the parity promise holds.** Out-of-app,
-there is no `invocation.panel` and *Outdent* resolves to no operands — not because the
-surface is a lesser build, but because outdent is defined relative to a panel and
-there is no panel. That is D7 doing its job, not a compromise. Every other node
-action resolves identically in both views.
+**Out-of-app coverage follows one rule, and the inventory is derived from it, not
+listed by hand.**
+
+> An action resolves `absent` out of app **iff** it requires an invocation part only
+> the main renderer can attest — `panel` or `workspace`.
+
+Applying it to the current set:
+
+| Absent out of app | Why |
+|---|---|
+| every `panel`-scoped entry — *View as*, *Filter/Sort/Group/Display*, *Show/Hide view toolbar* | no `invocation.panel` |
+| *Outdent* | reads `panelRootId` (`idsAllowedForStructuralOutdentBatch`) |
+| *Pin* / *Unpin* | read `workspace.isPinned` |
+
+Everything else — including *Open in split pane*, which consumes neither part —
+resolves identically in both views. **This is not a lesser build**: each entry is
+defined relative to a workspace or panel that genuinely is not there, which is D7
+doing its job. Earlier drafts said "exactly two", which was wrong in both directions;
+the rule is the contract and the table is its consequence.
 
 ### D1a — Five contracts, not one interface
 
@@ -172,8 +186,9 @@ interface ActionInvocation {
   selection?: { nodeIds: readonly NodeId[] };          // live multi-selection, if any
   panel?:     { panelId: string; panelRootId: NodeId };
   page?:      { contextId: ExternalContextId };        // main holds the ExternalContext
-  // Present ONLY when the invoking surface is the main renderer. Its absence is
-  // what makes workspace-scoped actions resolve `absent` out of app (see below).
+  // ATTESTED by the main renderer only (sender-checked; see D1b). Never suppliable
+  // by the launcher. Its absence is what makes the entries in D1's table resolve
+  // `absent` out of app.
   workspace?: { visualRowId: NodeId; isPinned: boolean; rowExpanded: boolean };
 }
 
@@ -191,10 +206,21 @@ interface ActionPresentation {
   confirm?: ConfirmationSpec;     // Delete forever, Empty Trash
 }
 
-// 4. REQUEST — the ONLY thing a renderer may send. No command, no effect.
+// 4. REQUEST — the ONLY thing a renderer may send. No command, no effect, and
+//    no self-asserted confirmation: a boolean would be convention, not admission.
 interface ActionRequest {
   actionId: ActionId; invocationRef: InvocationRef;
-  parameter?: ActionParameterValue; confirmed?: true;
+  parameter?: ActionParameterValue;
+  challenge?: ChallengeToken;       // minted by main; single-use; see D1b
+}
+
+// 4b. INVOCATION RECORD — main-owned. The ref is an opaque handle to this.
+interface InvocationRecord {
+  invocation: ActionInvocation;
+  attestedBy: 'mainRenderer';       // who supplied the facts (sender-checked)
+  consumableBy: RendererId;         // who may submit against it
+  openSeq: number;                  // launcher open-sequence, for invalidation
+  expiresAt: number;
 }
 
 // 5. EFFECT — produced by main, never accepted from a renderer. An ORDERED PLAN,
@@ -215,13 +241,18 @@ type EffectStep = EffectStepBase & (
   | { on: 'mainRenderer'; kind: 'navigate'; nodeId: NodeId; inPlace: boolean }
   | { on: 'mainRenderer'; kind: 'reveal'; surface: RevealTarget }
   | { on: 'mainRenderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: NodeId }
-  | { on: 'invoker';  kind: 'clipboard'; payload: 'text' | 'nodeId'; nodeId: NodeId }
+  | { on: 'main';     kind: 'clipboard'; text: string }   // main resolves + writes it
   | { on: 'mainRenderer'; kind: 'composerHandoff'; operand: ComposerOperand; draftText: string }
 );
 
 type ActionExecutionResult =
   | { status: 'completed' }
   | { status: 'failed'; atStep: number; reason: ExecutionFailure };
+type ExecutionFailure =
+  | { kind: 'commandRejected'; code: string }
+  | { kind: 'rendererReported'; code: string }
+  | { kind: 'ackTimeout' }          // every renderer step is bounded; see D9
+  | { kind: 'invocationStale' };
 ```
 
 Why each exists, in the order the reviews forced them:
@@ -330,8 +361,16 @@ command.
 - **A renderer target.** For a launcher invocation, `navigate` / `workspace` /
   `composerHandoff` must run in the **main renderer**, not the calling launcher
   renderer — the composer handoff is in-process pub/sub and the pin hook lives in
-  the main renderer. Only `clipboard` belongs to whoever invoked. Hence `on:` is
-  three-valued, not two.
+  the main renderer.
+- **Clipboard is a *main* step, and carries the resolved text.** An earlier draft
+  routed it to the invoker with `{ payload: 'text' | 'nodeId', nodeId }`. That works
+  for *Copy node id* and is impossible for *Copy text*: the launcher deliberately
+  cannot read the document, while the menu copies `textOf(target, untitled)` from
+  its own projection (`NodeContextMenu.tsx:421-425`). Main already owns the
+  projection, so it resolves the bounded string and writes it with Electron's
+  `clipboard` — no data crosses to a renderer, and no read-back IPC is added for
+  something main already has. The **untitled fallback** is part of the differential
+  proof.
 - **Acknowledgement.** Main routes a renderer step and **waits for its ack** before
   emitting the next step, so a failed renderer step stops the plan and surfaces as
   `ActionExecutionResult.failed` — which is what D9's result state displays. Without
@@ -339,9 +378,29 @@ command.
   untestable.
 
 **Parameter** is what makes half the set expressible at all: *Move to* needs a
-destination, *Add tag* a tag. Their candidates come from the one retrieval kernel
-(D5) or the one tag selector, so **the *Move to* picker converges onto shared
-ranking by construction** rather than by someone remembering to fix it.
+destination, *Add tag* a tag.
+
+**Both need a query transport, not just a spec.** A static `ParameterSpec` cannot
+express query-dependent behaviour, and the launcher has no projection to compute it
+locally: `interactions/tagSelector.ts` needs a full `DocumentIndex`, the live query
+and the already-applied tag ids, and it owns empty-query ordering, exclusion, the
+hex penalty and the **dynamic Create row**. Shipping every tag inside a presentation
+would be unbounded and stale within a keystroke.
+
+So the pure tag policy moves to core beside the retrieval kernel, and main exposes
+**one parameter-candidate query keyed by the authoritative invocation ref**:
+
+```ts
+// main: parameter/query { invocationRef, actionId, requestId, query } → candidates
+type ParameterCandidates =
+  | { kind: 'node'; items: readonly NodeCandidate[] }   // Move to (D5)
+  | { kind: 'tag';  items: readonly TagCandidate[] };   // incl. the dynamic Create row
+```
+
+Same async contract as D5 — request identity, out-of-order responses dropped,
+cancellation on close — and a parity test against the existing selector so the
+policy is provably unchanged. Without this transport `Add tag` would also be absent
+out of app, which the inventory in D1 does not claim.
 
 ### D1b — Admission: a renderer may name an action, never author one
 
@@ -365,6 +424,30 @@ before it reaches durable storage. The registry follows it exactly:
 So `ActionEffect` only ever travels **main → renderer**, which is the trusted
 direction. A stale or forged request fails re-evaluation instead of mutating.
 
+**`InvocationRef` needs two identities and a lifetime, or the rule above is not
+implementable.** In the command-surface path the renderer that *sends* the request
+is always the launcher — the main renderer only *pushed the context* (D4). So
+"the invoking surface is the main renderer" cannot key off `event.sender`: doing so
+makes the toolbar permanently absent from the searchable surface, while letting the
+launcher supply `workspace` erases the fence entirely. The record therefore
+separates them:
+
+- **`attestedBy`** — main mints the record from a **sender-checked main-renderer
+  IPC** and binds the `workspace` facts to that origin. The launcher can never
+  supply or upgrade them.
+- **`consumableBy`** — main hands a launcher-consumable ref to the *current*
+  launcher opening. Submitting against a ref you were not handed fails.
+
+The attestation survives the hand-off, so the toolbar exception holds in the
+searchable surface **when and only when** the main renderer attested the bit.
+
+**Invalidation is enumerated, not implied.** A ref dies on: TTL expiry; launcher
+dismissal or a superseding open (it binds the existing `launcherOpenSeq`, the same
+counter that already drops stale captures); operand chip removal; attesting-renderer
+reload; and completion of a mutating plan (single-use). Tests: replay a spent ref,
+submit from the wrong sender, submit after dismissal, submit against a superseded
+open.
+
 **Two admissions for renderer-owned facts, both bounded.**
 
 **(a) Renderer-side effects.** Facts main cannot know — `isPinned` is localStorage
@@ -378,7 +461,8 @@ cannot corrupt the document because pinning never touches it.
 changing behaviour. Rather than bend the rule silently, it is **listed by name and
 fenced by three conditions, all of which must hold**:
 
-1. the invoking surface is the **main renderer** (out of app the action is `absent`);
+1. the `workspace` facts were **attested by the main renderer** — which is not the
+   same as "the main renderer sent this request" (see the provenance rule below);
 2. the parameter selects among **view preferences the user can immediately
    re-toggle** — never node identity, never operand membership, never destructive;
 3. it is **enumerated in the registry**, not admitted by category.
@@ -388,10 +472,31 @@ today. The rule this protects is "a compromised locked-down renderer must not
 author arbitrary mutations", and a main-renderer-only toggle of one view preference
 is not that. Any future entrant is a plan-level decision, not an implementation one.
 
-**Confirmation is structural, not conventional.** An action carrying `confirm`
-produces no effect on a request without `confirmed`; main returns a
-confirmation-required presentation, the view raises the dialog, and only the
-confirmed request yields an effect. *Delete forever* and *Empty Trash* are outside
+**Confirmation is a main-owned phase, not a boolean a caller can assert.** A
+`confirmed: true` field would be convention: nothing stops a caller from setting it
+on its *first* request, so main would have no evidence a confirmation happened at
+all — and the threat model right above explicitly includes a compromised launcher
+renderer, which could then name *Delete forever* and assert it.
+
+So the flow has two legs and main owns both:
+
+1. A request **without** a challenge for an action carrying `confirm` returns a
+   `ChallengeToken` — **single-use, short-lived, and bound to
+   `(actionId, invocationRef, hash(resolved operands))`**.
+2. The commit request **redeems** it. Main revalidates: token unspent, unexpired,
+   invocation still live, and **the operands re-resolve to the same set** — so a
+   dialog shown for three nodes cannot commit against thirty.
+
+**And the security claim is stated exactly, because a challenge alone does not
+prove a human saw anything.** A compromised renderer that *receives* a challenge can
+redeem it silently. The challenge closes first-request commits, replay, and operand
+substitution between the phases — not "the user consented".
+
+For the two actions that are **outside `Cmd+Z`** — *Delete forever* and *Empty
+Trash* — that gap is not acceptable, so **main raises a native dialog**
+(`dialog.showMessageBox`) and mints the challenge only on the user's actual
+acceptance. No renderer can fabricate that. Reversible confirmations may keep a
+renderer dialog, where the challenge's replay/substitution guarantees are enough. *Delete forever* and *Empty Trash* are outside
 `Cmd+Z`'s reach — which is why they were given a dialog, and why D9's
 fire-to-commit rule applies only *after* this point.
 
@@ -675,10 +780,18 @@ launcher routes `blur` straight to `dismissLauncher()`
 surface meant to show the confirmation — precisely in the background case the
 signal exists for. The lifecycle is therefore explicit:
 
-1. The plan's first step commits. The panel enters a **result state**: input
-   disabled, the action no longer cancellable from here.
-2. The result state **suppresses blur-dismiss** for a bounded dwell and shows the
-   outcome. The panel is already the only surface the user is looking at.
+1. **Before step 0 is dispatched**, the panel enters an **executing** state and main
+   arms a **main-owned blur guard**. Arming it after the first step commits was a
+   race with two ways to lose: step 0 itself can fail (a command can throw, a
+   renderer step can never acknowledge), leaving no committed step to enter the
+   state *from*; and any destination step that focuses the main window would trip
+   the launcher's shipped `blur → dismissLauncher()` handler
+   (`launcherWindow.ts:108-114`) and destroy the panel before its outcome could be
+   rendered. The guard is main-owned because that handler is.
+2. The guard is **held through settlement**, then the panel shows the outcome for a
+   bounded dwell. **Every renderer step's acknowledgement is bounded by a timeout**;
+   expiry settles the plan as `failed` with `{ kind: 'ackTimeout' }` rather than
+   hanging the guard forever.
 3. At the end of the dwell the panel dismisses **itself**, and **focus goes where
    the action's `completion` policy says** — never unconditionally back to the
    invoker. **Focus moves at dismissal, not at commit.**
@@ -707,8 +820,11 @@ reports its outcome. On `{ status: 'failed' }`, regardless of `completion`:
   `ActionExecutionResult`;
 - focus goes to the **invoker**, because no destination was reached — a failed
   navigation must not strand the user somewhere neither surface promised;
-- E2E covers a **failed renderer acknowledgement** for navigation and for composer
-  handoff, alongside the three success shapes.
+- E2E covers, alongside the three success shapes: a **step-0 main command failure**
+  (nothing committed, guard still armed, reason shown), an **explicit failed
+  renderer ack**, a **missing ack that hits the timeout**, and the **blur ordering**
+  — a destination step focuses the main window and the panel must still survive to
+  render its outcome.
 
 E2E covers all three shapes: a background mutation (dwell visible for its duration,
 prior app refocused, in that order), `Go to node` from another app (Tenon focused at
