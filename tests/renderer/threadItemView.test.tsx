@@ -78,6 +78,44 @@ describe('ThreadItemView user message presentation', () => {
   });
 });
 
+describe('ThreadItemView reasoning presentation', () => {
+  test('renders a single reasoning line as plain content without a disclosure label', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['Planning an official weather search'],
+      content: [],
+    }), { streaming: true });
+    await flush();
+
+    const summary = rendered.document.querySelector('.thread-reasoning-summary');
+    expect(summary?.textContent).toBe('Planning an official weather search');
+    expect(rendered.document.querySelector('.thread-reasoning-toggle')).toBeNull();
+    expect(rendered.document.querySelector('.thread-reasoning-chevron')).toBeNull();
+    expect(rendered.document.querySelector('.thread-reasoning')?.textContent).not.toContain('Thinking');
+    expect(rendered.document.querySelector('.thread-reasoning')?.textContent).not.toContain('Thought');
+  });
+
+  test('discloses only the remaining reasoning lines from a direct-content summary', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['Inspect the current workspace'],
+      content: ['The workspace has enough evidence.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('Inspect the current workspace');
+    expect(toggle?.textContent).not.toContain('Thought');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(rendered.document.querySelector('.thread-reasoning-body')).toBeNull();
+
+    act(() => toggle?.click());
+    await flush();
+    expect(rendered.document.querySelector('.thread-reasoning-body')?.textContent)
+      .toBe('The workspace has enough evidence.');
+    expect(rendered.document.querySelector('.thread-reasoning-body')?.textContent)
+      .not.toContain('Inspect the current workspace');
+  });
+});
+
 describe('ThreadItemView tool output disclosure', () => {
   test('keeps one read across item identity updates and settles a rejected read', async () => {
     let rejectRead: ((error: Error) => void) | null = null;
@@ -805,6 +843,26 @@ function commandItem(): CommandExecutionThreadItem {
     exitCode: null,
     durationMs: null,
     modelCall: replayableModelCall('bash', { command: 'printf test' }),
+  };
+}
+
+function reasoningItem({
+  content,
+  summary,
+}: {
+  readonly content: readonly string[];
+  readonly summary: readonly string[];
+}): Extract<ThreadItem, { type: 'reasoning' }> {
+  return {
+    id: 'reasoning-1',
+    provenance: {
+      originThreadId: 'thread-1',
+      originTurnId: 'turn-1',
+      originItemId: 'reasoning-1',
+    },
+    type: 'reasoning',
+    summary,
+    content,
   };
 }
 

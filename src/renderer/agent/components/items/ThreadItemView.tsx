@@ -587,8 +587,17 @@ function ReasoningDisclosure({
       ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
       : null;
   }
+  const presentation = reasoningPresentation(trimmed);
+  if (!presentation.details) {
+    return (
+      <div className="thread-item thread-reasoning">
+        <span className="thread-reasoning-summary" title={presentation.summary}>
+          {presentation.summary}
+        </span>
+      </div>
+    );
+  }
   const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
-  const gist = expanded ? '' : reasoningGist(trimmed);
   return (
     <div className="thread-item thread-reasoning">
       <ButtonControl
@@ -597,11 +606,11 @@ function ReasoningDisclosure({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <span className="thread-reasoning-headline">
-          {streaming ? t.agent.thinking.thinking : t.agent.thinking.thought}
+        <span className="thread-reasoning-summary" title={presentation.summary}>
+          {presentation.summary}
         </span>
-        {gist ? <span className="thread-reasoning-gist" title={gist}>· {gist}</span> : null}
         <ChevronRightIcon
+          aria-hidden
           className={`thread-reasoning-chevron${expanded ? ' is-expanded' : ''}`}
           size={ICON_SIZE.menu}
         />
@@ -612,7 +621,7 @@ function ReasoningDisclosure({
             index={index}
             onNodeReferenceOpen={onOpenNodeReference}
             streaming={streaming}
-            text={trimmed}
+            text={presentation.details}
           />
         </div>
       ) : null}
@@ -1888,9 +1897,20 @@ function outputLanguage(text: string): string {
   return isJsonText(text) ? 'json' : 'text';
 }
 
-function reasoningGist(text: string): string {
-  const first = text.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
-  return first.replace(/^#+\s*/, '').replace(/\*+/g, '').replace(/\s+/g, ' ').trim();
+function reasoningPresentation(text: string): { readonly summary: string; readonly details: string } {
+  const lines = text.split('\n');
+  const firstLineIndex = lines.findIndex((line) => line.trim().length > 0);
+  if (firstLineIndex < 0) return { summary: '', details: '' };
+  const firstLine = lines[firstLineIndex]!.trim();
+  const summary = firstLine
+    .replace(/^#+\s*/, '')
+    .replace(/\*+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || firstLine;
+  return {
+    summary,
+    details: lines.slice(firstLineIndex + 1).join('\n').trim(),
+  };
 }
 
 function firstLine(text: string): string {

@@ -68,11 +68,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 
 - user and agent messages render readable text at the same content register as
   the outliner
-- reasoning uses the established `Thinking` / `Thought` disclosure with a
-  one-line gist while collapsed and every provider-supplied summary/content
-  part in the expanded body; every non-empty reasoning Item remains expandable,
-  including a single-part or single-line provider summary, so truncation never
-  removes access to the complete text; only the actual tail Item streams
+- reasoning places its first meaningful line directly in the process timeline,
+  without a `Thinking` / `Thought` prefix once content exists. A single-line
+  Item is plain text with no disclosure affordance. When more provider content
+  follows, the first line becomes the disclosure summary and expansion reveals
+  only the remaining content, without repeating the summary; only the actual
+  tail Item streams. An empty live Item retains the `Thinking` placeholder
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
@@ -265,9 +266,10 @@ activity-group, and tool detail disclosures rather than replacing them.
 An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized
 vertical interval on either side of the separator. Within the timeline, the
-reasoning headline, expanded reasoning body, and adjacent compact process rows
-use one shared tokenized interval; expanding reasoning does not introduce a
-tighter headline-to-body step than the surrounding row rhythm.
+direct reasoning summary, expanded reasoning body, and adjacent compact process
+rows use one shared tokenized interval; reasoning between separate tool runs
+therefore has the same visible interval above and below, and expansion does not
+introduce a tighter internal step.
 
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
@@ -286,16 +288,12 @@ timeline still keeps a neutral, status-free header rather than becoming an
 unlabelled list of rows.
 Counted activity reports finished and in-flight work separately — "Read 5 files
 · reading 1", never one present-tense count covering work that has already
-finished. A reasoning disclosure that opened by default **latches** open for the rest of
-the session: the default is otherwise recomputed each render from live state,
-so a newly arriving Item retracted it and snapped the disclosure shut mid-run,
-shifting the layout under the reader. An explicit collapse is recorded and
-still wins over the latch. The latch is Thread-session state, not a persisted
-override — it survives a Turn row unmounting to virtualization, and a reloaded
-transcript rests at the settled default rather than permanently expanding every
-reasoning Item a reader once watched live. The
-empty placeholder carries the same classes as the populated one so the first
-token does not restyle the element. The reconnect
+finished. Live reasoning disclosures start folded even while their Item is the
+streaming tail. An explicit expansion is recorded and remains open when a newer
+Item arrives. A lone multi-line terminal reasoning Item in a resultless Turn
+still opens for readability; that terminal default is Thread-session state, not
+a persisted override. The empty placeholder carries the same classes as the
+populated one so the first token does not restyle the element. The reconnect
 banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
 the Thread list reloads, so it cannot outlive the attempt it describes.
 
@@ -819,12 +817,13 @@ terminal completion, failure, interruption, Thread deletion, catalog reload,
 or application restart removes it. The pill is the Plan's *content* surface —
 the current step — and does not replace the record that the tool ran.
 
-Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
+Process, multi-line reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;
 switching Threads, streaming-to-terminal remounts, and application reloads do not
-discard an explicit user choice. A live reasoning Item is open while streaming.
-A terminal reasoning Item rests folded unless it is the only process Item in a
-Turn without a final agent response, in which case it opens by default. Expanding
+discard an explicit user choice. A live reasoning Item starts folded while
+streaming. A terminal multi-line reasoning Item rests folded unless it is the
+only process Item in a Turn without a final agent response, in which case it
+opens by default. A single-line reasoning Item has no disclosure state. Expanding
 or collapsing any explicit transcript disclosure preserves its activated surface's
 viewport position. This includes the persisted process, reasoning, tool-group, and
 tool-detail disclosures as well as measured long-user-message and image-gallery

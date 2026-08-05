@@ -1698,17 +1698,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
 }) {
   const t = useT();
   const responseItem = lastAgentResponse(turn);
-  // A reasoning disclosure that has been open by default stays open for the
-  // rest of the session. `isExpanded` re-reads the default every render, so a
-  // default derived from live state retracts the instant the Turn moves on and
-  // snaps the disclosure shut under the reader. The latch lives here rather
-  // than in the disclosure component so a Turn row unmounting to virtualization
-  // does not silently re-collapse it, and rather than in the persisted
-  // overrides so watching a run live does not permanently expand every
-  // reasoning Item the reader never touched.
+  // A resultless terminal reasoning disclosure stays open for the session once
+  // it takes that default. Live reasoning always starts folded; an explicit
+  // user override remains authoritative through the persisted disclosure state.
   const reasoningExpandedByDefault = (candidateTurn: Turn, item: ThreadItem): boolean => {
-    const live = candidateTurn.status === 'inProgress' && candidateTurn.items.at(-1)?.id === item.id;
-    if (live || isSoloResultlessReasoning(candidateTurn, item)) latchedReasoning.add(item.id);
+    if (candidateTurn.status !== 'inProgress' && isSoloResultlessReasoning(candidateTurn, item)) {
+      latchedReasoning.add(item.id);
+    }
     return latchedReasoning.has(item.id);
   };
   const standaloneContextBoundary = turn.status !== 'inProgress'

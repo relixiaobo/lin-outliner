@@ -2760,11 +2760,11 @@ test.describe('canonical agent Thread surface', () => {
 
     const thought = page.locator('.thread-reasoning-toggle').first();
     await expect(thought).toBeVisible();
-    await expect(thought).toHaveAccessibleName(/Thought.*Inspect the current workspace/);
-    await expect(thought.locator('.thread-reasoning-headline')).toHaveCSS('font-weight', '400');
-    await expect(thought.locator('.thread-reasoning-gist')).toHaveCSS('font-weight', '400');
+    await expect(thought).toHaveAccessibleName('Inspect the current workspace');
+    await expect(thought.locator('.thread-reasoning-summary')).toHaveCSS('font-weight', '400');
+    await expect(thought).toHaveAttribute('aria-expanded', 'false');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
-    await expect(thoughtChevron).toHaveCSS('opacity', '0');
+    await expect(thoughtChevron).toHaveCSS('opacity', '1');
     const activity = page.getByRole('button', { name: /^Ran a command · read / });
     const [thoughtBox, activityBox] = await Promise.all([thought.boundingBox(), activity.boundingBox()]);
     expect(thoughtBox).toBeTruthy();
@@ -2777,11 +2777,11 @@ test.describe('canonical agent Thread surface', () => {
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
     const reasoningBody = page.locator('.thread-reasoning-body');
-    await expect(reasoningBody).toContainText('Inspect the current workspace');
     await expect(reasoningBody).toContainText('The workspace has enough evidence.');
-    await expect(reasoningBody.locator('p')).toHaveCount(2);
+    await expect(reasoningBody).not.toContainText('Inspect the current workspace');
+    await expect(reasoningBody.locator('p')).toHaveCount(1);
     const [thoughtHeadlineBox, reasoningBodyBox] = await Promise.all([
-      thought.locator('.thread-reasoning-headline').boundingBox(),
+      thought.locator('.thread-reasoning-summary').boundingBox(),
       reasoningBody.boundingBox(),
     ]);
     expect(thoughtHeadlineBox).toBeTruthy();
@@ -2792,13 +2792,13 @@ test.describe('canonical agent Thread surface', () => {
     await setTranscriptFollowingBottom(page);
     await toggleDisclosureWithStableAnchor(thought);
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
-    const singleLineThought = page.locator('.thread-reasoning-toggle').nth(1);
-    await expect(singleLineThought).toHaveAccessibleName(/Thought.*Preparing the final response/);
-    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'false');
-    await singleLineThought.click();
-    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'true');
-    await expect(singleLineThought.locator('xpath=..').locator('.thread-reasoning-body'))
-      .toHaveText('Preparing the final response');
+    const singleLineThought = page.locator('.thread-reasoning-summary', {
+      hasText: 'Preparing the final response',
+    });
+    await expect(singleLineThought).toHaveCount(1);
+    expect(await singleLineThought.evaluate((element) => element.parentElement?.tagName)).toBe('DIV');
+    await expect(singleLineThought.locator('xpath=..').locator('.thread-reasoning-chevron')).toHaveCount(0);
+    await expect(page.getByText('Thought', { exact: true })).toHaveCount(0);
 
     const activityStatus = activity.locator('.thread-disclosure-status');
     const activityChevron = activity.locator('.thread-disclosure-chevron');
@@ -2920,6 +2920,138 @@ test.describe('canonical agent Thread surface', () => {
       'tool:01910000-0000-7000-8000-00000000aa03': true,
       'tools:01910000-0000-7000-8000-00000000aa03': true,
     });
+  });
+
+  test('spaces a direct reasoning line evenly between split web tool runs', async ({ page }) => {
+    await createNewThread(page);
+    const turnId = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000af01';
+      const itemId = (suffix: string) => `01910000-0000-7000-8000-00000000${suffix}`;
+      const provenance = (originItemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId });
+      const webSearch = (id: string, query: string) => ({
+        id,
+        type: 'webSearch',
+        provenance: provenance(id),
+        query,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'web_search' },
+          providerName: 'web_search',
+          arguments: { storage: 'inline', value: { query } },
+          schemaDigest: '0'.repeat(64),
+        },
+        results: [{ title: 'Forecast', url: 'https://example.com/weather', snippet: 'Rain' }],
+        status: 'completed',
+        error: null,
+      });
+      const webFetch = (id: string, url: string) => ({
+        id,
+        type: 'dynamicToolCall',
+        provenance: provenance(id),
+        namespace: null,
+        tool: 'web_fetch',
+        arguments: { url },
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'web_fetch' },
+          providerName: 'web_fetch',
+          arguments: { storage: 'inline', value: { url } },
+          schemaDigest: '0'.repeat(64),
+        },
+        status: 'completed',
+        outputRef: null,
+        contentItems: [{ type: 'text', text: 'Forecast loaded' }],
+        success: true,
+        durationMs: 4,
+      });
+      const hiddenReasoning = (id: string) => ({
+        id,
+        type: 'reasoning',
+        provenance: provenance(id),
+        summary: [],
+        content: [],
+      });
+      const reasoningId = itemId('af06');
+      const answerId = itemId('af10');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            webSearch(itemId('af02'), 'Chengdu weather August 5'),
+            hiddenReasoning(itemId('af03')),
+            webFetch(itemId('af04'), 'https://weather.example.com/chengdu'),
+            {
+              id: reasoningId,
+              type: 'reasoning',
+              provenance: provenance(reasoningId),
+              summary: ['Planning an additional official NMC search'],
+              content: [],
+            },
+            webSearch(itemId('af07'), 'Chengdu NMC forecast'),
+            hiddenReasoning(itemId('af08')),
+            webFetch(itemId('af09'), 'https://www.nmc.cn/chengdu'),
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: provenance(answerId),
+              text: 'Rain is expected today.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 36_001,
+          durationMs: 36_000,
+        },
+      });
+      return turnId;
+    });
+
+    const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
+    await turn.getByRole('button', { name: 'Worked for 36s' }).click();
+    const summary = turn.locator('.thread-reasoning-summary', {
+      hasText: 'Planning an additional official NMC search',
+    });
+    await expect(summary).toHaveCount(1);
+    await expect(turn.locator('.thread-tool-toggle')).toHaveCount(4);
+    await expect(turn.getByText('Thought', { exact: true })).toHaveCount(0);
+
+    const rhythm = await summary.evaluate((element) => {
+      const reasoning = element.closest<HTMLElement>('.thread-reasoning');
+      const timeline = reasoning?.parentElement;
+      const previousTool = reasoning?.previousElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      const nextTool = reasoning?.nextElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      if (!reasoning || !timeline || !previousTool || !nextTool) {
+        throw new Error('Missing split web timeline rhythm elements');
+      }
+      const expected = Number.parseFloat(getComputedStyle(timeline).rowGap);
+      const previousRect = previousTool.getBoundingClientRect();
+      const reasoningRect = reasoning.getBoundingClientRect();
+      const nextRect = nextTool.getBoundingClientRect();
+      return {
+        above: reasoningRect.top - previousRect.bottom,
+        below: nextRect.top - reasoningRect.bottom,
+        expected,
+      };
+    });
+    expect(rhythm.expected).toBeGreaterThan(0);
+    expect(Math.abs(rhythm.above - rhythm.expected)).toBeLessThan(1);
+    expect(Math.abs(rhythm.below - rhythm.expected)).toBeLessThan(1);
+    expect(Math.abs(rhythm.above - rhythm.below)).toBeLessThan(1);
   });
 
   test('explains only non-zero shell exit codes', async ({ page }) => {
@@ -3214,7 +3346,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('Turn interrupted')).toHaveCount(1);
   });
 
-  test('keeps a live reasoning disclosure open when a newer Item lands', async ({ page }) => {
+  test('keeps an explicitly opened live reasoning disclosure open when a newer Item lands', async ({ page }) => {
     await createNewThread(page);
     const ids = await page.evaluate(async () => {
       const target = window as Window & {
@@ -3232,7 +3364,7 @@ test.describe('canonical agent Thread surface', () => {
         type: 'reasoning',
         provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
         summary: ['Deciding which file to open'],
-        content: [],
+        content: ['Checking the available file candidates.'],
       };
       const liveTurn = (items: unknown[]) => ({
         id: turnId,
@@ -3251,7 +3383,11 @@ test.describe('canonical agent Thread surface', () => {
       return { threadId, turnId, toolId, reasoning };
     });
 
-    // Open while it is the streaming tail.
+    const reasoningToggle = page.locator('.thread-reasoning-toggle');
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
 
     // A tool call lands: the reasoning is no longer the tail. It must not snap
@@ -3300,8 +3436,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-tool')).toHaveCount(1);
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
 
-    // An explicit collapse still wins over the latch.
-    await page.locator('.thread-reasoning-toggle').click();
+    await reasoningToggle.click();
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
   });
 
@@ -3390,7 +3525,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'reasoning',
               provenance: itemProvenance(finalReasoningId),
               summary: ['Preparing the next file read'],
-              content: [],
+              content: ['Confirming the final candidate before the read.'],
             },
           ],
           itemsView: 'full',
@@ -3415,6 +3550,8 @@ test.describe('canonical agent Thread surface', () => {
     const reasoningToggle = page.locator(
       `[data-thread-disclosure-id="reasoning:${fixture.finalReasoningId}"]`,
     );
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    await reasoningToggle.click();
     await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
     await setTranscriptFollowingBottom(page);
     await reasoningToggle.evaluate((element) => { element.dataset.identityProbe = 'stable'; });
@@ -4244,7 +4381,7 @@ test.describe('canonical agent Thread surface', () => {
             type: 'reasoning',
             provenance: provenance(reasoningId),
             summary: ['The outline is currently empty.'],
-            content: [],
+            content: ['No outline nodes require inspection.'],
           },
         ],
         status: 'completed',
@@ -4261,9 +4398,11 @@ test.describe('canonical agent Thread surface', () => {
       });
     });
 
-    const thought = page.getByRole('button', { name: 'Thought' });
+    const thought = page.getByRole('button', { name: 'The outline is currently empty.' });
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByText('The outline is currently empty.', { exact: true })).toBeVisible();
+    await expect(page.getByText('No outline nodes require inspection.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Thought', { exact: true })).toHaveCount(0);
   });
 
   test('keeps the composer primary action identical to the active Turn state', async ({ page }) => {
@@ -4631,7 +4770,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'reasoning',
               provenance: provenance(reasoningItemId),
               summary: ['Inspect'],
-              content: [],
+              content: ['Review the response stream.'],
             },
             {
               id: responseItemId,

@@ -1807,6 +1807,7 @@
 
 .thread-reasoning-toggle {
   display: flex;
+  width: fit-content;
   max-width: min(100%, 520px);
   min-width: 0;
   align-items: center;
@@ -1823,36 +1824,35 @@
   color: var(--text-strong);
 }
 
-.thread-reasoning-headline {
-  flex: 0 0 auto;
+.thread-reasoning-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.thread-reasoning-gist {
-  min-width: 0;
+.thread-reasoning-toggle .thread-reasoning-summary {
   flex: 0 1 auto;
-  overflow: hidden;
-  color: var(--text-faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.thread-reasoning > .thread-reasoning-summary {
+  display: block;
+  max-width: min(100%, 520px);
 }
 
 .thread-reasoning-chevron {
   flex: 0 0 auto;
   color: var(--text-faint);
-  opacity: 0;
-  transition: transform var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
+  transition: transform var(--motion-fast), color var(--motion-fast);
 }
 
 .thread-reasoning-chevron.is-expanded {
   transform: rotate(90deg);
-  opacity: 1;
 }
 
 .thread-reasoning-toggle:hover .thread-reasoning-chevron,
 .thread-reasoning-toggle:focus-visible .thread-reasoning-chevron {
   color: var(--text-soft);
-  opacity: 1;
 }
 
 .thread-reasoning-body {
