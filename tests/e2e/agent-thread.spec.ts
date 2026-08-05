@@ -3305,6 +3305,194 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
   });
 
+  test('paints structural process updates at the followed bottom with one compact rhythm', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 520 });
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c601';
+      const userItemId = '01910000-0000-7000-8000-00000000c602';
+      const itemId = (sequence: number) => (
+        `01910000-0000-7000-8000-${sequence.toString().padStart(12, '0')}`
+      );
+      const itemProvenance = (originItemId: string) => ({
+        originThreadId: threadId,
+        originTurnId: turnId,
+        originItemId,
+      });
+      const fileReadItem = (
+        id: string,
+        index: number,
+        status: 'completed' | 'inProgress',
+      ) => ({
+        id,
+        type: 'dynamicToolCall',
+        provenance: itemProvenance(id),
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: `/mock/process-${index}.json` },
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_read' },
+          providerName: 'file_read',
+          arguments: {
+            storage: 'inline',
+            value: { file_path: `/mock/process-${index}.json` },
+          },
+          schemaDigest: '0'.repeat(64),
+        },
+        status,
+        outputRef: null,
+        contentItems: status === 'completed' ? [{ type: 'text', text: 'ok' }] : null,
+        success: status === 'completed' ? true : null,
+        durationMs: status === 'completed' ? 5 : null,
+      });
+      const processItems = Array.from({ length: 8 }, (_, index) => {
+        const reasoningId = itemId(10_000 + index * 2);
+        const toolId = itemId(10_001 + index * 2);
+        return [
+          {
+            id: reasoningId,
+            type: 'reasoning',
+            provenance: itemProvenance(reasoningId),
+            summary: [`Process reasoning ${index + 1}`],
+            content: [],
+          },
+          fileReadItem(toolId, index + 1, 'completed'),
+        ];
+      }).flat();
+      const finalReasoningId = itemId(10_100);
+      const nextToolId = itemId(10_101);
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userItemId,
+              type: 'userMessage',
+              provenance: itemProvenance(userItemId),
+              clientId: null,
+              acceptedAt: Date.now(),
+              content: [{ type: 'text', text: 'Keep this process timeline stable.' }],
+            },
+            ...processItems,
+            {
+              id: finalReasoningId,
+              type: 'reasoning',
+              provenance: itemProvenance(finalReasoningId),
+              summary: ['Preparing the next file read'],
+              content: [],
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return {
+        finalReasoningId,
+        nextTool: fileReadItem(nextToolId, 9, 'inProgress'),
+        nextToolId,
+        threadId,
+        turnId,
+      };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const reasoningToggle = page.locator(
+      `[data-thread-disclosure-id="reasoning:${fixture.finalReasoningId}"]`,
+    );
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
+    await setTranscriptFollowingBottom(page);
+    await reasoningToggle.evaluate((element) => { element.dataset.identityProbe = 'stable'; });
+
+    const frames = await page.evaluate(async ({ nextTool, nextToolId, threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const scroll = document.querySelector<HTMLElement>('.thread-transcript');
+      const anchor = document.querySelector<HTMLElement>('[data-identity-probe="stable"]');
+      if (!scroll || !anchor) throw new Error('Missing process stability probe');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/started',
+        threadId,
+        turnId,
+        item: nextTool,
+      });
+      const samples: Array<{
+        anchorTop: number;
+        bottomGap: number;
+        toolMounted: boolean;
+      }> = [];
+      const toolDisclosureId = `tool:${nextToolId}`;
+      for (let frame = 0; frame < 8; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        samples.push({
+          anchorTop: anchor.getBoundingClientRect().top,
+          bottomGap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
+          toolMounted: Boolean(document.querySelector(
+            `[data-thread-disclosure-id="${CSS.escape(toolDisclosureId)}"]`,
+          )),
+        });
+      }
+      return samples;
+    }, fixture);
+
+    const mountedFrames = frames.filter((frame) => frame.toolMounted);
+    expect(mountedFrames.length).toBeGreaterThan(1);
+    expect(mountedFrames[0]!.bottomGap).toBeLessThanOrEqual(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.bottomGap))).toBeLessThanOrEqual(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.anchorTop))
+      - Math.min(...mountedFrames.map((frame) => frame.anchorTop))).toBeLessThan(1);
+    await expect(reasoningToggle).toHaveAttribute('data-identity-probe', 'stable');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+
+    const rhythm = await reasoningToggle.evaluate((toggle) => {
+      const reasoning = toggle.closest<HTMLElement>('.thread-reasoning');
+      const timeline = reasoning?.parentElement;
+      const bodyLine = reasoning?.querySelector<HTMLElement>(
+        '.thread-reasoning-body .thread-markdown > :first-child',
+      );
+      const previousTool = reasoning?.previousElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      const nextTool = reasoning?.nextElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      if (!reasoning || !timeline || !bodyLine || !previousTool || !nextTool) {
+        throw new Error('Missing compact process rhythm elements');
+      }
+      const expected = Number.parseFloat(getComputedStyle(timeline).rowGap);
+      const previousRect = previousTool.getBoundingClientRect();
+      const toggleRect = toggle.getBoundingClientRect();
+      const bodyRect = bodyLine.getBoundingClientRect();
+      const nextRect = nextTool.getBoundingClientRect();
+      return {
+        actual: [
+          toggleRect.top - previousRect.bottom,
+          bodyRect.top - toggleRect.bottom,
+          nextRect.top - bodyRect.bottom,
+        ],
+        expected,
+      };
+    });
+    expect(rhythm.expected).toBeGreaterThan(0);
+    for (const interval of rhythm.actual) {
+      expect(Math.abs(interval - rhythm.expected)).toBeLessThan(1);
+    }
+  });
+
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
     await createNewThread(page);
     await seedMixedStatusToolTurn(page);

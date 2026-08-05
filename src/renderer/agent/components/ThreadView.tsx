@@ -689,6 +689,18 @@ export function ThreadView({
     });
   }, [hasPendingAnchor, setProgrammaticScrollTop]);
 
+  const pinStructuralBottomBeforePaint = useCallback(() => {
+    const scroll = scrollRef.current;
+    if (
+      !scroll
+      || !followRef.current
+      || hasPendingAnchor()
+      || pendingSendScrollRef.current
+      || sendAnchorSpacerRef.current
+    ) return;
+    setProgrammaticScrollTop(scroll, scroll.scrollHeight);
+  }, [hasPendingAnchor, setProgrammaticScrollTop]);
+
   const scheduleSendAnchorLayout = useCallback(() => {
     if (!pendingSendScrollRef.current && !sendAnchorSpacerRef.current) {
       sendAnchorLayoutDeferredRef.current = false;
@@ -871,16 +883,19 @@ export function ThreadView({
 
   useLayoutEffect(() => {
     const previousContent = bottomPinContentRef.current;
+    const structuralItemAdded = itemCount > previousContent.itemCount;
     const replayBottomPin = previousContent.itemCount !== itemCount
       || previousContent.turns !== turns;
     bottomPinContentRef.current = { itemCount, turns };
     attemptScrollRestore();
     scheduleSendAnchorLayout();
+    if (structuralItemAdded) pinStructuralBottomBeforePaint();
     scheduleBottomPin(replayBottomPin);
   }, [
     attemptScrollRestore,
     itemCount,
     pendingSendVersion,
+    pinStructuralBottomBeforePaint,
     scheduleBottomPin,
     scheduleSendAnchorLayout,
     sendAnchorSpacer,

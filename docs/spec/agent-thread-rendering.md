@@ -264,7 +264,10 @@ below the answer. The process disclosure contains the independent reasoning,
 activity-group, and tool detail disclosures rather than replacing them.
 An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized
-vertical interval on either side of the separator.
+vertical interval on either side of the separator. Within the timeline, the
+reasoning headline, expanded reasoning body, and adjacent compact process rows
+use one shared tokenized interval; expanding reasoning does not introduce a
+tighter headline-to-body step than the surrounding row rhythm.
 
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
@@ -727,12 +730,16 @@ values.
 
 The transcript follows streaming output only while its visible follow state is
 within 56 pixels of the bottom after a user or programmatic scroll. While follow
-is active, Turn updates, non-Turn transcript content, transcript viewport changes,
-and composer-region height changes all coalesce through one frame-level bottom
-pin. Moving upward releases follow, so later Item updates never pull the reader
-away from earlier evidence. A visible Jump to latest material pill appears only
-when follow is inactive and content remains below the viewport; activating it
-returns to the bottom, re-engages follow, and restores composer focus.
+is active, a canonical Item-count increase pins from the content layout commit,
+so the new row and its final bottom-followed position paint together rather than
+moving the existing transcript one frame later. Other Turn updates, non-Turn
+transcript content, transcript viewport changes, and composer-region height
+changes coalesce through one frame-level bottom pin. The structural path yields
+to pending send and explicit disclosure anchors. Moving upward releases follow,
+so later Item updates never pull the reader away from earlier evidence. A visible
+Jump to latest material pill appears only when follow is inactive and content
+remains below the viewport; activating it returns to the bottom, re-engages
+follow, and restores composer focus.
 
 Starting a new Turn first moves to the existing tail for immediate feedback. Once
 the accepted user message mounts and measures, that message is anchored at the
