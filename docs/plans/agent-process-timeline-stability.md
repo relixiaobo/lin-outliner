@@ -110,4 +110,3 @@ but it has no Draft PR claim and this change does not alter its composer contrac
 ## Open Questions
 
 None.
-
