@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import type {
+  ThreadFileSource,
+  ThreadImageArtifactReference,
+  ThreadResourceReference,
+} from '../../../core/agent/protocol';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
-export const AGENT_GENERATED_IMAGE_DIR = 'generated-images';
 export const AGENT_SCRATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ManagedAttachmentObservation {
   resolvePath(ref: ThreadResourceReference): Promise<string | null>;
+  resolveArtifactPath(artifact: ThreadImageArtifactReference): Promise<string | null>;
   dispose(): Promise<void>;
 }
 
@@ -58,6 +63,31 @@ export function createManagedAttachmentObservation(
       resources.set(key, pending);
       return pending;
     },
+    resolveArtifactPath(artifact) {
+      if (disposed) throw new Error('Managed attachment observation is closed.');
+      const key = `artifact:${artifact.id}`;
+      const existing = resources.get(key);
+      if (existing) return existing;
+      const pending = (async () => {
+        const targetDirectory = path.join(await workspace(), 'image-artifacts', artifact.id);
+        await mkdir(targetDirectory, { recursive: true });
+        const targetPath = path.join(targetDirectory, artifactMaterializedFileName(artifact));
+        const copiedOriginal = artifact.original
+          ? await copyArtifactSource(artifact.original, targetDirectory, targetPath, copyResource)
+          : null;
+        if (copiedOriginal) return realpath(copiedOriginal);
+        const copiedObservation = await copyArtifactSource(
+          { kind: 'threadPayload', ref: artifact.observation },
+          targetDirectory,
+          targetPath,
+          copyResource,
+        );
+        if (!copiedObservation) await rm(targetDirectory, { recursive: true, force: true });
+        return copiedObservation ? realpath(copiedObservation) : null;
+      })();
+      resources.set(key, pending);
+      return pending;
+    },
     async dispose() {
       if (disposed) return;
       disposed = true;
@@ -69,6 +99,31 @@ export function createManagedAttachmentObservation(
   };
 }
 
+async function copyArtifactSource(
+  source: ThreadFileSource,
+  targetDirectory: string,
+  targetPath: string,
+  copyResource: (ref: ThreadResourceReference, targetDirectory: string) => Promise<string | null>,
+): Promise<string | null> {
+  if (source.kind === 'localFile') {
+    const sourcePath = await realpath(source.path).catch(() => null);
+    if (!sourcePath) return null;
+    const sourceStat = await lstat(sourcePath).catch(() => null);
+    if (!sourceStat?.isFile() || sourceStat.isSymbolicLink()) return null;
+    await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    return targetPath;
+  }
+  const copied = await copyResource(source.ref, targetDirectory);
+  if (!copied) return null;
+  if (copied !== targetPath) await rename(copied, targetPath);
+  return targetPath;
+}
+
+function artifactMaterializedFileName(artifact: ThreadImageArtifactReference): string {
+  void artifact;
+  return 'image';
+}
+
 function safeWorkspaceKey(value: string): string {
   const safe = value.replace(/[^a-zA-Z0-9_-]/gu, '_').slice(0, 160);
   if (!safe) throw new Error('Managed attachment observation workspace key is empty.');
@@ -76,10 +131,10 @@ function safeWorkspaceKey(value: string): string {
 }
 
 // Bound the whole scratch root by age. Scratch is app-owned ephemeral data (attachment
-// observations, generated images, web-fetch binaries, bash overflow logs, PDF page images); none of it is durable,
-// so anything untouched past the TTL is removed. Pruning the entries WITHIN each scratch subdir
-// (by per-entry mtime) rather than the subdirs themselves keeps actively-written areas intact
-// while still reclaiming stale files. Best-effort; called once at startup.
+// observations, image-artifact materializations, web-fetch binaries, bash overflow logs,
+// and PDF page images); none of it is durable, so anything untouched past the TTL is
+// removed. Pruning entries within each scratch subdirectory keeps actively-written areas
+// intact while still reclaiming stale files. Best-effort; called once at startup.
 export async function pruneAgentScratch(
   scratchRoot: string,
   now = Date.now(),

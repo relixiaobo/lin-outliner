@@ -1,135 +1,176 @@
-# Generated images as file-backed artifacts with bounded previews
+# Unified image artifacts with tiered renditions
 
 ## Goal
 
-Make every successful `generate_image` result immediately usable without making
-model-input limits decide whether the original artifact survives.
+Give every image that enters Agent history one stable logical identity while
+keeping source-quality bytes separate from the bounded image sent to chat
+models.
 
-The tool must:
+The complete feature must:
 
-- save the provider's original bytes before attempting model observation;
-- return an absolute path that ordinary local tools can copy or edit;
-- show the model a bounded preview while the Thread UI addresses the saved local
-  original;
-- retain file-like history semantics: a saved path may later disappear, and that
-  loss degrades the image operation rather than invalidating the Thread; and
-- keep large outputs, including ordinary 4K PNGs, out of the 10 MiB generic
-  tool-image admission trap.
+- represent generated images, user image attachments, and dynamic-tool images
+  with the same immutable `artifactRef`;
+- create a bounded `observation` immediately when an image is admitted;
+- send only the observation bytes to chat models and history reconstruction;
+- prefer an available original for image editing, Preview, copy, and export;
+- preserve a stable materialized path when an owned original is replaced by its
+  observation;
+- degrade missing renditions to an unavailable image without killing a Turn,
+  fork, or inherited-context copy; and
+- reclaim generated originals before observations under storage pressure,
+  rather than deleting every image on a seven-day timer.
 
 ## Non-goals
 
-- A permanent user-facing gallery or export destination. Generated files remain
-  app-owned scratch artifacts until the model copies them to a requested path or
-  the user ingests them into the document asset store.
-- A new resource protocol. The existing dynamic-tool `localFile + promptImage`
-  shape already separates a file identity from the exact bounded image shown to
-  the model.
-- Provider option redesign. Provider-specific `size`, `quality`, format, and
-  aspect-ratio behavior remains unchanged.
-- Long-term availability of a generated-file path. A path is a weak reference,
-  just like any other local file reference.
-- Compatibility readers for the old relative `generated-images/...` and
-  `markdownImage` forms. This pre-release change keeps no legacy path channel.
+- A user-facing image library or document-asset replacement.
+- Mutation of persisted Thread Items when a rendition is reclaimed.
+- A compatibility reader for the pre-release `promptImage` or generated-image
+  scratch-path shapes.
+- Provider-specific image size, quality, format, or aspect-ratio redesign.
+- Lossless recovery after both renditions and an external source disappear.
 
 ## Shape
 
-**(a) One complete feature in one PR.** Original persistence, bounded preview,
-history projection, cleanup, and documentation land together.
+**(a) One complete feature in one PR.** The protocol, admission paths, history
+projection, file materialization, retention policy, UI resolution, tests, and
+current-behavior specs ship together.
 
 ## Design
 
-### 1. Original bytes and model observation are separate artifacts
+### 1. One immutable reference names every image
 
-The provider returns base64 image data. Per output, `generate_image` performs
-these operations in order:
-
-1. validate the image MIME and base64 payload against the existing 256 MiB image
-   source safety boundary;
-2. decode and write the original bytes under
-   `<scratchRoot>/generated-images/<turn>/...`;
-3. return the absolute path and original metadata in `data.images`; and
-4. independently ask the host image normalizer for a bounded model preview.
-
-The original write is not subject to the generic 10 MiB per-image or 20 MiB
-per-call tool-output limits. Those limits protect persisted provider-visible
-image content, not source artifacts. A detailed 4K PNG may therefore remain at
-its full resolution even when its preview must be resized or recompressed.
-
-The existing normalizer constrains previews to at most 2000 px per edge and 4.5
-MiB. At most four generated outputs are requested, so their previews also fit
-the generic 20 MiB per-call tool-output budget by construction.
-
-Original-write failure omits only that output and records a warning. Preview
-failure does not remove a successfully written original: the result keeps its
-path and reports that model/UI observation is unavailable. Provider indexes are
-one-based and never compacted, so partial results cannot make the model select a
-different image than the user named.
-
-### 2. Existing dynamic-tool image semantics carry the preview
-
-Each successful preview is emitted as image `extraContent`. The event normalizer
-persists that bounded preview through the ordinary tool-output image admission
-path and records:
+Canonical history stores an immutable image artifact reference:
 
 ```text
-source      = { kind: "localFile", path: <absolute original path> }
-promptImage = <Thread resource reference for the bounded preview>
+ImageArtifactReference
+  id
+  createdAt
+  retention: external | durable | tiered | observationOnly
+  original: localFile | threadPayload | null
+  observation: threadPayload
+  geometry: source size, observation size, observation-to-source matrix
 ```
 
-This is the same shape used by `file_read`: the local path identifies the
-operable source, while `promptImage` reproduces exactly what the provider saw.
-No original image is duplicated into the Thread resource store. The Thread UI
-previews and ingests the trusted local source, so adding the result to the
-outline preserves the original resolution rather than the model snapshot.
+`id` is a SHA-256 identity derived from the immutable reference fields. A
+rendition is itself an existing content-addressed `ThreadResourceReference`.
+The reference never changes after admission; availability is determined by
+resolving its renditions.
 
-Because an original may survive while its preview fails, each returned image
-with a preview records its compact image-content index for normalization. The
-normalizer resolves a content item to the matching original path by that index,
-not by indexing the possibly sparse provider-result array.
+`geometry` uses one affine matrix to map observation pixel coordinates back to
+the admitted source pixel plane. The current normalizer performs only
+aspect-preserving resize, but the matrix also represents future crop, padding,
+and rotation without changing the artifact contract.
 
-The generic image admission remains responsible for preview count, base64,
-MIME, per-image, per-call, and Thread-quota limits. A typed
-`ThreadResourceQuotaError`, including filesystem `ENOSPC` and `EDQUOT`, degrades
-preview persistence to `quotaExceeded`; unrelated storage failures retain their
-identity.
+The four retention classes mean:
 
-### 3. Paths are weak history references
+- `external`: the original remains owned by the user or workspace. Tenon never
+  deletes it and owns only the observation.
+- `durable`: Tenon owns a pathless user upload and retains its original for the
+  Thread lifetime.
+- `tiered`: Tenon owns a generated original that storage pressure may reclaim.
+- `observationOnly`: the source emitted only provider-visible pixels, such as a
+  screenshot or rendered page, so the observation is the only rendition.
 
-Persisted generated-image result text and slim details retain the absolute
-original path, provider index, MIME, byte length, and dimensions. They do not
-claim that the original is saved in the conversation.
+Image attachments retain their ordinary file source for file semantics and add
+an `artifactRef`. Dynamic-tool image content stores only its `artifactRef` and
+optional alt text. Paths remain access handles, never artifact identity.
 
-Historical projection reads the bounded `promptImage` snapshot when it exists
-and identifies its `localFile` source path. It does not copy the original into a
-new per-Turn observation and does not publish a replacement `readable_path`.
+### 2. Observation is created at ingress
 
-If the original file has disappeared, a later file operation fails through the
-ordinary local-file path just as it would for any deleted workspace file. If the
-preview resource is missing or corrupt, projection emits an unavailable image
-identity and continues; one missing image never blocks the Thread.
+Every image ingress normalizes an observation to the existing model boundary:
+at most 2000 px on either edge and at most 4.5 MiB. Admission is complete only
+after the observation is durably content-addressed.
 
-### 4. Scratch cleanup is uniform
+- A local user image becomes `external`.
+- A pathless managed user image becomes `durable`.
+- A generated provider image stores the source bytes as a `tiered` original,
+  then creates its observation from those bytes.
+- A dynamic-tool image with a trusted local source becomes `external`.
+- Other dynamic-tool image bytes become `observationOnly`.
 
-Generated originals are app-owned scratch artifacts, not durable conversation
-resources. The `generated-images` directory follows the existing seven-day
-scratch TTL with no exemption. The absolute path remains usable across Turns
-until ordinary cleanup or external deletion removes it.
+Generated originals use the Thread resource store directly and are not subject
+to the generic 10 MiB tool-observation limit. Source admission retains the 256
+MiB decode safety boundary. If observation creation fails, the output is not
+admitted as an image artifact and any newly written unreferenced resource is
+reclaimed by normal Turn cleanup.
 
-The old relative-path trust channel, generated-image path resolver, Preview
-fallback, and `markdownImage` value remain deleted. The model receives an
-absolute path directly, so `bash`, `file_read`, and later `image_paths` calls need
-no special resolver.
+### 3. Consumers select a rendition by purpose
 
-### 5. Instructions state the ownership boundary
+Chat-model projection always reads `observation`. Missing or corrupt observation
+bytes produce a textual unavailable marker and projection continues.
+The adjacent identity text includes source size, observation size, both derived
+source-per-observation scale factors, and the full observation-to-source matrix.
+The model therefore has enough information to relate positions in the bounded
+observation to the admitted source-image pixel plane and diagnose scaling mistakes.
+The artifact layer does not inspect, validate, convert, or rewrite later tool
+arguments. Any coordinate semantics beyond this image-to-image transform belong to
+the tool that consumes them.
 
-The result tells the model that returned paths are local scratch files and may
-expire. When the user names a destination, the model copies the original there
-in the same Turn. The generated local images are already rendered by the Thread
-UI, so the model does not repeat them through Markdown.
+Preview, copy, export, and image-edit input resolve the best currently available
+rendition in this order:
 
-Ingesting a generated image into the outline remains a separate operation. Once
-ingested, the document asset store owns its copy; subsequent scratch cleanup does
-not affect the outline asset.
+1. original;
+2. observation;
+3. unavailable.
+
+Managed images materialize outside the private payload store under a stable
+Thread-and-artifact path. The path is keyed by artifact identity, not rendition
+identity. Re-materializing after original reclamation therefore puts observation
+bytes at the same logical path. Materializations remain disposable scratch and
+can be recreated from the retained rendition.
+
+The generated-image result returns `artifactId` as identity and a current
+readable path as an access hint. Persisted slim details retain the artifact
+reference and image metadata, not the path.
+
+### 4. Missing renditions are expected runtime state
+
+The intended lifecycle is:
+
+```text
+FULL -> OBSERVATION_ONLY -> UNAVAILABLE
+```
+
+Canonical Items and artifact references remain immutable through each state.
+Resource enumeration retains references for garbage collection, but fork and
+inherited-context copying treat artifact rendition bytes as optional: available
+renditions are copied and missing ones are skipped. Ordinary non-image managed
+resources remain required.
+
+An externally deleted local original falls back to observation. A missing
+observation means the chat model cannot inspect the image; it does not invalidate
+the surrounding user message, tool result, Thread, or fork.
+
+### 5. Pressure-based retention replaces image TTL
+
+Artifact renditions live in durable Thread resources. Seven-day scratch cleanup
+applies only to reproducible materialized copies, never to the canonical original
+or observation.
+
+Per Thread, image retention uses the existing 8 GiB hard resource budget plus
+two earlier watermarks:
+
+- below 5 GiB: retain all renditions;
+- above the 6 GiB soft watermark: reclaim least-recently-used, then largest,
+  `tiered` originals older than 30 days until usage returns to 5 GiB;
+- when an incoming write would exceed 8 GiB: reclaim `tiered` originals regardless
+  of age, then least-recently-used observations, until the write fits;
+- never reclaim `external` files or `durable` originals automatically.
+
+Artifact materialization records rendition access for LRU ordering. Hard-pressure
+reclamation may remove a recent observation only to avoid making all Thread
+storage unwritable. If protected durable data alone exhausts the budget, the new
+write fails with the existing typed quota error.
+
+### 6. Cleanup and ownership stay transactional
+
+New original and observation resources join the active Turn's created-resource
+set. A completed canonical Item makes them reachable; failure or cancellation
+removes unreferenced writes. Rollback and startup reconciliation retain all
+referenced rendition keys even when a particular file is already absent.
+
+Thread deletion removes owned originals, observations, and disposable
+materializations. External source files are never touched.
 
 ## Open questions
 
@@ -138,15 +179,16 @@ None.
 ## Collision self-check
 
 PR #483 changes `PiTurnExecutor`, `ContextProjector`, runtime context, and Turn
-lifecycle wiring. This PR lands after #483 and rebases before final validation.
-The other open PR claims do not overlap the generated-image runtime, scratch
-cleanup, or focused tests.
+lifecycle wiring. This PR lands after #483 and rebases again before final
+validation. Other open PR claims do not overlap the image-artifact protocol or
+retention implementation.
 
 ## Build order
 
-1. Restore absolute original-file writes under uniformly pruned scratch.
-2. Normalize and emit bounded previews independently of original persistence.
-3. Associate preview content with its sparse original result by explicit index.
-4. Persist weak paths and remove generated-image history rematerialization.
-5. Keep missing preview resources degradable and retain typed quota handling.
-6. Update focused tests and fold the final behavior into the agent specs.
+1. Add the immutable artifact protocol, codec, and dependency enumeration.
+2. Admit user attachments and dynamic-tool images through the common shape.
+3. Store generated originals and their observations as one tiered artifact.
+4. Resolve stable best-rendition paths for model tools, Preview, copy, and export.
+5. Make history, fork, and inherited-context handling tolerate missing renditions.
+6. Add pressure-based reclamation and focused lifecycle tests.
+7. Fold shipped behavior into the Agent specs and run the full verification set.

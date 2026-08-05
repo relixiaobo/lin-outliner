@@ -731,9 +731,29 @@ describe('agent local tools', () => {
       const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
       const result = await (tool.execute as any)('test-call', { file_path: filePath });
       const visible = JSON.parse(result.content[0].text);
-      expect(visible.data.file.dimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.observationDimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.sourceDimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.sourcePixelsPerObservationPixel).toEqual({ x: 1, y: 1 });
+      expect(visible.data.file.observationToSource).toEqual([1, 0, 0, 1, 0, 0]);
       expect(visible.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+    });
+  });
+
+  test('file_read detects a materialized image from bytes when its stable path has no extension', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'image-artifact');
+      await writeFile(filePath, makePng(9, 13));
+
+      const read = await executeTool<{
+        type: 'image';
+        file: { dimensions: { width: number; height: number }; type: string };
+      }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+      expect(read.ok).toBe(true);
+      expect(read.data!.type).toBe('image');
+      expect(read.data!.file.type).toBe('image/png');
+      expect(read.data!.file.dimensions).toEqual({ width: 9, height: 13 });
     });
   });
 

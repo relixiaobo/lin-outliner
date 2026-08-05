@@ -5,8 +5,10 @@ import type {
   ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
+  ThreadImageArtifactReference,
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
+import { imageArtifactResourceReferences } from '../imageArtifacts';
 
 type ContextDependencyOwner = ContextEvidenceThreadItem | ContextCompactionThreadItem;
 
@@ -17,26 +19,54 @@ interface ContextPayloadDependencies {
 }
 
 export function itemResourceReferences(item: ThreadItem): ThreadResourceReference[] {
+  let references: ThreadResourceReference[];
   if (item.type === 'userMessage') {
-    return item.content.flatMap((content) => content.type === 'attachment'
+    references = item.content.flatMap((content) => content.type === 'attachment'
       ? [
           ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
-          ...(content.promptImage ? [content.promptImage] : []),
+          ...(content.artifactRef ? imageArtifactResourceReferences(content.artifactRef) : []),
         ]
       : []);
-  }
-  if (item.type === 'dynamicToolCall') {
-    return (item.contentItems ?? []).flatMap((content) => (
+  } else if (item.type === 'dynamicToolCall') {
+    references = (item.contentItems ?? []).flatMap((content) => (
       content.type !== 'image'
         ? []
-        : 'promptImage' in content
-          ? [content.promptImage]
-          : [content.source.ref]
+        : imageArtifactResourceReferences(content.artifactRef)
+    ));
+  } else {
+    references = item.type === 'contextEvidence' || item.type === 'contextCompaction'
+      ? [...item.resourceRefs]
+      : [];
+  }
+  return [...new Map(references.map((ref) => [resourceReferenceKey(ref), ref])).values()];
+}
+
+export function itemImageArtifactReferences(item: ThreadItem): ThreadImageArtifactReference[] {
+  if (item.type === 'userMessage') {
+    return item.content.flatMap((content) => (
+      content.type === 'attachment' && content.artifactRef ? [content.artifactRef] : []
     ));
   }
-  return item.type === 'contextEvidence' || item.type === 'contextCompaction'
-    ? [...item.resourceRefs]
-    : [];
+  if (item.type === 'dynamicToolCall') {
+    return (item.contentItems ?? []).flatMap((content) => content.type === 'image' ? [content.artifactRef] : []);
+  }
+  return [];
+}
+
+export function itemProtectedResourceReferences(item: ThreadItem): ThreadResourceReference[] {
+  let references: ThreadResourceReference[];
+  if (item.type === 'userMessage') {
+    references = item.content.flatMap((content) => (
+      content.type === 'attachment' && content.source.kind === 'threadPayload'
+        ? [content.source.ref]
+        : []
+    ));
+  } else {
+    references = item.type === 'contextEvidence' || item.type === 'contextCompaction'
+      ? [...item.resourceRefs]
+      : [];
+  }
+  return [...new Map(references.map((ref) => [resourceReferenceKey(ref), ref])).values()];
 }
 
 export function itemContextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {

@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, realpath, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ThreadResourceReference } from '../../src/core/agent/protocol';
+import type { ThreadFileSource, ThreadResourceReference } from '../../src/core/agent/protocol';
 import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../src/core/agentAttachmentLimits';
 import { AttachmentResolver } from '../../src/main/agent/tools/attachments';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const roots: string[] = [];
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
@@ -36,7 +37,7 @@ describe('AttachmentResolver', () => {
     expect((await stat(sourcePath)).size).toBe(3 * 1024 * 1024 * 1024);
   });
 
-  test('resolves managed payloads and records an immutable prompt image reference', async () => {
+  test('resolves managed payloads and records an immutable image artifact reference', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     const managedRoot = await temporaryRoot('tenon-attachment-managed-');
     const documentPath = join(managedRoot, 'report.pdf');
@@ -56,9 +57,9 @@ describe('AttachmentResolver', () => {
         ]).get(ref.id);
         return resourcePath ? use(resourcePath) : null;
       },
-      prepareImageSnapshot: async ({ sourcePath }) => {
+      prepareImageArtifact: async ({ attachment, sourcePath }) => {
         snapshots.push(sourcePath);
-        return { ref: promptRef, created: true };
+        return preparedArtifact(attachment.source, promptRef, true);
       },
     });
     const createdResources: ThreadResourceReference[] = [];
@@ -79,7 +80,13 @@ describe('AttachmentResolver', () => {
       sizeBytes: 14,
       source: { kind: 'threadPayload', ref: documentRef },
     });
-    expect(resolved[1]).toMatchObject({ promptImage: promptRef });
+    expect(resolved[1]).toMatchObject({
+      artifactRef: {
+        retention: 'durable',
+        original: { kind: 'threadPayload', ref: imageRef },
+        observation: promptRef,
+      },
+    });
     expect(snapshots).toEqual([imagePath]);
     expect(createdResources).toEqual([promptRef]);
   });
@@ -109,7 +116,7 @@ describe('AttachmentResolver', () => {
     const createdResources: ThreadResourceReference[] = [];
     const resolver = new AttachmentResolver({
       useResourcePath: async (_threadId, ref, use) => ref.id === imageRef.id ? use(imagePath) : null,
-      prepareImageSnapshot: async () => ({ ref: promptRef, created: true }),
+      prepareImageArtifact: async ({ attachment }) => preparedArtifact(attachment.source, promptRef, true),
     });
 
     await expect(resolver.resolve([
@@ -128,10 +135,11 @@ describe('AttachmentResolver', () => {
         resolutions += 1;
         return null;
       },
-      prepareImageSnapshot: async () => ({
-        ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
-        created: true,
-      }),
+      prepareImageArtifact: async ({ attachment }) => preparedArtifact(
+        attachment.source,
+        resourceRef('f', 'image/png', 1, 'prompt.png'),
+        true,
+      ),
     });
 
     await expect(resolver.resolve([
@@ -166,15 +174,16 @@ describe('AttachmentResolver', () => {
         const resourcePath = resources.get(ref.id);
         return resourcePath ? use(resourcePath) : null;
       },
-      prepareImageSnapshot: async () => {
+      prepareImageArtifact: async ({ attachment }) => {
         activePreparations += 1;
         maximumPreparations = Math.max(maximumPreparations, activePreparations);
         await new Promise((resolve) => setTimeout(resolve, 5));
         activePreparations -= 1;
-        return {
-          ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
-          created: true,
-        };
+        return preparedArtifact(
+          attachment.source,
+          resourceRef('f', 'image/png', 1, 'prompt.png'),
+          true,
+        );
       },
     });
 
@@ -195,10 +204,11 @@ function resolverWithResources(resources: ReadonlyMap<string, string>): Attachme
       const resourcePath = resources.get(ref.id);
       return resourcePath ? use(resourcePath) : null;
     },
-    prepareImageSnapshot: async () => ({
-      ref: resourceRef('f', 'image/png', 1, 'prompt.png'),
-      created: true,
-    }),
+    prepareImageArtifact: async ({ attachment }) => preparedArtifact(
+      attachment.source,
+      resourceRef('f', 'image/png', 1, 'prompt.png'),
+      true,
+    ),
   });
 }
 
@@ -231,6 +241,24 @@ function resourceRef(
   fileName: string,
 ): ThreadResourceReference {
   return { id: digit.repeat(64), mimeType, byteLength, fileName };
+}
+
+function preparedArtifact(
+  source: ThreadFileSource,
+  observation: ThreadResourceReference,
+  created: boolean,
+) {
+  return {
+    artifactRef: createImageArtifactReference({
+      createdAt: 1,
+      retention: source.kind === 'localFile' ? 'external' : 'durable',
+      original: source,
+      observation,
+      sourceDimensions: { width: 2, height: 2 },
+      observationDimensions: { width: 1, height: 1 },
+    }),
+    createdResources: created ? [observation] : [],
+  };
 }
 
 async function temporaryRoot(prefix: string): Promise<string> {

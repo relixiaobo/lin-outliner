@@ -22,6 +22,7 @@ import {
   composeStablePrompt,
 } from '../../src/main/agent/context/stablePrompt';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
@@ -609,7 +610,7 @@ describe('canonical context projection', () => {
     expect(await new CanonicalContextProjector(model, resources).projectTurns([terminal])).toEqual(projected);
   });
 
-  test('keeps weak local image paths adjacent to bounded history previews without rematerializing originals', async () => {
+  test('projects image observations with stable identity, best-rendition paths, and coordinate geometry', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const managedRef: ThreadResourceReference = {
       id: 'd'.repeat(64),
@@ -623,6 +624,25 @@ describe('canonical context projection', () => {
       byteLength: 3,
       fileName: 'local-snapshot.jpg',
     };
+    const managedArtifact = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: {
+        kind: 'threadPayload',
+        ref: { ...managedRef, id: 'c'.repeat(64), byteLength: 20, fileName: 'chart-original.webp' },
+      },
+      observation: managedRef,
+      sourceDimensions: { width: 4_000, height: 2_000 },
+      observationDimensions: { width: 2_000, height: 1_000 },
+    });
+    const localArtifact = createImageArtifactReference({
+      createdAt: 2,
+      retention: 'external',
+      original: { kind: 'localFile', path: '/workspace/output/raw.jpg' },
+      observation: localSnapshotRef,
+      sourceDimensions: { width: 2_000, height: 1_000 },
+      observationDimensions: { width: 1_000, height: 500 },
+    });
     const tool: ThreadItem = {
       type: 'dynamicToolCall',
       id: 'tool-images',
@@ -639,14 +659,12 @@ describe('canonical context projection', () => {
       contentItems: [
         {
           type: 'image',
-          source: { kind: 'localFile', path: '/scratch/generated-images/turn/chart.png' },
-          promptImage: managedRef,
+          artifactRef: managedArtifact,
           alt: 'Rendered chart',
         },
         {
           type: 'image',
-          source: { kind: 'localFile', path: '/workspace/output/raw.jpg' },
-          promptImage: localSnapshotRef,
+          artifactRef: localArtifact,
         },
       ],
       success: true,
@@ -659,9 +677,11 @@ describe('canonical context projection', () => {
         [managedRef.id, Buffer.from('chart')],
         [localSnapshotRef.id, Buffer.from('raw')],
       ])),
-      resolveResourceObservationPath: async () => {
+      resolveImageArtifactPath: async (artifact: typeof managedArtifact) => {
         pathResolutions += 1;
-        return '/scratch/turn/unused.png';
+        return artifact.id === managedArtifact.id
+          ? '/scratch/thread/image-artifacts/managed/image'
+          : '/scratch/thread/image-artifacts/local/image';
       },
     };
 
@@ -670,12 +690,30 @@ describe('canonical context projection', () => {
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
     expect(result?.content).toEqual([
-      { type: 'text', text: '[Image output: Rendered chart (/scratch/generated-images/turn/chart.png), image/png, 5 bytes]' },
+      {
+        type: 'text',
+        text: [
+          `[Image output: Rendered chart (artifact:${managedArtifact.id}), artifact=${managedArtifact.id}, image/png, 5 observation bytes]`,
+          'Readable path: /scratch/thread/image-artifacts/managed/image',
+          'Image geometry: observation=2000x1000; source=4000x2000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+        ].join('\n'),
+      },
       { type: 'image', data: Buffer.from('chart').toString('base64'), mimeType: 'image/png' },
-      { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
+      {
+        type: 'text',
+        text: [
+          `[Image output: artifact:${localArtifact.id}, artifact=${localArtifact.id}, image/jpeg, 3 observation bytes]`,
+          'Readable path: /scratch/thread/image-artifacts/local/image',
+          'Image geometry: observation=1000x500; source=2000x1000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+        ].join('\n'),
+      },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
-    expect(pathResolutions).toBe(0);
+    expect(pathResolutions).toBe(2);
 
     const unavailableMessages = await new CanonicalContextProjector(
       model,
@@ -685,8 +723,14 @@ describe('canonical context projection', () => {
     ]);
     const unavailableResult = unavailableMessages.find((message) => message.role === 'toolResult');
     expect(unavailableResult?.content).toEqual([
-      { type: 'text', text: '[Image output unavailable or corrupt: Rendered chart (/scratch/generated-images/turn/chart.png), image/png, 5 bytes]' },
-      { type: 'text', text: '[Image output unavailable or corrupt: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
+      {
+        type: 'text',
+        text: `[Image output unavailable or corrupt: Rendered chart (artifact:${managedArtifact.id}), artifact=${managedArtifact.id}]`,
+      },
+      {
+        type: 'text',
+        text: `[Image output unavailable or corrupt: artifact:${localArtifact.id}, artifact=${localArtifact.id}]`,
+      },
     ]);
   });
 
@@ -1808,6 +1852,7 @@ function projectionResources(
     readOutput: async (ref: { readonly id: string }) => outputs.get(ref.id) ?? null,
     readResource: async (ref: ThreadResourceReference) => resources.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
   };
 }
 

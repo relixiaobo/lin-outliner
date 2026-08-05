@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { AssetService } from './assetService';
 import { assetUrl } from '../core/assets';
-import type { ThreadResourceReference } from '../core/agent/protocol';
+import type { ThreadImageArtifactReference, ThreadResourceReference } from '../core/agent/protocol';
 import type { PreviewCommand } from '../core/commands';
 import {
   normalizePreviewHttpUrl,
@@ -35,7 +35,10 @@ export interface LocalFilePreviewMetadata {
 
 export interface ThreadAttachmentPreviewFile extends TrustedLocalFileReference {
   readonly acceptedPathHints: readonly string[];
+  readonly mimeType?: string;
 }
+
+type ResolvedLocalPreviewFile = TrustedLocalFileReference & { readonly mimeType?: string };
 
 export interface PreviewCommandContext {
   // The app-owned roots an absolute local-file preview may resolve under: the agent workdir
@@ -49,6 +52,10 @@ export interface PreviewCommandContext {
   threadResourceFile?: (
     threadId: string,
     ref: ThreadResourceReference,
+  ) => Promise<ThreadAttachmentPreviewFile | null>;
+  threadImageArtifactFile?: (
+    threadId: string,
+    artifact: ThreadImageArtifactReference,
   ) => Promise<ThreadAttachmentPreviewFile | null>;
   threadManagedFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
@@ -93,10 +100,11 @@ async function previewSourceForTarget(
     const file = await resolveLocalFileTarget(target, context);
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
+    const mimeType = file.mimeType ?? metadata.mimeType;
     const streamUrl = metadata.entryKind === 'file'
-      ? target.threadId && (target.attachmentId || target.resourceRef)
-        ? await context.threadManagedFileStreamUrl?.(file.path, metadata.mimeType)
-        : await context.localFileStreamUrl?.(file, metadata.mimeType)
+      ? target.threadId && (target.attachmentId || target.resourceRef || target.imageArtifactRef)
+        ? await context.threadManagedFileStreamUrl?.(file.path, mimeType)
+        : await context.localFileStreamUrl?.(file, mimeType)
       : null;
     const normalizedTarget: PreviewTarget = {
       ...target,
@@ -110,8 +118,8 @@ async function previewSourceForTarget(
       id: previewTargetKey(normalizedTarget),
       target: normalizedTarget,
       name,
-      ext: previewExtension(metadata.name, metadata.mimeType),
-      mimeType: metadata.mimeType,
+      ext: previewExtension(metadata.name, mimeType),
+      mimeType,
       entryKind: metadata.entryKind,
       sizeBytes: metadata.sizeBytes,
       lastModified: metadata.lastModified,
@@ -195,7 +203,7 @@ async function previewBytesBufferForTarget(
     if (file.stats.size > limitBytes) return { error: 'too-large' };
     return {
       bytes: await readFile(file.path),
-      mimeType: context.inferMimeType(file.path),
+      mimeType: file.mimeType ?? context.inferMimeType(file.path),
     };
   }
 
@@ -250,11 +258,13 @@ async function previewDirectoryEntriesForTarget(
         kind: 'local-file',
         path: child.path,
         entryKind: child.entryKind,
-        ...(target.threadId && target.attachmentId
-          ? { threadId: target.threadId, attachmentId: target.attachmentId }
-          : target.threadId && target.resourceRef
-            ? { threadId: target.threadId, resourceRef: target.resourceRef }
-          : {}),
+          ...(target.threadId && target.attachmentId
+            ? { threadId: target.threadId, attachmentId: target.attachmentId }
+            : target.threadId && target.resourceRef
+              ? { threadId: target.threadId, resourceRef: target.resourceRef }
+              : target.threadId && target.imageArtifactRef
+                ? { threadId: target.threadId, imageArtifactRef: target.imageArtifactRef }
+            : {}),
       },
       mimeType,
       sizeBytes: child.entryKind === 'directory' ? 0 : child.stats.size,
@@ -268,12 +278,19 @@ async function previewDirectoryEntriesForTarget(
 async function resolveLocalFileTarget(
   target: Extract<PreviewTarget, { kind: 'local-file' }>,
   context: PreviewCommandContext,
-): Promise<TrustedLocalFileReference | null> {
+): Promise<ResolvedLocalPreviewFile | null> {
   if (!target.threadId) {
     return resolveTrustedLocalFileReference(
       target.path,
       context.agentLocalFileRoots,
     );
+  }
+  if (target.imageArtifactRef) {
+    const artifact = await context.threadImageArtifactFile?.(target.threadId, target.imageArtifactRef);
+    if (!artifact || artifact.entryKind !== 'file') return null;
+    return target.path === artifact.path || artifact.acceptedPathHints.includes(target.path)
+      ? artifact
+      : null;
   }
   if (target.resourceRef) {
     const resource = await context.threadResourceFile?.(target.threadId, target.resourceRef);

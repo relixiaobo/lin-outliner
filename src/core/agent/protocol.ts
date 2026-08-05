@@ -512,6 +512,35 @@ export type ThreadFileSource =
   | { readonly kind: 'localFile'; readonly path: string }
   | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
 
+export const IMAGE_ARTIFACT_RETENTIONS = [
+  'external',
+  'durable',
+  'tiered',
+  'observationOnly',
+] as const;
+
+export type ImageArtifactRetention = typeof IMAGE_ARTIFACT_RETENTIONS[number];
+
+export interface ImageArtifactGeometry {
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+  readonly observationWidth: number;
+  readonly observationHeight: number;
+  /** Row-major 2D affine matrix mapping observation pixels to source pixels. */
+  readonly observationToSource: readonly [number, number, number, number, number, number];
+}
+
+/** Immutable logical image identity. Rendition availability may change independently. */
+export interface ThreadImageArtifactReference {
+  /** Lowercase SHA-256 digest of the immutable artifact fields. */
+  readonly id: string;
+  readonly createdAt: number;
+  readonly retention: ImageArtifactRetention;
+  readonly original: ThreadFileSource | null;
+  readonly observation: ThreadResourceReference;
+  readonly geometry: ImageArtifactGeometry;
+}
+
 export interface ThreadAttachmentContent {
   readonly type: 'attachment';
   readonly id: string;
@@ -519,7 +548,7 @@ export interface ThreadAttachmentContent {
   readonly mimeType: string;
   readonly sizeBytes: number;
   readonly source: ThreadFileSource;
-  readonly promptImage?: ThreadResourceReference;
+  readonly artifactRef?: ThreadImageArtifactReference;
   readonly extractedText?: string;
 }
 
@@ -979,14 +1008,7 @@ export type DynamicToolOutputContent =
   | { readonly type: 'text'; readonly text: string }
   | {
       readonly type: 'image';
-      readonly source: Extract<ThreadFileSource, { readonly kind: 'threadPayload' }>;
-      readonly alt?: string;
-    }
-  | {
-      readonly type: 'image';
-      readonly source: Extract<ThreadFileSource, { readonly kind: 'localFile' }>;
-      /** Thread-owned snapshot used to reproduce the exact provider-visible image. */
-      readonly promptImage: ThreadResourceReference;
+      readonly artifactRef: ThreadImageArtifactReference;
       readonly alt?: string;
     }
   | { readonly type: 'json'; readonly value: JsonValue };

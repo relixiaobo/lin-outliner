@@ -1,6 +1,7 @@
 import {
   CONTEXT_EVIDENCE_KINDS,
   CONTEXT_PAYLOAD_KINDS,
+  IMAGE_ARTIFACT_RETENTIONS,
   MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES,
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
@@ -29,6 +30,7 @@ import {
   type DynamicToolOutputContent,
   type FileUpdateChange,
   type ItemProvenance,
+  type ImageArtifactGeometry,
   type JsonValue,
   type MemoryCitation,
   type ModelToolCallArguments,
@@ -45,6 +47,7 @@ import {
   type ThreadItem,
   type ThreadItemDelta,
   type ThreadItemOutputReference,
+  type ThreadImageArtifactReference,
   type ThreadNodeReferenceContent,
   type ThreadSource,
   type ThreadStatus,
@@ -1809,7 +1812,7 @@ function decodeUserContent(value: unknown): ThreadUserContent {
       ...(record.note === undefined ? {} : { note: stringValue(record.note, 'userContent.note', true) }),
     });
   }
-  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'promptImage', 'extractedText'], 'userContent');
+  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'artifactRef', 'extractedText'], 'userContent');
   const decodedSource = decodeThreadFileSource(record.source, 'userContent.source');
   return deepFreeze<ThreadAttachmentContent>({
     type,
@@ -1818,9 +1821,9 @@ function decodeUserContent(value: unknown): ThreadUserContent {
     mimeType: stringValue(record.mimeType, 'userContent.mimeType'),
     sizeBytes: nonNegativeInteger(record.sizeBytes, 'userContent.sizeBytes'),
     source: decodedSource,
-    ...(record.promptImage === undefined
+    ...(record.artifactRef === undefined
       ? {}
-      : { promptImage: decodeThreadResourceReference(record.promptImage, 'userContent.promptImage') }),
+      : { artifactRef: decodeThreadImageArtifactReference(record.artifactRef, 'userContent.artifactRef') }),
     ...(record.extractedText === undefined
       ? {}
       : { extractedText: stringValue(record.extractedText, 'userContent.extractedText', true) }),
@@ -1856,6 +1859,63 @@ function decodeThreadFileSource(value: unknown, field: string): ThreadFileSource
   }
   exactKeys(source, ['kind', 'ref'], field);
   return deepFreeze({ kind, ref: decodeThreadResourceReference(source.ref, `${field}.ref`) });
+}
+
+export function decodeThreadImageArtifactReference(
+  value: unknown,
+  field = 'threadImageArtifactReference',
+): ThreadImageArtifactReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'createdAt', 'retention', 'original', 'observation', 'geometry'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!SHA_256_PATTERN.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  const retention = enumValue(record.retention, IMAGE_ARTIFACT_RETENTIONS, `${field}.retention`);
+  const original = record.original === null ? null : decodeThreadFileSource(record.original, `${field}.original`);
+  const observation = decodeImageResourceReference(record.observation, `${field}.observation`);
+  if (retention === 'external' && original?.kind !== 'localFile') {
+    fail(`${field}.original`, 'external artifacts require a local-file original');
+  }
+  if ((retention === 'durable' || retention === 'tiered') && original?.kind !== 'threadPayload') {
+    fail(`${field}.original`, `${retention} artifacts require a Thread-owned original`);
+  }
+  if (retention === 'observationOnly' && original !== null) {
+    fail(`${field}.original`, 'observation-only artifacts cannot carry an original');
+  }
+  if (original?.kind === 'threadPayload') {
+    assertImageResourceReference(original.ref, `${field}.original.ref`);
+  }
+  const createdAt = finiteNumber(record.createdAt, `${field}.createdAt`);
+  if (createdAt < 0) fail(`${field}.createdAt`, 'expected a non-negative timestamp');
+  return deepFreeze({
+    id,
+    createdAt,
+    retention,
+    original,
+    observation,
+    geometry: decodeImageArtifactGeometry(record.geometry, `${field}.geometry`),
+  });
+}
+
+function decodeImageArtifactGeometry(value: unknown, field: string): ImageArtifactGeometry {
+  const record = recordValue(value, field);
+  exactKeys(record, [
+    'sourceWidth',
+    'sourceHeight',
+    'observationWidth',
+    'observationHeight',
+    'observationToSource',
+  ], field);
+  const matrix = arrayValue(record.observationToSource, `${field}.observationToSource`);
+  if (matrix.length !== 6) fail(`${field}.observationToSource`, 'expected a six-value affine matrix');
+  return deepFreeze({
+    sourceWidth: positiveInteger(record.sourceWidth, `${field}.sourceWidth`),
+    sourceHeight: positiveInteger(record.sourceHeight, `${field}.sourceHeight`),
+    observationWidth: positiveInteger(record.observationWidth, `${field}.observationWidth`),
+    observationHeight: positiveInteger(record.observationHeight, `${field}.observationHeight`),
+    observationToSource: matrix.map((entry, index) => (
+      finiteNumber(entry, `${field}.observationToSource[${index}]`)
+    )) as unknown as ImageArtifactGeometry['observationToSource'],
+  });
 }
 
 export function decodeThreadContextPayloadReference(
@@ -3489,21 +3549,10 @@ function decodeDynamicToolOutput(value: unknown): DynamicToolOutputContent {
     return deepFreeze({ type, text: stringValue(record.text, 'dynamicToolOutput.text', true) });
   }
   if (type === 'image') {
-    const source = decodeThreadFileSource(record.source, 'dynamicToolOutput.source');
-    if (source.kind === 'localFile') {
-      exactKeys(record, ['type', 'source', 'promptImage', 'alt'], 'dynamicToolOutput');
-      return deepFreeze({
-        type,
-        source,
-        promptImage: decodeImageResourceReference(record.promptImage, 'dynamicToolOutput.promptImage'),
-        ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
-      });
-    }
-    exactKeys(record, ['type', 'source', 'alt'], 'dynamicToolOutput');
-    assertImageResourceReference(source.ref, 'dynamicToolOutput.source.ref');
+    exactKeys(record, ['type', 'artifactRef', 'alt'], 'dynamicToolOutput');
     return deepFreeze({
       type,
-      source,
+      artifactRef: decodeThreadImageArtifactReference(record.artifactRef, 'dynamicToolOutput.artifactRef'),
       ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
     });
   }

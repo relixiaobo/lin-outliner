@@ -176,10 +176,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - every ordinary tool, including a loaded or isolated Skill, uses the same
   expandable row inside the counted activity group; tool-specific icons,
   summaries, images, and child-Thread links remain supplemental affordances;
-  managed tool images resolve from their typed resource reference through the owning
-  Thread and preview only a disposable scratch copy; Add to Today sends the same typed
-  identity to a main-only ingest seam, which reauthorizes ownership and returns asset
-  metadata without accepting or returning a managed path
+  tool images resolve from their stable `artifactRef` through the owning Thread. Preview
+  selects the original first and observation second, then serves a disposable stable
+  extensionless materialization with MIME derived from its bytes. The renderer never
+  receives a canonical payload path or chooses a rendition itself. Add to Today sends
+  the same typed identity to a main-only ingest seam, which reauthorizes ownership and
+  returns asset metadata without accepting or returning a managed path
 - local paths in tool arguments and results retain the surrounding terminal-style
   code rendering: no file icon, resting background, independent wrapping, or
   ordinary-click navigation. Holding the platform primary modifier reveals the
@@ -342,7 +344,10 @@ image pixels, exposes rest/hover/active/focus feedback, and does not add a
 backdrop filter or the file-preview action shadow. The ordinary file reference
 retains its Thread-scoped preview identity without a second attachment-card
 wrapper; every gallery tile retains the same scoped identity and opens the shared
-reader. Replay, fork, context projection, and Model Interactions consume the
+reader. Image attachments resolve through their artifact's original-then-observation
+fallback without changing the attachment's canonical file identity; an unavailable
+rendition leaves the rest of the message usable. Replay, fork, context projection, and
+Model Interactions consume the
 unchanged canonical ordering rather than reconstructing attachment placement from
 this presentation projection. Free-text editing is exposed only when
 canonical content contains at most one text part, and replacement preserves every

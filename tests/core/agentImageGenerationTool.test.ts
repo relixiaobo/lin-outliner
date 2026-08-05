@@ -7,18 +7,47 @@ import {
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { MAX_TOOL_PAYLOAD_IMAGE_BYTES } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
-const GENERATED_IMAGE_PATH = '/scratch/generated-images/turn/image-0.png';
+const GENERATED_IMAGE_PATH = '/scratch/agent-attachments/thread/image-artifacts/generated/image';
 const ONE_PIXEL_PNG_BYTES = Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64');
+const GENERATED_IMAGE_ARTIFACT = createImageArtifactReference({
+  createdAt: 1,
+  retention: 'tiered',
+  original: {
+    kind: 'threadPayload',
+    ref: {
+      id: 'a'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'original.png',
+    },
+  },
+  observation: {
+    id: 'b'.repeat(64),
+    mimeType: 'image/png',
+    byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+    fileName: 'prompt.png',
+  },
+  sourceDimensions: { width: 1, height: 1 },
+  observationDimensions: { width: 1, height: 1 },
+});
 
 function generatedOutputRuntime(): Pick<
   AgentImageGenerationRuntime,
-  'writeGeneratedImage' | 'preparePromptImage'
+  'persistGeneratedImage'
 > {
   return {
-    writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
-    preparePromptImage: async () => ({ data: ONE_PIXEL_PNG_BYTES, mimeType: 'image/png' }),
+    persistGeneratedImage: async () => persistedGeneratedImage(),
+  };
+}
+
+function persistedGeneratedImage() {
+  return {
+    artifactRef: GENERATED_IMAGE_ARTIFACT,
+    path: GENERATED_IMAGE_PATH,
+    observation: { data: ONE_PIXEL_PNG_BYTES, mimeType: 'image/png' },
   };
 }
 
@@ -68,14 +97,19 @@ describe('generate_image tool', () => {
       data: {
         images: [{
           providerIndex: 1,
+          artifactId: GENERATED_IMAGE_ARTIFACT.id,
           path: GENERATED_IMAGE_PATH,
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
           width: 1,
           height: 1,
+          observationDimensions: { width: 1, height: 1 },
+          sourceDimensions: { width: 1, height: 1 },
+          sourcePixelsPerObservationPixel: { x: 1, y: 1 },
+          observationToSource: [1, 0, 0, 1, 0, 0],
         }],
       },
-      instructions: 'The generated image is saved at the returned local path. Available previews are already shown to the user; do not render them again in the final answer. Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.',
+      instructions: 'The generated image is saved at the returned local path. Available previews are already shown to the user; do not render them again in the final answer. Each artifact id is stable; its local path is a rematerializable access hint and can become unavailable under storage retention. If an image belongs somewhere in particular, copy it there now.',
     });
   });
 
@@ -91,9 +125,9 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      writeGeneratedImage: async ({ index }) => {
+      persistGeneratedImage: async ({ index }) => {
         if (index === 0) throw new Error('disk write failed');
-        return { path: GENERATED_IMAGE_PATH };
+        return persistedGeneratedImage();
       },
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
@@ -137,9 +171,9 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'google',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      writeGeneratedImage: async ({ data }) => {
+      persistGeneratedImage: async ({ data }) => {
         saved = data;
-        return { path: GENERATED_IMAGE_PATH };
+        return persistedGeneratedImage();
       },
       generateImages: async ({ modelId }) => ({
         api: 'google-images',
@@ -173,7 +207,7 @@ describe('generate_image tool', () => {
     ]);
   });
 
-  test('keeps the original path when its bounded model preview cannot be prepared', async () => {
+  test('does not admit an original when its bounded model observation cannot be prepared', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -185,7 +219,7 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       ...generatedOutputRuntime(),
-      preparePromptImage: async () => {
+      persistGeneratedImage: async () => {
         throw new Error('image decode failed');
       },
       generateImages: async ({ modelId }) => ({
@@ -207,16 +241,11 @@ describe('generate_image tool', () => {
       ok: true,
       status: 'partial',
       data: {
-        images: [{
-          providerIndex: 1,
-          path: GENERATED_IMAGE_PATH,
-          mimeType: 'image/png',
-          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
-        }],
+        images: [],
       },
-      warnings: [expect.stringContaining('model preview is unavailable')],
-      instructions: 'The generated image is saved at the returned local path. No model preview is available; do not claim to have inspected the image. Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.',
-      metrics: { outputBytes: ONE_PIXEL_PNG_BYTES.byteLength },
+      warnings: [expect.stringContaining('image decode failed')],
+      instructions: 'No generated image was saved. Follow the warnings before retrying.',
+      metrics: { outputBytes: 0 },
     });
     expect(result.content.filter((part) => part.type === 'image')).toHaveLength(0);
   });

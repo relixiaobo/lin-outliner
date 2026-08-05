@@ -55,6 +55,26 @@ const imageResourceRef = {
   byteLength: 12,
   fileName: 'tool-output.png',
 };
+const imageArtifactRef = {
+  id: '7'.repeat(64),
+  createdAt: 100,
+  retention: 'observationOnly' as const,
+  original: null,
+  observation: imageResourceRef,
+  geometry: {
+    sourceWidth: 4_000,
+    sourceHeight: 2_000,
+    observationWidth: 2_000,
+    observationHeight: 1_000,
+    observationToSource: [2, 0, 0, 2, 0, 0] as const,
+  },
+};
+const externalImageArtifactRef = {
+  ...imageArtifactRef,
+  id: '6'.repeat(64),
+  retention: 'external' as const,
+  original: { kind: 'localFile' as const, path: '/tmp/current.png' },
+};
 const contextRef = {
   id: 'a'.repeat(64),
   mimeType: 'application/vnd.tenon.agent-context+json' as const,
@@ -190,7 +210,7 @@ const allItems: readonly ThreadItem[] = [
     status: 'completed',
     contentItems: [
       { type: 'text', text: 'Node text' },
-      { type: 'image', source: { kind: 'threadPayload', ref: imageResourceRef }, alt: 'Node image' },
+      { type: 'image', artifactRef: imageArtifactRef, alt: 'Node image' },
     ],
     success: true,
     durationMs: 3,
@@ -574,33 +594,30 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodeThreadItem({
       ...dynamic,
       contentItems: [{ type: 'image', imageRef: '/tmp/legacy.png' }],
-    })).toThrow('dynamicToolOutput.source');
+    })).toThrow('unknown fields: imageRef');
     expect(decodeThreadItem({
       ...dynamic,
       contentItems: [{
         type: 'image',
-        source: { kind: 'localFile', path: '/tmp/current.png' },
-        promptImage: imageResourceRef,
+        artifactRef: externalImageArtifactRef,
       }],
     })).toMatchObject({
       contentItems: [{
-        source: { kind: 'localFile', path: '/tmp/current.png' },
-        promptImage: imageResourceRef,
+        artifactRef: externalImageArtifactRef,
       }],
     });
     expect(() => decodeThreadItem({
       ...dynamic,
       contentItems: [{
         type: 'image',
-        source: { kind: 'localFile', path: '/tmp/missing-snapshot.png' },
       }],
-    })).toThrow('dynamicToolOutput.promptImage');
+    })).toThrow('dynamicToolOutput.artifactRef');
     expect(() => decodeThreadItem({
       ...dynamic,
       contentItems: [{
         type: 'image',
         source: { kind: 'threadPayload', ref: imageResourceRef },
-        promptImage: imageResourceRef,
+        artifactRef: imageArtifactRef,
       }],
     })).toThrow('unknown fields');
     expect(() => decodeThreadItem({
@@ -901,6 +918,14 @@ describe('Codex Agent Core protocol codec', () => {
       byteLength: 128,
       fileName: 'prompt.png',
     };
+    const originalRef = { ...ref, id: 'c'.repeat(64), fileName: 'image.png', byteLength: 1024 };
+    const artifactRef = {
+      ...imageArtifactRef,
+      id: 'd'.repeat(64),
+      retention: 'durable' as const,
+      original: { kind: 'threadPayload' as const, ref: originalRef },
+      observation: ref,
+    };
     const managed = decodeThreadItem({
       type: 'userMessage',
       id: 'managed-message',
@@ -913,12 +938,12 @@ describe('Codex Agent Core protocol codec', () => {
         name: 'image.png',
         mimeType: 'image/png',
         sizeBytes: 1024,
-        source: { kind: 'threadPayload', ref: { ...ref, fileName: 'image.png', byteLength: 1024 } },
-        promptImage: ref,
+        source: { kind: 'threadPayload', ref: originalRef },
+        artifactRef,
       }],
     });
     expect(managed).toMatchObject({
-      content: [{ source: { kind: 'threadPayload' }, promptImage: ref }],
+      content: [{ source: { kind: 'threadPayload' }, artifactRef }],
     });
     expect(() => decodeThreadItem({
       type: 'userMessage',
@@ -965,9 +990,9 @@ describe('Codex Agent Core protocol codec', () => {
       ...dynamic,
       contentItems: [{
         type: 'image',
-        source: {
-          kind: 'threadPayload',
-          ref: { ...imageResourceRef, mimeType: 'text/plain' },
+        artifactRef: {
+          ...imageArtifactRef,
+          observation: { ...imageResourceRef, mimeType: 'text/plain' },
         },
       }],
     })).toThrow('expected an image MIME type');
@@ -975,8 +1000,10 @@ describe('Codex Agent Core protocol codec', () => {
       ...dynamic,
       contentItems: [{
         type: 'image',
-        source: { kind: 'localFile', path: '/tmp/output.png' },
-        promptImage: { ...imageResourceRef, mimeType: 'application/octet-stream' },
+        artifactRef: {
+          ...externalImageArtifactRef,
+          observation: { ...imageResourceRef, mimeType: 'application/octet-stream' },
+        },
       }],
     })).toThrow('expected an image MIME type');
   });

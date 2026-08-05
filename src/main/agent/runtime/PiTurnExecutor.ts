@@ -29,12 +29,13 @@ import type {
   SkillInvocationContextPayload,
   SubagentExecutionState,
   ThreadItem,
+  ThreadImageArtifactReference,
   ThreadItemOutputReference,
   Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
 import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
-import { decodeThreadContextPayload } from '../../../core/agent/codec';
+import { decodeThreadContextPayload, decodeThreadImageArtifactReference } from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
@@ -66,6 +67,8 @@ import {
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
 import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
+import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
+import { createImageArtifactReference, ImageObservationNormalizationError } from '../imageArtifacts';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
   ThreadResourceQuotaError,
@@ -1457,6 +1460,8 @@ async function dynamicOutput(
     imageByteLimit: 0,
     callByteLimit: 0,
     quotaExceeded: 0,
+    dimensionsUnavailable: 0,
+    normalizationFailed: 0,
   };
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
@@ -1486,25 +1491,50 @@ async function dynamicOutput(
         omittedImages.invalidMimeType += 1;
         continue;
       }
-      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
-        if (error instanceof ThreadResourceQuotaError) return null;
+      const observationBytes = Buffer.from(part.data, 'base64');
+      const observationDimensions = readAgentImageDimensions(observationBytes, mimeType);
+      if (!observationDimensions) {
+        omittedImages.dimensionsUnavailable += 1;
+        continue;
+      }
+      const persistedArtifact = toolImageArtifact(item.namespace, item.tool, result, sourceImageIndex);
+      const canonicalObservation = persistedArtifact
+        && persistedArtifact.observation.mimeType === mimeType
+        && persistedArtifact.observation.byteLength === observationBytes.byteLength
+        && persistedArtifact.geometry.observationWidth === observationDimensions.width
+        && persistedArtifact.geometry.observationHeight === observationDimensions.height
+        ? await context.readResource(persistedArtifact.observation).catch(() => null)
+        : null;
+      if (canonicalObservation?.equals(observationBytes)) {
+        persistedImageBytes += measurement.byteLength;
+        content.push({ type: 'image', artifactRef: persistedArtifact! });
+        persistedImages += 1;
+        continue;
+      }
+      const persisted = await context.persistOutputImage(observationBytes, mimeType).catch((error: unknown) => {
+        if (error instanceof ThreadResourceQuotaError) return 'quotaExceeded' as const;
+        if (error instanceof ImageObservationNormalizationError) return 'normalizationFailed' as const;
         throw error;
       });
-      if (!promptImage) {
-        omittedImages.quotaExceeded += 1;
+      if (persisted === 'quotaExceeded' || persisted === 'normalizationFailed') {
+        omittedImages[persisted] += 1;
         continue;
       }
       persistedImageBytes += measurement.byteLength;
       const existingPath = toolImagePath(item.namespace, item.tool, result, sourceImageIndex);
-      if (existingPath) {
-        content.push({
-          type: 'image',
-          source: { kind: 'localFile', path: existingPath },
-          promptImage,
-        });
-      } else {
-        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
-      }
+      const artifactRef = createImageArtifactReference({
+        retention: existingPath ? 'external' : 'observationOnly',
+        original: existingPath ? { kind: 'localFile', path: existingPath } : null,
+        observation: persisted.observation,
+        sourceDimensions: toolImageSourceDimensions(
+          item.namespace,
+          item.tool,
+          result,
+          persisted.sourceDimensions,
+        ),
+        observationDimensions: persisted.observationDimensions,
+      });
+      content.push({ type: 'image', artifactRef });
       persistedImages += 1;
     }
   }
@@ -1558,13 +1588,53 @@ function toolImagePath(
   return null;
 }
 
+function toolImageArtifact(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  imageIndex: number,
+): ThreadImageArtifactReference | null {
+  if (toolNamespace !== null || toolName !== 'generate_image') return null;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !Array.isArray(details.data.images)) return null;
+  const image = details.data.images.find((candidate) => (
+    isRecord(candidate) && candidate.previewIndex === imageIndex
+  ));
+  if (!isRecord(image) || image.artifactRef === undefined) return null;
+  try {
+    return decodeThreadImageArtifactReference(image.artifactRef, 'generateImage.artifactRef');
+  } catch {
+    return null;
+  }
+}
+
+function toolImageSourceDimensions(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  fallback: { readonly width: number; readonly height: number },
+): { readonly width: number; readonly height: number } {
+  if (toolNamespace !== null || toolName !== 'file_read') return fallback;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !isRecord(details.data.file)) return fallback;
+  const dimensions = details.data.file.sourceDimensions;
+  if (!isRecord(dimensions)) return fallback;
+  return typeof dimensions.width === 'number' && typeof dimensions.height === 'number'
+    && Number.isSafeInteger(dimensions.width) && dimensions.width > 0
+    && Number.isSafeInteger(dimensions.height) && dimensions.height > 0
+    ? { width: dimensions.width, height: dimensions.height }
+    : fallback;
+}
+
 type ImageOmissionReason =
   | 'countLimit'
   | 'invalidBase64'
   | 'invalidMimeType'
   | 'imageByteLimit'
   | 'callByteLimit'
-  | 'quotaExceeded';
+  | 'quotaExceeded'
+  | 'dimensionsUnavailable'
+  | 'normalizationFailed';
 
 function dynamicImageMimeType(value: unknown): string | null {
   if (value === undefined) return 'image/png';

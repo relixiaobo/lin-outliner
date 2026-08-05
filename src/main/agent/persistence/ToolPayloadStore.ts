@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
+import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   MAX_MANAGED_ATTACHMENT_BYTES,
@@ -18,6 +18,7 @@ import {
   type ThreadContextPayloadReference,
   type ThreadId,
   type ThreadItemOutputReference,
+  type ThreadImageArtifactReference,
   type ThreadResourceReference,
   type TurnDiagnosticsPayload,
   type TurnDiagnosticsPayloadReference,
@@ -50,6 +51,11 @@ const CONTEXT_DIR = 'context';
 const TURN_DIAGNOSTICS_DIR = 'turn-diagnostics';
 const RESOURCE_DIR = 'resources';
 const STAGING_DIR = '.staging';
+
+export const THREAD_IMAGE_RETENTION_TARGET_BYTES = 5 * 1024 * 1024 * 1024;
+export const THREAD_IMAGE_RETENTION_SOFT_BYTES = 6 * 1024 * 1024 * 1024;
+export const THREAD_IMAGE_RETENTION_MIN_ORIGINAL_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const RESOURCE_ACCESS_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 export const MAX_TOOL_PAYLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS = Math.ceil(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4;
@@ -92,6 +98,38 @@ export interface WrittenThreadResource {
   readonly created: boolean;
 }
 
+export interface ThreadImageRetentionInventory {
+  readonly artifacts: readonly ThreadImageArtifactReference[];
+  readonly protectedResources: readonly ThreadResourceReference[];
+}
+
+export interface ToolPayloadStoreOptions {
+  readonly now?: () => number;
+  readonly imageRetention?: {
+    readonly targetBytes: number;
+    readonly softBytes: number;
+    readonly hardBytes: number;
+    readonly minOriginalAgeMs: number;
+  };
+  readonly resourceAccessTouchIntervalMs?: number;
+}
+
+interface ImageRetentionRole {
+  readonly ref: ThreadResourceReference;
+  protected: boolean;
+  observation: boolean;
+  tieredOriginalCreatedAt: number | null;
+}
+
+interface ImageRetentionCandidate {
+  readonly ref: ThreadResourceReference;
+  readonly path: string;
+  readonly byteLength: number;
+  readonly lastAccessedAt: number;
+  readonly createdAt: number;
+  readonly identity: ResourceFileIdentity;
+}
+
 export class ThreadResourceQuotaError extends Error {
   constructor(message = 'Managed attachment exceeds the Thread storage quota.') {
     super(message);
@@ -103,8 +141,29 @@ export class ToolPayloadStore {
   private readonly pendingUploads = new Map<string, PendingResourceUpload>();
   private readonly resourceOperationTails = new Map<ThreadId, Promise<void>>();
   private readonly verifiedResourceFiles = new Map<string, ResourceFileIdentity>();
+  private readonly now: () => number;
+  private readonly imageRetention: NonNullable<ToolPayloadStoreOptions['imageRetention']>;
+  private readonly resourceAccessTouchIntervalMs: number;
+  private imageRetentionInventory: ((threadId: ThreadId) => ThreadImageRetentionInventory) | null = null;
 
-  constructor(private readonly rootPath: string) {}
+  constructor(private readonly rootPath: string, options: ToolPayloadStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.imageRetention = options.imageRetention ?? {
+      targetBytes: THREAD_IMAGE_RETENTION_TARGET_BYTES,
+      softBytes: THREAD_IMAGE_RETENTION_SOFT_BYTES,
+      hardBytes: MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
+      minOriginalAgeMs: THREAD_IMAGE_RETENTION_MIN_ORIGINAL_AGE_MS,
+    };
+    this.resourceAccessTouchIntervalMs = options.resourceAccessTouchIntervalMs
+      ?? RESOURCE_ACCESS_TOUCH_INTERVAL_MS;
+    validateImageRetentionPolicy(this.imageRetention, this.resourceAccessTouchIntervalMs);
+  }
+
+  setImageRetentionInventoryProvider(
+    provider: (threadId: ThreadId) => ThreadImageRetentionInventory,
+  ): void {
+    this.imageRetentionInventory = provider;
+  }
 
   async initialize(): Promise<void> {
     const root = await this.existingManagedDirectory(null);
@@ -335,6 +394,7 @@ export class ToolPayloadStore {
       }
       this.verifiedResourceFiles.set(key, verified);
     }
+    await this.touchResourceAccess(threadId, ref, canonicalPath, fileStat);
     return canonicalPath;
   }
 
@@ -441,6 +501,7 @@ export class ToolPayloadStore {
           if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
         });
       }
+      await this.applyImageRetentionUnlocked(threadId, 0);
     });
   }
 
@@ -958,9 +1019,143 @@ export class ToolPayloadStore {
     const activeBytes = [...this.pendingUploads.values()]
       .filter((upload) => upload.threadId === threadId)
       .reduce((total, upload) => total + upload.expectedBytes, 0);
-    const storedBytes = await this.managedResourceBytes(threadId);
-    if (storedBytes + activeBytes + additionalBytes > MAX_THREAD_MANAGED_ATTACHMENT_BYTES) {
+    const storedBytes = await this.applyImageRetentionUnlocked(
+      threadId,
+      activeBytes + additionalBytes,
+    );
+    if (storedBytes + activeBytes + additionalBytes > this.imageRetention.hardBytes) {
       throw new ThreadResourceQuotaError();
+    }
+  }
+
+  private async applyImageRetentionUnlocked(
+    threadId: ThreadId,
+    reservedBytes: number,
+  ): Promise<number> {
+    let storedBytes = await this.managedResourceBytes(threadId);
+    if (!this.imageRetentionInventory) return storedBytes;
+    let inventory: ThreadImageRetentionInventory;
+    try {
+      inventory = this.imageRetentionInventory(threadId);
+    } catch {
+      return storedBytes;
+    }
+    const candidates = await this.imageRetentionCandidates(threadId, inventory);
+    const projectedBytes = () => storedBytes + reservedBytes;
+    if (projectedBytes() > this.imageRetention.softBytes) {
+      const oldestAllowed = this.now() - this.imageRetention.minOriginalAgeMs;
+      storedBytes = await this.reclaimImageCandidatesUntil(
+        threadId,
+        candidates.tieredOriginals.filter((candidate) => candidate.createdAt <= oldestAllowed),
+        storedBytes,
+        Math.max(0, this.imageRetention.targetBytes - reservedBytes),
+      );
+    }
+    if (projectedBytes() > this.imageRetention.hardBytes) {
+      storedBytes = await this.reclaimImageCandidatesUntil(
+        threadId,
+        candidates.tieredOriginals,
+        storedBytes,
+        Math.max(0, this.imageRetention.hardBytes - reservedBytes),
+      );
+    }
+    if (projectedBytes() > this.imageRetention.hardBytes) {
+      storedBytes = await this.reclaimImageCandidatesUntil(
+        threadId,
+        candidates.observations,
+        storedBytes,
+        Math.max(0, this.imageRetention.hardBytes - reservedBytes),
+      );
+    }
+    return storedBytes;
+  }
+
+  private async imageRetentionCandidates(
+    threadId: ThreadId,
+    inventory: ThreadImageRetentionInventory,
+  ): Promise<{
+    readonly tieredOriginals: ImageRetentionCandidate[];
+    readonly observations: ImageRetentionCandidate[];
+  }> {
+    const roles = imageRetentionRoles(inventory);
+    const tieredOriginals: ImageRetentionCandidate[] = [];
+    const observations: ImageRetentionCandidate[] = [];
+    for (const role of roles.values()) {
+      if (role.protected) continue;
+      const candidate = await this.imageRetentionCandidate(threadId, role);
+      if (!candidate) continue;
+      if (role.observation) observations.push(candidate);
+      else if (role.tieredOriginalCreatedAt !== null) tieredOriginals.push(candidate);
+    }
+    tieredOriginals.sort(compareImageRetentionCandidates);
+    observations.sort(compareImageRetentionCandidates);
+    return { tieredOriginals, observations };
+  }
+
+  private async imageRetentionCandidate(
+    threadId: ThreadId,
+    role: ImageRetentionRole,
+  ): Promise<ImageRetentionCandidate | null> {
+    const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR, role.ref.id);
+    if (!directory) return null;
+    const path = join(directory, role.ref.fileName);
+    const fileStat = await lstat(path).catch(() => null);
+    if (!fileStat || !isStoredResourceFile(fileStat, role.ref.byteLength)) return null;
+    return {
+      ref: role.ref,
+      path,
+      byteLength: fileStat.size,
+      lastAccessedAt: Number.isFinite(fileStat.atimeMs) && fileStat.atimeMs > 0
+        ? fileStat.atimeMs
+        : fileStat.mtimeMs,
+      createdAt: role.tieredOriginalCreatedAt ?? 0,
+      identity: resourceFileIdentity(fileStat),
+    };
+  }
+
+  private async reclaimImageCandidatesUntil(
+    threadId: ThreadId,
+    candidates: readonly ImageRetentionCandidate[],
+    storedBytes: number,
+    targetStoredBytes: number,
+  ): Promise<number> {
+    let remainingBytes = storedBytes;
+    for (const candidate of candidates) {
+      if (remainingBytes <= targetStoredBytes) break;
+      const current = await lstat(candidate.path).catch(() => null);
+      if (!current
+        || !isStoredResourceFile(current, candidate.byteLength)
+        || !sameResourceFileIdentity(candidate.identity, resourceFileIdentity(current))) continue;
+      try {
+        await rm(candidate.path, { force: true });
+        this.verifiedResourceFiles.delete(resourceFileKey(threadId, candidate.ref));
+        await rmdir(dirname(candidate.path)).catch((error: unknown) => {
+          if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
+        });
+        remainingBytes -= candidate.byteLength;
+      } catch {
+        // Reclamation is best-effort. Capacity admission still fails closed below.
+      }
+    }
+    return remainingBytes;
+  }
+
+  private async touchResourceAccess(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+    path: string,
+    fileStat: Stats,
+  ): Promise<void> {
+    const now = this.now();
+    if (now - fileStat.atimeMs < this.resourceAccessTouchIntervalMs) return;
+    try {
+      await utimes(path, new Date(now), fileStat.mtime);
+      const touched = await lstat(path);
+      if (isStoredResourceFile(touched, ref.byteLength)) {
+        this.verifiedResourceFiles.set(resourceFileKey(threadId, ref), resourceFileIdentity(touched));
+      }
+    } catch {
+      // Access accounting must not make a valid rendition unreadable.
     }
   }
 }
@@ -986,6 +1181,76 @@ export function measureToolPayloadImage(
   return byteLength <= maxBytes
     ? { ok: true, byteLength }
     : { ok: false, reason: 'imageByteLimit' };
+}
+
+function imageRetentionRoles(inventory: ThreadImageRetentionInventory): Map<string, ImageRetentionRole> {
+  const roles = new Map<string, ImageRetentionRole>();
+  const roleFor = (ref: ThreadResourceReference): ImageRetentionRole => {
+    validateResourceReference(ref);
+    const key = resourceStorageKey(ref);
+    const existing = roles.get(key);
+    if (existing) {
+      if (existing.ref.mimeType !== ref.mimeType || existing.ref.byteLength !== ref.byteLength) {
+        existing.protected = true;
+      }
+      return existing;
+    }
+    const role: ImageRetentionRole = {
+      ref,
+      protected: false,
+      observation: false,
+      tieredOriginalCreatedAt: null,
+    };
+    roles.set(key, role);
+    return role;
+  };
+  for (const ref of inventory.protectedResources) roleFor(ref).protected = true;
+  for (const artifact of inventory.artifacts) {
+    roleFor(artifact.observation).observation = true;
+    if (artifact.original?.kind !== 'threadPayload') continue;
+    const original = roleFor(artifact.original.ref);
+    if (artifact.retention === 'durable') {
+      original.protected = true;
+    } else if (artifact.retention === 'tiered') {
+      original.tieredOriginalCreatedAt = Math.max(
+        original.tieredOriginalCreatedAt ?? 0,
+        artifact.createdAt,
+      );
+    }
+  }
+  return roles;
+}
+
+function compareImageRetentionCandidates(
+  left: ImageRetentionCandidate,
+  right: ImageRetentionCandidate,
+): number {
+  return left.lastAccessedAt - right.lastAccessedAt
+    || right.byteLength - left.byteLength
+    || left.createdAt - right.createdAt
+    || resourceStorageKey(left.ref).localeCompare(resourceStorageKey(right.ref));
+}
+
+function validateImageRetentionPolicy(
+  policy: NonNullable<ToolPayloadStoreOptions['imageRetention']>,
+  accessTouchIntervalMs: number,
+): void {
+  const values = [
+    policy.targetBytes,
+    policy.softBytes,
+    policy.hardBytes,
+    policy.minOriginalAgeMs,
+    accessTouchIntervalMs,
+  ];
+  if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error('Image retention policy values must be non-negative safe integers.');
+  }
+  if (!(policy.targetBytes < policy.softBytes && policy.softBytes < policy.hardBytes)) {
+    throw new Error('Image retention watermarks must satisfy target < soft < hard.');
+  }
+  if (policy.hardBytes > MAX_THREAD_MANAGED_ATTACHMENT_BYTES) {
+    throw new Error('Image retention hard watermark exceeds the Thread storage quota.');
+  }
 }
 
 function isAlreadyExists(error: unknown): boolean {

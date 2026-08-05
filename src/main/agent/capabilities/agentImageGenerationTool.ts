@@ -18,6 +18,7 @@ import {
   type FileReferenceSegment,
 } from '../../../core/referenceMarkup';
 import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../../core/agentAttachmentLimits';
+import type { ThreadImageArtifactReference } from '../../../core/agent/protocol';
 import { measureToolPayloadImage } from '../persistence/ToolPayloadStore';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
@@ -50,7 +51,7 @@ export interface AgentImageGenerationRuntime {
     options: GenerateImageRuntimeOptions;
   }): AgentImageGenerationOptionValidationIssue | null;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
-  writeGeneratedImage(input: {
+  persistGeneratedImage(input: {
     toolCallId: string;
     index: number;
     providerId: string;
@@ -58,11 +59,12 @@ export interface AgentImageGenerationRuntime {
     data: Buffer;
     mimeType: string;
     prompt: string;
-  }): Promise<{ path: string }>;
-  preparePromptImage(input: {
-    filePath: string;
     signal?: AbortSignal;
-  }): Promise<AgentImageGenerationInputImage>;
+  }): Promise<{
+    readonly artifactRef: ThreadImageArtifactReference;
+    readonly path: string;
+    readonly observation: AgentImageGenerationInputImage;
+  }>;
   generateImages(input: {
     providerId: string;
     modelId: string;
@@ -99,6 +101,7 @@ export interface GenerateImageData {
 
 export interface GeneratedImageResult {
   providerIndex: number;
+  artifactRef: ThreadImageArtifactReference;
   path: string;
   mimeType: string;
   byteLength: number;
@@ -305,9 +308,9 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
             warnings.push(generatedImageSourceWarning(index, 'invalidBase64'));
             continue;
           }
-          let saved: { path: string };
+          let saved: Awaited<ReturnType<AgentImageGenerationRuntime['persistGeneratedImage']>>;
           try {
-            saved = await runtime.writeGeneratedImage({
+            saved = await runtime.persistGeneratedImage({
               toolCallId,
               index,
               providerId: selected.providerId,
@@ -315,6 +318,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
               data,
               mimeType,
               prompt: params.prompt,
+              signal,
             });
           } catch (error) {
             signal?.throwIfAborted();
@@ -325,23 +329,18 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           const dimensions = readAgentImageDimensions(data, mimeType);
           const generated: GeneratedImageResult = {
             providerIndex: index + 1,
+            artifactRef: saved.artifactRef,
             path: saved.path,
             mimeType,
             byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
           };
-          try {
-            const preview = await runtime.preparePromptImage({ filePath: saved.path, signal });
-            generated.previewIndex = extraContent.length;
-            extraContent.push({
-              type: 'image',
-              data: preview.data.toString('base64'),
-              mimeType: preview.mimeType,
-            });
-          } catch (error) {
-            signal?.throwIfAborted();
-            warnings.push(`Generated image ${index + 1} was saved at ${saved.path}, but its model preview is unavailable: ${errorMessage(error)}`);
-          }
+          generated.previewIndex = extraContent.length;
+          extraContent.push({
+            type: 'image',
+            data: saved.observation.data.toString('base64'),
+            mimeType: saved.observation.mimeType,
+          });
           images.push(generated);
         }
 
@@ -498,13 +497,30 @@ function noImageModelMessage(requested: string | undefined): string {
 
 function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
-    images: data.images.map((image) => ({
-      providerIndex: image.providerIndex,
-      ...(image.path ? { path: image.path } : {}),
-      mimeType: image.mimeType,
-      byteLength: image.byteLength,
-      ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
-    })),
+    images: data.images.map((image) => {
+      const geometry = image.artifactRef.geometry;
+      return {
+        providerIndex: image.providerIndex,
+        artifactId: image.artifactRef.id,
+        path: image.path,
+        mimeType: image.mimeType,
+        byteLength: image.byteLength,
+        ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
+        observationDimensions: {
+          width: geometry.observationWidth,
+          height: geometry.observationHeight,
+        },
+        sourceDimensions: {
+          width: geometry.sourceWidth,
+          height: geometry.sourceHeight,
+        },
+        sourcePixelsPerObservationPixel: {
+          x: geometry.sourceWidth / geometry.observationWidth,
+          y: geometry.sourceHeight / geometry.observationHeight,
+        },
+        observationToSource: geometry.observationToSource,
+      };
+    }),
     ...(data.text.length ? { text: data.text } : {}),
   };
 }
@@ -551,7 +567,7 @@ function generatedImageInstructions(imageCount: number, previewCount: number): s
   const previews = previewCount > 0
     ? 'Available previews are already shown to the user; do not render them again in the final answer.'
     : 'No model preview is available; do not claim to have inspected the image.';
-  return `${subject} saved at ${location}. ${previews} Each path is a weak scratch-file reference that may expire. If an image belongs somewhere in particular, copy it there now.`;
+  return `${subject} saved at ${location}. ${previews} Each artifact id is stable; its local path is a rematerializable access hint and can become unavailable under storage retention. If an image belongs somewhere in particular, copy it there now.`;
 }
 
 function formatMegabytes(bytes: number): string {

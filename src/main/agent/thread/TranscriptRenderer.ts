@@ -339,7 +339,7 @@ function dynamicTextOutput(item: DynamicToolCallThreadItem): string | null {
 /** The identity line the provider sees, from the provider's own helper — never a copy of it. */
 function imageOutputLines(item: DynamicToolCallThreadItem): string[] {
   return (item.contentItems ?? []).flatMap((part) => (part.type === 'image'
-    ? [dynamicToolImageIdentity(part, 'promptImage' in part ? part.promptImage : part.source.ref)]
+    ? [dynamicToolImageIdentity(part)]
     : []));
 }
 

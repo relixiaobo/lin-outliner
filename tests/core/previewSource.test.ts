@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
+import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadBytesResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 describe('preview source commands', () => {
   let root: string;
@@ -157,6 +158,78 @@ describe('preview source commands', () => {
         target: { ...target, path: '/tmp/substituted.png' },
       }, context) as PreviewReadTextResult;
       expect(substituted).toEqual({ text: null, error: 'missing' });
+    } finally {
+      await rm(managedRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves an image artifact by canonical identity and rendition MIME', async () => {
+    const managedRoot = await mkdtemp(join(tmpdir(), 'lin-preview-image-artifact-test-'));
+    try {
+      const observationBytes = Buffer.from('png observation bytes');
+      const observedPath = join(managedRoot, 'stable-artifact-path');
+      await writeFile(observedPath, observationBytes);
+      const observedStats = await stat(observedPath);
+      const artifact = createImageArtifactReference({
+        createdAt: 1,
+        retention: 'observationOnly',
+        original: null,
+        observation: {
+          id: 'b'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: observationBytes.byteLength,
+          fileName: 'prompt.png',
+        },
+        sourceDimensions: { width: 3_840, height: 2_160 },
+        observationDimensions: { width: 1_920, height: 1_080 },
+      });
+      const streamCalls: Array<{ path: string; mimeType: string }> = [];
+      const context = previewContext({
+        threadImageArtifactFile: async (threadId, candidate) => (
+          threadId === 'thread-1' && candidate.id === artifact.id
+            ? {
+                entryKind: 'file',
+                path: observedPath,
+                stats: observedStats,
+                mimeType: 'image/png',
+                acceptedPathHints: [artifact.id, artifact.observation.fileName],
+              }
+            : null
+        ),
+        threadManagedFileStreamUrl: async (path, mimeType) => {
+          streamCalls.push({ path, mimeType });
+          return `${PREVIEW_LOCAL_URL_SCHEME}://artifact-token`;
+        },
+      });
+      const target = {
+        kind: 'local-file' as const,
+        path: artifact.id,
+        entryKind: 'file' as const,
+        label: 'Generated chart',
+        threadId: 'thread-1',
+        imageArtifactRef: artifact,
+      };
+
+      const resolved = await handlePreviewCommand('preview_resolve_source', { target }, context) as PreviewResolveSourceResult;
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        name: 'Generated chart',
+        ext: 'png',
+        mimeType: 'image/png',
+        displayPath: observedPath,
+        streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://artifact-token`,
+        target: { threadId: 'thread-1', imageArtifactRef: artifact },
+      });
+      expect(streamCalls).toEqual([{ path: observedPath, mimeType: 'image/png' }]);
+
+      const bytes = await handlePreviewCommand('preview_read_bytes', { target }, context) as PreviewReadBytesResult;
+      expect(Buffer.from(bytes.bytes!)).toEqual(observationBytes);
+      expect(bytes.mimeType).toBe('image/png');
+
+      const substituted = await handlePreviewCommand('preview_resolve_source', {
+        target: { ...target, path: '/tmp/substituted.png' },
+      }, context) as PreviewResolveSourceResult;
+      expect(substituted.source).toBeNull();
     } finally {
       await rm(managedRoot, { recursive: true, force: true });
     }

@@ -4,6 +4,7 @@ import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrier
 import { RUNTIME_FAILURE_ERROR_CODE,normalizeTurnErrorCode,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
+import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
 import type { DocumentProjection } from '../../../core/types';
 import { planContextCompaction } from '../context/ContextCompaction';
 import { assertContextPayloadDependencies } from '../context/contextDependencies';
@@ -12,10 +13,12 @@ import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdm
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
+import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
+import { ImageObservationNormalizationError } from '../imageArtifacts';
 import { cappedChildPoolId,requestPoolIdForTurn,type SubagentRequestLedger,type SubagentRequestMember,type SubagentRequestPool,type SubagentRequestPoolId } from '../persistence/SubagentRequestLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
-import type { StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
+import type { OutputImageObservationNormalizer,PreparedOutputImageObservation,StagedContextCompaction,SteeredTurnInput,TurnExecutionResult,TurnExecutor } from '../runtime/types';
 import { SubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
 import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
 import type { SkillAdmissionResolution,SkillAdmissionResolutionInput } from '../ThreadService';
@@ -66,6 +69,7 @@ export class TurnLifecycle {
     private readonly resolveReferencedAsset: ((assetId: string) => Promise<import('../capabilities/agentReferencedAssets').ReferencedAssetResolution | null>) | undefined,
     private readonly resolveSkillAdmission: (input: SkillAdmissionResolutionInput) => Promise<SkillAdmissionResolution>,
     private readonly resolveRoleCatalog: (cwd: string) => Promise<RoleCatalogContextPayload | null>, private readonly goalUsage: TurnLifecycleGoalUsage,
+    private readonly normalizeOutputImage: OutputImageObservationNormalizer | undefined,
     private readonly now: () => number, private readonly createThreadBusyError: (message: string) => Error,
     private readonly isThreadBusyError: (error: unknown) => boolean,
   ) {}
@@ -980,9 +984,43 @@ export class TurnLifecycle {
           readContext: (ref) => this.core.payloads.readContext(active.threadId, ref),
           readOutput: (ref) => this.core.payloads.readTextReference(active.threadId, ref),
           resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
+          resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
           readResource: (ref) => this.core.payloads.readResource(active.threadId, ref),
-          persistOutputImage: async (dataBase64, mimeType) => {
-            const written = await this.core.payloads.writeImageWithStatus(active.threadId, dataBase64, mimeType);
+          persistOutputImage: async (bytes, mimeType) => {
+            const sourceBytes = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const prepared = this.normalizeOutputImage
+              ? await this.normalizeOutputImage({
+                  bytes: sourceBytes,
+                  mimeType,
+                  signal: active.controller.signal,
+                })
+              : defaultOutputImageObservation(sourceBytes, mimeType);
+            validatePreparedOutputImage(sourceBytes, mimeType, prepared);
+            const observationBytes = Buffer.from(
+              prepared.bytes.buffer,
+              prepared.bytes.byteOffset,
+              prepared.bytes.byteLength,
+            );
+            const written = await this.core.payloads.writeImageWithStatus(
+              active.threadId,
+              observationBytes.toString('base64'),
+              prepared.mimeType,
+            );
+            if (written.created) createdOutputResources.push(written.ref);
+            return {
+              observation: written.ref,
+              observationBytes,
+              sourceDimensions: prepared.sourceDimensions,
+              observationDimensions: prepared.observationDimensions,
+            };
+          },
+          persistOutputResource: async (bytes, mimeType, fileName) => {
+            const written = await this.core.payloads.writeResourceWithStatus(
+              active.threadId,
+              bytes,
+              mimeType,
+              fileName,
+            );
             if (written.created) createdOutputResources.push(written.ref);
             return written.ref;
           },
@@ -1636,6 +1674,71 @@ function initialTurnExecution(
       cost: null,
     },
   };
+}
+
+function defaultOutputImageObservation(bytes: Buffer, mimeType: string) {
+  const dimensions = readAgentImageDimensions(bytes, mimeType);
+  if (!dimensions) {
+    throw new ImageObservationNormalizationError('Tool output image dimensions could not be decoded.');
+  }
+  if (bytes.byteLength > MAX_PROMPT_IMAGE_BYTES) {
+    throw new ImageObservationNormalizationError('Tool output image requires normalization before model admission.');
+  }
+  if (dimensions.width > MAX_PROMPT_IMAGE_DIMENSION || dimensions.height > MAX_PROMPT_IMAGE_DIMENSION) {
+    throw new ImageObservationNormalizationError('Tool output image dimensions require normalization before model admission.');
+  }
+  return {
+    bytes,
+    mimeType,
+    sourceDimensions: dimensions,
+    observationDimensions: dimensions,
+  };
+}
+
+function validatePreparedOutputImage(
+  sourceBytes: Buffer,
+  sourceMimeType: string,
+  prepared: PreparedOutputImageObservation,
+): void {
+  const observationBytes = Buffer.from(
+    prepared.bytes.buffer,
+    prepared.bytes.byteOffset,
+    prepared.bytes.byteLength,
+  );
+  const sourceDimensions = readAgentImageDimensions(sourceBytes, sourceMimeType);
+  const observationDimensions = readAgentImageDimensions(observationBytes, prepared.mimeType);
+  if (
+    !sourceDimensions
+    || !observationDimensions
+    || !validImageDimensions(sourceDimensions)
+    || !validImageDimensions(observationDimensions)
+  ) {
+    throw new ImageObservationNormalizationError('Normalized tool output image dimensions could not be decoded.');
+  }
+  if (
+    sourceDimensions.width !== prepared.sourceDimensions.width
+    || sourceDimensions.height !== prepared.sourceDimensions.height
+    || observationDimensions.width !== prepared.observationDimensions.width
+    || observationDimensions.height !== prepared.observationDimensions.height
+  ) {
+    throw new ImageObservationNormalizationError('Normalized tool output image geometry does not match its bytes.');
+  }
+  if (observationBytes.byteLength === 0 || observationBytes.byteLength > MAX_PROMPT_IMAGE_BYTES) {
+    throw new ImageObservationNormalizationError('Normalized tool output image exceeds the model-input byte budget.');
+  }
+  if (
+    observationDimensions.width > MAX_PROMPT_IMAGE_DIMENSION
+    || observationDimensions.height > MAX_PROMPT_IMAGE_DIMENSION
+  ) {
+    throw new ImageObservationNormalizationError('Normalized tool output image exceeds the model-input dimension budget.');
+  }
+}
+
+function validImageDimensions(dimensions: { readonly width: number; readonly height: number }): boolean {
+  return Number.isSafeInteger(dimensions.width)
+    && dimensions.width > 0
+    && Number.isSafeInteger(dimensions.height)
+    && dimensions.height > 0;
 }
 
 function turnErrorFromError(error: Error): TurnError {

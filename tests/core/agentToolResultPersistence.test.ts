@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { TOOL_RESULT_VERSION } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { persistedToolResultDetails } from '../../src/main/agent/capabilities/agentToolResultPersistence';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 describe('agent tool result persistence', () => {
   test('does not persist generic tool runtime envelopes', () => {
@@ -24,6 +25,7 @@ describe('agent tool result persistence', () => {
   });
 
   test('persists only slim generated image render metadata', () => {
+    const artifactRef = generatedArtifact();
     const details = persistedToolResultDetails({
       toolNamespace: null,
       toolName: 'generate_image',
@@ -40,6 +42,7 @@ describe('agent tool result persistence', () => {
           text: ['provider side text'],
           images: [{
             providerIndex: 1,
+            artifactRef,
             path: '/scratch/generated-images/turn/image-0.png',
             mimeType: 'image/png',
             byteLength: 123,
@@ -66,7 +69,7 @@ describe('agent tool result persistence', () => {
         modelName: 'GPT Image 2',
         images: [{
           providerIndex: 1,
-          path: '/scratch/generated-images/turn/image-0.png',
+          artifactRef,
           mimeType: 'image/png',
           byteLength: 123,
           width: 1024,
@@ -130,3 +133,27 @@ describe('agent tool result persistence', () => {
     })).toBeUndefined();
   });
 });
+
+function generatedArtifact() {
+  return createImageArtifactReference({
+    createdAt: 1,
+    retention: 'tiered',
+    original: {
+      kind: 'threadPayload',
+      ref: {
+        id: 'a'.repeat(64),
+        mimeType: 'image/png',
+        byteLength: 123,
+        fileName: 'original.png',
+      },
+    },
+    observation: {
+      id: 'b'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 100,
+      fileName: 'prompt.png',
+    },
+    sourceDimensions: { width: 1_024, height: 1_024 },
+    observationDimensions: { width: 1_024, height: 1_024 },
+  });
+}

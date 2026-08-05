@@ -6,6 +6,8 @@ import {
   TOOL_RESULT_VERSION,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { decodeThreadImageArtifactReference } from '../../../core/agent/codec';
+import type { ThreadImageArtifactReference } from '../../../core/agent/protocol';
 
 export interface PersistedToolResultDetailsInput {
   toolNamespace: string | null;
@@ -22,7 +24,7 @@ export interface PersistedGeneratedImageDetailsData {
 
 export interface PersistedGeneratedImageDetailsImage {
   providerIndex: number;
-  path: string;
+  artifactRef: ThreadImageArtifactReference;
   mimeType?: string;
   byteLength?: number;
   width?: number;
@@ -70,15 +72,20 @@ function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<Pers
 function persistedGeneratedImage(image: unknown): PersistedGeneratedImageDetailsImage | null {
   if (!isRecord(image)) return null;
   const providerIndex = optionalPositiveInteger(image.providerIndex);
-  const path = requiredString(image.path);
-  if (providerIndex === undefined || !path) return null;
+  if (providerIndex === undefined || image.artifactRef === undefined) return null;
+  let artifactRef: ThreadImageArtifactReference;
+  try {
+    artifactRef = decodeThreadImageArtifactReference(image.artifactRef, 'generatedImage.artifactRef');
+  } catch {
+    return null;
+  }
   const mimeType = optionalString(image.mimeType);
   const byteLength = optionalPositiveNumber(image.byteLength);
   const width = optionalPositiveNumber(image.width);
   const height = optionalPositiveNumber(image.height);
   return {
     providerIndex,
-    path,
+    artifactRef,
     ...(mimeType ? { mimeType } : {}),
     ...(byteLength !== undefined ? { byteLength } : {}),
     ...(width !== undefined ? { width } : {}),
