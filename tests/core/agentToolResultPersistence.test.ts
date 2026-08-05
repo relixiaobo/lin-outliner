@@ -121,6 +121,23 @@ describe('agent tool result persistence', () => {
     });
   });
 
+  test('preserves built-in generated-image results when no image was saved', () => {
+    const text = JSON.stringify({
+      ok: true,
+      tool: 'generate_image',
+      status: 'partial',
+      data: { images: [] },
+      warnings: ['Generated image 1 could not be saved.'],
+      instructions: 'No generated image was saved. Follow the warnings before retrying.',
+    });
+
+    expect(persistedToolResultText({
+      toolNamespace: null,
+      toolName: 'generate_image',
+      text,
+    })).toBe(text);
+  });
+
   test('does not persist details for namespaced tools that share the generate_image name', () => {
     expect(persistedToolResultDetails({
       toolNamespace: 'myplugin',

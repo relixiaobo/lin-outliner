@@ -56,6 +56,7 @@ export function persistedToolResultText(input: {
       || !isRecord(visible.data)
       || !Array.isArray(visible.data.images)
     ) return input.text;
+    if (visible.data.images.length === 0) return input.text;
     const images = visible.data.images.map((image) => {
       if (!isRecord(image)) return image;
       const persisted = { ...image };
