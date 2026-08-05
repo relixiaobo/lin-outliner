@@ -12,6 +12,58 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **The unified command surface now starts from one action registry (PR #485, cc,
+  plan-only)** — replaces the former `Target × Verb`, habit-learning, and
+  reversibility-tier design with two independently complete implementation PRs
+  split where the compiler and a differential test can judge the contract. PR 1
+  moves the full node context menu onto compiling core invocation/evaluation/
+  presentation/request/effect contracts, preserves its behaviour against the old
+  path as an oracle, and fixes the *Move to* picker that currently limits unranked
+  document-order matches. PR 2 renders the registry as the searchable command
+  surface, adds capture and agent handoff, and retires the old global `Cmd+K`
+  palette. Main owns action admission, confirmation/execution phases, replay and
+  delivery outcomes; renderers may name an action but cannot author its effects.
+  Capture lands in Today, there is no browser extension or screenshot tier, and a
+  future rich-page reader is an explicit post-choice main API rather than a network
+  implementation on the ambient hotkey path. Fifteen review rounds closed the
+  cross-renderer lifecycle, confirmation, result-delivery, retrieval-order, and
+  runtime-binding contradictions before implementation; both feature PRs remain
+  unclaimed. The source edits in this plan are comment-only and do not change
+  behaviour.
+
+- **Generated images as durable Thread resources plan (PR #489, cc-2, plan-only)**
+  — boards the tool-agnostic artifact work `agent-browser-control` left behind
+  when it closed as `superseded`, with generated images as the first complete
+  consumer. `generate_image` writes bytes into the agent scratch root and returns
+  a path relative to a root the model is never told about, which produces three
+  defects from one cause: the model **never sees its own output** (the tool
+  passes no tool-result `extraContent`, so no image content item is ever created
+  — and `toolImagePath`'s `generate_image` branch, which only runs inside the
+  branch that image would have triggered, is therefore unreachable dead code);
+  the model **cannot act on that output**, because `file_write` is text-only
+  while `file_read` and `bash` resolve relative paths against the workdir, so
+  "generate an image and put it in Downloads" fails — and worse, sometimes
+  half-works by stumbling into `../agent-scratch/…` until `LIN_AGENT_LOCAL_ROOT`
+  moves the workdir; and history holds a durable reference into a directory the
+  code itself declares ephemeral, which is why `pruneAgentScratch` carries a
+  `generated-images` exemption. The plan has the producer persist → resolve a
+  turn-scoped observation path → emit the bytes as `extraContent`, exactly as
+  `file_read` does, with the executor's second write a content-addressed no-op.
+  Dependency tracking already flows through `contentItems`, so **no
+  `protocol.ts` / `codec.ts` change**; `markdownImage` is retired rather than
+  re-schemed, keeping `referenceMarkup.ts` out entirely. Its one piece of real
+  plumbing moves all five image gates — count, per-image 10 MB, per-call 20 MB,
+  mime shape, thread quota — behind a single call-scoped admission call both
+  sides consult, so an image cannot be admitted producer-side, published to the
+  model, and then dropped executor-side into an orphaned resource with a dead
+  path. Caps degrade (persist what fits, report the rest) rather than fail
+  closed. Four gate rounds, every claim traced to the call that actually runs:
+  the first version routed through a `resourceRefs` field tool items do not
+  have, and the gate's own counter — that the bytes were already persisted —
+  was equally wrong, because the executor branch holding that write never fires
+  for this tool. Success signal at implementation: the `pruneAgentScratch`
+  special case disappears. Lands after PR #483.
+
 - **Canonical tool-call history plan (PR #482, codex-3, plan-only)** — boards the
   fix for a defect that made the agent teach itself to fail. Tool history is
   currently reverse-engineered from the presentation Item rather than recorded:
@@ -73,6 +125,60 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **The reading column is centered again when scrollbars take space (PR #479,
+  codex)** — the outliner panel reserved its scrollbar gutter with
+  `scrollbar-gutter: stable`, which reserves the inline-end edge only. With
+  overlay scrollbars (the macOS default) that costs nothing, but with
+  Appearance → "Show scroll bars: Always", on Windows, or on a CI runner, the
+  gutter is permanently reserved and the 720px reading column sat ~5–6px left of
+  the pane's visual center in every wide single-pane window. It is now
+  `stable both-edges`, so the gutters are symmetric and the column centers against
+  the panel's visible border box. The four e2e guards that had failed every CI
+  macOS sample while never failing locally are fixed with it: three of them
+  measured material and HUD colors while GitHub's macOS images forced
+  `prefers-reduced-transparency: reduce`, flipping the `a11y.css` override block
+  underneath them, so the suite gained `tests/e2e/emulatedMedia.ts` — Playwright's
+  own `emulateMedia` cannot set that preference, so the helper pins all five
+  visual preferences over CDP and verifies they applied. The guards now assert
+  against the visible border box and pin the computed `scrollbar-gutter`, and the
+  token probe throws when a token is missing instead of silently inheriting a
+  false match.
+
+- **Preview header actions stay beside Close in split layouts (PR #484, codex)** —
+  with more than one pane open, an EPUB or URL preview pulled its Translate and
+  More controls up next to the filename while the `×` sat alone at the far right.
+  The pane-reorder work had narrowed the breadcrumb's drag-to-reorder handle to the
+  crumb content, and the preview actions — rendered as breadcrumb children — went
+  inside that fit-content wrapper with it. The shared pane breadcrumb now has a
+  trailing-actions slot outside the reorder handle, so pane actions and Close share
+  the right-hand column while the empty header space between the crumbs and that
+  group stays window-drag. One drag detail the fix also closes: the 4px gap between
+  the two icon buttons belonged to the window drag region even though both buttons
+  opted out, so a press landing a couple of pixels off started a window drag instead
+  of hitting the button — a control opting out of the drag region is not enough, its
+  group's gaps have to as well. The regression test reads that gap from the layout
+  token rather than a hardcoded tolerance.
+
+- **The agent toggle collapses the dock again (PR #481, codex-2)** — clicking the
+  fixed top-right toggle did nothing in the real macOS window, though it worked in
+  every browser-based test. `.thread-dock-header` declared
+  `-webkit-app-region: drag` from a sibling DOM subtree whose box extends under the
+  toggle, and macOS consumed the press as title-bar drag before React ever saw a
+  click. Electron only carves a `no-drag` control out of a drag region reliably when
+  that control is a DOM *descendant* of the region — a rule `shell.css` already
+  documented and this file was quietly contradicting. Dragging goes back to the right
+  window-chrome zone, which owns it. One deliberate trade: with the dock open, the
+  ~290px of header band to the left of that zone no longer drags the window or
+  double-click-zooms; restoring it needs an inner spacer bounded to the header's
+  content box, recorded in the plan as a follow-up. The Thread-list trigger also drops
+  its redundant leading agent glyph and now shows its chevron at rest instead of only
+  on hover, so it reads as a list trigger without being pointed at. The regression
+  guard is geometric rather than selector-pinned: no element carrying
+  `app-region: drag` outside the window-chrome subtrees may intersect the toggle's
+  box, so the next overlapping element gets caught too. Native macOS click
+  verification remains outstanding — Chromium ignores app regions, so no
+  browser-based test can prove this class of bug fixed.
+
 - **Closing a menu in the agent panel no longer bounces your focus to the
   composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
   Escape put focus back on the trigger, as it should, and then a frame later the
@@ -87,6 +193,34 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   menus do and what keyboard users need.
 
 ### Changed
+
+- **Connections keep up with their providers (PR #487, codex-4)** — the model
+  runtime moved to pi-ai 0.83, which brings the current model catalog and the
+  provider-owned sign-in flow. Signing in is now the provider's own flow rather
+  than one shared script, so device codes, pasted codes, and account pickers all
+  behave the way that provider actually works — and a connection you configured
+  with an API key still opens on its key, not on a sign-in sheet that hides it.
+  Providers whose model list is only known after you connect (Radius, and any
+  future one like it) now fill in: their models load at launch from what was
+  saved last time, refresh when you add a key or sign in, and can be refreshed
+  on demand from the connection's ⋯ menu. Refreshing one connection refreshes
+  only that one. Testing a connection no longer writes anything down — a key you
+  typed but never saved leaves no trace in your model list. Enterprise GitHub
+  Copilot reaches its own host again, on Threads and on page translation.
+
+- **Pick a model, not a provider (PR #478, cc-2)** — the Thread's model control
+  is now one flat list of models across your connections. The model name leads
+  each row; the connection it comes from appears only as a small secondary
+  label, and only when more than one is listed. Connections still bound how many
+  models each contributes, so a long catalog stays collapsed behind its own
+  "show all" (which now says whose models it expands) and a model you have
+  pinned stays visible even when it falls outside that window. The list leads
+  with **Always newest**, which follows your connection's newest model instead
+  of pinning one — choosing it never moves the Thread to a different connection,
+  and it names the model it would switch you to. A pinned model is shown exactly
+  as stored: the pill and the check mark always name the model that will
+  actually run, so you can no longer be shown one model while another answers
+  the turn.
 
 - **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
   delegating Turn now carries a live card in its process block: one line per
@@ -220,6 +354,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   icons were re-picked (file delete, `web_fetch`, MCP vs unknown tool, skill).
 
 ### Added
+
+- **`/new` starts a Thread without leaving the composer (PR #486, codex-2)** —
+  typing `/new` and pressing Enter creates an empty Thread and selects it, so
+  starting a fresh conversation no longer means reaching for the Thread list.
+  The completion is offered in the slash menu like any other command, but once
+  the token is typed in full the menu gets out of the way: a slash command that
+  takes no argument (`/new`, `/clear` — the ones whose `insertText` carries no
+  trailing space) closes its own trigger on an exact match and submits on the
+  first Enter, while argument-taking commands like `/compact` keep their menu
+  open. Casing variants are treated as an unfinished token, so `/New` offers the
+  completion rather than being sent to the model as a message. `/new` is gated on
+  any usable provider rather than the current Thread's own send gate, and when no
+  provider is configured it says so inline instead of doing nothing; a failed
+  creation keeps both the draft and the Thread you were in, and returns focus to
+  the composer once it is editable again. Runtime command names are reserved, so
+  a user Skill named `new` no longer renders a duplicate, uninvocable row.
+  Leaving for a new Thread never interrupts the one you left: a Thread whose own
+  Turn is still running now carries the same background-work dot the Thread list
+  already showed for working descendants — but a Thread merely parked on a
+  question does not, because that state needs you to come back, not to be told it
+  is busy.
 
 - **A Subagent is a place you can go, and every delegated child says what it is
   doing (PR #471, cc-2)** — child Threads leave the conversation history

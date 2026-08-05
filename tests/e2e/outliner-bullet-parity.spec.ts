@@ -84,7 +84,9 @@ test.describe('outliner bullet parity', () => {
       const titleRect = document.querySelector('.panel-title-editor')?.getBoundingClientRect();
       const tagRect = document.querySelector('.panel-title-toolbar-row .tag-bar')?.getBoundingClientRect();
       const rootStyle = getComputedStyle(document.documentElement);
-      const panelRect = document.querySelector('.main-panel')?.getBoundingClientRect();
+      const panelElement = document.querySelector('.main-panel');
+      const panelRect = panelElement?.getBoundingClientRect();
+      const innerRect = document.querySelector('.outline-panel-surface .panel-inner')?.getBoundingClientRect();
       const moreRect = document.querySelector('.panel-title-more-button')?.getBoundingClientRect();
       const rowElement = document.querySelector(`[data-node-id="${ids.alpha}"] > .row`);
       const rowBulletRect = rowElement?.querySelector('.row-bullet-button')?.getBoundingClientRect();
@@ -92,13 +94,24 @@ test.describe('outliner bullet parity', () => {
       const trailingBulletRect = document
         .querySelector(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`)
         ?.getBoundingClientRect();
-      if (!titleRect || !tagRect || !panelRect || !moreRect || !rowBulletRect || !rowChevronRect || !trailingBulletRect) {
+      if (!(panelElement instanceof HTMLElement)
+        || !titleRect
+        || !tagRect
+        || !panelRect
+        || !innerRect
+        || !moreRect
+        || !rowBulletRect
+        || !rowChevronRect
+        || !trailingBulletRect) {
         throw new Error('missing panel alignment target');
       }
       return {
         panelContentX: Number.parseFloat(rootStyle.getPropertyValue('--panel-content-x')),
+        scrollbarGutter: getComputedStyle(panelElement).scrollbarGutter,
         panelLeft: panelRect.left,
         panelRight: panelRect.right,
+        innerLeft: innerRect.left,
+        innerRight: innerRect.right,
         titleLeft: titleRect.left,
         tagLeft: tagRect.left,
         moreRight: moreRect.right,
@@ -111,9 +124,12 @@ test.describe('outliner bullet parity', () => {
     expectClose(metrics.tagLeft, metrics.titleLeft);
     expectClose(metrics.rowBulletLeft, metrics.titleLeft);
     expectClose(metrics.trailingBulletLeft, metrics.titleLeft);
-    expect(metrics.rowChevronLeft).toBeGreaterThanOrEqual(metrics.panelLeft + 8);
+    expectClose(metrics.titleLeft - metrics.innerLeft, metrics.panelContentX);
+    expectClose(metrics.innerRight - metrics.moreRight, metrics.panelContentX);
+    expectClose(metrics.innerLeft - metrics.panelLeft, metrics.panelRight - metrics.innerRight);
+    expect(metrics.scrollbarGutter).toBe('stable both-edges');
+    expect(metrics.rowChevronLeft).toBeGreaterThanOrEqual(metrics.innerLeft + 8);
     expect(metrics.rowChevronLeft).toBeLessThan(metrics.titleLeft);
-    expectClose(metrics.panelRight - metrics.moreRight, metrics.panelContentX);
   });
 
   test('tag definition bullet uses nodex hash glyph', async ({ page }) => {

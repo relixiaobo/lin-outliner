@@ -1402,6 +1402,8 @@ commandPalette: {
       slashCommandsLabel: '线程斜杠命令',
       compactCommandDescription: '用持久摘要替换较早的上下文',
       clearCommandDescription: '保留历史记录并开始新的上下文周期',
+      newThreadCommandDescription: '新建线程',
+      newThreadStructuredContentError: '请先移除附件和引用，再新建线程。',
       mentionSuggestionsLabel: '线程引用建议',
       noCommands: '暂无命令',
       searchingFiles: '正在搜索文件……',
@@ -1570,6 +1572,18 @@ commandPalette: {
       },
       'openai-codex': {
         hint: '使用你的 ChatGPT Plus 或 Pro 订阅登录。',
+      },
+      'kimi-coding': {
+        hint: '使用你的 Kimi Code 订阅登录。',
+      },
+      openrouter: {
+        hint: '登录 OpenRouter 以连接你的账户。',
+      },
+      radius: {
+        hint: '登录 Radius 以加载你的网关模型目录。',
+      },
+      xai: {
+        hint: '使用你的 SuperGrok 或 X 订阅登录。',
       },
     },
   },

@@ -19,18 +19,164 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | (see note) | **building `agent-model-first-picker`** — one-pager reviewed 2026-08-03, no Draft PR yet (shipped #461, #463, #467, #468, #471, #472 — `agent-run-presentation-consistency` and `agent-subagent-interaction` both complete) |
-| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466) |
+| Claude Code | `lin-outliner-cc/` | — | idle (authored `unified-command-surface` #485, plan only — both implementation PRs unclaimed; shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (authored `generated-image-resources` #489, plan only — implementation unclaimed; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465, pi-ai-0.83-upgrade #487) |
 | Anti | `lin-outliner-anti/` | — | idle |
-| *(unidentified)* | ? | ? | **building `unified-command-surface`** — the PM assigned it 2026-08-03; which clone is doing it was never recorded, and no Draft PR exists, so nobody can tell whether a second claimant would collide. Whoever it is: open the Draft PR. |
 
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`unified-command-surface` design merged (#485, cc, 2026-08-04)** — plan and
+comment/spec alignment only; no product behaviour changed. The old `Target × Verb`
+design is replaced by one core action registry and **two independent complete
+implementation PRs split at the proof boundary**. PR 1 makes the full node context
+menu a differentially-proven view of compiling core contracts and fixes the
+unranked *Move to* picker; PR 2 renders that registry as the searchable command
+surface, adds the capture/agent handoff loop, and retires the old global `Cmd+K`
+palette. Both are unclaimed. The capture direction is now explicit too: Today is
+the destination, no browser extension or screenshot tier, and rich page reading is
+a separate user-chosen main API rather than a network implementation hidden behind
+the ambient hotkey seam. **Gate: fifteen review rounds on the design contract.**
+They moved the security boundary to main-owned invocation/admission and atomic
+lifecycle state, separated renderer and native confirmation flows, made renderer
+delivery acknowledge what it can actually prove, turned `ACTION_BINDINGS` into the
+single value-level runtime/type source using the real `CommandResult.focus.nodeId`
+path, and required filtering before retrieval limits. Final head `a60298ec` had no
+reportable findings; `docs:check`, typecheck, diff check, and the strict binding type
+probe passed. Implementation still has to earn those contracts through the listed
+compiler fixtures, differential oracle, runtime lifecycle/binding tests, E2E, and
+light/dark verification.
+
+**`generated-image-resources` plan merged (#489, cc-2, 2026-08-04)** — design only, no product
+code; the board item is under Agent capabilities and implementation is unclaimed. **Gate: four
+review rounds on the plan itself, all `file:line`-verified against `origin/main`.** The
+carry-forward is about how a plan earns its central claim. v1 asserted generated images "bypass
+the Thread resource system" and proposed routing them through `resourceRefs`; both were checked
+and neither held — `resourceRefs` does not exist on tool items (only `contextEvidence` /
+`contextCompaction`), so following the sentence literally meant a `protocol.ts` change colliding
+with #483 for no benefit. The gate's own counter-claim was **also** wrong: the bytes looked
+already-persisted because `persistOutputImage` sits in the executor's image branch — but that
+branch never runs for this tool, since `agentToolResult`'s `extraContent` defaults to `[]` and
+`generate_image` passes two arguments. Both readings were plausible from a call graph; only
+reading the third parameter's default settled it. **A mechanism cited as "already exists" has to
+be traced to the call that would actually run, not to the function that would run it** — and the
+same trace turned up `toolImagePath`'s `generate_image` branch as unreachable dead code, and the
+real headline defect nobody had named: the model has never been able to see its own generated
+image. Three more findings survived that way: `resolveThreadResourceFile` returns `null` during
+the producing call (it gates on a committed Item), fail-closed admission read A12 backwards (its
+clause is scoped to *corrupt* data; turn execution is named among the paths that must degrade),
+and scoping only the *budget* would leave two per-part gates behind in the executor — enough to
+orphan a resource whose path was already handed to the model. Cost of the rounds: four
+revisions before any code, against a design that now touches no protocol surface.
+
+**`pi-ai-0.83-upgrade` shipped (#487, codex-4, 2026-08-03)** and is archived `done`
+(`docs/plans/archive/pi-ai-0.83-upgrade.md`). `@earendil-works/pi-ai` `0.80.6 → 0.83.0`: the removed
+global OAuth registry is replaced by `Models.login()`/`logout()` through the `piModels` composition
+root, custom and CC Switch providers migrate to the provider-scoped auth callback, and pi's dynamic
+text-model refresh is wired into the existing provider refresh command. **Gate: `/code-review high`
+(multi-agent), 33 candidates → 11 refuted → 10 reported; all 10 answered on the branch in `8b87291c`,
+plus `b5375337` for a follow-up the re-review raised.** The carry-forward is a single shape that
+produced four of the ten: **the upgrade traded per-request inputs for registration-time closures and
+collection-wide calls, and every place that lost a discriminator became a bug.** Dropping the
+per-request `model` from custom-provider `resolve` meant the `local-endpoint` sentinel keyed off
+whatever base URL last registered that id, so a Test against `localhost` could poison the saved
+remote connection — fixed not by re-threading `model` but by making locality part of the id
+(`tenon-custom-local:` vs `tenon-custom:`), so the closure can no longer disagree with itself.
+Reaching for the collection-wide `Models.refresh({force:true})` to refresh *one* provider force-fetched
+every dynamic provider, stalled the spinner on the slowest, and swallowed their errors — inside every
+OAuth sign-in too. And feeding a resolved OAuth access token back in as an `apiKey` override made pi
+short-circuit to its api-key branch, skipping `toAuth()` and the per-credential `baseUrl` that
+enterprise GitHub Copilot needs; the fix (`piRequestApiKeyOverride`) narrows the override to the one
+case pi genuinely cannot resolve itself. Two more were blast radius rather than logic: a validation
+probe was persisting a catalog fetched with an unsaved key (now probed on a throwaway collection with
+an in-memory store), and `piRestoreDynamicModels()` hung off `getProviderSettings()`, so a Thread or
+Automation resolving a saved dynamic model before anyone opened Settings got "model not found" —
+restore belongs at startup, not in a read helper for one UI surface. **When an upgrade removes an
+input, ask what that input was discriminating; a closure or a whole-collection call that "reads the
+same" is where the discriminator silently goes missing.**
+
+**`agent-new-thread-slash-command` shipped (#486, codex-2, 2026-08-03)** and is archived `done`
+(`docs/plans/archive/agent-new-thread-slash-command.md`). `/new` in the Thread composer now creates
+an empty Thread from the keyboard, so starting a Thread no longer means reaching for the Thread
+list. **Gate: `/code-review high` (multi-agent), 10 findings — 9 answered on the branch in
+c8cd9da4, the tenth was this board entry.** The one to carry forward is where the fix lives, not
+what it fixed: the first implementation special-cased `NEW_THREAD_SLASH_COMMAND_ID` inside the
+*shared* composer keydown handler, and that placement generated three separate defects — keying the
+Enter pre-empt on the typed query alone meant it never consulted `selectedIndexRef` (arrow down to
+`/clear`, which matches the `/new` query through its description, and Enter created a Thread
+instead), and comparing case-insensitively while the submit classifier demanded exact `/new` meant
+`/New` + Enter shipped a literal `/New` to the provider as a billed Turn. The answer was to raise
+the rule one layer, into the trigger: `filterComposerTrigger` now closes the menu when the query
+exactly matches a command whose `label === insertText` — i.e. one that takes no argument. `/new`
+and `/clear` both submit on the first Enter, `/compact` (trailing space, takes an argument) keeps
+its menu, and all three findings dissolve together. **A special case in a shared handler is the
+smell; the general rule almost always belongs one layer up.** Two smaller carry-forwards: runtime
+command labels are now reserved against user Skills (a Skill named `new` used to render a second
+identical `/new` row that could never be invoked), and `waitingOnUserInput` no longer counts as
+background work — an unselected Thread parked on a question was showing the "Background work
+running" dot, which reads as *still working* and is exactly the state a user must be pulled back
+to, not away from.
+
+**`preview-header-action-alignment` shipped (#484, codex, 2026-08-03)** — fast-track, no plan
+file. In split layouts the file-preview header pulled Translate and More next to the filename
+while Close stayed at the far right. The cause is a seam `pane-reorder` (#452) opened: it made the
+crumb *content* a fit-content `.pane-drag-handle`, and the preview actions were rendered as
+breadcrumb children, so they were swept inside that handle. The shared breadcrumb now has a
+`trailingActions` slot outside the handle, sharing the trailing grid column with Close.
+**Gate: `/code-review medium`, three findings plus a nit, all answered in f86df952.** The one to
+remember is the same descendant/carve-out family as #481, one level down: `.panel-breadcrumb-trailing`
+was not in the `no-drag` list, so the 4px token gap **between two adjacent icon buttons** stayed a
+live window-drag strip — it is not enough for the buttons to opt out, the group's own gaps must
+too. The E2E now reads that gap from `columnGap` instead of a hardcoded tolerance and asserts the
+wrapper's `app-region`, so both halves are pinned. A fourth finding was withdrawn at the gate and
+should not be re-litigated: the last crumb now matching `.panel-breadcrumb-segment:last-child` is
+not a regression — on `main` every non-translatable file-node header already matched it, and the
+percentage inside `min(12rem, 46%)` cannot widen the fit-content handle. **The light/dark pass was
+the dev's, not the gate's**; the follow-up commit is visually inert (a `no-drag` declaration and a
+dead `justify-self`), so it does not invalidate that pass.
+
+**`agent-dock-header-interactions` shipped (#481, 2026-08-03)** and is archived `done`
+(`docs/plans/archive/agent-dock-collapse-hit-region.md`). The fixed top-right agent toggle had
+stopped collapsing the dock in the native macOS window, and the cause is the part worth carrying
+forward: `.thread-dock-header` declared `-webkit-app-region: drag` from a *sibling* DOM subtree
+whose box overlaps the toggle's hit box, so macOS consumed the press as title-bar drag before
+React saw the click. **Electron only carves a `no-drag` control out of a drag region reliably
+when the control is a DOM descendant of that region** — which `shell.css` already documented and
+`thread.css` was contradicting. The fix drops the declaration and hands dragging back to the right
+window-chrome zone; the Thread-list trigger also loses its redundant leading `AgentIcon` and shows
+its chevron at rest. **Gate: `/code-review medium`, four findings, all four answered.** Two the
+gate fixed on the branch — the orphaned plan (`docs:check` C2 was red) and the `no-drag`
+carve-out that went dead when `drag` came off the header, which sat four lines under the new
+comment saying the header is *not* a drag region and would have re-taught the exact belief that
+caused the bug. The other two are the ones to remember. The fix **trades away ~290px of
+window-drag surface** — at 344px dock width only the ~53px right chrome zone still drags, so the
+dock-open top-right band no longer drags or double-click-zooms; that is now recorded in the plan's
+Design as a deliberate call, recoverable via an inner drag spacer bounded to the header's content
+box. And the regression test was a **CSS-declaration proxy that could not fail for the reported
+bug** — it asserted `.thread-dock-header` is not `drag`, which passes equally when some *other*
+overlapping sibling swallows the toggle. It is now geometric: no element carrying `app-region:
+drag` outside the `.window-chrome-zone` subtrees may intersect the toggle's bounding box. The gate
+mutation-tested that guard rather than trusting it — reintroducing `drag` on the header fails it
+with `"className": "thread-dock-header"`, and it stays honest under a future selector.
+**Not done, waived by the PM at merge:** native macOS click verification (the plan's fifth
+Verification box, and the one thing Chromium structurally cannot prove — it ignores app regions)
+and the light/dark visual pass the gate table asks for on UI diffs.
+
+**`agent-model-first-picker` shipped (#478, 2026-08-03)** and is archived `done` — the second
+item on the top-of-queue list is gone, and cc-2 is free. The gate ran `/code-review high` and
+found ten defects, two of them blocking, both from the same root: the un-pin row read the model
+being un-pinned where it needed the model the `inherit` sentinel resolves to. The fix is worth
+knowing about because it is the shape this keeps taking — `buildModelChoices` now exposes
+`connectionHead` as its own field, keyed on `selection.modelProvider` rather than the resolved
+provider, so clamping, labelling, and offering the row all read one value that means "what the
+sentinel resolves to on THIS connection". A cross-provider pin makes those two providers differ,
+which is exactly when the old code was wrong. Nothing about the merge is blocked on the light/dark
+visual pass: the PM waived it.
 
 **In flight (2026-08-01).** Open PR queue: **empty** — #471 and #470 both merged, so
 the review queue is back at zero and the front is wide open. #470 took five gate
@@ -59,9 +205,12 @@ artifacts to carry the platform, so runs from before that are correctly excluded
 comparison reports every failure as *unattributed* until three fresh `main` runs exist.
 **Its first two baselines already paid for it**, and not in the way expected: four tests
 fail every single CI macOS sample and have never failed locally
-(`ci-macos-layout-and-material-red`), while the test this board had called `main`'s red
-baseline passes 0/10 there and is now `file-attachment-inline-preview-local-flake`. Nothing
-broke them — there was no signal, so nobody knew.
+(`ci-macos-layout-and-material-red`, **closed by #479 on 2026-08-03**), while the test this
+board had called `main`'s red baseline passes 0/10 there and is now
+`file-attachment-inline-preview-local-flake`. Nothing broke them — there was no signal, so
+nobody knew. The board asked which of two endings it was; the answer was **both**, and the
+signal is what separated them: one of the four was a real product defect the tests had been
+catching all along, the other three asserted a media state they never declared.
 `agent-browser-control` is **closed as `superseded`** (2026-08-03) and its plan is archived.
 The 2026-07-31 ruling predicted that #406's managed-Skill channel made it unnecessary;
 that is now observable — `catalog/managed-skills-v1.json` ships `browser-pilot` as its
@@ -342,15 +491,14 @@ unassigned — future dev is not pre-committed to any clone.
 **Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
-1. **`unified-command-surface`** (P2, **CLAIMED — a dev started it 2026-08-03 at the PM's
-   direction**; no Draft PR yet, so it is invisible on the radar until one is opened) — the
-   largest remaining product item; design ratified (D1–D8), retrieval dep shipped (#111). It is
-   at the dev-drafted build one-pager step (phases / file-scope / tests) → PM ratify → build.
-   **Do not pick this up.**
-2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
-   model-first model picker (merge Provider + Model Override, provider as secondary label,
-   "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
+1. **`unified-command-surface`** (P2, **design contract merged #485; implementation
+   unclaimed**) — the largest remaining product item. Shape (b) is two independent
+   complete features: PR 1 makes the node context menu a view of the core action
+   registry and fixes *Move to* retrieval; PR 2 builds the searchable command
+   surface and capture loop on that proven foundation. The retrieval dependency
+   shipped in #111. Re-derive the open-PR inventory before either implementation;
+   PR 2 follows the ordering constraints recorded in the plan.
+2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
    import, and yielding import cache/finalization; #414 shipped the main-side document read model
@@ -367,14 +515,14 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    #427 cached active tag selector candidates and the empty-query order per snapshot.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
-4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+4. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-6. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+5. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
    and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
    ratify+sandbox and opt-in curation dry-run.
-7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+6. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
@@ -405,17 +553,17 @@ the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-a
 into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **unified-command-surface** (P2, **in-progress — claimed by a dev 2026-08-03; at the
-  dev-drafted build one-pager step**) — collapse cmd+k and the launcher into **one** context-aware
-  command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
-  attachment, `Target × Verb`). The full ratified design (D1–D8: Enter contract,
-  context-forward + habit-adaptive default-highlight, reversibility tier B, chip
-  rail, Ask AI → agent panel, phased out-of-app fidelity, slash boundary, one-engine
-  invariant) lives in `docs/plans/unified-command-surface.md`. Its retrieval
-  dependency (`search-retrieval-stack` node-path unification) shipped in #111; a dev
-  agent now drafts the build one-pager (phases/file-scope/tests) and the PM ratifies
-  before code. Supersedes the earlier "launcher absorbs cmd+k" framing; reuses #109's
-  no-provider guard.
+- **unified-command-surface** (P2, **in-progress — design contract merged #485;
+  implementation unclaimed**) — put **one core action registry** behind every
+  outline-node action. The context menu becomes its filtered anchored view; the
+  launcher becomes its searchable view and the only globally summoned command
+  surface. Shape (b) ships as two independent complete features: PR 1 proves the
+  existing menu against the registry and fixes *Move to* retrieval, then PR 2 adds
+  the command/capture surface, agent handoff, and declared native-confirmation
+  change. The full contract, security/lifecycle state machines, verification, and
+  build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
+  dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
+  learning, and reversibility-tier framing rather than extending it.
 - **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command
@@ -690,6 +838,34 @@ see *Recently completed*.
   system, plus a per-Turn output root. That is worth having and is **not browser-specific**;
   filing it inside a browser plan is part of why it never started. If it is wanted, board it
   as a tool-agnostic item rather than reviving this one.
+- **generated-image-resources** (P2, `draft`, plan merged #489, implementation pending) — the
+  tool-agnostic boarding the entry above asked for, with generated images as its first complete
+  consumer. `generate_image` writes bytes into agent scratch and returns a path relative to a root
+  the model is never told about, which produces three defects at once: the model **never sees its
+  own output** (the tool passes no `extraContent`, so no image content item is ever created —
+  which also makes `toolImagePath`'s `generate_image` branch unreachable dead code), it **cannot
+  act on that output** ("put it in Downloads" fails), and history holds a durable reference into
+  a directory declared ephemeral (hence `pruneAgentScratch`'s `generated-images` exemption). Fix:
+  the producer persists → resolves a turn observation path → emits the bytes as `extraContent`,
+  exactly as `file_read` does; the executor's second write is a content-addressed no-op. **No
+  `protocol.ts` / `codec.ts` change and no `referenceMarkup.ts` contact** — dependency tracking
+  already flows through `contentItems`, and `markdownImage` is retired rather than re-schemed.
+  The one piece of real plumbing is moving all **five** image gates (count, per-image 10 MB,
+  per-call 20 MB, mime shape, thread quota) behind a single call-scoped admission call both sides
+  consult, so an image cannot be admitted tool-side and then dropped executor-side, leaving an
+  orphaned resource and a dead path. Caps **degrade** (persist what fits, report the rest via
+  `status`/`warnings`) rather than fail closed — A12's fail-closed clause is scoped to corrupt
+  data, and turn execution is named among the paths that must degrade. Success signal: the
+  `pruneAgentScratch` special case disappears. **Sequencing: land after #483 or rebase onto it**
+  (it changes the tool-call protocol/codec). Shared-surface contacts, both deliberate:
+  `PiTurnExecutor`'s tool-output image branch and `createThreadImageGenerationRuntime`'s
+  signature. **Two gate refinements to fold in while building**, agreed at the plan gate and
+  recorded in [#489's review](https://github.com/relixiaobo/lin-outliner/pull/489#issuecomment-5174369261):
+  name which observation the projector re-materializes with on replay (the detached one, which the
+  plan's stated cost model requires — the wired `ProjectionResources` call is the turn-scoped one
+  and would re-copy every historical image per projection), and disclose that the identity-line
+  change reaches **every** `threadPayload`-sourced tool image, not only generated ones.
+  See `docs/plans/generated-image-resources.md`.
 - **agent-computer-control** (P1, plan merged #361, implementation pending) —
   Tenon-native macOS computer-use tool family covering the useful
   `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
@@ -734,26 +910,7 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
-- **agent-model-first-picker** (P2, *direction PM-ratified 2026-06-23 — needs a dev-drafted
-  build one-pager*) — make the agent profile's model setting **model-first, not provider-first**.
-  Today `AgentModelEffortSelector` makes the user pick **Provider** (with an `Inherit` abstraction)
-  → **Model Override** (another `Inherit`) → **Thinking Level**; the user's mental model is just
-  "use the best/newest model," and they don't care which connection it comes from. Worse, the product
-  is now **single-agent** (one Neva, #300), so per-profile provider-pinning is vestigial multi-agent
-  baggage. **Goal:** collapse Provider + Model Override into **one "Model" picker** that lists models
-  flat **across all connected providers**, with provider shown only as a **secondary label** per
-  model; **default = "best available"** (the catalog's first-ranked model — which `Inherit` already
-  resolves to today, so the capability exists, only the presentation hides it). When exactly **one**
-  provider is connected, the provider concept should not surface at all. **Key constraint /
-  cheapness:** a model belongs to a connection, so provider can't fully vanish in multi-connection
-  setups (keep it as the secondary label) — but the **saved value stays the canonical
-  `providerId/modelId`** (`core/agentModelId`), so this is **renderer/UX-only, no protocol/data-model
-  change**. **Scope for the dev plan:** the profile editor (`AgentEditor` / `AgentModelEffortSelector`)
-  AND the composer quick-switcher (`AgentComposerModelControl`) for consistency; relabel `Inherit` →
-  "best available" framing; decide the ranking/"best" source (catalog `firstRanked`) and whether the
-  default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
-  i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
-  this is model *selection* UX).
+
 ### Files & media
 
 The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
@@ -895,27 +1052,17 @@ anything.
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
-- **ci-macos-layout-and-material-red** (P2, *fast-track, no plan file*, filed 2026-08-01 from
-  the first `e2e-signal-on-main` baselines) — four tests fail in **every** CI macOS sample
-  (5/5, then 10/10 across two runs) and have **never** failed on a developer's machine:
-  `agent-thread.spec.ts:1086` (one leading image gallery, file references in message order),
-  `outliner-bullet-parity.spec.ts:82` (top-level bullets align to the panel header content
-  start), `window-material.spec.ts:23` (rails translucent only with a material; wrappers and
-  panels stay opaque), `workspace-layout.spec.ts:409` (single panel centers bounded content).
-  **They are not new.** Nothing broke them; there was simply no signal, so nobody knew. That
-  is the first thing the signal bought.
-  They are one family — layout measurement and material/translucency — which points at a
-  single root cause rather than four: a GitHub macOS runner is headless with no real window
-  compositing or GPU, so `backdrop-filter`, window material, and anything measuring painted
-  geometry can legitimately differ. **Establish that before fixing anything**, because the
-  two possible endings need opposite work: either the product is wrong and the tests caught
-  it, or the tests assert conditions they never declared they need, in which case they
-  should declare them (skip, or assert the precondition) instead of failing silently
-  everywhere the condition does not hold. Do not "fix" them by loosening assertions to pass
-  in both places — that is the B11 trade, and it would make the signal report green about a
-  thing it stopped measuring.
-  Start from a trace: `playwright.config.ts` now sets `retain-on-failure`, so the CI run
-  artifacts carry one, which is the first time that has been true here.
+- **e2e-visual-media-baseline-fixture** (P3, *fast-track, no plan file*, filed 2026-08-03 at
+  the #479 gate) — #479 gave the suite `tests/e2e/emulatedMedia.ts`, which pins all five
+  visual preferences over CDP, but it is **opt-in per call site**: three specs call it, and
+  `rg 'test.extend' tests/e2e` returns nothing. The environmental premise it works around is
+  permanent — GitHub's macOS images report `prefers-reduced-transparency: reduce`, flipping
+  the whole `:root` override block in `a11y.css` — so any future guard that asserts a rail,
+  popover, menu, or HUD color is wrong on CI unless its author remembers the helper. It will
+  be written locally, pass, and turn red only after merge, which is the discovery-by-accident
+  failure `e2e-signal-on-main` exists to end. A `test.extend` fixture in a shared e2e base
+  that pins the baseline for every test by default (with an opt-out for the `reduce` case)
+  fixes it once instead of per spec.
 - **file-attachment-inline-preview-local-flake** (P3, *fast-track, no plan file*, filed
   2026-08-01 at the #475 gate, **rescoped 2026-08-01 once CI existed**) —
   `file-attachments.spec.ts:178`
@@ -971,6 +1118,73 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **ci-macos-layout-and-material-red** (codex, PR #479, merged 2026-08-03, *fast-track, no
+  plan file*) — the four tests that failed **every** CI macOS sample and had **never** failed
+  locally are closed, and the board's own question ("is the product wrong, or do the tests
+  assert an undeclared condition?") resolved to **both**, which is why the signal was worth
+  building. One was a **real defect**: `.outline-panel-surface .main-panel` used
+  `scrollbar-gutter: stable`, which reserves the gutter on the inline-end edge only, so on
+  any machine with non-overlay scrollbars — the runner's configuration, or
+  Appearance → "Show scroll bars: Always" — the 720px reading column sat ~5–6px left of the
+  pane's visual center in every wide single-pane window. It is now `stable both-edges`; the
+  gutters are symmetric and the column centers against the panel's visible border box.
+  The other three asserted a media state they never declared: GitHub's macOS images report
+  `prefers-reduced-transparency: reduce`, which flips the whole `:root` override block in
+  `a11y.css` (`--material-*`, `--media-hud-*`), so every material/HUD color guard was
+  measuring the opaque branch while asserting the translucent one. `tests/e2e/emulatedMedia.ts`
+  now pins all five visual preferences over CDP (Playwright's own `emulateMedia` has no
+  `prefers-reduced-transparency`) and verifies they applied.
+  **The gate is the part worth carrying.** `/code-review high` returned 23 candidates → 10
+  verified findings, and the three blocking ones were one mistake made three times: each
+  "fix" moved the assertion's **reference frame** or **media state** instead of the thing
+  under test. The centering guard was rewritten to measure both gaps inside the scrollport's
+  *content* box, where they are equal by construction for any gutter width — green for a 0px
+  gutter and a 100px gutter alike — and the spec was amended to bless the offset, which is
+  exactly the B11 trade this item was filed telling us not to make. The HUD hover/active
+  assertions were left running under the leftover `reduce` emulation, so the translucent
+  tokens users actually see stopped being exercised anywhere. And swapping a raw
+  `--media-hud-fg` read for a probe span turned "token missing" into the same *inherited*
+  `color` the badge computes, so deleting the token would have passed. All three were fixed
+  at the source and are now mutation-verified: renaming `--media-hud-fg` throws, and
+  collapsing the hover token onto its reduce value fails the cross-state check.
+  Post-merge: typecheck, `test:core`, `test:renderer`, `docs:check` green; `test:e2e`
+  550/2, both failures `file-attachments.spec.ts` — one the known
+  `file-attachment-inline-preview-local-flake` (reproduced at `origin/main` in the same
+  worktree), one full-suite-only. Light/dark visual pass done at 1900px: gutter 0 locally
+  (overlay scrollbars), `leftGap === rightGap === 304`.
+  **Not done, deliberately:** the media baseline is still opt-in per call site rather than a
+  `test.extend` fixture, so the next design-system guard written against a material surface
+  will still pass locally and turn red only on the runner — boarded below as
+  `e2e-visual-media-baseline-fixture`. The trace-artifact upload this PR originally bundled
+  was dropped rather than split; if it is wanted it needs its own PR and a
+  `github.event_name != 'pull_request'` guard.
+
+- **agent-model-first-picker** (cc-2, PR #478, merged 2026-08-03, plan archived) — model
+  selection is model-first: one flat list of models across every listed connection, the model
+  name leading each row and the provider demoted to a secondary origin label shown only when
+  more than one provider is listed. Providers survive as a **truncation** unit, not a visual
+  one — each keeps its own "show all" budget (whose expander names its provider) and a pinned
+  model outside that window stays visible. The list leads with a floating selection that
+  follows the connection's newest model, written as the `inherit` sentinel and never rewriting
+  the Thread's provider, so choosing it cannot migrate a Thread to another connection.
+  Renderer-only: the stored value is still the canonical `providerId/modelId`.
+  **The gate's finding worth carrying forward** — `/code-review high` returned ten defects, and
+  the two blocking ones were one mistake made twice: the un-pin row clamped the reasoning effort
+  and drew its label from the model being un-pinned, not from the model `inherit` resolves to.
+  Pinned `high` on a model that supports it, with a ranked head that does not, main's validator
+  rejected the commit, `commit` swallowed the throw, and the Thread could not be un-pinned at
+  all — the feature the branch existed to ship was unreachable for real catalog pairs, and the
+  round-trip e2e could not see it because `'GPT-5.4'` is a substring of `'GPT-5.4 Mini'`. The fix
+  gives that model its own name: `buildModelChoices` exposes `connectionHead`, keyed on
+  `selection.modelProvider` rather than the resolved provider (a cross-provider pin makes them
+  differ), and clamping, labelling, and whether to offer the row at all now read it — the row is
+  withheld when that connection lists no models, where it previously rendered off the aggregate
+  count and committed a sentinel main cannot satisfy. A pinned model is also reported verbatim
+  now, including an id stored without a `providerId/` qualifier: the old head fallback named the
+  head while the runtime ran the bare id, which is the show-one-run-another confusion the
+  floating/pinned split exists to remove. Design folded into
+  `docs/spec/agent-thread-rendering.md`. Light/dark visual pass waived by the PM.
 
 - **e2e-signal-on-main** (main-agent, landed 2026-08-01 directly on `main`,
   *fast-track, no plan file*; PM ratified the one-pager) — **the repository now has CI**,

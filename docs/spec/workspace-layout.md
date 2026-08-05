@@ -40,12 +40,13 @@ The important boundaries:
 
 ## Window Chrome (Top Strip)
 
-The window chrome is a single thin strip at the window top, at traffic-light
-height. It is the window's title-bar drag region and is part of the app shell.
-There is **no global tab strip and no top-bar back/forward**; page-history
-navigation is keyboard-driven. The full visual contract is in
-[`design-system/surfaces.md`](./design-system/surfaces.md#shell); this section
-covers only the ownership model.
+The window chrome is a single thin visual strip at the window top, at
+traffic-light height, and is part of the app shell. Native title-bar dragging is
+owned by the fixed left/right window-chrome zones and pane breadcrumb chrome,
+not by every header aligned to that strip. There is **no global tab strip and no
+top-bar back/forward**; page-history navigation is keyboard-driven. The full
+visual contract is in [`design-system/surfaces.md`](./design-system/surfaces.md#shell);
+this section covers only the ownership model.
 
 The strip holds three regions on one shared centreline:
 
@@ -67,22 +68,27 @@ do not move when the sidebar collapses (only the rail slides away).
 Center — per-pane breadcrumb headers:
 
 - Each open pane contributes its own breadcrumb header (`avatar / path /
-  current`) with a `×` close at its right; the last remaining pane shows no `×`.
+  current`) with any pane-specific actions followed by a `×` close at its
+  right; the last remaining pane shows no `×`.
 - The breadcrumb is the pane's header and its drag region. A per-pane back
   control lives in the breadcrumb row; global page-history back/forward are on
   `Cmd+[` / `Cmd+]` with no chrome buttons.
 - With more than one pane open, the breadcrumb's crumb content — sized to the
   crumbs, not the header's full middle column — is additionally the pane's
   drag-to-reorder handle and opts out of the window drag region (`no-drag`
-  carve-out, like the breadcrumb's buttons); the empty header space right of
-  the crumbs, the top strip, and the gaps stay window-drag. Single-pane
-  canvases keep the full drag region.
+  carve-out, like the breadcrumb's buttons). The trailing action/Close group
+  remains a right-aligned `no-drag` surface outside that reorder handle; the
+  empty header space between the crumbs and trailing group, the top strip, and
+  the surrounding gaps stay window-drag. Single-pane canvases keep the full
+  drag region.
 
 Right corner — agent chrome:
 
-- The selected Thread title and compact Thread actions when the dock is open.
+- The selected Thread title and compact Thread actions when the dock is open;
+  this header is visually aligned to the strip but is not a native drag region.
 - The agent toggle, pinned to the top-right corner as a fixed window-chrome
-  control.
+  control. Its containing right window-chrome zone owns native dragging, and the
+  toggle is its `no-drag` descendant so macOS delivers the click.
 
 The sidebar and agent toggles are symmetric: fixed, neutral, and signalling
 open/collapsed by glyph state in place, never by a selected background or a

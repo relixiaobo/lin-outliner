@@ -6,7 +6,6 @@ import { localGatewayProviderDefinition } from '../../../core/localGatewayProvid
 import { useT } from '../../i18n/I18nProvider';
 import {
   formatProviderName,
-  OAUTH_API_KEY_FALLBACK,
   oauthSignInInfo,
   providerAuthInfo,
   PROVIDER_DOCS_URL,
@@ -15,6 +14,7 @@ import {
   providerHasCredential,
   resolveUsableActiveProvider,
 } from './providerCatalog';
+import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';
@@ -88,7 +88,7 @@ export function ProviderConfigWindow() {
   // Auth class comes from main (`authKind`), falling back to the configured view's
   // descriptor for a provider with no catalog row. Custom providers are always api-key.
   const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
-  const showOAuth = authKind === 'oauth' && !useApiKey;
+  const showOAuth = authKind === 'oauth' && !hasStoredKey && !useApiKey;
   const oauthInfo = oauthSignInInfo(providerId, t);
   const initialBaseUrl = existing?.baseUrl
     ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');

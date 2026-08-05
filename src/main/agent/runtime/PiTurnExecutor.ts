@@ -73,7 +73,7 @@ import {
 import {
   piExternalProviderId,
   piCompleteSimple,
-  piResolveAuthApiKey,
+  piRequestApiKeyOverride,
 } from '../../piModels';
 import {
   applyCustomOpenAIResponsesPayloadProfile,
@@ -664,7 +664,7 @@ async function resolveDefaultRuntime(context: PiRuntimeContext): Promise<PiRunti
     thinkingLevel,
     getApiKey: async (providerId) => {
       if (piExternalProviderId(providerId) !== provider.providerId) return undefined;
-      return provider.apiKey ?? piResolveAuthApiKey(model);
+      return provider.apiKey ?? piRequestApiKeyOverride(model);
     },
   };
 }

@@ -308,6 +308,10 @@ export class TurnDiagnosticsCollector {
 
   async captureEvent(event: AgentEvent): Promise<void> {
     if (event.type !== 'message_end' || event.message.role !== 'assistant') return;
+    // pi-ai uses `pending` only on partial streaming messages. Diagnostics are
+    // inspection-only, so an impossible pending message_end stays unrecorded
+    // instead of widening the durable terminal-response contract or killing a Turn.
+    if (event.message.stopReason === 'pending') return;
     const call = [...this.providerCalls].reverse().find((candidate) => candidate.response === null);
     if (!call) return;
     call.response = {

@@ -467,6 +467,28 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       ) : null}
     </>
   ) : null;
+  const headerMenuActions = readerMode
+    ? readerMenuActions
+    : looseUrlOpenAction
+      ? [{
+          key: 'open',
+          label: looseUrlOpenAction.label,
+          icon: OpenIcon,
+          run: looseUrlOpenAction.run,
+        }]
+      : [];
+  const headerActions = translationControl || headerMenuActions.length > 0 ? (
+    <>
+      {translationControl}
+      {headerMenuActions.length > 0 ? (
+        <FilePreviewHeaderMenu
+          actions={headerMenuActions}
+          ariaLabel={previewLabels.actions}
+          meta={meta}
+        />
+      ) : null}
+    </>
+  ) : null;
 
   const fillPreviewPane = readerMode || looseUrlPreview;
 
@@ -509,6 +531,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         previousPageLabel={t.nodePanel.previousPage}
         showClose={props.showClose}
         stickyRef={stickyBreadcrumbRef}
+        trailingActions={headerActions}
         titleDocked={titleDocked}
       >
         {readerMode ? (
@@ -518,14 +541,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            {translationControl}
-            {readerMenuActions.length > 0 ? (
-              <FilePreviewHeaderMenu
-                actions={readerMenuActions}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         ) : fileRoot ? (
           <>
@@ -558,7 +573,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 </span>
               );
             })}
-            {translationControl}
           </>
         ) : looseUrlPreview ? (
           <>
@@ -567,19 +581,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            {translationControl}
-            {looseUrlOpenAction ? (
-              <FilePreviewHeaderMenu
-                actions={[{
-                  key: 'open',
-                  label: looseUrlOpenAction.label,
-                  icon: OpenIcon,
-                  run: looseUrlOpenAction.run,
-                }]}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         ) : (
           <>
@@ -589,19 +590,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 <span className="file-preview-path-label">{segment.label}</span>
               </span>
             ))}
-            {translationControl}
-            {looseUrlOpenAction ? (
-              <FilePreviewHeaderMenu
-                actions={[{
-                  key: 'open',
-                  label: looseUrlOpenAction.label,
-                  icon: OpenIcon,
-                  run: looseUrlOpenAction.run,
-                }]}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         )}
       </PanelStickyBreadcrumb>

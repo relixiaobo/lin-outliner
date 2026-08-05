@@ -2,7 +2,15 @@ import * as electron from 'electron';
 import {
   getSupportedThinkingLevels,
 } from '@earendil-works/pi-ai';
-import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
+import type {
+  Api,
+  Credential,
+  CredentialInfo,
+  Model,
+  ModelsStoreEntry,
+  OAuthCredentials,
+  SimpleStreamOptions,
+} from '@earendil-works/pi-ai';
 import { join } from 'node:path';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type {
@@ -44,8 +52,13 @@ import {
   piModelsForProvider,
   piProviderAuthKind,
   piProviderHasAmbientAuth,
+  piProviderModelsRefreshable,
   piProviders,
+  piFetchProviderModelsWithCredential,
+  piRefreshProviderModels as refreshPiProviderModels,
   piResolveAuthApiKey,
+  piResolveProviderRefreshCredential,
+  piRestoreDynamicModels,
 } from '../../piModels';
 import {
   imageModelOptionsForProvider,
@@ -74,6 +87,7 @@ import {
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
+const MODEL_CATALOGS_FILE = 'agent-model-catalogs.json';
 
 // A provider config is a connection record only. Thread configuration owns the
 // model and reasoning effort selected for execution.
@@ -114,6 +128,10 @@ interface SecretEnvelope {
   credentials?: Record<string, AuthCredential>;
 }
 
+interface ModelCatalogFile {
+  catalogs: Record<string, ModelsStoreEntry>;
+}
+
 function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
   return piProviderAuthKind(providerId);
 }
@@ -148,13 +166,19 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 
 interface AgentProviderConnectionAuth {
   apiKey?: string;
+  catalogCredential?: Credential;
   listHeaders?: Record<string, string>;
 }
 
 configurePiCredentialStorage({
   read: readPiCredential,
+  list: listPiCredentials,
   modify: modifyPiCredential,
   delete: deletePiCredential,
+}, {
+  read: readPiModelCatalog,
+  write: writePiModelCatalog,
+  delete: deletePiModelCatalog,
 });
 
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
@@ -162,6 +186,7 @@ export async function getProviderSettings(): Promise<AgentProviderSettingsView> 
   // `reconcileProviderConfig`, NOT on every read: a write on the read path both
   // raced concurrent writers and could prune rows from a transient read failure.
   // See `reconcileProviderConfig`.
+  await piRestoreDynamicModels();
   return toSettingsView(await readProviderFile(), await readSecretFileSafe());
 }
 
@@ -171,6 +196,7 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
   if (localGatewayProvider?.adapter === 'cc-switch-codex' && localGatewayProvider.refreshableModels) {
     await registerCcSwitchRuntimeModels(localGatewayProvider, await readCcSwitchRegistry());
   }
+  await refreshPiProviderModels(providerId);
   await piRefreshImageModels(providerId).catch(() => undefined);
   return getProviderSettings();
 }
@@ -180,6 +206,7 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
 }
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
+  await piRestoreDynamicModels();
   const file = await readProviderFile();
   const secrets = await readSecretFileSafe();
   const active = await findUsableProvider(file.providers.filter((provider) => provider.providerId === file.activeProviderId), secrets)
@@ -201,6 +228,7 @@ export async function getProviderRuntimeConfig(
   providerIdInput: string,
   modelIdInput?: string,
 ): Promise<AgentProviderRuntimeConfig | null> {
+  await piRestoreDynamicModels();
   const providerId = normalizeProviderId(providerIdInput);
   const modelId = modelIdInput?.trim();
   if (modelIdInput !== undefined && !modelId) return null;
@@ -312,11 +340,14 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
 export function rankedModels(providerId: string): Model<Api>[] {
   try {
-    const models = piModelsForProvider(providerId);
-    return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
+    return rankProviderModels(providerId, piModelsForProvider(providerId));
   } catch {
     return [];
   }
+}
+
+function rankProviderModels(providerId: string, models: readonly Model<Api>[]): Model<Api>[] {
+  return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
 }
 
 function firstRankedModel(providerId: string): Model<Api> | null {
@@ -367,6 +398,7 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
       delete secrets.credentials[providerId];
     }
   });
+  if (apiKey) await refreshPiProviderModels(providerId).catch(() => undefined);
   return { providerId, hasApiKey: !!apiKey };
 }
 
@@ -563,6 +595,7 @@ async function getAvailableProviders(configuredProviders: readonly AgentProvider
       hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
       envKeyNames: [],
       defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
+      modelsRefreshable: piProviderModelsRefreshable(providerId) || undefined,
       capabilities: providerCapabilities(providerId, models),
       models,
     };
@@ -606,6 +639,7 @@ async function getCcSwitchProviderOption(
     hasEnvApiKey: false,
     envKeyNames: [],
     defaultBaseUrl: baseUrl,
+    modelsRefreshable: localGatewayProvider.refreshableModels || undefined,
     capabilities: providerCapabilities(localGatewayProvider.providerId, models),
     models,
   };
@@ -693,9 +727,11 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {
   const capabilities: AgentProviderCapabilitySummary[] = [];
+  const languageRefreshable = piProviderModelsRefreshable(providerId);
   if (languageModels.length > 0) {
     capabilities.push({
       kind: 'language',
+      refreshable: languageRefreshable || undefined,
       models: languageModels.map((model) => ({
         id: model.id,
         name: model.name,
@@ -825,6 +861,7 @@ async function findUsableProvider(
  *    oauth rows carry a stored credential.
  */
 export async function reconcileProviderConfig(): Promise<void> {
+  await piRestoreDynamicModels();
   const { secrets, readable } = await readSecretsWithStatus();
   if (!readable) return; // rule 1: credential picture unknown → touch nothing
   const file = await readProviderFile();
@@ -978,6 +1015,15 @@ async function readPiCredential(providerId: string): Promise<Credential | undefi
   return toPiCredential((await readSecretFileSafe()).credentials[providerId]);
 }
 
+async function listPiCredentials(): Promise<readonly CredentialInfo[]> {
+  return Object.entries((await readSecretFileSafe()).credentials)
+    .flatMap(([providerId, credential]) => (
+      credential.type === 'api_key' || credential.type === 'oauth'
+        ? [{ providerId, type: credential.type }]
+        : []
+    ));
+}
+
 async function modifyPiCredential(
   providerId: string,
   fn: (current: Credential | undefined) => Promise<Credential | undefined>,
@@ -1022,12 +1068,90 @@ function normalizeSecretFile(value: unknown): SecretFile {
   return { credentials: credentials && typeof credentials === 'object' ? credentials : {} };
 }
 
+async function readPiModelCatalog(providerId: string): Promise<ModelsStoreEntry | undefined> {
+  return (await readJsonOrDefault(
+    modelCatalogsPath(),
+    { catalogs: {} },
+    normalizeModelCatalogFile,
+  )).catalogs[providerId];
+}
+
+async function writePiModelCatalog(providerId: string, entry: ModelsStoreEntry): Promise<void> {
+  await updateJsonFile(
+    modelCatalogsPath(),
+    { catalogs: {} },
+    normalizeModelCatalogFile,
+    (file) => {
+      file.catalogs[providerId] = entry;
+    },
+    PRIVATE_JSON_FILE_OPTIONS,
+  );
+}
+
+async function deletePiModelCatalog(providerId: string): Promise<void> {
+  await updateJsonFile(
+    modelCatalogsPath(),
+    { catalogs: {} },
+    normalizeModelCatalogFile,
+    (file) => {
+      delete file.catalogs[providerId];
+    },
+    PRIVATE_JSON_FILE_OPTIONS,
+  );
+}
+
+function normalizeModelCatalogFile(value: unknown): ModelCatalogFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { catalogs: {} };
+  const catalogsValue = (value as { catalogs?: unknown }).catalogs;
+  if (!catalogsValue || typeof catalogsValue !== 'object' || Array.isArray(catalogsValue)) return { catalogs: {} };
+  const catalogs: Record<string, ModelsStoreEntry> = {};
+  for (const [providerId, entry] of Object.entries(catalogsValue)) {
+    if (isModelsStoreEntry(entry)) catalogs[providerId] = entry;
+  }
+  return { catalogs };
+}
+
+function isModelsStoreEntry(value: unknown): value is ModelsStoreEntry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entry = value as Partial<ModelsStoreEntry>;
+  return Array.isArray(entry.models)
+    && entry.models.every(isStoredModel)
+    && (entry.lastModified === undefined || typeof entry.lastModified === 'number')
+    && (entry.checkedAt === undefined || typeof entry.checkedAt === 'number')
+    && (entry.etag === undefined || typeof entry.etag === 'string');
+}
+
+function isStoredModel(value: unknown): value is Model<Api> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const model = value as Partial<Model<Api>>;
+  const cost = model.cost as Partial<Model<Api>['cost']> | undefined;
+  return typeof model.id === 'string'
+    && typeof model.name === 'string'
+    && typeof model.api === 'string'
+    && typeof model.provider === 'string'
+    && typeof model.baseUrl === 'string'
+    && typeof model.reasoning === 'boolean'
+    && Array.isArray(model.input)
+    && model.input.every((input) => input === 'text' || input === 'image')
+    && Boolean(cost)
+    && typeof cost?.input === 'number'
+    && typeof cost.output === 'number'
+    && typeof cost.cacheRead === 'number'
+    && typeof cost.cacheWrite === 'number'
+    && typeof model.contextWindow === 'number'
+    && typeof model.maxTokens === 'number';
+}
+
 function providerPath() {
   return join(electron.app.getPath('userData'), PROVIDERS_FILE);
 }
 
 function secretPath() {
   return join(electron.app.getPath('userData'), SECRETS_FILE);
+}
+
+function modelCatalogsPath() {
+  return join(electron.app.getPath('userData'), MODEL_CATALOGS_FILE);
 }
 
 /**
@@ -1063,14 +1187,22 @@ export async function testProviderConnection(input: {
 
     const explicitApiKey = input.apiKey?.trim();
     const requestAuth = explicitApiKey
-      ? { apiKey: explicitApiKey, listHeaders: { Authorization: `Bearer ${explicitApiKey}` } }
+      ? {
+          apiKey: explicitApiKey,
+          catalogCredential: { type: 'api_key' as const, key: explicitApiKey },
+          listHeaders: { Authorization: `Bearer ${explicitApiKey}` },
+        }
       : await resolveProviderConnectionAuth(providerId, baseUrl);
     if (!requestAuth) {
       return { success: false, message: 'API Key is missing.' };
     }
     const authOverride = requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {};
 
-    const catalogModel = firstRankedModel(providerId);
+    let catalogModel = firstRankedModel(providerId);
+    if (!catalogModel && requestAuth.catalogCredential && piProviderModelsRefreshable(providerId)) {
+      const probeModels = await piFetchProviderModelsWithCredential(providerId, requestAuth.catalogCredential);
+      catalogModel = rankProviderModels(providerId, probeModels)[0] ?? null;
+    }
 
     // A custom base URL means the connection points at a proxy/gateway, which may
     // not host the catalog's first-ranked model — so discover the endpoint's own
@@ -1088,7 +1220,7 @@ export async function testProviderConnection(input: {
             baseUrl,
             catalogModel: piFindModel(providerId, discoveredModelId),
           });
-          await piCompleteSimple(model, {
+          const response = await piCompleteSimple(model, {
             messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
           }, {
             ...authOverride,
@@ -1097,6 +1229,7 @@ export async function testProviderConnection(input: {
             timeoutMs: 8000,
             maxTokens: 1,
           });
+          assertProviderProbeSucceeded(response);
           return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
         }
       } catch (listError) {
@@ -1110,7 +1243,7 @@ export async function testProviderConnection(input: {
 
     if (catalogModel) {
       const model = baseUrl ? { ...catalogModel, baseUrl } : { ...catalogModel };
-      await piCompleteSimple(model as Model<any>, {
+      const response = await piCompleteSimple(model as Model<any>, {
         messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
       }, {
         ...authOverride,
@@ -1119,6 +1252,7 @@ export async function testProviderConnection(input: {
         timeoutMs: 8000,
         maxTokens: 1,
       });
+      assertProviderProbeSucceeded(response);
       return { success: true, message: 'Connection successful.' };
     }
 
@@ -1151,6 +1285,12 @@ export async function testProviderConnection(input: {
   }
 }
 
+function assertProviderProbeSucceeded(response: Awaited<ReturnType<typeof piCompleteSimple>>): void {
+  if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+    throw new Error(response.errorMessage || 'Provider connection probe failed.');
+  }
+}
+
 async function resolveProviderConnectionAuth(providerId: string, baseUrl?: string): Promise<AgentProviderConnectionAuth | null> {
   const localGatewayProvider = localGatewayProviderDefinition(providerId);
   if (localGatewayProvider?.externalSecret) {
@@ -1158,12 +1298,10 @@ async function resolveProviderConnectionAuth(providerId: string, baseUrl?: strin
       registerCcSwitchRuntimeModels(localGatewayProvider, await readCcSwitchRegistry());
       const model = firstRankedModel(providerId);
       if (!model) return null;
-      try {
-        const resolved = await piModels().getAuth(model);
-        return resolved ? { listHeaders: providerHeadersForModelList(resolved.auth, resolved.source) } : null;
-      } catch {
-        return null;
-      }
+      const apiKey = await piResolveAuthApiKey(model);
+      return apiKey && apiKey !== 'local-endpoint'
+        ? { apiKey, listHeaders: { Authorization: `Bearer ${apiKey}` } }
+        : {};
     }
     return null;
   }
@@ -1171,12 +1309,16 @@ async function resolveProviderConnectionAuth(providerId: string, baseUrl?: strin
   const model = baseUrl
     ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl })
     : firstRankedModel(providerId);
-  if (!model) return null;
   try {
-    const resolved = await piModels().getAuth(model);
+    const resolved = model
+      ? await piModels().getAuth(model)
+      : await piModels().getAuth(providerId);
     if (!resolved) return null;
     const headers = providerHeadersForModelList(resolved.auth, resolved.source);
     return {
+      ...(!baseUrl && piProviderModelsRefreshable(providerId)
+        ? { catalogCredential: await piResolveProviderRefreshCredential(providerId) }
+        : {}),
       listHeaders: headers,
     };
   } catch {

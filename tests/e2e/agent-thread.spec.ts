@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -1245,22 +1246,49 @@ test.describe('canonical agent Thread surface', () => {
     await expect(gallery.getByRole('button', { name: 'Show all 6 images' })).toBeVisible();
 
     await page.setViewportSize({ width: 420, height: 760 });
-    await page.emulateMedia({ colorScheme: 'dark' });
     await expect(gallery).toBeInViewport();
-    const overflowContrast = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
+    const readOverflowContrast = () => overflowBadge.evaluate((element) => {
       const buttonStyle = getComputedStyle(element);
-      const rootStyle = getComputedStyle(document.documentElement);
       return {
         background: buttonStyle.backgroundColor,
         backdropFilter: buttonStyle.backdropFilter,
         foreground: buttonStyle.color,
-        expectedBackground: rootStyle.getPropertyValue('--media-hud-bg').trim(),
-        expectedForeground: rootStyle.getPropertyValue('--media-hud-fg').trim(),
+        reducedTransparency: matchMedia('(prefers-reduced-transparency: reduce)').matches,
       };
     });
-    expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
-    expect(overflowContrast.backdropFilter).toBe('none');
-    expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
+    const expectResolvedOverflowContrast = async (reducedTransparency: boolean) => {
+      const expected = {
+        background: await resolveTokenColor(page, '--media-hud-bg'),
+        backdropFilter: 'none',
+        foreground: await resolveTokenColor(page, '--media-hud-fg'),
+        reducedTransparency,
+      };
+      await expect.poll(readOverflowContrast, {
+        message: `Overflow badge contrast did not settle for reducedTransparency=${reducedTransparency}`,
+      }).toEqual(expected);
+      return expected;
+    };
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'no-preference' });
+    const standardContrast = await expectResolvedOverflowContrast(false);
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'reduce' });
+    const reducedContrast = await expectResolvedOverflowContrast(true);
+    expect(reducedContrast.background).not.toBe(standardContrast.background);
+    const reducedInteractionBackgrounds = {
+      hover: await resolveTokenColor(page, '--media-hud-hover-bg'),
+      active: await resolveTokenColor(page, '--media-hud-active-bg'),
+    };
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'no-preference' });
+    const interactionBackgrounds = {
+      hover: await resolveTokenColor(page, '--media-hud-hover-bg'),
+      active: await resolveTokenColor(page, '--media-hud-active-bg'),
+    };
+    expect(interactionBackgrounds.hover).not.toBe(reducedInteractionBackgrounds.hover);
+    expect(interactionBackgrounds.active).not.toBe(reducedInteractionBackgrounds.active);
+
     const overflowGeometry = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
       const tile = element.closest('.thread-image-gallery-tile');
       if (!tile) throw new Error('Overflow badge tile was not found');
@@ -1279,14 +1307,6 @@ test.describe('canonical agent Thread surface', () => {
     expect(overflowGeometry.areaRatio).toBeLessThan(0.25);
     expect(overflowGeometry.rightInset).toBe(overflowGeometry.expectedRightInset);
     expect(overflowGeometry.bottomInset).toBe(overflowGeometry.expectedBottomInset);
-    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
-    const interactionBackgrounds = await overflowBadge.evaluate(() => {
-      const rootStyle = getComputedStyle(document.documentElement);
-      return {
-        hover: rootStyle.getPropertyValue('--media-hud-hover-bg').trim(),
-        active: rootStyle.getPropertyValue('--media-hud-active-bg').trim(),
-      };
-    });
     await overflowBadge.hover();
     await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.hover);
     await page.mouse.down();

@@ -407,37 +407,34 @@ test.describe('workspace layout resizing', () => {
   });
 
   test('single panel centers bounded content and fills when narrow', async ({ page }) => {
+    const readPanelMetrics = () => page.locator('.outline-panel-surface .panel-inner').first().evaluate((inner) => {
+      const scrollport = inner.closest('.main-panel');
+      if (!(scrollport instanceof HTMLElement)) throw new Error('missing panel scrollport');
+      const scrollportBox = scrollport.getBoundingClientRect();
+      const innerBox = inner.getBoundingClientRect();
+      return {
+        innerWidth: innerBox.width,
+        leftGap: innerBox.left - scrollportBox.left,
+        panelWidth: scrollportBox.width,
+        rightGap: scrollportBox.right - innerBox.right,
+        scrollbarGutter: getComputedStyle(scrollport).scrollbarGutter,
+      };
+    });
+
     await page.setViewportSize({ width: 1900, height: 900 });
 
     // The default layout is a single pane.
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(1);
 
-    const centeredMetrics = await page.locator('.outline-panel-surface .panel-inner').first().evaluate((inner) => {
-      const panel = inner.closest('.outline-panel-surface')!.getBoundingClientRect();
-      const innerBox = inner.getBoundingClientRect();
-      return {
-        innerWidth: innerBox.width,
-        leftGap: innerBox.left - panel.left,
-        panelWidth: panel.width,
-        rightGap: panel.right - innerBox.right,
-      };
-    });
+    const centeredMetrics = await readPanelMetrics();
     expect(centeredMetrics.panelWidth).toBeGreaterThan(900);
     expect(centeredMetrics.innerWidth).toBeLessThanOrEqual(721);
     expect(Math.abs(centeredMetrics.leftGap - centeredMetrics.rightGap)).toBeLessThanOrEqual(2);
+    expect(centeredMetrics.scrollbarGutter).toBe('stable both-edges');
 
     await page.setViewportSize({ width: 900, height: 900 });
-    const narrowMetrics = await page.locator('.outline-panel-surface .panel-inner').first().evaluate((inner) => {
-      const panel = inner.closest('.outline-panel-surface')!.getBoundingClientRect();
-      const innerBox = inner.getBoundingClientRect();
-      return {
-        innerWidth: innerBox.width,
-        leftGap: innerBox.left - panel.left,
-        panelWidth: panel.width,
-        rightGap: panel.right - innerBox.right,
-      };
-    });
+    const narrowMetrics = await readPanelMetrics();
     expect(narrowMetrics.innerWidth).toBeLessThanOrEqual(narrowMetrics.panelWidth + 1);
     expect(narrowMetrics.leftGap).toBeGreaterThanOrEqual(-1);
     expect(narrowMetrics.rightGap).toBeGreaterThanOrEqual(-1);

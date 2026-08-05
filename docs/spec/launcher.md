@@ -103,8 +103,13 @@ combobox over the result `listbox` (`aria-activedescendant` follows selection).
 ## Capture (basic-info only)
 
 Capture reads URL + title + frontmost app and classifies the provider **from the
-URL** — no in-page body/transcript/selection extraction (that returns with the
-browser-extension backend). Orchestrated by `captureExternalContext`
+URL** — no in-page body/transcript/selection extraction, and **no network access on
+this path at all**: `captureExternalContext` runs on every hotkey press, so a fetch
+here would be one silent outbound request for whatever page the user is looking at.
+Reading page content is **not built**; when it is, it will be a separate explicit
+API invoked only after the user picks an action, never on this path
+(`docs/plans/unified-command-surface.md`). No browser extension is involved.
+Orchestrated by `captureExternalContext`
 (`src/main/context/contextCapture.ts`): frontmost app via JXA NSWorkspace, the
 active tab via the Accessibility addon (authoritative, by PID) with an AppleScript
 front-tab fallback. The AppleScript spawn is skipped when the AX read already

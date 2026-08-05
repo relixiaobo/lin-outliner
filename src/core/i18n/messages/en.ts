@@ -1486,6 +1486,8 @@ commandPalette: {
       slashCommandsLabel: 'Thread slash commands',
       compactCommandDescription: 'Replace earlier context with a durable summary',
       clearCommandDescription: 'Start a new context epoch without deleting history',
+      newThreadCommandDescription: 'Start a new Thread',
+      newThreadStructuredContentError: 'Remove attachments and references before starting a new Thread.',
       mentionSuggestionsLabel: 'Thread reference suggestions',
       noCommands: 'No commands',
       searchingFiles: 'Searching files...',
@@ -1610,7 +1612,7 @@ commandPalette: {
     save: 'Save',
     saving: 'Saving…',
   },
-  // The per-provider OAuth sign-in surface (Anthropic / GitHub Copilot / OpenAI Codex).
+  // The provider-owned OAuth sign-in surface.
   providerOAuth: {
     activeChip: 'Active',
     connected: 'Connected',
@@ -1664,6 +1666,18 @@ commandPalette: {
       },
       'openai-codex': {
         hint: 'Sign in with your ChatGPT Plus or Pro subscription.',
+      },
+      'kimi-coding': {
+        hint: 'Sign in with your Kimi Code subscription.',
+      },
+      openrouter: {
+        hint: 'Sign in with OpenRouter to connect your account.',
+      },
+      radius: {
+        hint: 'Sign in with Radius to load your gateway model catalog.',
+      },
+      xai: {
+        hint: 'Sign in with your SuperGrok or X subscription.',
       },
     },
   },

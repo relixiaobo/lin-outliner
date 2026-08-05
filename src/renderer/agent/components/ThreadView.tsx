@@ -114,6 +114,7 @@ import {
   projectSubagentsForTurn,
   type SubagentTurnProjection,
 } from '../subagentPresentation';
+import { classifyNewThreadCommand } from '../threadComposerCommands';
 
 interface ThreadViewProps {
   readonly composerEnabled: boolean;
@@ -136,8 +137,11 @@ interface ThreadViewProps {
   readonly waitingOnUserInput: boolean;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
   readonly plan: ActiveTurnPlan | null;
+  readonly threadCreationBlocked: boolean;
+  readonly threadCreationPending: boolean;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
+  readonly onCreateThread: () => Promise<boolean>;
   readonly onInterrupt: () => Promise<void>;
   /** Stop one delegated child from the card, or the child Thread view header. */
   readonly onInterruptThread: (threadId: string) => Promise<void>;
@@ -173,6 +177,8 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   fileRefs: [],
   text: '',
 };
+
+type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 
 interface ThreadScrollSnapshot {
   readonly follow: boolean;
@@ -340,8 +346,11 @@ export function ThreadView({
   inputRequest,
   waitingOnUserInput,
   providerRetry,
+  threadCreationBlocked,
+  threadCreationPending,
   onEditUserMessage,
   onContinueInNewChat,
+  onCreateThread,
   onInterrupt,
   onInterruptThread,
   onConfigurationChange,
@@ -360,6 +369,8 @@ export function ThreadView({
   const [sending, setSending] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newThreadValidation, setNewThreadValidation] = useState<NewThreadValidation>(null);
+  const [failedThreadCreationFocusToken, setFailedThreadCreationFocusToken] = useState(0);
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
   const [recentLocalFiles, setRecentLocalFiles] = useState<ThreadComposerLocalFileCandidate[]>([]);
   const [follow, setFollow] = useState(initialScrollSnapshot?.follow ?? true);
@@ -395,6 +406,7 @@ export function ThreadView({
   const attachmentSourceKeysRef = useRef(new Map<string, string>());
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const handledFocusTokenRef = useRef(0);
+  const handledFailedThreadCreationFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
   const measuredTurnHeights = useMemo(() => cachedTurnHeights(threadId), [threadId]);
   const [measureVersion, setMeasureVersion] = useState(0);
@@ -432,6 +444,25 @@ export function ThreadView({
   const hasUsableProvider = Boolean(providerSettings?.providers.some(
     (provider) => isProviderUsable(providerSettings, provider),
   ));
+  const newThreadCommandState = classifyNewThreadCommand(draft);
+  const newThreadAction = newThreadCommandState !== 'ordinary';
+  const composerActionDisabled = !hasDraft
+    || sending
+    || threadCreationPending
+    || (newThreadCommandState === 'ready' ? threadCreationBlocked : false)
+    || (newThreadCommandState === 'ordinary' ? providerBlocksSend : false);
+  const composerActionLabel = newThreadAction
+    ? t.agent.thread.new
+    : activeTurn ? t.agent.thread.steer : t.agent.thread.send;
+  const composerActionTitle = (
+    (newThreadCommandState === 'ready' && threadCreationBlocked)
+    || (newThreadCommandState === 'ordinary' && providerBlocksSend)
+  ) ? t.agent.thread.providerRequired : composerActionLabel;
+  const newThreadValidationMessage = newThreadValidation === 'structuredContent'
+    ? t.agent.composer.newThreadStructuredContentError
+    : newThreadValidation === 'providerRequired'
+      ? t.agent.thread.providerRequired
+      : null;
   const virtualLayout = useMemo(
     () => buildVirtualTurnLayout(turns, measuredTurnHeights),
     [measureVersion, measuredTurnHeights, turns],
@@ -925,6 +956,21 @@ export function ThreadView({
     return () => window.cancelAnimationFrame(frame);
   }, [composerFocusToken, waitingForInput]);
 
+  useEffect(() => {
+    if (failedThreadCreationFocusToken <= 0
+      || handledFailedThreadCreationFocusTokenRef.current >= failedThreadCreationFocusToken
+      || threadCreationPending
+      || waitingForInput) return undefined;
+    handledFailedThreadCreationFocusTokenRef.current = failedThreadCreationFocusToken;
+    const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [failedThreadCreationFocusToken, threadCreationPending, waitingForInput]);
+
+  useEffect(() => {
+    if (threadCreationBlocked) return;
+    setNewThreadValidation((current) => current === 'providerRequired' ? null : current);
+  }, [threadCreationBlocked]);
+
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
     if (!composerEnabled) return;
     composerRef.current?.insertNodeReference({ nodeId: request.nodeId, title: request.title });
@@ -947,10 +993,27 @@ export function ThreadView({
   async function submit() {
     const currentDraft = draftRef.current;
     if (!composerEnabled
-      || providerBlocksSend
       || currentDraft.empty
       || sending
+      || threadCreationPending
       || waitingForInput) return;
+    const commandState = classifyNewThreadCommand(currentDraft);
+    if (commandState === 'blockedByStructuredContent') {
+      setNewThreadValidation('structuredContent');
+      return;
+    }
+    if (commandState === 'ready') {
+      if (threadCreationBlocked) {
+        setNewThreadValidation('providerRequired');
+        return;
+      }
+      setNewThreadValidation(null);
+      const created = await onCreateThread();
+      if (!created) setFailedThreadCreationFocusToken((token) => token + 1);
+      return;
+    }
+    setNewThreadValidation(null);
+    if (providerBlocksSend) return;
     const submittedContent = threadContentFromDraft(currentDraft, attachmentsRef.current);
     const submittedAttachments = submittedContent.filter(
       (content): content is ThreadAttachmentContent => content.type === 'attachment',
@@ -1267,6 +1330,12 @@ export function ThreadView({
   function handleDraftChange(next: ThreadComposerDraft) {
     draftRef.current = next;
     setDraft(next);
+    const nextCommandState = classifyNewThreadCommand(next);
+    setNewThreadValidation((current) => {
+      if (current === 'structuredContent' && nextCommandState === 'blockedByStructuredContent') return current;
+      if (current === 'providerRequired' && nextCommandState === 'ready' && threadCreationBlocked) return current;
+      return null;
+    });
     if (sendingRef.current) return;
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
     const current = attachmentsRef.current;
@@ -1434,12 +1503,17 @@ export function ThreadView({
           <div className="thread-composer-main" hidden={waitingForInput}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}
               {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
+              {newThreadValidationMessage ? (
+                <p className="thread-inline-error" role="status">
+                  {newThreadValidationMessage}
+                </p>
+              ) : null}
               <ThreadComposerEditor
-                allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput}
-                allowNodeReferences={!waitingForInput}
+                allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}
+                allowNodeReferences={!waitingForInput && !threadCreationPending}
                 allowSlashCommands
                 currentNodeId={null}
-                disabled={waitingForInput}
+                disabled={waitingForInput || threadCreationPending}
                 index={index}
                 isStreaming={Boolean(activeTurn)}
                 onChange={handleDraftChange}
@@ -1464,7 +1538,11 @@ export function ThreadView({
                   type="file"
                 />
                 <IconButton
-                  disabled={providerBlocksSend || Boolean(activeTurn) || attachments.length >= MAX_ATTACHMENTS || sending}
+                  disabled={providerBlocksSend
+                    || Boolean(activeTurn)
+                    || attachments.length >= MAX_ATTACHMENTS
+                    || sending
+                    || threadCreationPending}
                   icon={AttachmentIcon}
                   label={t.agent.thread.addAttachment}
                   onClick={() => void addPickedFiles()}
@@ -1478,6 +1556,7 @@ export function ThreadView({
                     configuration={configuration}
                     disabled={Boolean(activeTurn)
                       || sending
+                      || threadCreationPending
                       || (providerSettingsLoaded && !hasUsableProvider)}
                     onChange={async (next) => {
                       setError(null);
@@ -1501,13 +1580,11 @@ export function ThreadView({
                   />
                 ) : (
                   <IconButton
-                    disabled={providerBlocksSend || !hasDraft || sending}
+                    disabled={composerActionDisabled}
                     icon={SendIcon}
-                    label={activeTurn ? t.agent.thread.steer : t.agent.thread.send}
+                    label={composerActionLabel}
                     onClick={() => void submit()}
-                    title={providerBlocksSend
-                      ? t.agent.thread.providerRequired
-                      : activeTurn ? t.agent.thread.steer : t.agent.thread.send}
+                    title={composerActionTitle}
                     variant="composerAction"
                   />
                 )}

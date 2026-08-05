@@ -1,13 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
-import type { AgentProviderSettingsView, AgentSlashCommandView, SkillDefinition } from '../../api/types';
+import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
-  AgentIcon,
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
@@ -27,6 +26,7 @@ import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
+import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -104,15 +104,22 @@ export function ThreadDock({
     && thread.status.type === 'active'
     && lineageRoot(thread, threadsById)?.threadSource === 'user';
   /**
-   * "This conversation has background work running" — derived from catalog
-   * status, so it also covers a fire-and-forget child whose parent Turn already
-   * ended, which is the case the list can no longer show any other way.
+   * "This conversation has background work running" — either the unselected
+   * root itself is active, or one of its descendants is. The selected root's
+   * own foreground Turn does not need a duplicate background indicator.
    */
   const rootsWithBackgroundWork = useMemo(() => {
     const parentById = new Map(snapshot.threads.map((candidate) => [candidate.id, candidate.parentThreadId]));
     const roots = new Set<string>();
     for (const candidate of snapshot.threads) {
-      if (candidate.parentThreadId === null || candidate.status.type !== 'active') continue;
+      if (
+        candidate.status.type !== 'active'
+        || candidate.status.activeFlags.includes('waitingOnUserInput')
+      ) continue;
+      if (candidate.parentThreadId === null) {
+        if (candidate.id !== snapshot.selectedThreadId) roots.add(candidate.id);
+        continue;
+      }
       const seen = new Set<string>([candidate.id]);
       let current: string | null = candidate.parentThreadId;
       while (current !== null && !seen.has(current)) {
@@ -128,7 +135,7 @@ export function ThreadDock({
       if (current !== null) roots.add(current);
     }
     return roots;
-  }, [snapshot.threads]);
+  }, [snapshot.selectedThreadId, snapshot.threads]);
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
@@ -168,6 +175,7 @@ export function ThreadDock({
         setSlashCommands(slashCommandsFromSkills(skills, {
           compactDescription: t.agent.composer.compactCommandDescription,
           clearDescription: t.agent.composer.clearCommandDescription,
+          newThreadDescription: t.agent.composer.newThreadCommandDescription,
         }));
       }
     } catch {
@@ -175,6 +183,7 @@ export function ThreadDock({
         setSlashCommands(runtimeSlashCommands({
           compactDescription: t.agent.composer.compactCommandDescription,
           clearDescription: t.agent.composer.clearCommandDescription,
+          newThreadDescription: t.agent.composer.newThreadCommandDescription,
         }));
       }
     }
@@ -231,7 +240,7 @@ export function ThreadDock({
   }, [t]);
 
   const createThread = useCallback(async () => {
-    if (creatingRef.current || providerBlocksCreation) return;
+    if (creatingRef.current || providerBlocksCreation) return false;
     creatingRef.current = true;
     setCreating(true);
     setActionError(null);
@@ -239,8 +248,10 @@ export function ThreadDock({
       await threadStore.createThread();
       setListOpen(false);
       setComposerFocusToken((token) => token + 1);
+      return true;
     } catch (error) {
       setActionError(errorMessage(error));
+      return false;
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -338,9 +349,6 @@ export function ThreadDock({
                 ref={threadListAnchorRef}
                 type="button"
               >
-                {thread?.parentThreadId
-                  ? null
-                  : <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />}
                 <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
                 <ChevronDownIcon
                   className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
@@ -417,6 +425,7 @@ export function ThreadDock({
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
+              onCreateThread={createThread}
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
                 threadStore.rollbackAndSend(thread.id, content, userView)
               )}
@@ -437,6 +446,8 @@ export function ThreadDock({
               providerRetry={providerRetry}
               plan={plan}
               slashCommands={slashCommands}
+              threadCreationBlocked={providerBlocksCreation}
+              threadCreationPending={creating}
               threadCwd={thread.cwd}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}
@@ -559,51 +570,4 @@ function lineageRoot(thread: Thread, threadsById: ReadonlyMap<string, Thread>): 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-interface RuntimeSlashCommandLabels {
-  readonly compactDescription: string;
-  readonly clearDescription: string;
-}
-
-function runtimeSlashCommands(labels: RuntimeSlashCommandLabels): AgentSlashCommandView[] {
-  return [
-    {
-      id: 'runtime:compact',
-      kind: 'runtime',
-      label: '/compact',
-      description: labels.compactDescription,
-      insertText: '/compact ',
-    },
-    {
-      id: 'runtime:clear',
-      kind: 'runtime',
-      label: '/clear',
-      description: labels.clearDescription,
-      insertText: '/clear',
-    },
-  ];
-}
-
-function slashCommandsFromSkills(
-  skills: readonly SkillDefinition[],
-  labels: RuntimeSlashCommandLabels,
-): AgentSlashCommandView[] {
-  const skillCommands = skills
-    .filter((skill) => skill.userInvocable)
-    .map((skill) => ({
-      id: `skill:${skill.name}`,
-      kind: 'skill' as const,
-      label: `/${skill.name}`,
-      description: slashCommandDescription(skill),
-      insertText: `/${skill.name} `,
-    }))
-    .sort((left, right) => left.label.localeCompare(right.label));
-  return [...runtimeSlashCommands(labels), ...skillCommands];
-}
-
-function slashCommandDescription(skill: SkillDefinition): string {
-  const detail = skill.description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
-  if (!skill.displayName || skill.displayName === detail) return detail;
-  return detail ? `${skill.displayName} - ${detail}` : skill.displayName;
 }

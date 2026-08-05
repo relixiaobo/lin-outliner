@@ -5,9 +5,10 @@
 //   1. getFrontmostApp()  — which app is in front (no TCC; NSWorkspace).
 //   2. getActiveTab()     — the front tab's URL+title (Automation TCC).
 //
-// Capture is basic-info only (URL + title); rich in-page extraction was removed in
-// favor of the planned browser extension / CDP backend (see contextCapture.ts and
-// docs/plans/browser-extension-integration.md). Each function returns a typed
+// Capture is basic-info only (URL + title); rich in-page extraction was removed and
+// no extension or CDP backend is planned — page reading, when it lands, is an
+// explicit API invoked after the user picks an action, never on this ambient path
+// (see contextCapture.ts and docs/plans/unified-command-surface.md). Each function returns a typed
 // result or null; the orchestrator folds whatever succeeded into an ExternalContext.
 // No step ever throws (runOsascript never throws).
 

@@ -83,11 +83,6 @@ export function oauthSignInInfo(providerId: string, t: Messages): OAuthSignInInf
   return { hint: copy.hint, docsUrl: OAUTH_SIGN_IN_DOCS_URL[providerId], docsLabel };
 }
 
-// OAuth providers that ALSO accept a pasted API key (Anthropic console keys). For
-// these the sign-in form offers an "Use an API key instead" escape hatch back to
-// the standard key form; the others are sign-in only.
-export const OAUTH_API_KEY_FALLBACK = new Set<string>(['anthropic']);
-
 // Brand avatar. The monogram fallback (no vendored logo) keeps a neutral fill so
 // the letter reads; a vendored logo shows bare (no box). The SVG is INLINED so
 // monochrome `fill="currentColor"` marks follow the theme via the avatar's color.

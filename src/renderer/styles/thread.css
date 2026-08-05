@@ -13,6 +13,10 @@
   color: var(--text-primary);
 }
 
+/* The header shares the top-strip centreline but is NOT a native drag region.
+   Its box overlaps the fixed agent toggle from the sibling WindowChrome tree;
+   marking both regions draggable makes macOS consume the toggle click before
+   React receives it. The right window-chrome zone owns dragging here. */
 .thread-dock-header {
   position: relative;
   display: flex;
@@ -26,13 +30,7 @@
     calc(var(--chrome-right-zone-width) - var(--layout-gap))
     0
     calc(var(--rail-pad) + (var(--chrome-control-height) - var(--icon-size-md)) / 2 - var(--space-2));
-  -webkit-app-region: drag;
   user-select: none;
-}
-
-.thread-dock-header button,
-.thread-dock-header input {
-  -webkit-app-region: no-drag;
 }
 
 .thread-dock-title-button {
@@ -129,14 +127,8 @@
 
 .thread-title-chevron {
   flex: 0 0 auto;
-  opacity: 0;
-  transition: opacity var(--motion-fast), transform var(--motion-fast);
-}
-
-.thread-dock-title-button:hover .thread-title-chevron,
-.thread-dock-title-button:focus-visible .thread-title-chevron,
-.thread-dock-title-button[aria-expanded='true'] .thread-title-chevron {
   opacity: 0.72;
+  transition: transform var(--motion-fast);
 }
 
 .thread-title-chevron.is-open {

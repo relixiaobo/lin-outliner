@@ -155,6 +155,10 @@ describe('Turn diagnostics', () => {
       input: [firstProviderMessage, secondMessage],
       temperature: 0.2,
     });
+    collector.captureEvent({
+      type: 'message_end',
+      message: { ...assistantMessage('Still streaming'), stopReason: 'pending' },
+    } as AgentEvent);
 
     const payload = collector.payload();
     expect(payload.stablePrompt?.blocks.map((block) => block.layer)).toEqual(['L0', 'L1', 'L2']);
@@ -277,6 +281,7 @@ describe('Turn diagnostics', () => {
       estimatedInputTokens: 160,
       commonPrefixMessageCount: 1,
       transportResponse: null,
+      // `pending` is a partial-stream state and must not become a durable response.
       response: null,
     });
     expect(payload.activities).toEqual([
