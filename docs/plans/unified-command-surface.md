@@ -76,7 +76,7 @@ does not need them to build.
 
 ## Non-goals
 
-- **No habit-adaptive default action.** The default highlight is a fixed rule.
+- **No habit-adaptive default action.** Default activity is a fixed rule.
   Personalization already exists where it belongs: search *ordering*
   (`nodeAccessStore`). It never moves what Enter does.
 - **No Inbox and no capture-destination picker.** Today's date node is the
@@ -264,17 +264,45 @@ interface ObjectPresentation {
 type ActionSurface = 'contextMenu' | 'actionPanel'; // never `mainList`
 
 // 1. INVOCATION — the object membership available in one opening. Main-owned;
-//    crosses the seam as an opaque id. Fixed objects survive query changes; the
-//    one result generation is replaced atomically on every accepted object query.
-interface ObjectResultGeneration {
+//    crosses the seam as an opaque id. Fixed subject objects survive query changes;
+//    the one subject-result generation is replaced atomically on every accepted
+//    main-list query. Argument objects have a separate, slot-scoped capability domain.
+type ObjectResultGeneration = {
   generation: number; // main-owned monotonic counter; request ids are not trusted
   requestId: RequestId;
-  state: 'pending' | 'ready';
-  objects: readonly SurfaceObject[];
-}
+} & (
+  | { state: 'pending'; objects: readonly [] }
+  | { state: 'ready'; objects: readonly SurfaceObject[] }
+);
+type ObjectParameterId = {
+  [K in ActionId]:
+    K extends 'move' ? 'destination'
+      : K extends 'addTag' ? 'tag'
+        : K extends 'capture' ? 'destination' | 'tag'
+          : K extends 'create' ? 'destination'
+            : never;
+};
+type ArgumentSlot = {
+  [K in ActionId]: {
+    actionId: K;
+    subjectRef: ObjectRef;
+    parameterId: ObjectParameterId[K];
+  }
+}[ActionId];
+type ArgumentObjectGeneration = {
+  slot: ArgumentSlot;
+  generation: number; // from the same main-owned monotonic counter
+} & (
+  | { source: { kind: 'resolver' }; state: 'ready'; objects: readonly SurfaceObject[] }
+  | { source: { kind: 'query'; requestId: RequestId };
+      state: 'pending'; objects: readonly [] }
+  | { source: { kind: 'query'; requestId: RequestId };
+      state: 'ready'; objects: readonly SurfaceObject[] }
+);
 interface ActionInvocation {
-  fixedObjects: readonly SurfaceObject[]; // ambient page/node/selection chip
+  fixedObjects: readonly SurfaceObject[]; // menu anchors + resolved ambient chip
   resultGeneration?: ObjectResultGeneration; // node/system/app/draft results
+  argumentGenerations: readonly ArgumentObjectGeneration[];
   draftText: string; // sanitized input payload; never an implicit subject choice
   // ATTESTED by the main renderer only (sender-checked; see D1b). Never suppliable
   // by the launcher. Facts are tied to the object they qualify, never treated as
@@ -284,6 +312,14 @@ interface ActionInvocation {
   }[];
   workspace?: readonly { objectRef: ObjectRef; isPinned: boolean }[];
 }
+
+type AmbientSlot = {
+  requestId: AmbientRequestId;
+  revision: number;
+} & (
+  | { state: 'pending' | 'none' }
+  | { state: 'resolved'; objectRef: ObjectRef }
+);
 
 // 2. EVALUATION — three raw states, never a bare list. `absent` has no subject and
 //    therefore never produces an ActionPresentation.
@@ -295,7 +331,9 @@ type PresentableEvaluation = Exclude<ActionEvaluation, { status: 'absent' }>;
 
 // Arguments already known for a parameterized variant. This is an explicit map per
 // action family, not generic Partial<ActionArguments[K]>; the registry descriptor
-// decides which one missing field the ParameterSpec is allowed to fill.
+// decides which one missing field the ParameterSpec is allowed to fill. Every
+// object-valued spec declares its ObjectParameterId and exact ActionArguments path;
+// the presentation builder, request codec and admission check read that same entry.
 type ActionArgumentBinding<K extends ActionId> =
   | { state: 'ready'; arguments: ActionArguments[K] }
   | { state: 'needsParameter'; seed: ActionArgumentSeed[K]; parameter: ParameterSpec<K> };
@@ -355,6 +393,8 @@ interface InvocationRecord {
   attestation?: { webContentsId: number; renderGeneration: number };
   consumableBy: RendererId;
   openSeq: number | null;           // null when not bound to a launcher opening
+  // Launcher-only slot. The invocation exists before ambient capture resolves.
+  ambient?: AmbientSlot;
   phase: InvocationPhase;           // atomic; see D1b
   expiresAt: number;
 }
@@ -379,6 +419,7 @@ type InvocationSeed =
 interface InvocationOpened {
   invocationRef: InvocationRef;
   openSeq: number | null;
+  ambient?: { state: 'pending' | 'resolved' | 'none'; revision: number };
   fixedItems: readonly SurfaceItemPresentation[];  // chips / anchored objects
   resultItems: readonly SurfaceItemPresentation[]; // current ready generation
   menuActions: readonly ActionPresentation[];
@@ -400,7 +441,49 @@ type ObjectQueryResult =
   | { status: 'superseded'; invocationRef: InvocationRef; openSeq: number;
       requestId: RequestId; generation: number };
 
-// 4d. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
+// 4d. PARAMETER QUERY — argument rows use the same SurfaceObject shape but a
+// capability generation scoped to one exact action + subject + parameter slot.
+interface ParameterObjectQueryRequest {
+  invocationRef: InvocationRef;
+  openSeq: number | null;
+  slot: ArgumentSlot;
+  requestId: RequestId;
+  query: string;
+}
+type ParameterObjectQueryResult =
+  | { status: 'ready'; invocationRef: InvocationRef; slot: ArgumentSlot;
+      requestId: RequestId; generation: number;
+      items: readonly ObjectPresentation[] }
+  | { status: 'superseded'; invocationRef: InvocationRef; slot: ArgumentSlot;
+      requestId: RequestId; generation: number };
+
+// 4e. AMBIENT CONTEXT — main owns this transition. External capture resolves in
+// main; an in-app seed first passes its sender/ID checks. Neither renderer may post
+// a finished object. Main pushes only the authoritative replacement presentation.
+interface InAppAmbientSeedResponse {
+  invocationRef: InvocationRef;
+  openSeq: number;
+  requestId: AmbientRequestId;
+  seed: InvocationSeed; // sender-checked main renderer only
+}
+type AmbientContextResolution =
+  | { kind: 'externalPage'; contextId: ExternalContextId }
+  | { kind: 'inApp'; seed: InvocationSeed }
+  | { kind: 'none' };
+interface AmbientContextResolved {
+  invocationRef: InvocationRef;
+  openSeq: number;
+  requestId: AmbientRequestId;
+  resolution: AmbientContextResolution;
+}
+type AmbientContextChanged =
+  | { status: 'updated'; invocationRef: InvocationRef; openSeq: number;
+      revision: number; ambientState: 'resolved' | 'none';
+      fixedItems: readonly SurfaceItemPresentation[] }
+  | { status: 'superseded'; invocationRef: InvocationRef; openSeq: number;
+      requestId: AmbientRequestId };
+
+// 4f. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
 //     NAME a transition; main decides whether it is legal in the current phase.
 type InvocationEvent =
   | { kind: 'confirmationCancelled'; invocationRef: InvocationRef; challenge: ChallengeToken }
@@ -497,7 +580,9 @@ type ActionRequestResult =
   | { status: 'confirmationRequired'; challenge: ChallengeToken; confirm: ConfirmationSpec;
       presentation: ReadyActionPresentation } // authoritative copy + subject + args for the dialog
   | { status: 'reEvaluated'; presentation: ActionPresentation } // current subject, changed args/state
-  | { status: 'stale'; reason: 'invocation' | 'subject' | 'generation' }
+  | { status: 'stale'; reason:
+      | 'invocation' | 'subject' | 'subjectGeneration'
+      | 'argument' | 'argumentGeneration' }
   | ActionExecutionResult;
 
 type ActionExecutionResult =
@@ -530,11 +615,35 @@ drops any response that does not match its latest `(openSeq, requestId)`, so nei
 IPC arrival order nor an old draft replay can resurrect a stale subject.
 Refs are generation-scoped: the same backing node found twice receives a new
 `ObjectRef`, while its `NodeObjectRef` continues to identify the same document node.
-The initial `InvocationOpened` synchronously installs a main-minted ready
-empty-query generation, which is why its Today/system/app rows are already legal
-subjects before the first keystroke. Queries and membership edits are admitted only
-in `live` / `confirming`; `executing` has already frozen the plan, and `spent` is
-terminal.
+Deleting a result subject also deletes every argument slot keyed to that ref. The
+initial `InvocationOpened` synchronously installs a main-minted ready empty-query
+generation, which is why its Today/system/app rows are already legal subjects before
+the first keystroke. Queries and membership edits are admitted only in `live` /
+`confirming`; `executing` has already frozen the plan, and `spent` is terminal.
+
+**Argument objects use the same object model and a different membership domain.**
+An object-valued argument is admissible only when its ref belongs to a `ready`
+`ArgumentObjectGeneration` whose `slot` exactly matches the request's
+`(actionId, subjectRef, parameterId)`. Main materializes the backing node/tag/draft
+from that record; a renderer never substitutes a `NodeId`, text, or a ref from the
+main subject list. This is why the same Today `NodeObjectRef` may have one main-list
+subject ref and another capture-destination argument ref: the noun is the same, but
+the two refs grant different uses and lifetimes.
+
+Resolver-installed arguments and queried candidates share that store. When
+`capture(page)` or `create(draft)` is presented, main installs Today in the exact
+`destination` slot with `source.kind = 'resolver'`; that generation survives
+main-list queries as long as its subject remains current. Re-evaluation reuses that
+generation when the slot and backing object are unchanged; it does not mint a new ref
+merely because an execution request arrived. A parameter query first
+installs an empty `pending` generation for only its named slot, then installs fresh
+objects if its private generation is still current. It invalidates the previous
+candidate refs for that slot, never another action's candidates and never the main
+result generation. Removing/replacing a subject, re-evaluating away its action,
+spending the invocation, or replacing the same argument generation invalidates its
+refs and revokes any challenge that names them. Stale candidates and refs replayed
+across action, subject, or parameter slots return `stale`; they are never accepted by
+backing identity alone.
 
 `draftText` is updated in that same main-owned transition, but it is **payload, not
 selection**. The same characters drive object retrieval and may later become a page
@@ -548,6 +657,32 @@ resets the retrieval timer. IPC order from the same sender therefore makes
 type-then-immediate-Enter observe the latest text even though results have not
 resolved yet.
 
+**The launcher invocation opens before ambient context resolves.** Main creates the
+record synchronously for the new `openSeq`, installs the ready empty-query result
+generation, marks its one ambient slot `pending`, and shows/focuses the panel. The
+existing external capture or the sender-checked in-app seed may arrive later. Only
+the main renderer may answer the corresponding main-issued request with
+`InAppAmbientSeedResponse`; main validates that sender and the opaque tuple before
+using its raw facts. Only main calls `AmbientContextResolved`; it validates
+`(invocationRef, openSeq, AmbientRequestId, phase)`, then atomically installs or
+replaces the fixed page/node/selection object (or records `none`) and pushes
+`AmbientContextChanged`. That transition preserves `draftText`, the current main
+result generation, and unrelated argument generations. Replacing an old ambient
+subject invalidates that ref and its argument slots; if a confirmation named it, the
+challenge is revoked and the phase returns to `live`.
+
+Ambient resolution is serialized with object queries but updates disjoint fields, so
+typing while capture is slow loses neither the text nor the ready result that later
+arrives. A resolution for an old opening/request, or one arriving after `executing`,
+is `superseded` without changing membership. The launcher cannot call this
+transition, and a main-renderer seed is converted into an object only after sender,
+render-generation, and node/selection validation. Activity after the authoritative
+push is the deterministic renderer rule in D4; membership does not itself invent a
+selection. Every install, replacement, `none` result or ambient-chip removal
+increments `ambient.revision`; the renderer applies only a matching `openSeq` with a
+strictly newer revision, so a delayed push cannot resurrect a replaced or removed
+chip.
+
 **Removing a chip changes membership through main.** `objectRemoved` deletes one
 fixed object; `selectionMemberRemoved` validates the member and atomically replaces
 the aggregate selection with a freshly referenced aggregate (or a single node / no
@@ -555,7 +690,9 @@ chip when the remaining cardinality requires it). Main re-derives the replacemen
 node facets and rekeys only still-current attested facts; the event cannot supply
 either. Removed and replaced refs stop
 being admissible immediately while the opening itself remains live; the returned
-`InvocationOpened` is the authoritative replacement presentation. `abandoned` is
+`InvocationOpened` is the authoritative replacement presentation. Removing the
+ambient object also advances its revision and leaves the slot at `none`, preventing
+an older context push from reattaching it. `abandoned` is
 reserved for closing the menu or panel; it no longer conflates "remove this object"
 with "discard this invocation".
 
@@ -706,9 +843,10 @@ So D1b gains **one exception, admitted by name and bounded by three conditions**
 qualifies today, and out of app the action resolves `absent` anyway, since there is
 no main renderer to supply the bit.
 
-**One opening produces one `InvocationRef`, one fixed object set, at most one current
-result generation and one ordered action list**, so a menu never assembles itself
-from several refs and a command row never authors an object/action pair locally.
+**One opening produces one `InvocationRef`, one fixed subject set, at most one current
+subject-result generation, independently keyed argument generations and one ordered
+action list**, so a menu never assembles itself from several invocation refs and a
+command row never authors an object/action pair locally.
 
 **Evaluation has three states because the two projections treat non-applicability
 differently.** D2 must preserve the menu's existing disabled rows; D7's searchable
@@ -862,24 +1000,25 @@ hex penalty and the **dynamic tag-draft object**. Shipping every tag inside a pr
 would be unbounded and stale within a keystroke.
 
 So the pure tag policy moves to core beside the retrieval kernel, and main exposes
-**one parameter-candidate query keyed by the authoritative invocation ref**:
+the `ParameterObjectQueryRequest` / `ParameterObjectQueryResult` contract above.
+The request names the authoritative invocation and the exact
+`actionId + subjectRef + parameterId` slot; main first proves that the current
+presentation owns that slot, then installs the candidate objects in its
+`ArgumentObjectGeneration`. A request cannot create a slot merely by naming one.
 
-```ts
-// main: parameter/query { invocationRef, actionId, subjectRef, requestId, query } → candidates
-type ParameterCandidates =
-  | { kind: 'node'; items: readonly ObjectPresentation[] } // Move to (D5)
-  | { kind: 'tag';  items: readonly ObjectPresentation[] }; // tag nodes + tag draft
-```
-
-Same async contract as D5 — request identity, out-of-order responses dropped,
-cancellation on close — and a parity test against the existing selector so the
-policy is provably unchanged. A candidate remains an **argument object**, not a new
-action subject: selecting it binds its `objectRef` into the parent request's typed
-arguments while preserving the original subject and `actionId`. A tag draft is
-therefore a noun row whose selection lets `addTag` resolve create-then-apply; it
-does not gain a speculative top-level `createTag` action or a *Create tag X* command
-row. Without this transport `Add tag` would also be absent out of app, which the
-inventory in D1 does not claim.
+It has the same async mechanics as D5 — a private generation, request identity,
+out-of-order responses dropped, cancellation on close — plus a parity test against
+the existing selector so the policy is provably unchanged. It does **not** share the
+main-list result generation: changing a note query cannot invalidate the Today
+destination for a fixed page, while changing an `addTag.tag` query invalidates only
+the prior tag candidates for that same action and subject. A candidate remains an
+**argument object**, not a new action subject: selecting it binds its `objectRef`
+into the parent request's typed arguments while preserving the original subject and
+`actionId`. Main accepts that ref only from the matching ready slot. A tag draft is
+therefore a noun row whose selection lets `addTag` resolve create-then-apply; it does
+not gain a speculative top-level `createTag` action or a *Create tag X* command row.
+Without this transport `Add tag` would also be absent out of app, which the inventory
+in D1 does not claim.
 
 ### D1b — Admission: a renderer may name an action, never author one
 
@@ -921,7 +1060,10 @@ the authoritative `ExternalContext`**, and the intent is validated at the seam
 before it reaches durable storage. The registry follows it exactly:
 
 0. **The ref has to be created before anything can name it, and that is the
-   security boundary.** Main cannot infer which visual row was right-clicked, the
+   security boundary.** A context-menu seed creates its record after validation; a
+   launcher open creates its record synchronously with an empty fixed set and a
+   main-owned pending ambient slot, before either async context path resolves. Main
+   cannot infer which visual row was right-clicked, the
    live selection, panel identity, `rowExpanded` or `isPinned` from the projection —
    those are renderer facts today (`NodeContextMenu.tsx:63-80`,
    `OutlinerItem.tsx:2500-2516`). But letting a renderer post a finished
@@ -934,21 +1076,38 @@ before it reaches durable storage. The registry follows it exactly:
    authored objects. A draft object is constructed by main from the launcher's
    sanitized, bounded input; it cannot carry an arbitrary object ref. The launcher
    can neither submit a seed nor upgrade one; wrong-sender and forged-selection /
-   `workspace` attempts are rejected, and both are tested.
-1. Main returns `{ invocationRef, openSeq, fixedItems, resultItems, menuActions }`.
+   `workspace` attempts are rejected, and both are tested. For a launcher invocation
+   the validated seed is input to the main-owned ambient transition, never a second
+   invocation and never a renderer-authored membership patch.
+1. Main returns
+   `{ invocationRef, openSeq, ambient, fixedItems, resultItems, menuActions }`.
+   Launcher `ambient.state` begins `pending`; `fixedItems` may therefore be empty
+   while the ready empty-query generation already contains Today and the other
+   stable objects.
 2. Each input change sends the bounded `ObjectQueryRequest`; main replaces the
    result generation and `draftText` as D1a specifies. A query response can present
    objects but cannot execute one or make it active.
-3. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
+3. External capture or a sender-checked in-app seed resolves through
+   `AmbientContextResolved`; an in-app path first returns the main-issued tuple in a
+   sender-checked `InAppAmbientSeedResponse`. Main installs/replaces the fixed object
+   only for the matching opening and pushes `AmbientContextChanged`. The launcher
+   cannot answer the seed request or invoke the transition.
+4. Resolving an object-valued default installs a resolver-owned argument generation;
+   opening a parameter picker uses `ParameterObjectQueryRequest`. Both mint refs in
+   the exact action/subject/parameter slot rather than borrowing a main-list ref.
+5. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
    ref, subject ref and correlated typed arguments**. Nothing else.
-4. **Main re-evaluates** that action/subject/argument tuple against the *latest*
+6. **Main re-evaluates** that tuple against the latest projection, proves the subject
+   ref against current subject membership and every object-valued argument ref
+   against its exact ready argument slot, then produces and executes the effect
+   itself.
    projection and its own invocation record, then produces and executes the effect
    itself.
 
 So `ActionEffectPlan` only ever travels **main → renderer**, which is the trusted
-direction. A current subject whose state/arguments changed returns `reEvaluated`; a
-removed generation/subject returns `stale` with no invented presentation. Forged
-requests are rejected instead of mutating.
+direction. A current subject whose state/arguments changed returns `reEvaluated`;
+a removed subject/result generation or stale/cross-slot argument returns `stale`
+with no invented presentation. Forged requests are rejected instead of mutating.
 
 **`InvocationRef` needs an origin, a per-part attestation, and a phase — or the rule
 above is not implementable.** In the command-surface path the renderer that *sends*
@@ -977,11 +1136,14 @@ So provenance attaches to the **parts that need it**, not to the envelope:
 - **`consumableBy`** — main hands a launcher-consumable ref to the *current*
   opening. Submitting against a ref you were not handed fails.
 
-Admission then reads: an action needing `view`/`workspace` context requires a **current**
-attestation; an action on a main-resolved node, page, draft or app-surface object
-requires none. The toolbar exception therefore holds in the action panel **iff**
-the main renderer attested the bit — and `open` on the Today object works with no
-main window at all.
+Admission then reads: an action needing `view`/`workspace` context requires a
+**current** attestation; an action on a main-resolved node, page, draft or app-surface
+subject requires none; and every object-valued argument requires a current
+action/subject/parameter-scoped generation regardless of its backing object's
+identity. The toolbar exception therefore holds in the action panel **iff** the main
+renderer attested the bit — and `open` on the Today subject works with no main window
+at all, while Today used as a capture destination still needs its separate admitted
+argument ref.
 
 **Phases are atomic, because "single-use" was not exclusion.** A record with only
 identity and expiry lets two concurrent requests both observe it live and both
@@ -1034,9 +1196,12 @@ so a fourth phase existed only to be transited through.
 | from | event | to |
 |---|---|---|
 | `live` / `confirming` | `objectRemoved` / `selectionMemberRemoved` | same phase with membership atomically rewritten; if the confirmed subject was removed/replaced, challenge revoked and phase returns to `live` |
+| `live` / `confirming` | main-owned `AmbientContextResolved` for the current opening | same phase with the ambient fixed slot atomically installed/replaced; a replaced confirmed subject revokes the challenge and returns to `live` |
+| `live` / `confirming` | accepted parameter query | same phase with only the named argument slot replaced; a challenge using its old generation is revoked and returns to `live` |
 | any phase before `executing` | `abandoned`, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
 | `executing` | settlement — `completed` / `failed` / `indeterminate` | `spent` |
 | `executing` | dismissal · superseding open · reload | **`executing`** — UI lifetime events must never invalidate an in-flight plan |
+| `executing` / `spent` | late ambient or query completion | unchanged / `superseded` — a frozen plan and terminal record cannot gain membership |
 
 The invocation is **claimed on entering `executing`, before step 0 is dispatched** —
 not at completion. A second submit against a claimed record is rejected.
@@ -1071,7 +1236,11 @@ global-hotkey dismissal while step 0 is pending, dismissal between two steps,
 **cancel then run a different action from the same menu opening**, **redeem after
 cancel**, **redeem after challenge expiry**, **submit through a ref whose chip was
 removed**, selection-member removal with the old aggregate ref replayed,
-out-of-order object-query completion, superseding query, and old draft replay,
+out-of-order object-query completion, superseding query, old draft replay,
+stale parameter candidate replay, a candidate reused across action/subject/parameter
+slots, Today subject-ref substitution for a capture-destination ref, a main-list
+query while the page's resolver-owned Today argument stays valid, slow ambient
+context after input, stale-opening ambient replay and a late in-app seed,
 **PR 1 Confirm-to-effect end to end**, **native Cancel with no token ever
 minted**, **a launcher attempt to advance a native confirmation** (rejected), spent-ref replay, wrong sender, superseded open, a launcher attempt to add
 `view`/`workspace`, attestation invalidated by a main-renderer reload, and `open` on
@@ -1201,6 +1370,8 @@ menu.render(
 
 `currentObjects` is the main-owned union of `fixedObjects` and the one `ready`
 result generation; a context-menu opening has only the fixed node/selection set.
+Argument generations are deliberately excluded: a destination/tag candidate can
+fill only its declared slot and can never become a menu subject by appearing there.
 
 The precedence is conditional on what the family accepts, not a blanket hiding
 rule. With a live multi-selection, selection-capable families (`duplicate`, `move`,
@@ -1287,42 +1458,55 @@ stage.
   when a current view exists.
 - **In-app summon must not read external context.** Today the hotkey classifies
   Tenon itself as `unknown-app`; when the main window is frontmost, skip the
-  external capture and attach in-app context instead (D4).
+  external capture and resolve the sender-checked in-app seed into the pending
+  ambient slot instead (D4).
 - **Focus lands where the action points.** `open`, `openInSplitPane` and
   `sendToAgent` leave focus at their destination. Every other action returns focus
   to the editor position it came from, subject to D9's failure rules.
 
-### D4 — The chip is the preselected object, visible and removable
+### D4 — The chip is the ambient object, visible and removable
 
 There is **one** concept here, not two. The chip is not "attached context" that
 separately happens to be actionable — it is the same `ObjectPresentation` a result
-row uses, rendered compactly because ambient context preselected it. In app this is
+row uses, rendered compactly because ambient context offers it as the implicit
+default. In app this is
 the focused node or selection (pushed from the main renderer over IPC); out of app
 it is the foreground page.
 
-- Pre-filled on summon, **always visible** — nothing is ever attached silently.
+- **Shown as soon as it resolves, and always visible once attached.** The launcher
+  opens and accepts input immediately; while ambient resolution is pending there is
+  no chip and no invisible attached object. `AmbientContextChanged` installs the
+  authoritative presentation without clearing typed text or current results.
 - **Removable through main**, because a default is a guess: remove it and the
   surface falls back to global object search with no contextual object. The
   `objectRemoved` transition in D1a invalidates the ref; deletion is never a local
   visual-only erase.
-- **Initially active, and typing alone does not move activity.** The action bar and
-  `Actions ⌘K` continue to resolve against the chip while the main input also
-  searches objects. `ArrowDown` from the input/chip or clicking a result explicitly
-  makes that row active. `ArrowUp` from the first row, or `Esc` while a result is
-  active, returns to the chip without clearing the input; a subsequent `Esc`
-  dismisses the panel. Escape precedence is subpanel → active result → launcher;
-  D9's executing/dwell lifecycle overrides it once an action is claimed. A new query
-  generation invalidates an active old result and
-  returns activity to the chip. Clearing the query does the same.
+- **The chip is the implicit default; explicit result choice wins.** If context is
+  ready at opening, the chip starts active. If it arrives later while activity is
+  still implicit, it becomes active even when the user has typed; typing alone is
+  payload admission, not result selection. If the user already used `ArrowDown` or
+  clicked a current result, or opened an action/parameter/confirmation subpanel for
+  the current object, the late chip is installed visibly but **does not steal
+  activity**. Replacing an active ambient chip activates its replacement; replacing
+  an inactive one preserves the explicit result. This activity cause is renderer UI
+  state, not an admission claim: execution still names and validates a ref.
+- `ArrowDown` from the input/chip or clicking a result explicitly makes that row
+  active. `ArrowUp` from the first row, or `Esc` while a result is active, returns to
+  the chip without clearing the input; a subsequent `Esc` dismisses the panel.
+  Escape precedence is subpanel → active result → launcher; D9's executing/dwell
+  lifecycle overrides it once an action is claimed. A new query generation
+  invalidates an active old result and returns activity to the chip when one exists;
+  without a chip there is no active object until the new generation is ready.
+  Clearing the query follows the same rule.
 - **The input is independent payload.** With a page chip active, Enter runs
   `capture(page)` and main supplies the current `draftText` as its note; `Actions
   ⌘K → Send to Agent` supplies the same text as the editable question. The user can
   still choose a matched node or no-match draft explicitly. Thus object search does
   not delete the shipped page + note path or the promised page + question path.
 - Parameter pickers preserve the parent action's subject and bind the highlighted
-  candidate as an argument (D1a); they do not replace the active subject. The action
-  bar always names the action for the currently active object, never for an invisible
-  subject.
+  candidate from that action's current argument generation (D1a); they do not
+  replace the active subject. The action bar always names the action for the currently
+  active object, never for an invisible subject.
 - Carried by ref, not merely displayed — which is what lets the action panel act on
   an object that is not otherwise in the result list.
 
@@ -1440,8 +1624,8 @@ contracts.
 |---|---|---|---|
 | Today / Library / Schema / Saved searches / Trash | system-node object | yes | `open` |
 | Main window / Settings | app-surface object | yes | `open` |
-| foreground page | external-page object | active chip | `capture` |
-| current multi-selection | node-selection object | active chip | none; choose from `Actions ⌘K` |
+| foreground page | external-page object | ambient chip when resolved | `capture` |
+| current multi-selection | node-selection object | ambient chip when resolved | none; choose from `Actions ⌘K` |
 | unmatched typed text | node-purpose draft object | yes, literal title + *New node* type | `create` |
 | Mark done / Move / Add tag | action | no; `Actions ⌘K` only | resolved for active object |
 | Raycast-like *Search Files* | future command object | only when a real provider ships | `open`, or a separately justified future family |
@@ -1449,7 +1633,7 @@ contracts.
 | Element | Rule | State |
 |---|---|---|
 | Main-list row | `ObjectPresentation`, type label right-aligned | current `rowView` is adapted; action rows and legacy compound-command rows are removed |
-| Context chip | the same object presentation, compact; initially active | new |
+| Context chip | the same object presentation, compact; implicit default unless a result was explicitly chosen | new |
 | Action bar, left | the active object's optional primary action + `↵` | current `primaryActionLabel` is adapted |
 | Action bar, right | `Actions ⌘K` | **new** |
 | `Enter` | run the primary action when one exists; otherwise inert | adapted |
@@ -1467,7 +1651,9 @@ searches never return mixed row types.
 
 **Ordering** makes object retrieval authoritative and creation an explicit fallback:
 
-1. the ambient page or in-app object is the active chip, outside the result list;
+1. the launcher opens with an ambient slot outside the result list; once its page or
+   in-app object resolves, D4 decides whether the chip becomes active or preserves an
+   explicitly selected result;
 2. a non-empty query searches node, system-node and app-surface objects in one
    ranked result list;
 3. when at least one object matches, only those matched objects are returned -- a
@@ -1484,8 +1670,9 @@ generation is pending the list cannot render or submit stale rows. A ready respo
 installs fresh refs atomically. A late response is `superseded`, and a search failure
 leaves only fixed objects active until the next query rather than restoring the old
 generation. The fixed chip may still execute while retrieval is pending because its
-latest `draftText` was admitted synchronously; a no-chip opening has no blind-Enter
-subject until the generation is ready.
+latest `draftText` was admitted synchronously and its resolver-owned argument
+generation is independent; a no-chip opening has no blind-Enter subject until the
+generation is ready.
 
 There is no final "commands" bucket in this release and registry actions never slot
 into the object list. If a real command-object provider ships later, its objects join
@@ -1493,12 +1680,15 @@ the same ranked results instead of returning as a privileged trailing bucket. An
 matched command object suppresses the fallback draft just like a matched node,
 system node or app surface.
 
-**Default highlight is a fixed rule, never learned:**
+**Default activity is a fixed rule, never learned:**
 
-- context chip present -> the chip stays active until `ArrowDown` or click explicitly
-  selects a current-generation result;
-- when a selected result is superseded, `ArrowUp`/`Esc` returns from the first row,
-  or the query is cleared -> the chip is active;
+- context chip present before an explicit result choice -> the chip is active;
+- context chip resolves after typing but before an explicit result choice -> it
+  becomes active without changing `draftText` or results;
+- context chip resolves after `ArrowDown`/click or while a subject-bound subpanel is
+  open -> it appears without stealing activity from the current-generation result;
+- selected result is superseded, `ArrowUp`/`Esc` returns from the first row, or the
+  query is cleared -> the chip is active when present;
 - no chip -> the first current-generation result is active; on an empty query that
   is Today, and on a no-match query it is the one draft;
 - removing the active chip promotes the first current-generation result under the
@@ -1700,7 +1890,11 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
 
 - **Today is the bound destination object.** `capture(page, { destination: Today,
   tag? })` and `create(draft, { destination: Today })` use the same system-node
-  object that appears in search. For page capture, main builds the real
+  object model and backing identity that appears in search, but **never borrow that
+  row's subject ref**. When each action presentation resolves, main mints Today in
+  its `destination` argument slot. A page's resolver-owned generation survives note
+  queries; a draft's is removed with that draft subject. Cross-slot or stale Today
+  refs are rejected before effect construction. For page capture, main builds the real
   `CreateCaptureInput` from its authoritative `ExternalContext` plus the invocation's
   bounded `draftText`. The existing pure builder is factored into a
   destination-independent capture template and final input materialization, so the
@@ -1712,8 +1906,10 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
   page chip, typing does not switch subjects: Enter captures that page and uses the
   input as its note whether the same text matches another object or produces a
   no-match draft. `ArrowDown` or click is the explicit choice to act on a result;
-  `ArrowUp`/`Esc` returns to the page. This is the brownfield requirement inherited
-  from `launcher:createContextCapture({ note })`, not a new shortcut.
+  `ArrowUp`/`Esc` returns to the page. If capture is slow, the user may type first;
+  the later chip preserves that admitted text and becomes active only when no result
+  was explicitly chosen, per D4. This is the brownfield requirement inherited from
+  `launcher:createContextCapture({ note })`, not a new shortcut.
 - **Success is visible.** Capture currently resets and hides with no confirmation
   (`LauncherApp.tsx:121-127`) — when Tenon is in the background the user gets no
   evidence at all. Show a brief confirmation before dismissing.
@@ -1782,8 +1978,9 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
 ### D10 — Out-of-app fidelity chain
 
 Structured read (AX browser tab) → URL + title → *clipboard* → manual entry. No
-screenshot tier. Read nothing → no chip, degrade to a plain note. Per A12 this
-path degrades; it never throws on the user's action.
+screenshot tier. Read nothing moves the ambient slot from `pending` to `none`: no
+chip, and the surface degrades to a plain note. Per A12 this path degrades; it never
+throws on the user's action.
 
 **The clipboard tier does not exist and this PR does not build it.** There is no
 clipboard read anywhere under `src/main/context/`, and no stage below adds one — so
@@ -1806,9 +2003,10 @@ are exactly D2's list: convergent `Move to` retrieval, convergent mixed-selectio
 Done setters, and normalized action copy. Everything else remains strict parity.
 
 1. **Contracts in `src/core/actions/`** (D1a) as compiling TypeScript with codec
-   tests — mutable invocation membership, evaluation, presentation, request,
-   nested-path effect binding — and the main-owned admission path (D1b). View facts
-   contain `visualRowId`/`rowExpanded`; workspace facts contain only `isPinned`.
+   tests — mutable subject membership, action/subject/parameter-scoped argument
+   generations, evaluation, presentation, request, nested-path effect binding — and
+   the main-owned admission path (D1b). View facts contain
+   `visualRowId`/`rowExpanded`; workspace facts contain only `isPinned`.
 2. **Predicates move to core** (D1). The stage-0 spike, done before approval,
    found no renderer dependency that survives tracing: `rowMap` is a cache with an
    existing derivation fallback, `actionPolicy` derives from the projection, and
@@ -1851,18 +2049,22 @@ self-check); the earlier "no locale file" claim is no longer true.
    reclassify *Open main window* / *Open Settings* as objects (D3/D6). The main
    input searches only objects through the atomic
    `(invocationRef, openSeq, requestId)` generation contract, synthesizing its draft
-   only when none match; `Actions ⌘K` searches the active object's actions. Implement
-   `activateAppSurface` in main and prove both windows open with the main window
-   initially closed.
-8. Add the in-app invocation path, aggregate object chip and main-owned membership
-   edits. Keep `draftText` independent of subject selection: a chip stays active
-   until `ArrowDown`/click, `ArrowUp`/`Esc` returns to it, and no-chip openings use
-   the first current result. Add optional-primary Enter behavior, focus completion
-   and result signal (D4/D9).
-9. Close the capture loop with the Today destination object, optional tag object,
-   nested `create_capture` binding/producer, `Send to Agent`, and its
-   `PendingComposerContext`. Preserve page + note capture and add page + question
-   handoff as explicit keyboard E2E flows (D9).
+   only when none match; `Actions ⌘K` searches the active object's actions. Create
+   the launcher invocation synchronously with a pending ambient slot, then install
+   external or sender-checked in-app context through the main-owned, `openSeq`-bound
+   transition. Implement `activateAppSurface` in main and prove both windows open
+   with the main window initially closed.
+8. Add the in-app seed path, aggregate object chip and main-owned membership edits.
+   Keep `draftText` independent of subject selection and preserve it across late
+   ambient resolution. A late chip becomes active only while activity is implicit;
+   `ArrowDown`/click protects an explicitly selected result, and `ArrowUp`/`Esc`
+   returns to the chip. Add optional-primary Enter behavior, focus completion and
+   result signal (D4/D9).
+9. Close the capture loop with a resolver-installed Today argument object, optional
+   tag candidates in their own argument generations, nested `create_capture`
+   binding/producer, `Send to Agent`, and its `PendingComposerContext`. Preserve
+   page + note capture under slow context and immediate query invalidation, and add
+   page + question handoff as an explicit keyboard E2E flow (D9).
 10. **Declared user-visible change:** replace the in-app `ConfirmDialog` with a
    main-owned native sheet for *Delete forever* and *Empty Trash* in **both** views
    (D1b). It belongs here rather than in PR 1 because the threat it answers — a
@@ -1892,7 +2094,7 @@ start; PR numbers are evidence, not a permanent dependency declaration.
 
 The PM originally chose one PR to spend one ratification and one merge. Two full
 review rounds later that PR had produced zero code, so the bandwidth argument had
-been answered by events. Both NO-GOs had the same root cause — **a type asserted in
+been answered by events. The NO-GO rounds had the same root cause — **a type asserted in
 prose cannot be falsified**, so each round fixed the prose and the next round found
 the next thing prose could not hold. The split puts the contracts where a compiler
 and a differential test can judge them instead.
@@ -1915,8 +2117,9 @@ and a differential test can judge them instead.
   destination), and its **empty-query ordering** returns candidates rather than
   nothing.
 - **AC-03 — Object/action separation (D1a/D3/D6/D8).** Compile-time and renderer fixtures
-  assert that every main-list row and chip is an `ObjectPresentation`, every action
-  request binds `subjectRef + actionId + typed arguments`, and no
+  assert that every main-list row, chip and parameter candidate is an
+  `ObjectPresentation`, every action request binds
+  `subjectRef + actionId + typed arguments`, and no
   `ActionPresentation` or legacy `LauncherItem.kind: 'command'` enters the main
   object list. Locale guards reject compound row titles such as *Go to Today*,
   *Open Settings*, *Capture page to Today* and *New node in Today*. A query with one
@@ -1943,11 +2146,16 @@ and a differential test can judge them instead.
   `workspace.isPinned`; they remain node-subject actions and are absent out of app
   when those attested facts do not exist. A fixture carrying `view` but no
   `workspace` can still build the correct view-section effect.
-- **AC-06 — Parameter-object binding (D1a/D5).** `Move to` and `Add tag` candidate queries
-  return only `ObjectPresentation`s. Choosing a destination node, tag node or tag
-  draft preserves the parent request's subject/action and binds only the correlated
-  argument; candidate objects never become compound command rows or replacement
-  subjects.
+- **AC-06 — Parameter-object binding and admission (D1a/D5).** `Move to` and *Add
+  tag* candidate queries return only `ObjectPresentation`s and install them in the
+  main-owned generation for the exact action/subject/parameter slot. Choosing a
+  destination node, tag node or tag draft preserves the parent request's subject and
+  binds only the correlated argument; candidate objects never become compound
+  command rows or replacement subjects. Fixtures accept a current candidate and
+  reject: its prior generation, the same ref under another action, subject or
+  parameter, and a main-list subject ref substituted by backing identity. A
+  resolver-installed Today destination for a fixed page remains valid across a main
+  object query, while the Today slot for an invalidated draft is removed with it.
 - **AC-07 — Contract correlation (D1a), the reason these types live in PR 1 at all.** A
   compile-time **negative** fixture: wrong args for a command, `bindAs` on a
   non-bindable step, and step refs in **`create_tag.name`** and
@@ -1968,11 +2176,14 @@ and a differential test can judge them instead.
   `setDone(true)` changes only not-done nodes and `setDone(false)` changes only done
   nodes. Re-evaluation after either request reaches the requested homogeneous state;
   no runtime toggle remains in a resolved presentation.
-- **AC-09 — Object activation and draft payload (D4/D6).** With an ambient chip,
-  typing a matching or no-match query leaves the chip active. `ArrowDown`/click
-  transfers activity to a current-generation result; `ArrowUp`/first `Esc`, clearing
-  or superseding the query restores the chip. With no chip, the first current result
-  is active. Removing a chip promotes that result without closing the invocation. A
+- **AC-09 — Ambient arrival, object activation and draft payload (D4/D6).** A
+  launcher opening begins with `ambient.pending`, an empty fixed set and a ready
+  empty-query generation. Type before context resolves; the authoritative late chip
+  preserves both text and results and becomes active while activity is implicit.
+  Repeat after `ArrowDown`/click explicitly selects a result; the chip appears without
+  stealing activity. `ArrowUp`/first `Esc`, clearing or superseding the query restores
+  an available chip. With no chip, the first current result is active. Removing a
+  chip promotes that result without closing the invocation. A
   matching node/system-node/app-surface object uses `open`; only a zero-match query
   produces a node-purpose draft using `create`. The same query remains independent
   `draftText` throughout. A multi-selection has no primary action, so Enter is inert
@@ -1983,11 +2194,16 @@ and a differential test can judge them instead.
   launcher sender can call its dedicated query/action API but both
   `lin:invoke('get_projection')` and `lin:invoke('delete_node', …)` are rejected;
   non-launcher senders are rejected by `launcher:*`, while Settings/provider app
-  calls remain green. Object-query tests cover an empty `pending` replacement,
+  calls remain green. Subject-query tests cover an empty `pending` replacement,
   out-of-order responses, a superseding query, old node/draft replay, chip deletion
-  and selection-aggregate replacement; only the latest
-  `(invocationRef, openSeq, requestId)` generation is admissible, and replay returns
-  `stale` without a fabricated presentation. The confirmation
+  and selection-aggregate replacement. Argument tests cover current, stale and
+  cross-slot refs independently of the subject generation. Ambient tests cover slow
+  external context, a late sender-checked in-app seed, rejection of a launcher seed
+  response or forged ambient tuple, query/context interleaving, replacement of an old
+  ambient ref, old-opening/request replay, capture failure to `none`, and resolution
+  after execution has claimed the record. Only current refs
+  in their correct membership domain are admissible; replay returns `stale` or
+  `superseded` without a fabricated presentation. The confirmation
   response sequence remains request → `confirmationRequired` + challenge → dialog →
   challenge-bearing request → execution result, with wrong-sender and forged-seed
   rejection at invocation creation.
@@ -2002,9 +2218,11 @@ and a differential test can judge them instead.
 - **AC-13 — Action result signal (D9).** E2E: fire a mutating action from the panel with
   the main window in the background; assert the user gets a result signal.
 - **AC-14 — Capture and handoff (D4/D9).** Keyboard E2E from a background page:
-  type a note while the page chip stays active and press Enter before the 120 ms
-  retrieval debounce settles; assert the captured page uses that latest note, Today
-  destination and confirmation. Repeat with an existing tag and a tag draft,
+  hold ambient capture unresolved, type a note, then release capture; assert the late
+  page chip becomes active without losing text. Press Enter before the 120 ms
+  retrieval debounce settles and after the main query has invalidated the initial
+  Today **subject** ref; assert capture still succeeds through its distinct current
+  Today **argument** ref and reports confirmation. Repeat with an existing tag and a tag draft,
   asserting the complete bound effect plan and resulting user tag. Then type a
   question, choose `Send to Agent` without reselecting the page, and assert
   exactly one staged user draft plus exactly one untrusted page context. A separate
@@ -2022,8 +2240,10 @@ the no-match draft fallback and today's compound pseudo-commands (D3/D6); bound
 references without a `commands.ts` change (D1a); and the `Move to` retrieval path
 through main with debounce, request identity, cancellation and an A9 measurement
 (D5). The review-driven boundaries are closed too: a dedicated minimal launcher
-preload plus main capability gate; atomic object-result generations; input as
-main-owned payload independent of subject selection; nested `create_capture`
+preload plus main capability gate; separate subject-result and
+action/subject/parameter-scoped argument generations; a main-owned late ambient
+transition that preserves query/text state and never steals explicit activity; input
+as main-owned payload independent of subject selection; nested `create_capture`
 bindings plus a native-host app-surface effect; and visual-row facts in `view` while
 only pin state remains in `workspace`. Two presentation decisions are also closed:
 
@@ -2145,8 +2365,9 @@ first slice shipped as #103 and is now `spec/launcher.md`.
 filter/search with a no-match draft fallback, fuzzy match, Enter runs the active
 object, a non-activating panel that never makes you leave what you were doing. This
 shipped and this plan preserves it with two D4/D6 clarifications: creation is a
-no-match-only result, and an ambient chip remains active until the user explicitly
-enters the result list so page + typed note is not lost.
+no-match-only result, and an ambient chip becomes/remains active unless the user has
+explicitly entered the result list, so slow context does not lose page + typed note
+and never steals an explicit choice.
 
 **Borrowed — the row / action-bar split.** Rows are objects with a right-aligned
 type label; the primary action lives in the bottom bar with `↵`, and the rest
