@@ -341,7 +341,7 @@ function InstallReviewDialog({
         repository={review.discovery.repository}
         scripts={review.candidate.scripts}
         subdirectory={review.candidate.subdirectory}
-        trust={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={review.candidate.version}
       />
       {/* What the Skill will tell the model, shown because installing enables and
@@ -357,14 +357,14 @@ function InstallReviewDialog({
           <p className="managed-skill-review-body-label">{t.settings.skills.managedSkillBodyLabel}</p>
           <pre className="managed-skill-diff">{review.candidate.skillBody}</pre>
           {review.candidate.skillBodyTruncated ? (
-            <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
+            <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTooLargeToInstall}</p>
           ) : null}
         </>
       ) : null}
       <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
-        <Button disabled={busy} onClick={onInstall} variant="primary">
+        <Button disabled={busy || review.candidate.skillBodyTruncated === true} onClick={onInstall} variant="primary">
           {busy ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
           <span>{busy ? t.settings.skills.managedInstalling : t.settings.skills.managedInstall}</span>
         </Button>
@@ -404,7 +404,7 @@ function UpdatePreviewDialog({
         repository={preview.repository}
         scripts={preview.scripts}
         subdirectory={preview.subdirectory}
-        trust={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={`${preview.current.version ?? t.settings.skills.managedCompatibilityUnknown} -> ${preview.candidate.version ?? t.settings.skills.managedCompatibilityUnknown}`}
       />
       <div className="managed-skill-changed-paths">
@@ -433,19 +433,19 @@ function ManagedSkillDetails({
   commit,
   compatibility,
   contentHash,
+  distribution,
   repository,
   scripts,
   subdirectory,
-  trust,
   version,
 }: {
   commit: string;
   compatibility: string;
   contentHash?: string;
+  distribution: string;
   repository: string;
   scripts: string[];
   subdirectory: string;
-  trust: string;
   version?: string;
 }) {
   const t = useT();
@@ -455,7 +455,7 @@ function ManagedSkillDetails({
     ...(version ? [[t.settings.skills.managedVersion, version]] : []),
     ...(contentHash ? [[t.settings.skills.managedContentHash, shortHash(contentHash)]] : []),
     [t.settings.skills.managedCompatibility, compatibility],
-    [t.settings.skills.managedTrust, trust],
+    [t.settings.skills.managedDistribution, distribution],
     [t.settings.skills.managedScripts, scripts.length > 0 ? scripts.join(', ') : t.settings.skills.managedNoScripts],
   ];
   return (
@@ -514,7 +514,7 @@ function ManagedSkillActionDialog({
         repository={action.skill.repository}
         scripts={version?.scripts ?? action.skill.scripts}
         subdirectory={action.skill.subdirectory}
-        trust={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={version?.version}
       />
       <ManagedSkillDialogError error={error} />
@@ -564,9 +564,13 @@ export function managedSkillActions(
   ];
 }
 
-export function managedStatusLabel(skill: ManagedSkillView, t: ReturnType<typeof useT>): string {
-  if (skill.status === 'installed-disabled') return t.settings.skills.managedStatusDisabled;
-  if (skill.status === 'enabled') return t.settings.skills.managedStatusEnabled;
+export function managedSkillAttentionLabel(
+  skill: ManagedSkillView,
+  t: ReturnType<typeof useT>,
+): string | undefined {
+  // Enabled/disabled is already stated by the adjacent switch. Only states that
+  // need attention earn a chip, so the two representations cannot contradict.
+  if (skill.status === 'installed-disabled' || skill.status === 'enabled') return undefined;
   if (skill.status === 'update-available') return t.settings.skills.managedStatusUpdate;
   if (skill.status === 'modified') return t.settings.skills.managedStatusModified;
   return t.settings.skills.managedStatusFailure;

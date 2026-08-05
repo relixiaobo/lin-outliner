@@ -20,7 +20,7 @@ interface SettingsGeneralSectionProps {
 
 /**
  * The General category. Everything here applies immediately and persists on its
- * own — theme, language, notifications, the data groups, diagnostics — so this
+ * own — theme, language, the data groups, diagnostics — so this
  * category has no draft and never participates in the footer Save. That is why
  * all of its state is local to this component and only the shared error/notice
  * surface is passed down.

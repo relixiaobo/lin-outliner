@@ -36,6 +36,7 @@ export interface SettingsOpenTarget {
 export const SETTINGS_CATEGORY_PARAM = 'category';
 export const SETTINGS_ANCHOR_PARAM = 'anchor';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
+const SETTINGS_ANCHOR_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Which category owns each page, so a page target routes without being told twice. */
 const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
@@ -57,6 +58,10 @@ export function isSettingsCategoryTarget(value: unknown): value is SettingsCateg
 
 export function isSettingsPageTarget(value: unknown): value is SettingsPageTarget {
   return value === 'services' || value === 'skills' || value === 'about';
+}
+
+export function isSettingsAnchorTarget(value: unknown): value is string {
+  return typeof value === 'string' && SETTINGS_ANCHOR_PATTERN.test(value);
 }
 
 export function settingsPageCategory(page: SettingsPageTarget): SettingsCategoryTarget {
@@ -91,7 +96,7 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
   } else if (isSettingsCategoryTarget(head)) {
     target.category = head;
   }
-  if (anchor) target.anchor = anchor;
+  if ((target.category || target.page) && isSettingsAnchorTarget(anchor)) target.anchor = anchor;
   return target;
 }
 

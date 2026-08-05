@@ -11,6 +11,7 @@ import { formatProviderName } from './providerCatalog';
 interface SettingsAgentSectionProps {
   settings: AgentProviderSettingsView | null;
   blocks: readonly string[];
+  blockErrors: ReadonlyMap<string, string>;
   skillCount: number;
   skillUpdateCount: number;
   onOpenPage: (page: SettingsPageTarget) => void;
@@ -32,6 +33,7 @@ interface SettingsAgentSectionProps {
 export function SettingsAgentSection({
   settings,
   blocks,
+  blockErrors,
   skillCount,
   skillUpdateCount,
   onOpenPage,
@@ -71,7 +73,7 @@ export function SettingsAgentSection({
 
       <MemorySettingsGroup onError={onError} onNotice={onNotice} />
 
-      <SettingsSecuritySection blocks={blocks} onRemoveBlock={onRemoveBlock} />
+      <SettingsSecuritySection blockErrors={blockErrors} blocks={blocks} onRemoveBlock={onRemoveBlock} />
     </section>
   );
 }

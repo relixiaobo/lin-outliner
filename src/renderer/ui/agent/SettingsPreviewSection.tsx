@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { TRANSLATION_LANGUAGES } from '../../../core/translationLanguage';
@@ -24,6 +24,8 @@ import {
   translationModelName,
   translationProviderName,
 } from '../preview/translationModelChoices';
+import { reportPreviewPreferenceWriteError } from '../preview/previewPreferenceErrors';
+import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
 interface SettingsPreviewSectionProps {
   onError: (message: string | null) => void;
@@ -51,6 +53,12 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
   // Only to build the model menu. Read-only and best-effort: a menu that cannot
   // be built falls back to "Agent model", which is also the default.
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
+  const [preferenceErrors, setPreferenceErrors] = useState<Map<string, string>>(new Map());
+  const preferenceMutationGenerationsRef = useRef(new Map<string, number>());
+  const autoTranslateUrlsIntentRef = useRef(preferences.autoTranslateUrls);
+  const autoTranslateEpubsIntentRef = useRef(preferences.autoTranslateEpubs);
+  autoTranslateUrlsIntentRef.current = preferences.autoTranslateUrls;
+  autoTranslateEpubsIntentRef.current = preferences.autoTranslateEpubs;
 
   useEffect(() => {
     let active = true;
@@ -65,6 +73,25 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
   const modelsLoaded = providerSettings !== null;
   const modelAvailable = modelGroups.some((group) => group.models.some((entry) => entry.value === model));
 
+  function persistPreference(preference: string, action: () => Promise<void>): void {
+    const generation = beginKeyedMutation(preferenceMutationGenerationsRef.current, preference);
+    onError(null);
+    setPreferenceErrors((current) => withoutMapKey(current, preference));
+    void action().catch((error) => {
+      reportPreviewPreferenceWriteError(preference, error);
+      if (!isCurrentKeyedMutation(
+        preferenceMutationGenerationsRef.current,
+        preference,
+        generation,
+      )) return;
+      setPreferenceErrors((current) => withMapValue(
+        current,
+        preference,
+        t.shell.filePreview.preferenceSaveFailed,
+      ));
+    });
+  }
+
   return (
     <section className="agent-settings-section" aria-label={t.settings.preview.sectionAriaLabel}>
       <InsetGroup
@@ -73,12 +100,18 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
         label={t.settings.preview.translationGroup}
       >
         <InsetRow
+          feedback={preferenceErrors.get('translation-language') ? (
+            <span role="alert">{preferenceErrors.get('translation-language')}</span>
+          ) : undefined}
           label={t.settings.preview.targetLanguageLabel}
           sublabel={t.settings.preview.targetLanguageSublabel}
           trailing={(
             <SelectControl
               label={t.settings.preview.targetLanguageLabel}
-              onChange={(event) => setTranslationLanguagePreference(event.target.value as TranslationLanguage)}
+              onChange={(event) => persistPreference(
+                'translation-language',
+                () => setTranslationLanguagePreference(event.target.value as TranslationLanguage),
+              )}
               value={language}
               variant="popup"
             >
@@ -90,13 +123,20 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
           wrap
         />
         <InsetRow
+          feedback={preferenceErrors.get('auto-translate-urls') ? (
+            <span role="alert">{preferenceErrors.get('auto-translate-urls')}</span>
+          ) : undefined}
           label={t.settings.preview.autoTranslateUrlsLabel}
           sublabel={t.settings.preview.autoTranslateUrlsSublabel}
           trailing={(
             <SwitchControl
               checked={preferences.autoTranslateUrls}
               label={t.settings.preview.autoTranslateUrlsLabel}
-              onCheckedChange={setAutoTranslateUrls}
+              onCheckedChange={() => {
+                const enabled = !autoTranslateUrlsIntentRef.current;
+                autoTranslateUrlsIntentRef.current = enabled;
+                persistPreference('auto-translate-urls', () => setAutoTranslateUrls(enabled));
+              }}
             >
               <SwitchMark checked={preferences.autoTranslateUrls} />
             </SwitchControl>
@@ -104,13 +144,20 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
           wrap
         />
         <InsetRow
+          feedback={preferenceErrors.get('auto-translate-epubs') ? (
+            <span role="alert">{preferenceErrors.get('auto-translate-epubs')}</span>
+          ) : undefined}
           label={t.settings.preview.autoTranslateEpubsLabel}
           sublabel={t.settings.preview.autoTranslateEpubsSublabel}
           trailing={(
             <SwitchControl
               checked={preferences.autoTranslateEpubs}
               label={t.settings.preview.autoTranslateEpubsLabel}
-              onCheckedChange={setAutoTranslateEpubs}
+              onCheckedChange={() => {
+                const enabled = !autoTranslateEpubsIntentRef.current;
+                autoTranslateEpubsIntentRef.current = enabled;
+                persistPreference('auto-translate-epubs', () => setAutoTranslateEpubs(enabled));
+              }}
             >
               <SwitchMark checked={preferences.autoTranslateEpubs} />
             </SwitchControl>
@@ -118,12 +165,18 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
           wrap
         />
         <InsetRow
+          feedback={preferenceErrors.get('translation-model') ? (
+            <span role="alert">{preferenceErrors.get('translation-model')}</span>
+          ) : undefined}
           label={t.settings.preview.modelLabel}
           sublabel={t.settings.preview.modelSublabel}
           trailing={(
             <SelectControl
               label={t.settings.preview.modelLabel}
-              onChange={(event) => setTranslationModel(event.target.value || null)}
+              onChange={(event) => persistPreference(
+                'translation-model',
+                () => setTranslationModel(event.target.value || null),
+              )}
               value={model ?? ''}
               variant="popup"
             >
@@ -181,4 +234,17 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
       </InsetGroup>
     </section>
   );
+}
+
+function withMapValue<K, V>(current: ReadonlyMap<K, V>, key: K, value: V): Map<K, V> {
+  const next = new Map(current);
+  next.set(key, value);
+  return next;
+}
+
+function withoutMapKey<K, V>(current: ReadonlyMap<K, V>, key: K): Map<K, V> {
+  if (!current.has(key)) return current as Map<K, V>;
+  const next = new Map(current);
+  next.delete(key);
+  return next;
 }

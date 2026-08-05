@@ -17,15 +17,17 @@ import {
   WarningIcon,
 } from '../icons';
 import {
+  isSettingsAnchorTarget,
   settingsPageCategory,
   type SettingsCategoryTarget,
   type SettingsOpenTarget,
   type SettingsPageTarget,
 } from '../../../core/settingsWindow';
+import { serializeUnknownError } from '../../../core/errorObservability';
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
-import { resolveUsableActiveProvider } from './providerCatalog';
+import { formatProviderName, resolveUsableActiveProvider } from './providerCatalog';
 import { PREFERRED_PROVIDER_ORDER } from './providerOrder';
 import { SettingsGeneralSection } from './SettingsGeneralSection';
 import { SettingsProvidersSection } from './SettingsProvidersSection';
@@ -34,6 +36,7 @@ import { SettingsAgentSection } from './SettingsAgentSection';
 import { SettingsPreviewSection } from './SettingsPreviewSection';
 import { SettingsAboutSection } from './SettingsAboutSection';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
+import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -48,8 +51,7 @@ type SettingsCategory = SettingsCategoryTarget;
  * anything: history could only hold categories that the rail already listed two
  * inches to the left. With real second-level pages the arrows have work.
  */
-type SettingsRoute = { category: SettingsCategory; page?: SettingsPageTarget };
-type RequestScope = 'settings' | 'mutation';
+type SettingsRoute = { category: SettingsCategory; page?: SettingsPageTarget; anchor?: string };
 
 /**
  * Not a draft in the commit sense — nothing here waits for a Save. `ProviderDraft`
@@ -86,9 +88,12 @@ const SETTINGS_CATEGORY_ICONS = {
 } satisfies Partial<Record<SettingsCategory, AppIcon>>;
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
-  if (target?.page) return { category: settingsPageCategory(target.page), page: target.page };
+  const anchor = isSettingsAnchorTarget(target?.anchor) ? target.anchor : undefined;
+  if (target?.page) {
+    return { category: settingsPageCategory(target.page), page: target.page, ...(anchor ? { anchor } : {}) };
+  }
   if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
-    return { category: target.category };
+    return { category: target.category, ...(anchor ? { anchor } : {}) };
   }
   // General, not the first pane that needs configuring: opening Providers on every
   // Cmd+, leaked a first-run concern onto the everyday path.
@@ -104,7 +109,7 @@ function routeCategory(route: SettingsRoute): SettingsCategory {
 }
 
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
-  return left.category === right.category && left.page === right.page;
+  return left.category === right.category && left.page === right.page && left.anchor === right.anchor;
 }
 
 /**
@@ -126,14 +131,18 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     stack: [routeFromOpenTarget(initialTarget)],
     index: 0,
   });
+  const [targetGeneration, setTargetGeneration] = useState(0);
   const route = nav.stack[nav.index];
   const category = routeCategory(route);
   const canGoBack = nav.index > 0;
   const canGoForward = nav.index < nav.stack.length - 1;
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [capabilityMutationErrors, setCapabilityMutationErrors] = useState<Map<string, string>>(new Map());
+  const [providerEnabledOverrides, setProviderEnabledOverrides] = useState<Map<string, boolean>>(new Map());
+  const [providerToggleErrors, setProviderToggleErrors] = useState<Map<string, string>>(new Map());
+  const [skillToggleErrors, setSkillToggleErrors] = useState<Map<string, string>>(new Map());
   // Notices are transient. A stale "Unbound /x" that lingers until some unrelated
   // action happens to clear it reads as a report on whatever the user did next.
   useEffect(() => {
@@ -156,15 +165,20 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // The persisted disabledSkills as of the last completed write, and a queue so
   // concurrent toggles cannot each write a whole array from the same stale read.
   const latestDisabledSkillsRef = useRef<readonly string[]>([]);
+  const skillDraftRef = useRef<SkillDraft>(EMPTY_SKILL_DRAFT);
+  const skillDisabledTargetsRef = useRef(new Map<string, boolean>());
   const skillDisableQueueRef = useRef<Promise<void>>(Promise.resolve());
-  // Provider writes serialize on their own queue for the reason the Skill writes
-  // needed one: each sends a whole settings object built from what it read, so two
-  // overlapping writes let the second silently undo the first. Instant-apply makes
-  // that easy to trigger — a slow keychain write looks like nothing happened, and
-  // the natural response is to click again.
+  // Every provider command returns a complete settings snapshot. Serialize those
+  // responses as one family so an older Set active / Remove / Refresh response
+  // cannot land after a newer enable toggle and replace that row with stale state.
+  // Controls still move optimistically, so coordination never makes the UI inert.
   const providerMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const providerSettingsRef = useRef<AgentProviderSettingsView | null>(null);
+  const providerEnabledTargetsRef = useRef(new Map<string, boolean>());
   const settingsRequestRef = useRef(0);
-  const mutationRequestRef = useRef(0);
+  const providerRefreshRequestRef = useRef(0);
+  const settingsInitializedRef = useRef(false);
+  const mutationGenerationsRef = useRef(new Map<string, number>());
   const t = useT();
   // The toolbar names where you are, which on a sub-page is the page — the rail
   // already shows which category owns it.
@@ -172,15 +186,21 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
 
   useEffect(() => {
     let active = true;
+    const allSkillsRequest = api.agentListAllSkills();
+    const managedSkillsRequest = api.agentManagedSkillList();
     // Read-only, and silent on failure: a badge that cannot be computed is
     // simply absent. It never blocks the page or raises an alert.
-    void api.agentManagedSkillList()
+    void managedSkillsRequest
       .then((skills) => {
         if (active) setSkillUpdateCount(skills.filter((skill) => skill.updateCommit).length);
       })
       .catch(() => { /* no badge */ });
-    void api.agentListAllSkills()
-      .then((skills) => { if (active) setSkillCount(skills.length); })
+    void Promise.all([allSkillsRequest, managedSkillsRequest])
+      .then(([allSkills, managedSkills]) => {
+        if (active) {
+          setSkillCount(allSkills.filter((skill) => skill.source !== 'managed').length + managedSkills.length);
+        }
+      })
       .catch(() => { /* the row falls back to zero rather than blocking the pane */ });
     return () => { active = false; };
   }, []);
@@ -190,29 +210,47 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return () => {
       mountedRef.current = false;
       settingsRequestRef.current += 1;
-      mutationRequestRef.current += 1;
+      providerRefreshRequestRef.current += 1;
+      mutationGenerationsRef.current.clear();
     };
   }, []);
 
   useEffect(() => window.lin?.onSettingsNavigate?.((target) => {
     setNav(navFromOpenTarget(target));
+    setTargetGeneration((current) => current + 1);
     setError(null);
     setNotice(null);
   }), []);
 
-  function requestRefFor(scope: RequestScope) {
-    if (scope === 'settings') return settingsRequestRef;
-    return mutationRequestRef;
+  useEffect(() => {
+    if (loading || !route.anchor) return;
+    const target = document.querySelector<HTMLElement>(`[data-settings-anchor="${route.anchor}"]`);
+    if (!target) return;
+    target.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+    target.classList.add('is-settings-anchor-target');
+    const timer = window.setTimeout(() => target.classList.remove('is-settings-anchor-target'), 1_600);
+    return () => {
+      window.clearTimeout(timer);
+      target.classList.remove('is-settings-anchor-target');
+    };
+  }, [loading, route.anchor, route.category, route.page, targetGeneration]);
+
+  function beginSettingsRequest() {
+    settingsRequestRef.current += 1;
+    return settingsRequestRef.current;
   }
 
-  function beginRequest(scope: RequestScope) {
-    const ref = requestRefFor(scope);
-    ref.current += 1;
-    return ref.current;
+  function isCurrentSettingsRequest(requestId: number) {
+    return mountedRef.current && requestId === settingsRequestRef.current;
   }
 
-  function isCurrentRequest(scope: RequestScope, requestId: number) {
-    return mountedRef.current && requestId === requestRefFor(scope).current;
+  function beginMutation(key: string) {
+    return beginKeyedMutation(mutationGenerationsRef.current, key);
+  }
+
+  function isCurrentMutation(key: string, generation: number) {
+    return mountedRef.current
+      && isCurrentKeyedMutation(mutationGenerationsRef.current, key, generation);
   }
 
   // Navigate to a route, recording history for back / forward. Re-selecting the
@@ -251,15 +289,21 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     );
   }
 
-  function applyLoadedSettings(next: AgentProviderSettingsView) {
-    latestDisabledSkillsRef.current = next.agent.disabledSkills ?? [];
+  function applyLoadedSettings(next: AgentProviderSettingsView, applySkillState = true) {
+    providerSettingsRef.current = next;
     setSettings(next);
     setProviderDraft(resolveInitialProviderDraft(next));
-    setSkillDraft(resolveSkillDraft(next));
+    if (applySkillState) {
+      latestDisabledSkillsRef.current = next.agent.disabledSkills ?? [];
+      const nextSkillDraft = resolveSkillDraft(next);
+      skillDraftRef.current = nextSkillDraft;
+      setSkillDraft(nextSkillDraft);
+    }
+    settingsInitializedRef.current = true;
   }
 
   useEffect(() => {
-    const requestId = beginRequest('settings');
+    const requestId = beginSettingsRequest();
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -270,15 +314,15 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       api.agentGetCapabilitySettings(),
     ])
       .then(([next, nextCapabilities]) => {
-        if (!isCurrentRequest('settings', requestId)) return;
+        if (!isCurrentSettingsRequest(requestId)) return;
         setCapabilitySettings(nextCapabilities);
         applyLoadedSettings(next);
       })
       .catch((caught) => {
-        if (isCurrentRequest('settings', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+        if (isCurrentSettingsRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
       })
       .finally(() => {
-        if (isCurrentRequest('settings', requestId)) setLoading(false);
+        if (isCurrentSettingsRequest(requestId)) setLoading(false);
       });
   }, []);
 
@@ -287,11 +331,20 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // new configured provider row without a manual reopen.
   useEffect(() => {
     const off = window.lin?.onSettingsChanged?.(() => {
-      const requestId = beginRequest('settings');
-      void api.agentGetProviderSettings()
-        .then((next) => {
-          if (!isCurrentRequest('settings', requestId)) return;
-          applyLoadedSettings(next);
+      const refreshId = ++providerRefreshRequestRef.current;
+      void Promise.all([
+        api.agentGetProviderSettings(),
+        api.agentGetCapabilitySettings(),
+      ])
+        .then(([next, nextCapabilities]) => {
+          if (!mountedRef.current || refreshId !== providerRefreshRequestRef.current) return;
+          // Invalidate an older initial load only after this replacement is known
+          // to be complete. A failed refresh must not strand the window in its
+          // loading state with the successful initial response marked stale.
+          beginSettingsRequest();
+          setCapabilitySettings(nextCapabilities);
+          applyLoadedSettings(next, !settingsInitializedRef.current);
+          setLoading(false);
         })
         .catch(() => { /* a refetch failure leaves the prior list in place */ });
     });
@@ -314,19 +367,37 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       ...base,
       blocks: base.blocks.filter((candidate) => candidate !== rule),
     });
-    const requestId = beginRequest('mutation');
+    const mutationKey = `capability:${rule}`;
+    const generation = beginMutation(mutationKey);
+    setCapabilityMutationErrors((current) => withoutMapKey(current, rule));
     // Optimistic: the row leaves at once because that is what the user asked for.
-    setCapabilitySettings({ ...base, blocks: base.blocks.filter((candidate) => candidate !== rule) });
+    setCapabilitySettings((current) => removeCapabilityRule(current ?? base, rule));
     try {
       const next = await api.agentApplyCapabilitySettingsPatch(patch);
-      if (isCurrentRequest('mutation', requestId)) setCapabilitySettings(next);
-      await onApplied();
+      if (isCurrentMutation(mutationKey, generation)) {
+        // Merge only this rule. Replacing the whole response can resurrect a
+        // different rule whose concurrent removal is still in flight.
+        setCapabilitySettings((current) => ({
+          ...next,
+          blocks: removeCapabilityRule(current ?? next, rule).blocks,
+        }));
+      }
+      await reportAppliedRefreshFailure(onApplied, 'capability-block-refresh', rule);
     } catch (caught) {
       // Put it back. A row that vanished and stayed vanished would tell the user
       // the rule is gone while the agent still enforces it.
-      if (isCurrentRequest('mutation', requestId)) {
-        setCapabilitySettings(base);
-        setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentMutation(mutationKey, generation)) {
+        setCapabilitySettings((current) => restoreCapabilityRule(
+          current ?? emptyCapabilitySettings(),
+          base.blocks,
+          rule,
+        ));
+        setCapabilityMutationErrors((current) => withMapValue(
+          current,
+          rule,
+          t.settings.security.removeFailed,
+        ));
+        reportSettingsMutationError('capability-block-remove-failed', rule, caught);
       }
     }
   }
@@ -338,19 +409,17 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * change is orthogonal to the toggles the user may have pending.
    */
   async function changeSkillDirectories(next: string[]): Promise<readonly string[]> {
-    const requestId = beginRequest('mutation');
-    setSaving(true);
-    try {
-      const updated = await api.agentUpdateRuntimeSettings({ additionalSkillDirectories: next });
-      if (isCurrentRequest('mutation', requestId)) setSettings(updated);
-      await onApplied();
-      // Returned so the caller can see what main actually kept. The list is
-      // bounded, and a request that silently lost its entry would otherwise
-      // look like nothing happened at all.
-      return updated.agent.additionalSkillDirectories;
-    } finally {
-      if (isCurrentRequest('mutation', requestId)) setSaving(false);
+    const mutationKey = 'skill-directories';
+    const generation = beginMutation(mutationKey);
+    const updated = await api.agentUpdateRuntimeSettings({ additionalSkillDirectories: next });
+    if (isCurrentMutation(mutationKey, generation)) {
+      setSettings((current) => current ? { ...current, agent: updated.agent } : updated);
     }
+    await reportAppliedRefreshFailure(onApplied, 'skill-directories-refresh', mutationKey);
+    // Returned so the caller can see what main actually kept. The list is
+    // bounded, and a request that silently lost its entry would otherwise
+    // look like nothing happened at all.
+    return updated.agent.additionalSkillDirectories;
   }
 
   /**
@@ -371,48 +440,49 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * silently undid the first: the Skill's activation had succeeded and its notice
    * said so, but the row came back off and the model could not invoke it, with no
    * error anywhere. Chaining makes the second read the result of the first.
-   */
+  */
   async function persistSkillDisabled(skillName: string, disabled: boolean): Promise<boolean> {
+    const mutationKey = `skill:${skillName}`;
+    // Allocate the generation when intent is expressed, not when this queued step
+    // eventually starts. A second click must supersede the first immediately.
+    const generation = beginMutation(mutationKey);
+    skillDisabledTargetsRef.current.set(skillName, disabled);
+    applySkillDisabledToView(skillName, disabled);
+    setSkillToggleErrors((current) => withoutMapKey(current, skillName));
+
     const run = skillDisableQueueRef.current.then(async () => {
       const persisted = latestDisabledSkillsRef.current;
       const next = disabled
         ? [...new Set([...persisted, skillName])]
         : persisted.filter((name) => name !== skillName);
-      const requestId = beginRequest('mutation');
-      setSaving(true);
       try {
         const updated = await api.agentUpdateRuntimeSettings({ disabledSkills: next });
         // Recorded outside the isCurrentRequest guard: the next queued write
         // must build on what main actually stored, even if this reply is too
         // late to be applied to the view.
         latestDisabledSkillsRef.current = updated.agent.disabledSkills ?? [];
-        if (isCurrentRequest('mutation', requestId)) {
-          setSettings(updated);
-          // Adjusted by the same SINGLE change, never overwritten wholesale, so a
-          // reply arriving while another row is mid-flight cannot revert it.
-          setSkillDraft((current) => ({
-            disabledSkills: disabled
-              ? [...new Set([...current.disabledSkills, skillName])]
-              : current.disabledSkills.filter((name) => name !== skillName),
-          }));
+        if (isCurrentMutation(mutationKey, generation)) {
+          skillDisabledTargetsRef.current.delete(skillName);
+          applySkillDisabledToView(skillName, latestDisabledSkillsRef.current.includes(skillName));
+          setSettings((current) => current ? { ...current, agent: updated.agent } : updated);
         }
-        await onApplied();
+        await reportAppliedRefreshFailure(onApplied, 'skill-toggle-refresh', skillName);
         return true;
       } catch (caught) {
         // Revert the optimistic flip: a switch that stayed where the user put it
         // after the write failed would claim a state the model does not see.
-        if (isCurrentRequest('mutation', requestId)) {
-          setSkillDraft((current) => ({
-            disabledSkills: disabled
-              ? current.disabledSkills.filter((name) => name !== skillName)
-              : [...new Set([...current.disabledSkills, skillName])],
-          }));
+        if (isCurrentMutation(mutationKey, generation)) {
+          skillDisabledTargetsRef.current.delete(skillName);
+          applySkillDisabledToView(skillName, latestDisabledSkillsRef.current.includes(skillName));
+          setSkillToggleErrors((current) => withMapValue(
+            current,
+            skillName,
+            t.settings.skills.toggleFailed({ name: skillName }),
+          ));
+          reportSettingsMutationError('skill-toggle-write-failed', skillName, caught);
+          setNotice(null);
         }
-        setError(caught instanceof Error ? caught.message : String(caught));
-        setNotice(null);
         return false;
-      } finally {
-        if (isCurrentRequest('mutation', requestId)) setSaving(false);
       }
     });
     skillDisableQueueRef.current = run.then(() => undefined, () => undefined);
@@ -424,17 +494,72 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * the managed half committed immediately, so two identical-looking switches in
    * one list meant different things and Cancel reverted only one of them. Both
    * now take the same path.
-   */
+  */
   function toggleSkill(skillName: string) {
-    const disabled = !skillDraft.disabledSkills.includes(skillName);
-    // Optimistic: the switch moves now, and `persistSkillDisabled` puts it back
-    // if the write fails.
-    setSkillDraft((current) => ({
-      disabledSkills: disabled
-        ? [...new Set([...current.disabledSkills, skillName])]
-        : current.disabledSkills.filter((name) => name !== skillName),
-    }));
+    const disabled = !(skillDisabledTargetsRef.current.get(skillName)
+      ?? skillDraftRef.current.disabledSkills.includes(skillName));
     void persistSkillDisabled(skillName, disabled);
+  }
+
+  function applySkillDisabledToView(skillName: string, disabled: boolean) {
+    const next: SkillDraft = {
+      disabledSkills: disabled
+        ? [...new Set([...skillDraftRef.current.disabledSkills, skillName])]
+        : skillDraftRef.current.disabledSkills.filter((name) => name !== skillName),
+    };
+    skillDraftRef.current = next;
+    setSkillDraft(next);
+  }
+
+  /**
+   * Provider activation is a targeted local preference, not a connection save.
+   * The synchronous target ref makes two clicks before React renders mean off,
+   * then on — not two identical off writes from one stale closure. The actual IPC
+   * step joins the provider snapshot queue because every provider command returns
+   * the whole collection, even when it mutates only one row.
+   */
+  function toggleProviderEnabled(providerId: string, baseUrl: string | null) {
+    const stored = providerSettingsRef.current?.providers.find((provider) => provider.providerId === providerId);
+    const enabled = !(providerEnabledTargetsRef.current.get(providerId) ?? stored?.enabled ?? false);
+    const mutationKey = `provider-enabled:${providerId}`;
+    const generation = beginMutation(mutationKey);
+    providerEnabledTargetsRef.current.set(providerId, enabled);
+    setProviderEnabledOverrides((current) => withMapValue(current, providerId, enabled));
+    setProviderToggleErrors((current) => withoutMapKey(current, providerId));
+    setError(null);
+    setNotice(null);
+
+    void enqueueProviderMutation(async () => {
+      let next: AgentProviderSettingsView;
+      try {
+        next = await api.agentUpsertProviderConfig({ providerId, baseUrl, enabled }, { probeConnection: false });
+      } catch (caught) {
+        if (isCurrentMutation(mutationKey, generation)) {
+          providerEnabledTargetsRef.current.delete(providerId);
+          setProviderEnabledOverrides((current) => withoutMapKey(current, providerId));
+          setProviderToggleErrors((current) => withMapValue(
+            current,
+            providerId,
+            t.settings.providers.toggleFailed({ name: formatProviderName(providerId) }),
+          ));
+          reportSettingsMutationError('provider-enabled-write-failed', providerId, caught);
+        }
+        return;
+      }
+
+      const merged = mergeProviderEnabledResult(providerSettingsRef.current ?? next, next, providerId, enabled);
+      providerSettingsRef.current = merged;
+      if (mountedRef.current) {
+        setSettings((current) => mergeProviderEnabledResult(current ?? next, next, providerId, enabled));
+      }
+      await reportAppliedRefreshFailure(onApplied, 'provider-enabled-refresh', providerId);
+
+      if (isCurrentMutation(mutationKey, generation)) {
+        providerEnabledTargetsRef.current.delete(providerId);
+        setProviderEnabledOverrides((current) => withoutMapKey(current, providerId));
+        setNotice(enabled ? t.settings.providers.enabledNotice : t.settings.providers.disabledNotice);
+      }
+    });
   }
 
   // There is no `save()`. Every control in this window commits where it is, so
@@ -448,7 +573,11 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     successNotice: string,
     resetToInitial = false,
   ) {
-    const run = providerMutationQueueRef.current.then(() => runProviderMutationStep(action, successNotice, resetToInitial));
+    return enqueueProviderMutation(() => runProviderMutationStep(action, successNotice, resetToInitial));
+  }
+
+  function enqueueProviderMutation<T>(action: () => Promise<T>): Promise<T> {
+    const run = providerMutationQueueRef.current.then(action, action);
     providerMutationQueueRef.current = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -458,25 +587,23 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     successNotice: string,
     resetToInitial: boolean,
   ) {
-    const requestId = beginRequest('mutation');
-    setSaving(true);
+    const mutationKey = 'providers';
+    const generation = beginMutation(mutationKey);
     setError(null);
     setNotice(null);
     try {
       const next = await action();
-      if (isCurrentRequest('mutation', requestId)) {
+      providerSettingsRef.current = next;
+      if (isCurrentMutation(mutationKey, generation)) {
         setSettings(next);
         setProviderDraft(resetToInitial
           ? resolveInitialProviderDraft(next)
           : resolveProviderDraftFor(next, providerDraft.providerId));
-        setSkillDraft(resolveSkillDraft(next));
         setNotice(successNotice);
       }
       await onApplied();
     } catch (caught) {
-      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest('mutation', requestId)) setSaving(false);
+      if (isCurrentMutation(mutationKey, generation)) setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
@@ -576,15 +703,19 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 onError={setError}
                 onNotice={setNotice}
                 onPersistSkillDisabled={persistSkillDisabled}
+                onSkillCountChange={setSkillCount}
                 onToggleSkill={toggleSkill}
                 onUpdateCountChange={setSkillUpdateCount}
+                toggleErrors={skillToggleErrors}
               />
             ) : route.page === 'services' ? (
               <SettingsProvidersSection
                 draftProviderId={providerDraft.providerId}
+                enabledOverrides={providerEnabledOverrides}
+                onToggleProviderEnabled={toggleProviderEnabled}
                 runProviderMutation={runProviderMutation}
-                saving={saving}
                 settings={settings}
+                toggleErrors={providerToggleErrors}
               />
             ) : route.page === 'about' ? (
               <SettingsAboutSection onError={setError} onNotice={setNotice} />
@@ -596,6 +727,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               />
             ) : category === 'agent' ? (
               <SettingsAgentSection
+                blockErrors={capabilityMutationErrors}
                 blocks={capabilityBlocks}
                 onError={setError}
                 onNotice={setNotice}
@@ -673,4 +805,84 @@ function providerToDraft(provider: AgentProviderConfigView): ProviderDraft {
   };
 }
 
+function withMapValue<K, V>(current: ReadonlyMap<K, V>, key: K, value: V): Map<K, V> {
+  const next = new Map(current);
+  next.set(key, value);
+  return next;
+}
 
+function withoutMapKey<K, V>(current: ReadonlyMap<K, V>, key: K): Map<K, V> {
+  if (!current.has(key)) return current as Map<K, V>;
+  const next = new Map(current);
+  next.delete(key);
+  return next;
+}
+
+function removeCapabilityRule(settings: AgentCapabilitySettingsView, rule: string): AgentCapabilitySettingsView {
+  return { ...settings, blocks: settings.blocks.filter((candidate) => candidate !== rule) };
+}
+
+function restoreCapabilityRule(
+  settings: AgentCapabilitySettingsView,
+  originalOrder: readonly string[],
+  rule: string,
+): AgentCapabilitySettingsView {
+  if (settings.blocks.includes(rule)) return settings;
+  const blocks = [...settings.blocks];
+  const originalIndex = originalOrder.indexOf(rule);
+  const nextKnownRule = originalOrder
+    .slice(originalIndex + 1)
+    .find((candidate) => blocks.includes(candidate));
+  const insertionIndex = nextKnownRule ? blocks.indexOf(nextKnownRule) : blocks.length;
+  blocks.splice(insertionIndex, 0, rule);
+  return { ...settings, blocks };
+}
+
+function mergeProviderEnabledResult(
+  current: AgentProviderSettingsView,
+  response: AgentProviderSettingsView,
+  providerId: string,
+  enabled: boolean,
+): AgentProviderSettingsView {
+  const responseProvider = response.providers.find((provider) => provider.providerId === providerId);
+  if (!responseProvider) return current;
+  const index = current.providers.findIndex((provider) => provider.providerId === providerId);
+  const providers = [...current.providers];
+  if (index >= 0) providers[index] = responseProvider;
+  else providers.push(responseProvider);
+  return {
+    ...current,
+    providers,
+    // Enabling never selects a provider. Disabling the active row does, however,
+    // make main resolve a fallback, so only that targeted transition adopts the
+    // response's active id instead of overwriting an unrelated concurrent choice.
+    activeProviderId: !enabled && current.activeProviderId === providerId
+      ? response.activeProviderId
+      : current.activeProviderId,
+  };
+}
+
+function reportSettingsMutationError(code: string, key: string, error: unknown): void {
+  window.lin?.reportRendererError?.({
+    domain: 'persistence',
+    severity: 'error',
+    code,
+    message: 'Failed to persist an immediate Settings mutation.',
+    context: { key },
+    error: serializeUnknownError(error),
+  });
+}
+
+async function reportAppliedRefreshFailure(
+  onApplied: () => Promise<void>,
+  code: string,
+  key: string,
+): Promise<void> {
+  try {
+    await onApplied();
+  } catch (error) {
+    // The write already committed. A secondary refresh failure must not roll the
+    // control back and claim persistence failed.
+    reportSettingsMutationError(code, key, error);
+  }
+}

@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
+import type { AppInfo } from '../../src/core/errorObservability';
 
 export const ids = {
   workspace: 'workspace',
@@ -122,6 +123,7 @@ type E2EWindow = Window & {
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    appInfo?: () => Promise<AppInfo>;
     onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
@@ -563,7 +565,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       hasUserSpecifiedDescription: true,
       userInvocable: true,
       modelInvocable: true,
-      ratified: false,
       canUndoLastAgentEdit: false,
       contentHash: 'hash-workspace-review-v1',
       allowedTools: [],
@@ -1740,6 +1741,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      appInfo: async () => ({
+        name: 'Tenon',
+        version: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        electron: '39.0.0',
+        chrome: '142.0.0',
+        node: '22.0.0',
+      }),
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
         if (method === 'list') return clone({ data: mockAutomations }) as T;

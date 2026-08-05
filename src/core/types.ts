@@ -933,6 +933,8 @@ export interface ManagedSkillView {
   id: string;
   name: string;
   description: string;
+  /** Whether the active version may appear as a slash command. */
+  userInvocable: boolean;
   repository: string;
   subdirectory: string;
   trackingRef: string;

@@ -41,7 +41,18 @@ describe('settings window query routing', () => {
       anchor: 'memory',
     });
     // An anchor alone routes nowhere: it qualifies a destination, it is not one.
-    expect(settingsOpenTargetFromSearch('?surface=settings&anchor=memory')).toEqual({ anchor: 'memory' });
+    expect(settingsOpenTargetFromSearch('?surface=settings&anchor=memory')).toEqual({});
+  });
+
+  test('rejects anchors that cannot be used as bounded selector slugs', () => {
+    for (const anchor of ['UPPERCASE', '-leading', 'contains space', 'a'.repeat(65), 'x\"] .inset-card']) {
+      expect(settingsOpenTargetFromSearch(`?surface=settings&category=agent&anchor=${encodeURIComponent(anchor)}`))
+        .toEqual({ category: 'agent' });
+    }
+    expect(settingsOpenTargetFromSearch('?surface=settings&category=agent&anchor=agent-access')).toEqual({
+      category: 'agent',
+      anchor: 'agent-access',
+    });
   });
 
   test('ignores unknown categories and unrelated detail parameters', () => {

@@ -196,6 +196,41 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(modelSelect?.textContent).toContain('Agent model');
   });
 
+  test('clears a preference write error when the user retries', async () => {
+    let writeCount = 0;
+    const errors: Array<string | null> = [];
+    const rendered = renderUrlPanel({
+      onError: (message) => errors.push(message),
+      setUrlPageTranslationPreferences: async (preferences) => {
+        writeCount += 1;
+        if (writeCount === 1) throw new Error('disk full');
+        return preferences;
+      },
+    });
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    if (!toggle) throw new Error('Missing URL translation control');
+
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    const autoSwitch = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-auto-switch');
+    if (!autoSwitch) throw new Error('Missing automatic-translation switch');
+    await act(async () => {
+      autoSwitch.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(errors).toEqual([null, "This translation preference couldn't be saved."]);
+
+    await act(async () => {
+      autoSwitch.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(errors).toEqual([null, "This translation preference couldn't be saved.", null]);
+  });
+
   test('routes a webview shortcut only to the matching active URL panel', async () => {
     const rendered = renderUrlPanel();
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
@@ -220,7 +255,11 @@ describe('FilePreviewPanel URL preview chrome', () => {
 
 function renderUrlPanel(options: {
   initialTranslationPreferences?: UrlPageTranslationPreferences;
+  onError?: (message: string | null) => void;
   providerSettings?: unknown;
+  setUrlPageTranslationPreferences?: (
+    preferences: UrlPageTranslationPreferences,
+  ) => Promise<UrlPageTranslationPreferences>;
 } = {}): {
   document: Document;
   savedLanguages: TranslationLanguage[];
@@ -276,10 +315,10 @@ function renderUrlPanel(options: {
     setTranslationLanguage: async (language) => {
       savedLanguages.push(language);
     },
-    setUrlPageTranslationPreferences: async (preferences) => {
+    setUrlPageTranslationPreferences: options.setUrlPageTranslationPreferences ?? (async (preferences) => {
       savedTranslationPreferences.push(preferences);
       return preferences;
-    },
+    }),
   };
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -294,6 +333,7 @@ function renderUrlPanel(options: {
         isNodePinned={() => false}
         onBack={() => undefined}
         onClose={() => undefined}
+        onError={options.onError}
         onOpenTarget={() => undefined}
         onRoot={() => undefined}
         onTogglePin={() => undefined}

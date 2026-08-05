@@ -96,11 +96,15 @@ import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
+  SETTINGS_ANCHOR_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
+  isSettingsAnchorTarget,
   isSettingsCategoryTarget,
+  isSettingsPageTarget,
+  settingsTargetPath,
   type ProviderConfigMode,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
@@ -169,6 +173,7 @@ import {
   updateImageGenerationSettings,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
+  prepareProviderConnectionProbe,
   recordProviderConnectionCheck,
   testProviderConnection,
 } from './agent/capabilities/agentSettings';
@@ -203,7 +208,6 @@ import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
   saveLanguagePreference,
-  saveOsNotificationsPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
@@ -712,9 +716,9 @@ async function prepareSkillRuntimeForTurn(
   }
 }
 
-async function refreshTurnSkillTrustRecords(): Promise<void> {
+async function refreshTurnSkillProvenanceRecords(): Promise<void> {
   await Promise.all(
-    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshTrustRecords()),
+    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()),
   );
 }
 
@@ -1313,7 +1317,10 @@ function buildApplicationMenu(): Electron.Menu {
     template.push({
       label: APP_NAME,
       submenu: [
-        { role: 'about', label: t.about({ app: APP_NAME }) },
+        {
+          label: t.about({ app: APP_NAME }),
+          click: () => openSettingsWindow({ page: 'about' }),
+        },
         { type: 'separator' },
         { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
@@ -1691,17 +1698,23 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown };
+  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
+  const page = isSettingsPageTarget(input.page) ? input.page : undefined;
+  const anchor = (category || page) && isSettingsAnchorTarget(input.anchor) ? input.anchor : undefined;
   return {
     ...(category ? { category } : {}),
+    ...(page ? { page } : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
+  const path = settingsTargetPath(target);
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(path ? { [SETTINGS_CATEGORY_PARAM]: path } : {}),
+    ...(path && target.anchor ? { [SETTINGS_ANCHOR_PARAM]: target.anchor } : {}),
   };
 }
 
@@ -1718,9 +1731,11 @@ function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
     if (existing.isMinimized()) existing.restore();
     existing.show();
     existing.focus();
-    // A navigate with no category must not yank a user who is already somewhere
-    // else back to the default pane; only an explicitly targeted open navigates.
-    if (openTarget.category) existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
+    // An untargeted Cmd+, must not yank a user who is already somewhere else back
+    // to General. A page names its own category, so it is independently explicit.
+    if (openTarget.category || openTarget.page) {
+      existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
+    }
     return;
   }
   // A utilitarian Preferences window: opaque content, no OS material (unlike the
@@ -2278,21 +2293,6 @@ function registerIpc() {
     if (!isThemeMode(mode)) return;
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
-  });
-  // Opt-in OS-notification preference. Dedicated channels (not the agent-command
-  // union) so the off-floor task plane owns its preference without touching the
-  // shared command/type surface; backed by the shared synchronous app-preferences
-  // store (theme/language live there too).
-  ipcMain.handle('lin:get-notification-prefs', () => ({
-    osNotificationsEnabled: loadAppPreferences().osNotificationsEnabled,
-  }));
-  ipcMain.handle('lin:set-notification-prefs', (_event, input: unknown) => {
-    const enabled =
-      !!input && typeof input === 'object' && 'osNotificationsEnabled' in input
-        ? (input as { osNotificationsEnabled?: unknown }).osNotificationsEnabled === true
-        : false;
-    saveOsNotificationsPreference(enabled);
-    return { osNotificationsEnabled: enabled };
   });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
@@ -2904,14 +2904,21 @@ function notifySettingsChanged(origin?: BrowserWindow | null): void {
 async function probeAndRecordConnection(providerIdInput: unknown): Promise<void> {
   const providerId = String(providerIdInput ?? '');
   if (!providerId) return;
+  let connectionGeneration: number | undefined;
   try {
-    const result = await testProviderConnection({ providerId });
-    await recordProviderConnectionCheck(providerId, result);
+    const probe = await prepareProviderConnectionProbe({ providerId });
+    connectionGeneration = probe.connectionGeneration;
+    if (!probe.matchesStoredConnection || connectionGeneration === undefined) return;
+    const result = await testProviderConnection(probe.input);
+    const recorded = await recordProviderConnectionCheck(providerId, result, connectionGeneration);
+    if (recorded) notifySettingsChanged();
   } catch {
-    await recordProviderConnectionCheck(providerId, null).catch(() => undefined);
-    return;
+    if (connectionGeneration !== undefined) {
+      const recorded = await recordProviderConnectionCheck(providerId, null, connectionGeneration)
+        .catch(() => false);
+      if (recorded) notifySettingsChanged();
+    }
   }
-  notifySettingsChanged();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -3630,7 +3637,12 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_upsert_provider_config': {
       const input = args.provider as AgentProviderConfigInput;
       const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
-      // Prove the connection AFTER committing it. Saving a credential is the
+      // Prove the connection AFTER committing it when the caller says this was a
+      // connection save. The same upsert command also backs the provider-list
+      // enable switch; that switch must not spend a billed completion merely to
+      // change local activation state.
+      //
+      // Saving a credential is the
       // user's intent and must not wait on a network round trip — the window
       // closes at once, which is also why there is no timeout to design here and
       // no "can I close mid-probe" question to answer. The verdict lands on the
@@ -3639,7 +3651,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // This is one of exactly two things that probe: an explicit write, and the
       // explicit Test button. Nothing probes on open, on a schedule, or in the
       // background, because the probe bills a 1-token completion.
-      void probeAndRecordConnection(input.providerId);
+      if (args.probeConnection === true) void probeAndRecordConnection(input.providerId);
       return settings;
     }
     case 'agent_delete_provider_config':
@@ -3657,11 +3669,17 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // another provider can't deliver them to the wrong window (where they'd be
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = providerConfigWindow;
-      return withCanonicalSkillDirectories(await oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
+      const providerId = String(args.providerId);
+      const settings = withCanonicalSkillDirectories(await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
       }));
+      // A successful sign-in is a credential write just like saving an API key.
+      // Keep the login response fast, then persist the same conservative probe
+      // verdict the API-key path records in the background.
+      void probeAndRecordConnection(providerId);
+      return settings;
     }
     case 'agent_oauth_logout':
       return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
@@ -3673,19 +3691,27 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       return undefined;
     case 'agent_test_provider_connection': {
       const providerId = String(args.providerId);
-      const result = await testProviderConnection({
+      const apiKeyOverride = typeof args.apiKey === 'string' && args.apiKey.trim().length > 0;
+      const probe = await prepareProviderConnectionProbe({
         providerId,
-        baseUrl: args.baseUrl ? String(args.baseUrl) : undefined,
-        apiKey: args.apiKey ? String(args.apiKey) : undefined,
+        baseUrl: typeof args.baseUrl === 'string' ? args.baseUrl : undefined,
+        apiKey: apiKeyOverride ? args.apiKey as string : undefined,
+        baseUrlOverride: Object.prototype.hasOwnProperty.call(args, 'baseUrl'),
+        apiKeyOverride,
       });
+      const result = await testProviderConnection(probe.input);
       // An explicit Test is the other thing allowed to probe, so its answer is
       // kept rather than thrown away the moment the dialog closes — which is how
       // "Ready" came to mean "has a credential" instead of "works". Recorded only
       // when it probed the STORED connection: a test against a key typed into the
       // form but not saved is not a verdict about what is on disk.
-      if (!args.apiKey && !args.baseUrl) {
-        await recordProviderConnectionCheck(providerId, result).catch(() => undefined);
-        notifySettingsChanged();
+      if (probe.matchesStoredConnection && probe.connectionGeneration !== undefined) {
+        const recorded = await recordProviderConnectionCheck(
+          providerId,
+          result,
+          probe.connectionGeneration,
+        ).catch(() => false);
+        if (recorded) notifySettingsChanged();
       }
       return result;
     }
@@ -3695,7 +3721,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         : skillRuntime.listAllSkills();
     case 'agent_undo_skill_agent_edit': {
       await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
-      await refreshTurnSkillTrustRecords();
+      await refreshTurnSkillProvenanceRecords();
       return skillRuntime.listAllSkills();
     }
     case 'agent_managed_skill_catalog':

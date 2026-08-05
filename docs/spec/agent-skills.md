@@ -152,7 +152,7 @@ required. The Skill tool is the only model-facing result channel for that isolat
 child; collaboration listing and waiting exclude it. Failed or interrupted outcomes
 are labeled as partial evidence rather than being described as completed.
 
-## Authoring And Trust
+## Authoring And Provenance
 
 Mutable Skill edits are ordinary file mutations. Provenance records which bytes
 the agent wrote and the one version preceding that write, so a model edit can be
@@ -214,11 +214,9 @@ restores its executable mode and fails the build when the resource is absent.
 
 Agent settings control additional directories and disabled Skill identities.
 Changes apply to newly assembled tool catalogs and to active per-Turn Skill
-runtimes through a catalog refresh. Accept, revoke, and undo actions refresh every
-active runtime from persisted provenance; undo also reloads the restored bytes and
-appends a catalog delta before the next provider request when the content hash changed.
-An unchanged trust-only catalog comparison emits no Item. Settings never rewrite
-Thread history.
+runtimes through a catalog refresh. Undo also reloads the restored bytes and
+appends a catalog delta before the next provider request when the content hash
+changed. Settings never rewrite Thread history.
 
 ### The Skill library
 
@@ -257,6 +255,19 @@ Managed rows are read from the managed index rather than the loaded catalog, so 
 Skill that is installed but not activated still appears — installed-but-off is a
 state the user owns and must be able to see and reverse.
 
+The count shown one level up follows that same library, not only the currently
+loaded runtime catalog: every non-managed runtime Skill plus every managed-index
+record counts. A disabled, incompatible, or integrity-blocked managed Skill still
+exists in the user's library and must not disappear from the total. Library
+refreshes report the new count back to the category row.
+
+Managed frontmatter treats `user-invocable` as a strict boolean and defaults it
+to `true`; strings and numbers are invalid rather than truthy aliases. The value
+is stored with both the active and previous immutable versions, projected on
+every managed row, and therefore follows update and rollback. The managed index
+schema is version 2 and fails closed on the old shape; this pre-release format has
+no compatibility reader.
+
 ### One enable predicate, two writers
 
 "On" has one meaning — *available to the model right now*:
@@ -279,9 +290,10 @@ enables it, because a Skill that installs into a do-nothing state reads as broke
 and the review dialog — which shows the source, the commit, the scripts, the
 description and the SKILL.md body — is where consent is given. Consent covers the
 instruction because enabling is what puts a Skill's text in front of the model;
-the inertness boundary below is about execution and does not reach it. Merging them would put managed lifecycle state into settings, or
-settings into an index that does not own the Skills they describe. The toggle
-routes by source; what it *means* never branches on source.
+the inertness boundary below is about execution and does not reach it. Merging
+them would put managed lifecycle state into settings, or settings into an index
+that does not own the Skills they describe. The toggle routes by source; what it
+*means* never branches on source.
 
 ### Acquisition behind `+`
 
@@ -293,6 +305,12 @@ carries an icon-only `+` (B6) whose menu has two entries:
    existing compatibility/integrity review still gates the install.
 2. **Add Local Directory** — a native directory picker appending to
    `additionalSkillDirectories`.
+
+The install review shows the candidate description and the complete bounded
+`SKILL.md` body before enabling it. Discovery marks a body that exceeded the
+review bound; that candidate's Install action is disabled, and main repeats the
+check before any candidate download so a stale or bypassed renderer cannot admit
+instructions the user could not review in full.
 
 The panel is a dialog-class surface: opaque `--bg-elevated` at
 `--overlay-shadow-level-2`, matching `.confirm-dialog`. Translucent material is

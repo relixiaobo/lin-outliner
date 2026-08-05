@@ -21,6 +21,7 @@ describe('managed skill store', () => {
     const store = new ManagedSkillStore(root);
     const skill = fixture('Stored v1');
     const version = storedVersionFromValidated('a'.repeat(40), 100, skill);
+    expect(version.userInvocable).toBe(true);
 
     const installedPath = await store.installValidatedContent(skill.name, skill);
     expect(installedPath).toBe(store.contentPath(skill.name, skill.contentHash));
@@ -109,7 +110,7 @@ describe('managed skill store', () => {
     await store.installValidatedContent(previousSkill.name, previousSkill);
     await store.installValidatedContent(orphanSkill.name, orphanSkill);
     await store.replaceIndex({
-      schemaVersion: 1,
+      schemaVersion: 2,
       skills: [{
         id: activeSkill.name,
         name: activeSkill.name,

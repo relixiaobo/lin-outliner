@@ -5,15 +5,15 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 interface SettingsSecuritySectionProps {
   blocks: readonly string[];
+  blockErrors: ReadonlyMap<string, string>;
   onRemoveBlock: (rule: string) => void;
 }
 
 /**
- * The Security category. It edits the capability draft the parent owns and the
- * footer Save commits, so it holds no state of its own — the removal handler is
- * passed in.
+ * The Security category. Each removal commits immediately in the parent, so this
+ * component only renders the current rules and their row-owned failure state.
  */
-export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecuritySectionProps) {
+export function SettingsSecuritySection({ blocks, blockErrors, onRemoveBlock }: SettingsSecuritySectionProps) {
   const t = useT();
 
   function renderCapabilityRuleRows(
@@ -24,6 +24,7 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
     if (rules.length === 0) return <InsetRow empty label={emptyLabel} />;
     return rules.map((rule) => (
       <InsetRow
+        feedback={blockErrors.get(rule) ? <span role="alert">{blockErrors.get(rule)}</span> : undefined}
         key={rule}
         label={capabilityRuleLabel(rule, t)}
         sublabel={<span className="inset-row-code">{rule}</span>}

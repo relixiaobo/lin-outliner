@@ -282,64 +282,51 @@ selected category title. History controls reuse the main chrome control family
 inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
-**Category rail and content.** The left rail lists three categories — General,
-Agent, Preview — cut along what a user is trying to affect rather than which
-subsystem implements it. The content pane is a flat opaque Preferences base with
-constrained grouped content (`--settings-content-max-width`, 920px). The rail,
-toolbar, and selected category surface render immediately; provider/runtime data
-loads into the pane asynchronously instead of replacing the window with a loading
-page.
+**Category rail and content.** The left rail lists General, Agent, and Preview,
+cut along user intent rather than implementation subsystem. The content pane is
+an opaque Preferences base constrained to `--settings-content-max-width` (920px).
+Rail, toolbar, and category render immediately; provider/runtime data loads locally.
 
-**Pages.** Three second-level pages hang off the categories: Model services and
-Skills under Agent, About under General. The rule is about what the group holds,
-not how large it is: a collection the user installs or connects — unbounded, with
-its own lifecycle — becomes a page; a bounded set of settings stays inline on its
-category. A row that opens one carries a chevron, so a door does not look like a
-statement. Per-provider config remains a native child window, giving a depth of
-two pages plus a dialog.
+**Pages.** Model services and Skills sit under Agent; About sits under General.
+An unbounded collection the user installs or connects becomes a page; bounded
+settings stay inline. Page rows carry chevrons, history walks real routes, and
+per-provider configuration remains a native child window.
 
-Because pages are real routes, the toolbar's history capsule has something to
-walk. It is not the reason for the structure — the reason is the IA — but it is
-why the arrows stopped being permanently disabled chrome duplicating the rail
-beside them.
+**Deep links.** Categories are `general|agent|preview`; pages are
+`agent/services`, `agent/skills`, and `general/about`. An optional bounded
+lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
+highlights a group. Category/page mismatches do not route; retired ids have no
+aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
 
-**Deep links.** `category=general|agent|preview`, plus a page in path form
-(`agent/services`, `agent/skills`, `general/about`) and an optional `anchor` that
-scrolls to and briefly highlights a group. A page claimed by the wrong category
-does not route. The retired ids (`providers`, `security`, `skills`) are gone
-rather than aliased.
+**Commit model.** Controls apply immediately with no footer or draft. Optimistic
+writes revert on failure, show a localized row-owned `role="alert"`, and record
+raw errors only in diagnostics. Writes serialize per key; independent Agent
+mutations use independent keys and a shared pending count. Provider commands
+also share a response queue because they return full settings snapshots, so an
+older Set active, Remove, Refresh, or image-model response cannot overwrite a
+later enable intent. Composite Preview writes serialize from the last persisted
+snapshot: failure rolls back only its field, later pending fields stay visible,
+and broadcasts merge below pending values. Settings and the preview popover use
+the same failure contract. Only the modal provider form retains Cancel/Save.
 
-**Commit model.** Every control in this window applies immediately. There is no
-footer, no draft, and therefore no way for closing the window or switching
-category to discard work. Writes are optimistic: the control moves at once and
-reverts if the write fails, with the failure reported in the pane's pinned
-feedback strip. Writes that share a key are serialized, so two fast toggles
-cannot each persist a whole object built from the same stale read. The
-per-provider connection form is the one exception and keeps Cancel/Save, because
-it edits one object as a modal dialog.
+**General.** Appearance (Theme and Language), Diagnostics, and About. Theme is a
+neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
+Language is `SelectControl variant="popup"`.
 
-**General.** Appearance (Theme, Language), Diagnostics, and a row into About.
-Theme uses `SegmentedControl` (System / Light / Dark) with neutral selected
-state, ARIA `radiogroup`, roving tabindex, arrow-key navigation, and neutral
-focus. Language uses `SelectControl variant="popup"`.
+**Agent.** Model services and Skills are pages; Memory and Permissions stay
+inline. Permissions states the Full Access boundary, lists explicit blocks, and
+commits removal on the row; boundary explanation is a footnote under that row.
 
-**Agent.** Model services and Skills as pages, then Memory and Permissions
-inline. Permissions states the Full Access boundary and lists the user's explicit
-blocks; removing one commits on the row. What that boundary means is a footnote
-under the row that states it, not a section of its own — a header over a row whose
-label named something unsettable and whose sublabel was a paragraph is settings
-furniture wrapped around prose.
+**Preview.** Translation owns target language, webpage/EPUB auto-translation,
+model, and clearing saved translations; Websites clears URL-preview session data.
+The preview Languages popover writes the same cross-window preference store.
 
-**Preview.** Translation — target language, automatic translation for webpages
-and for EPUBs, the translating model, and clearing saved translations — and
-Websites, which clears the URL-preview session data. The four translation
-preferences are the same cross-window store the preview's Languages popover
-writes, so the two surfaces cannot disagree.
-
-**About.** Identity and version with a copy action, what's new (the per-version
-`CHANGELOG` section, minus the `Internal` category), support links, and legal.
-The native About menu item opens this page rather than the OS panel, so there is
-one About rather than two.
+**About.** Identity/version with copy, per-version What's New, support, and legal.
+The native About item opens this page. `AppInfo.version` selects its `CHANGELOG`
+section; if absent, `Unreleased` is labelled as that version's development train.
+`Internal` is hidden, multiple sections use a native select, and notes start
+collapsed before expanding into a bounded keyboard-scrollable region. Changelog
+links use external navigation; legal links to the actual MIT license.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in
 [components.md → Inset Groups And Rows](./components.md#inset-groups-and-rows).
@@ -388,6 +375,14 @@ fallback. A completed sign-in may populate a dynamic model catalog without
 changing the sheet's connection-only ownership. Capability rows render only
 non-empty model groups; provider-level refreshability remains available to the
 settings row when a dynamic catalog is empty.
+
+Save commits before its non-blocking probe; OAuth completion follows the same
+path, while opening Settings never probes. Using the stored Base URL, the probe
+lists models and sends a one-token completion. It records timestamped, redacted
+`ok`, confident 401/403 `rejected`, or other `unreachable`. Connection changes
+clear the result and advance a main-only generation; results commit only when
+their generation still matches. Explicit Test persists only for the stored
+endpoint and credential, compared via fixed-size digests in constant time.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.

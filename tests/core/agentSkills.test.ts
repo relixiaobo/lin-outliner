@@ -236,14 +236,14 @@ describe('skill provenance and undo', () => {
     await runtime.notifySkillContentWritten([skillFile]);
     expect((await runtime.getSkill('user-edited'))).toMatchObject({});
 
-    const handEdited = skillMarkdown('User tuned the accepted draft.');
+    const handEdited = skillMarkdown('User tuned the agent draft.');
     await writeFile(skillFile, handEdited, 'utf8');
     await runtime.notifySkillContentWritten([skillFile]);
     const skill = await runtime.getSkill('user-edited');
     expect(skill?.source).toBe('user');
   });
 
-  test('trust actions resolve paths:-conditional skills the panel lists', async () => {
+  test('Undo provenance resolves paths:-conditional skills the panel lists', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
     const skillFile = path.join(root, '.agents', 'skills', 'conditional', 'SKILL.md');
     const content = [
@@ -272,7 +272,7 @@ describe('skill provenance and undo', () => {
   // surviving reason a second runtime must re-read the store is Undo, which
   // rewrites the file — covered by the test below.
 
-  test('refreshTrustRecords reloads externally restored Skill bytes and schedules a catalog delta', async () => {
+  test('refreshProvenanceRecords reloads externally restored Skill bytes and schedules a catalog delta', async () => {
     const { root, skillFile, content: firstContent } = await writeAuthoredSkill('shared-undo', 'First workflow.');
     const store = createMemoryProvenanceStore();
     const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
@@ -293,7 +293,7 @@ describe('skill provenance and undo', () => {
       .toMatchObject({ contentHash: skillContentHash(secondContent) });
 
     await settingsRuntime.undoLastAgentSkillEdit('shared-undo');
-    await conversationRuntime.refreshTrustRecords();
+    await conversationRuntime.refreshProvenanceRecords();
     expect(acknowledgePendingCatalogRefresh(conversationRuntime)).toBe(true);
     const after = await conversationRuntime.buildSkillCatalogSnapshot();
     expect(after.entries.find((entry) => entry.name === 'shared-undo'))
@@ -677,7 +677,7 @@ describe('agent skills', () => {
 
     expect(body).toContain('available immediately');
     expect(body).toContain('slash invocation works immediately');
-    expect(body).toContain('without a separate trust prompt');
+    expect(body).toContain('without a separate approval prompt');
     expect(body).toContain('Do not write executable or binary support files');
   });
 

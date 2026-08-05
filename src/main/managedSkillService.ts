@@ -234,6 +234,12 @@ export class ManagedSkillService {
     }
     const candidate = session.discovery.candidates.find((entry) => entry.view.id === input.candidateId);
     if (!candidate) throw new ManagedSkillServiceError('candidate_not_found', 'Select one of the discovered skill folders.');
+    if (candidate.view.skillBodyTruncated) {
+      throw new ManagedSkillServiceError(
+        'invalid_request',
+        'The selected SKILL.md is too large to review in full and cannot be installed.',
+      );
+    }
     const validated = await this.github.downloadCandidate({
       origin: session.discovery.origin,
       candidate,
@@ -972,6 +978,7 @@ function managedSkillView(record: ManagedSkillRecord, appVersion: string): Manag
     id: record.id,
     name: record.name,
     description: record.active.description,
+    userInvocable: record.active.userInvocable,
     repository: record.origin.repository,
     subdirectory: record.origin.subdirectory,
     trackingRef: record.origin.trackingRef,

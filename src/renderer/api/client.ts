@@ -377,8 +377,13 @@ export const api = {
     command<AgentCapabilitySettingsView>('agent_apply_capability_settings_patch', { patch }),
   agentAppendCapabilityBlock: (ruleValue: string) =>
     command<AgentCapabilitySettingsView>('agent_append_capability_block', { ruleValue }),
-  agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
-    command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
+  agentUpsertProviderConfig: (
+    provider: AgentProviderConfigInput,
+    options?: { probeConnection?: boolean },
+  ) => command<AgentProviderSettingsView>('agent_upsert_provider_config', {
+    provider,
+    probeConnection: options?.probeConnection === true,
+  }),
   agentDeleteProviderConfig: (providerId: string) =>
     command<AgentProviderSettingsView>('agent_delete_provider_config', { providerId }),
   agentSetActiveProvider: (providerId: string) =>

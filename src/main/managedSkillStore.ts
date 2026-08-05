@@ -20,7 +20,7 @@ import {
   type ValidatedManagedSkill,
 } from './managedSkillValidation';
 
-const INDEX_SCHEMA_VERSION = 1;
+const INDEX_SCHEMA_VERSION = 2;
 const PRIVATE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o700;
 const PRIVATE_FILE_MODE = process.platform === 'win32' ? undefined : 0o600;
 const IMMUTABLE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o500;
@@ -36,6 +36,7 @@ export interface ManagedSkillStoredVersion {
   fileCount: number;
   totalBytes: number;
   description: string;
+  userInvocable: boolean;
   compatibility: ManagedSkillCompatibilityView;
   scripts: string[];
   version?: string;
@@ -69,7 +70,7 @@ export interface ManagedSkillRecord {
 }
 
 export interface ManagedSkillIndex {
-  schemaVersion: 1;
+  schemaVersion: 2;
   skills: ManagedSkillRecord[];
 }
 
@@ -170,6 +171,7 @@ export class ManagedSkillStore {
           fileCount: skill.fileCount,
           totalBytes: skill.totalBytes,
           description: skill.description,
+          userInvocable: skill.userInvocable,
           compatibility: skill.compatibility,
           scripts: skill.scripts,
         });
@@ -300,6 +302,7 @@ export function storedVersionFromValidated(
     fileCount: skill.fileCount,
     totalBytes: skill.totalBytes,
     description: skill.description,
+    userInvocable: skill.userInvocable,
     compatibility: skill.compatibility,
     scripts: [...skill.scripts],
     ...(skill.version ? { version: skill.version } : {}),
@@ -393,6 +396,7 @@ function parseStoredVersion(value: unknown): ManagedSkillStoredVersion {
     fileCount: requiredNumber(value.fileCount, 'version.fileCount'),
     totalBytes: requiredNumber(value.totalBytes, 'version.totalBytes'),
     description: requiredString(value.description, 'version.description'),
+    userInvocable: requiredBoolean(value.userInvocable, 'version.userInvocable'),
     compatibility: {
       status: compatibilityStatus,
       appVersion: requiredString(value.compatibility.appVersion, 'compatibility.appVersion'),
@@ -528,6 +532,11 @@ function boundedOptionalString(value: unknown): string | undefined {
 
 function requiredNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(`Managed skill index field ${field} is invalid.`);
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`Managed skill index field ${field} is invalid.`);
   return value;
 }
 

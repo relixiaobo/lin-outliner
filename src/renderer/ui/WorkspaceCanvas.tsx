@@ -27,7 +27,7 @@ interface WorkspaceCanvasProps {
   isNodePinned: (nodeId: NodeId) => boolean;
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
-  onError: (message: string) => void;
+  onError: (message: string | null) => void;
   onMovePanel: (panelId: string, index: number) => void;
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;

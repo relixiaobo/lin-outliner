@@ -30,6 +30,25 @@ describe('managed skill service', () => {
     expect(managedSkillErrorView(new Error('internal path and token'))).toEqual({ code: 'unexpected_error' });
   });
 
+  test('rejects a truncated discovery review before downloading any candidate bytes', async () => {
+    const root = await temporaryRoot();
+    const github = new FakeGitHub();
+    github.truncateDiscovery = true;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+
+    await expect(service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(github.downloadCalls).toBe(0);
+  });
+
   test('installs enabled, toggles off and on, discovers updates without activation, then applies and rolls back', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
@@ -932,6 +951,8 @@ class FakeGitHub {
   version = 1;
   offline = false;
   sameContentUpdate = false;
+  truncateDiscovery = false;
+  downloadCalls = 0;
   updateCheckGate: Promise<void> | null = null;
   onUpdateCheckStarted: (() => void) | null = null;
   additionalCandidates: ManagedSkillGitHubDiscovery['candidates'] = [];
@@ -967,6 +988,7 @@ class FakeGitHub {
           subdirectory: 'skills/demo-skill',
           compatibility: skill.compatibility,
           scripts: [],
+          ...(this.truncateDiscovery ? { skillBody: 'partial', skillBodyTruncated: true } : {}),
         },
         repositoryTree: [],
       }, ...this.additionalCandidates],
@@ -974,6 +996,7 @@ class FakeGitHub {
   }
 
   async downloadCandidate(input: { origin: { commit: string } }): Promise<ValidatedManagedSkill> {
+    this.downloadCalls += 1;
     if (this.offline) throw new Error('offline');
     if (input.origin.commit === 'a'.repeat(40)) return this.versions.get(1)!;
     if (input.origin.commit === 'b'.repeat(40)) {

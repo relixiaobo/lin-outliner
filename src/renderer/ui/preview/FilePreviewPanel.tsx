@@ -73,6 +73,7 @@ import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
 import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
+import { reportPreviewPreferenceWriteError } from './previewPreferenceErrors';
 import {
   translationModelGroups,
   translationModelName,
@@ -80,6 +81,7 @@ import {
 } from './translationModelChoices';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 import { isProviderUsable } from '../agent/providerUsability';
+import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
@@ -93,7 +95,7 @@ interface FilePreviewPanelProps {
   nodeId?: NodeId;
   onBack: () => void;
   onClose: () => void;
-  onError?: (message: string) => void;
+  onError?: (message: string | null) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
@@ -147,12 +149,27 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
   const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
+  const preferenceMutationGenerationsRef = useRef(new Map<string, number>());
   const closeTranslationPopover = useCallback(() => setTranslationPopoverOpen(false), []);
   const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
     props.onError?.(error === 'not-configured'
       ? previewLabels.translationNotConfigured
       : previewLabels.translationFailed);
   }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
+  const persistPreference = useCallback((preference: string, action: () => Promise<void>) => {
+    const generation = beginKeyedMutation(preferenceMutationGenerationsRef.current, preference);
+    props.onError?.(null);
+    void action().catch((error) => {
+      reportPreviewPreferenceWriteError(preference, error);
+      if (isCurrentKeyedMutation(
+        preferenceMutationGenerationsRef.current,
+        preference,
+        generation,
+      )) {
+        props.onError?.(previewLabels.preferenceSaveFailed);
+      }
+    });
+  }, [previewLabels.preferenceSaveFailed, props.onError]);
   const urlTranslation = useUrlPageTranslation({
     active: looseUrlPreview,
     autoTranslate: translationPreferences.autoTranslateUrls,
@@ -423,9 +440,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const automaticTranslationEnabled = looseUrlPreview
     ? translationPreferences.autoTranslateUrls
     : translationPreferences.autoTranslateEpubs;
+  const automaticTranslationIntentRef = useRef(automaticTranslationEnabled);
+  automaticTranslationIntentRef.current = automaticTranslationEnabled;
   const setAutomaticTranslation = looseUrlPreview
     ? translationPreferences.setAutoTranslateUrls
     : translationPreferences.setAutoTranslateEpubs;
+  const automaticTranslationPreference = looseUrlPreview ? 'auto-translate-urls' : 'auto-translate-epubs';
   const translationControl = activeTranslation ? (
     <>
       <ButtonControl
@@ -459,10 +479,21 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           dismissIgnoreRefs={translationDismissRefs}
           language={translationLanguage.language}
           model={translationPreferences.translationModel}
-          onAutoTranslateChange={setAutomaticTranslation}
+          onAutoTranslateChange={() => {
+            const enabled = !automaticTranslationIntentRef.current;
+            automaticTranslationIntentRef.current = enabled;
+            persistPreference(
+              automaticTranslationPreference,
+              () => setAutomaticTranslation(enabled),
+            );
+          }}
           onClose={closeTranslationPopover}
-          onLanguageChange={translationLanguage.setLanguage}
-          onModelChange={translationPreferences.setTranslationModel}
+          onLanguageChange={(language) => {
+            persistPreference('translation-language', () => translationLanguage.setLanguage(language));
+          }}
+          onModelChange={(model) => {
+            persistPreference('translation-model', () => translationPreferences.setTranslationModel(model));
+          }}
           onToggle={() => {
             activeTranslation.toggle();
             setTranslationPopoverOpen(false);

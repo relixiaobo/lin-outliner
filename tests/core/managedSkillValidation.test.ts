@@ -23,6 +23,7 @@ describe('managed skill validation', () => {
     expect(validated).toMatchObject({
       name: 'demo-skill',
       description: 'A managed validation fixture.',
+      userInvocable: true,
       version: '1.2.3',
       fileCount: 2,
       scripts: ['scripts/run.py'],
@@ -50,6 +51,35 @@ describe('managed skill validation', () => {
       selectedDirectoryName: 'community-skill',
       appVersion: '0.1.0',
     }).compatibility.status).toBe('unknown');
+  });
+
+  test('parses user-invocable as a strict boolean and defaults it to true', () => {
+    const modelOnly = validateManagedSkillFiles({
+      files: [file('SKILL.md', [
+        '---',
+        'name: model-only',
+        'description: Model-only managed skill.',
+        'user-invocable: false',
+        '---',
+        'Instructions.',
+      ].join('\n'))],
+      selectedDirectoryName: 'model-only',
+      appVersion: '0.1.0',
+    });
+    expect(modelOnly.userInvocable).toBe(false);
+
+    expect(() => validateManagedSkillFiles({
+      files: [file('SKILL.md', [
+        '---',
+        'name: invalid-flag',
+        'description: Invalid flag fixture.',
+        'user-invocable: "false"',
+        '---',
+        'Instructions.',
+      ].join('\n'))],
+      selectedDirectoryName: 'invalid-flag',
+      appVersion: '0.1.0',
+    })).toThrow(ManagedSkillValidationError);
   });
 
   test('hashes canonically equivalent Unicode paths in deterministic byte order', () => {

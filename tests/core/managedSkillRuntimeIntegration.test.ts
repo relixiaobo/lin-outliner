@@ -123,7 +123,7 @@ describe('managed skill runtime integration', () => {
     const version = storedVersionFromValidated('a'.repeat(40), 1, validated);
     await store.installValidatedContent('modified-during-load', validated);
     await store.replaceIndex({
-      schemaVersion: 1,
+      schemaVersion: 2,
       skills: [{
         id: 'modified-during-load',
         name: 'modified-during-load',

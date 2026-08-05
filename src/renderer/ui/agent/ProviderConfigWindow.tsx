@@ -111,8 +111,10 @@ export function ProviderConfigWindow() {
     const pid = draft.providerId.trim() || providerId;
     const result = await api.agentTestProviderConnection({
       providerId: pid,
-      baseUrl: draft.baseUrl.trim() || undefined,
-      apiKey: draft.apiKey.trim() || undefined,
+      // Empty is meaningful: test the provider's official endpoint after the
+      // user clears a previously stored custom Base URL.
+      baseUrl: draft.baseUrl.trim(),
+      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
     });
     return { success: result.success, message: result.message };
   }
@@ -134,7 +136,7 @@ export function ProviderConfigWindow() {
       providerId: pid,
       baseUrl: draft.baseUrl.trim() || null,
       enabled: existing?.enabled ?? true,
-    });
+    }, { probeConnection: true });
     await window.lin?.notifySettingsChanged?.();
   }
 

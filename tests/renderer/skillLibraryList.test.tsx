@@ -44,7 +44,6 @@ function localSkill(name: string, source: SkillDefinition['source']): SkillDefin
     hasUserSpecifiedDescription: true,
     userInvocable: true,
     modelInvocable: true,
-    ratified: true,
     allowedTools: [],
     argumentNames: [],
     execution: 'inline',
@@ -58,6 +57,7 @@ function managedSkill(overrides: Partial<ManagedSkillView> = {}): ManagedSkillVi
     id: 'managed-pdf',
     name: 'pdf',
     description: 'Managed fixture.',
+    userInvocable: true,
     repository: 'https://github.com/relixiaobo/linlab-skills',
     subdirectory: 'pdf',
     trackingRef: 'main',
@@ -106,7 +106,7 @@ describe('skill library list', () => {
       .map((node) => node.textContent ?? '');
     // One group, sorted by the name the user reads — not grouped by origin.
     expect(labels.filter((label) => label.startsWith('/'))).toEqual([
-      '/pdfmanagedRecommendedEnabled',
+      '/pdfmanagedRecommended',
       '/project-lintproject',
       '/skillifybuilt-in',
       '/user-notesuser',
@@ -126,6 +126,17 @@ describe('skill library list', () => {
 
     expect(rendered.document.body.textContent).toContain('/pdf');
     expect(switchFor(rendered.document, 'Enable pdf').getAttribute('aria-checked')).toBe('false');
+  });
+
+  test('does not present a model-only managed skill as a slash command', async () => {
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill({ userInvocable: false })],
+    });
+
+    const label = rendered.document.querySelector('.inset-row-label')?.textContent ?? '';
+    expect(label.startsWith('/pdf')).toBe(false);
+    expect(label).toContain('pdf');
   });
 
   test('an activated managed skill named in disabledSkills reads as off', async () => {
@@ -286,6 +297,36 @@ describe('skill library list', () => {
     expect(counts.at(-1)).toBe(1);
   });
 
+  test('counts every managed record once and refreshes after the managed list changes', async () => {
+    const counts: number[] = [];
+    const incompatible = managedSkill({
+      id: 'managed-incompatible',
+      name: 'incompatible',
+      enabled: false,
+      status: 'failed',
+      compatibility: { status: 'incompatible', appVersion: '0.1.0' },
+    });
+    const rendered = await render({
+      skills: [localSkill('notes', 'user'), localSkill('pdf', 'managed')],
+      managed: [managedSkill(), incompatible],
+      onSkillCountChange: (count) => { counts.push(count); },
+    });
+
+    expect(counts.at(-1)).toBe(3);
+
+    rendered.setManaged([managedSkill()]);
+    const check = rendered.document.querySelector<HTMLButtonElement>(
+      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
+    );
+    if (!check) throw new Error('Missing check-for-updates control');
+    await act(async () => {
+      check.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(counts.at(-1)).toBe(2);
+  });
+
   test('enabling a managed skill keeps other pending toggles', async () => {
     // The immediate-persist path must adjust the draft by its own single
     // change. Overwriting it with the persisted list threw away the user's
@@ -346,6 +387,72 @@ describe('skill library list', () => {
     // setEnabled's own "pdf enabled" notice must not survive the other half
     // failing — a green success above a switch that snapped back off.
     expect(rendered.document.querySelector('.agent-settings-notice')).toBeNull();
+  });
+
+  test('does not change disabledSkills when managed activation fails', async () => {
+    const persisted: Array<[string, boolean]> = [];
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf'],
+      managedSetEnabledFails: true,
+      onPersistSkillDisabled: async (name, disabled) => {
+        persisted.push([name, disabled]);
+        return true;
+      },
+    });
+
+    await act(async () => {
+      switchFor(rendered.document, 'Enable pdf').click();
+      await settle();
+    });
+
+    expect(persisted).toEqual([]);
+    expect(rendered.document.querySelector('.inset-row-feedback [role="alert"]')?.textContent)
+      .toContain('could not complete');
+  });
+
+  test('keeps a managed switch live and optimistic while its write is pending', async () => {
+    const pending = deferred<{ ok: true; value: ManagedSkillView }>();
+    const rendered = await render({
+      skills: [],
+      managed: [managedSkill()],
+      onManagedSetEnabled: async () => pending.promise,
+    });
+    const control = switchFor(rendered.document, 'Enable pdf');
+
+    await act(async () => {
+      control.click();
+      await Promise.resolve();
+    });
+
+    expect(control.disabled).toBe(false);
+    expect(control.getAttribute('aria-checked')).toBe('false');
+
+    await act(async () => {
+      pending.resolve({
+        ok: true,
+        value: managedSkill({ enabled: false, status: 'installed-disabled' }),
+      });
+      await settle();
+    });
+  });
+
+  test('serializes two fast managed toggles as off then on', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill()] });
+    const control = switchFor(rendered.document, 'Enable pdf');
+
+    await act(async () => {
+      control.click();
+      control.click();
+      await settle();
+    });
+
+    const writes = rendered.calls
+      .filter((entry) => entry.command === 'agent_managed_skill_set_enabled')
+      .map((entry) => entry.args?.enabled);
+    expect(writes).toEqual([false, true]);
+    expect(control.getAttribute('aria-checked')).toBe('true');
   });
 
   test('a healthy skill carries no diagnostic line', async () => {
@@ -808,11 +915,16 @@ async function render(input: {
   onDirectoriesChange?: (next: string[]) => Promise<readonly string[]>;
   onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
   onToggleSkill?: (skillName: string) => void;
+  onSkillCountChange?: (count: number) => void;
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
   pickedDirectory?: string;
   pickedIsSkillFolder?: boolean;
   pickedNameValid?: boolean;
+  managedSetEnabledFails?: boolean;
+  onManagedSetEnabled?: (
+    args: Record<string, unknown> | undefined,
+  ) => Promise<{ ok: true; value: ManagedSkillView } | { ok: false; error: { code: string } }>;
   onNotice?: (message: string | null) => void;
   onError?: (message: string | null) => void;
 }): Promise<Rendered> {
@@ -830,7 +942,19 @@ async function render(input: {
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
         if (command === 'agent_managed_skill_set_enabled') {
-          return { ok: true, value: { ...(input.managed[0] ?? {}), enabled: true } };
+          if (input.onManagedSetEnabled) return input.onManagedSetEnabled(args);
+          if (input.managedSetEnabledFails) {
+            return { ok: false, error: { code: 'unexpected_error' } };
+          }
+          const enabled = args?.enabled === true;
+          const current = managed.find((skill) => skill.id === args?.skillId) ?? input.managed[0];
+          const next = {
+            ...(current ?? {}),
+            enabled,
+            status: enabled ? 'enabled' : 'installed-disabled',
+          } as ManagedSkillView;
+          managed = managed.map((skill) => skill.id === next.id ? next : skill);
+          return { ok: true, value: next };
         }
         if (command === 'agent_pick_skill_directory') {
           return {
@@ -861,6 +985,7 @@ async function render(input: {
           onError={input.onError ?? (() => undefined)}
           onNotice={input.onNotice ?? (() => undefined)}
           onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => true)}
+          onSkillCountChange={input.onSkillCountChange ?? (() => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
           onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}
         />
@@ -893,4 +1018,10 @@ function installDomGlobals(window: Window): void {
   });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: window.navigator });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
 }

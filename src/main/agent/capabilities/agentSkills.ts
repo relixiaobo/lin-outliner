@@ -78,10 +78,10 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Ask only for a missing identity, storage target, trigger, or behavioral choice that cannot be inferred. Do not ask merely because the skill is persistent or agent-authored.',
     '   - For materially ambiguous requests, show the complete `SKILL.md` or a focused update diff only when that preview is needed to obtain the missing decision.',
     '',
-    '7. Write, report, and explain trust.',
+    '7. Write, report, and explain provenance.',
     '   - Use `file_write` or `file_edit` after the contract is determined. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '   - After writing, report the exact path and how to invoke it as `/<skill-name> ...`.',
-    '   - Agent-written skills and workspace skills are available immediately: slash invocation works immediately, and model-invocable skills can appear in the automatic listing without a separate trust prompt.',
+    '   - Agent-written skills and workspace skills are available immediately: slash invocation works immediately, and model-invocable skills can appear in the automatic listing without a separate approval prompt.',
     '   - If validation fails, repair the draft and show the corrected preview again when the change is material.',
     '',
     'Do not write executable or binary support files in this workflow. Do not copy secrets into skills.',
@@ -221,16 +221,15 @@ export interface AgentSkillPreviousVersion {
   content: string;
   /**
    * The agent-write hash that applied while this previous content was current
-   * (undefined = the previous bytes were human-produced). Restored on undo so the
-   * ratification derivation re-derives the pre-edit state.
+   * (undefined = the previous bytes were human-produced). Restored on undo so a
+   * later edit can still identify who produced the current bytes.
    */
   agentHash?: string;
 }
 
 /**
- * Persists per-skill trust records (agent-write provenance, user acceptance, one undo
- * version), so ratification survives a restart. The registry always keeps an in-memory
- * record as well, so within a Thread the gate holds even without a wired store.
+ * Persists agent-write provenance and one undo version per Skill. The registry also
+ * keeps an in-memory record so Undo remains available when persistence fails.
  */
 export interface AgentSkillProvenanceStore {
   load(): Promise<Record<string, AgentSkillProvenanceRecord>>;
@@ -442,12 +441,11 @@ export class AgentSkillRuntime {
   }
 
   /**
-   * Re-derive trust from the persisted store after a trust change made through a
-   * different runtime (the Settings panel runs outside a Thread). A freshly ratified
-   * Skill schedules a canonical catalog refresh before the next provider request.
+   * Reload provenance after another runtime restores Skill bytes through Undo, then
+   * schedule a canonical catalog refresh before the next provider request.
    */
-  async refreshTrustRecords(): Promise<void> {
-    this.registry.refreshTrustRecords();
+  async refreshProvenanceRecords(): Promise<void> {
+    this.registry.refreshProvenanceRecords();
     this.requestCatalogRefresh();
   }
 
@@ -821,8 +819,7 @@ class SkillRegistry {
   private readonly seenSkillFileIds = new Set<string>();
   private loadPromise: Promise<void> | null = null;
   private loadGeneration = 0;
-  // Per-skill trust records: agent-write provenance, user acceptance, one undo
-  // version. Ratification is derived from these in addLoadedSkill, never stored.
+  // Per-Skill agent-write provenance and one undo version.
   private readonly provenance = new Map<string, AgentSkillProvenanceRecord>();
   private readonly provenanceStore?: AgentSkillProvenanceStore;
   private readonly managedSkillRoots?: SkillLoadOptions['managedSkillRoots'];
@@ -894,8 +891,8 @@ class SkillRegistry {
 
   /**
    * Single-step undo of the last agent edit: restore the one previous version the
-   * gateway captured, through the same validator as agent writes, then re-derive
-   * ratification from the restored provenance facts. Strictly one-shot — the
+   * gateway captured, through the same validator as agent writes, then restore
+   * the provenance facts that belonged to those bytes. Strictly one-shot — the
    * previous-version slot is consumed; deeper history is git's job.
    */
   async undoLastAgentEdit(name: string): Promise<void> {
@@ -953,9 +950,9 @@ class SkillRegistry {
   }
 
   private async resolveMutableSkill(name: string): Promise<SkillDefinition> {
-    // Unlike invocation, trust actions must also reach paths:-conditional skills
+    // Unlike invocation, Undo must also reach paths:-conditional skills
     // that have not been activated yet — the Skills panel lists them (listAllSkills)
-    // with full trust derivation, so their Accept/Revoke/Undo must resolve too.
+    // and exposes Undo before they match a file.
     await this.ensureLoaded();
     const normalized = normalizeSkillName(name);
     const skill = normalized
@@ -967,19 +964,17 @@ class SkillRegistry {
       : null;
     if (!skill) throw new Error(`Unknown skill: ${name}`);
     if (skill.source === 'built-in' || skill.source === 'managed' || !skill.contentHash) {
-      throw new Error(`Skill ${skill.name} is ${skill.source} and has no mutable trust record to manage.`);
+      throw new Error(`Skill ${skill.name} is ${skill.source} and has no editable provenance record.`);
     }
     return skill;
   }
 
   /**
-   * Re-derive trust for this registry from the persisted store: drop the in-memory
-   * trust map and reload. Used to propagate a trust change made through ANOTHER
-   * registry instance over the same store (each live Thread holds its own). The
-   * in-memory-newer-wins merge is intentionally bypassed — after an explicit trust
-   * action the store IS the newest state.
+   * Reload provenance for this registry after another registry instance restores
+   * Skill bytes through Undo. The in-memory-newer-wins merge is bypassed because
+   * the shared store now describes the restored file.
    */
-  refreshTrustRecords(): void {
+  refreshProvenanceRecords(): void {
     this.provenance.clear();
     this.provenanceLoaded = false;
     this.reloadAll();
@@ -1414,7 +1409,8 @@ async function loadSkillFromRoot(
 /**
  * The canonical skill content hash, used by BOTH the provenance record (gateway, over
  * in-memory normalized content) and the loader (over raw disk bytes). Both sides must
- * hash the same domain or the ratification gate fails open: file tools normalize to
+ * hash the same domain or the Undo safety check stops recognizing agent-written bytes:
+ * file tools normalize to
  * BOM-stripped LF in memory while writeTextFile restores the file's original CRLF/BOM
  * on disk, so hashing raw disk bytes would never match the recorded hash for a
  * CRLF/BOM skill an agent edited. Normalizing here is a no-op for LF files.

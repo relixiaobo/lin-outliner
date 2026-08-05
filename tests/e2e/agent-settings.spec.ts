@@ -71,6 +71,37 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
   });
 
+  test('shows public release notes and copies the running version information', async ({ page }) => {
+    const settings = await openSettings(page, '&category=general/about');
+
+    await expect(settings.getByRole('heading', { name: 'About' })).toBeVisible();
+    await expect(settings.getByText('Version 0.1.0', { exact: true })).toBeVisible();
+    const releaseNotes = settings.getByRole('list', { name: 'What’s new' });
+    await expect(releaseNotes).toBeVisible();
+    const releaseDisclosure = releaseNotes.getByRole('button', { name: /Release notes.*0\.1\.0 development/ });
+    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'false');
+    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' })).toHaveCount(0);
+    await releaseDisclosure.click();
+    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'true');
+    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' }).first()).toBeVisible();
+    await expect(releaseNotes.getByRole('heading', { name: 'Internal' })).toHaveCount(0);
+    await expect(releaseNotes.getByLabel('Release notes version')).toHaveCount(0);
+    const releaseNotesRegion = releaseNotes.getByRole('region', { name: /Release notes for 0\.1\.0 development/ });
+    await expect(releaseNotesRegion).toHaveAttribute('tabindex', '0');
+    const releaseNotesGeometry = await releaseNotesRegion.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(releaseNotesGeometry.clientHeight).toBeLessThanOrEqual(
+      Math.min(480, releaseNotesGeometry.viewportHeight * 0.5) + 1,
+    );
+    expect(releaseNotesGeometry.scrollHeight).toBeGreaterThan(releaseNotesGeometry.clientHeight);
+
+    await settings.getByRole('button', { name: 'Copy version info' }).click();
+    await expect.poll(() => clipboardText(page)).toContain('Tenon 0.1.0\ndarwin arm64');
+  });
+
   test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
     const settings = await openSettings(page);
     const toolbarBox = await settings.locator('.settings-toolbar').boundingBox();
@@ -146,11 +177,8 @@ test.describe('agent settings window', () => {
     });
   }
 
-  // The pending-acceptance case that stood here could never have run against the
-  // shipped app: `ratified` was hardcoded true, so the chip and the Accept button
-  // it asserted were unreachable in the product and existed only for the mock. The
-  // trust model is deleted; what a project Skill's row still owes the user is its
-  // source and a working toggle.
+  // A project Skill row exposes its source and enable state without inventing an
+  // approval step that does not exist in the runtime.
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`keeps a workspace skill row readable in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
@@ -295,6 +323,7 @@ test.describe('agent settings window', () => {
         providerId: 'openai',
         enabled: false,
       },
+      probeConnection: false,
     });
     await expect(openaiSwitch).toHaveAttribute('aria-checked', 'false');
     await expect(settings.getByRole('button', { name: 'OpenAI, Disabled' })).toBeVisible();
@@ -310,6 +339,7 @@ test.describe('agent settings window', () => {
         providerId: 'openai',
         enabled: true,
       },
+      probeConnection: false,
     });
     await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(settings.getByText('Provider enabled')).toBeVisible();
@@ -332,6 +362,7 @@ test.describe('agent settings window', () => {
         baseUrl: 'https://registry.example.com/v1',
         enabled: true,
       },
+      probeConnection: false,
     });
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
     await expect(settings.getByRole('switch', { name: 'Enable or disable CC Switch' })).toHaveAttribute('aria-checked', 'true');
@@ -478,6 +509,7 @@ test.describe('provider config windows', () => {
         providerId: 'anthropic',
         enabled: true,
       },
+      probeConnection: true,
     });
   });
 
@@ -532,6 +564,7 @@ test.describe('provider config windows', () => {
       return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
     }).toMatchObject({
       provider: { providerId: 'my-proxy', enabled: true },
+      probeConnection: true,
     });
   });
 
@@ -549,6 +582,7 @@ test.describe('provider config windows', () => {
         baseUrl: 'http://localhost:1234/v1',
         enabled: true,
       },
+      probeConnection: true,
     });
   });
 });

@@ -17,6 +17,37 @@
   margin-top: var(--space-5);
 }
 
+/* Contextual Settings links call attention to the destination without borrowing
+   a brand/status colour. The class is short-lived and has no transition, so the
+   same behavior inherently respects reduced motion. */
+.inset-group.is-settings-anchor-target .inset-card {
+  box-shadow: var(--inset-hairline), var(--focus-ring-shadow);
+}
+
+.settings-about-release-notes-row {
+  min-width: 0;
+}
+
+.settings-about-release-notes {
+  max-height: min(480px, 50vh);
+  max-width: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-5);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  scrollbar-gutter: stable;
+}
+
+.settings-about-release-notes > :first-child {
+  margin-top: 0;
+}
+
+.settings-about-release-notes:focus-visible {
+  box-shadow: var(--outline-focus);
+  outline: none;
+}
+
 /* Native System Settings section header: sentence-case, prominent, NOT the old
    uppercase micro-caption (matches "Known Networks" / "Other Networks"). */
 .inset-group-header {
@@ -67,7 +98,8 @@
 
 .inset-row {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   min-height: var(--row-h-comfortable);
 }
@@ -232,6 +264,19 @@
   align-items: center;
   gap: var(--space-2);
   padding-right: var(--space-4);
+}
+
+.inset-row-feedback {
+  grid-column: 1 / -1;
+  color: var(--status-danger);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.inset-row:has(.inset-row-feedback) .inset-row-main,
+.inset-row:has(.inset-row-feedback) .inset-row-trailing {
+  padding-bottom: var(--space-1);
 }
 
 /* A destructive row action keeps the shape of every other row action and says

@@ -116,6 +116,74 @@ describe('Skill library — managed sources', () => {
     ).toBe('true');
   });
 
+  test('clears a legacy disabledSkills entry after installing the same name', async () => {
+    let installed = false;
+    const persisted: Array<[string, boolean]> = [];
+    const rendered = renderComponent(async (command) => {
+      if (command === 'agent_managed_skill_catalog') return catalog(installed);
+      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(true)] : [];
+      if (command === 'agent_managed_skill_discover') return discovery();
+      if (command === 'agent_managed_skill_install') {
+        installed = true;
+        return managedSkill(true);
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    }, 'en', {
+      disabledSkills: ['demo-skill'],
+      onPersistSkillDisabled: async (name, disabled) => {
+        persisted.push([name, disabled]);
+        return true;
+      },
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
+    if (!reviewInstall) throw new Error('Missing reviewed install button');
+    await act(async () => {
+      reviewInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persisted).toEqual([['demo-skill', false]]);
+  });
+
+  test('does not offer installation when the SKILL.md review is truncated', async () => {
+    const calls: string[] = [];
+    const rendered = renderComponent(async (command) => {
+      calls.push(command);
+      if (command === 'agent_managed_skill_catalog') return catalog(false);
+      if (command === 'agent_managed_skill_list') return [];
+      if (command === 'agent_managed_skill_discover') return discovery({ skillBodyTruncated: true });
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.body.textContent).toContain('too large to review in full');
+    const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
+    expect(reviewInstall?.disabled).toBe(true);
+    reviewInstall?.click();
+    expect(calls).not.toContain('agent_managed_skill_install');
+  });
+
   test('renders update-available, modified, recommended, and unverified states without collapsing rows', async () => {
     const update = { ...managedSkill(true), status: 'update-available' as const, updateCommit: 'b'.repeat(40) };
     const modified = {
@@ -291,6 +359,10 @@ describe('Skill library — managed sources', () => {
 function renderComponent(
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
   locale: Locale = 'en',
+  options: {
+    disabledSkills?: string[];
+    onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
+  } = {},
 ): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -316,9 +388,10 @@ function renderComponent(
     <I18nProvider>
       <SettingsSkillLibrarySection
         additionalSkillDirectories={[]}
-        disabledSkills={[]}
+        disabledSkills={options.disabledSkills ?? []}
         onDirectoriesChange={async (next) => next}
-        onPersistSkillDisabled={async () => undefined}
+        onPersistSkillDisabled={options.onPersistSkillDisabled ?? (async () => true)}
+        onSkillCountChange={() => undefined}
         onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}
         onError={() => undefined}
@@ -403,7 +476,9 @@ function catalog(installed: boolean): ManagedSkillCatalogView {
   };
 }
 
-function discovery(): ManagedSkillDiscoveryView {
+function discovery(
+  candidateOverrides: Partial<ManagedSkillDiscoveryView['candidates'][number]> = {},
+): ManagedSkillDiscoveryView {
   return {
     id: 'discovery',
     repository: 'https://github.com/public/repo',
@@ -419,6 +494,7 @@ function discovery(): ManagedSkillDiscoveryView {
       compatibility: { status: 'unknown', appVersion: '0.1.0' },
       scripts: ['scripts/run.py'],
       skillBody: '---\nname: demo-skill\n---\n\nRead a PDF and summarize it.',
+      ...candidateOverrides,
     }],
   };
 }
@@ -428,6 +504,7 @@ function managedSkill(enabled: boolean): ManagedSkillView {
     id: 'demo-skill',
     name: 'demo-skill',
     description: 'Recommended demo skill.',
+    userInvocable: true,
     repository: 'https://github.com/public/repo',
     subdirectory: 'skills/demo-skill',
     trackingRef: 'main',

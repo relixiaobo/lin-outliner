@@ -30,8 +30,13 @@ mock.module('electron', () => ({
 }));
 
 const {
+  deleteProviderConfig,
+  deleteProviderApiKey,
   getProviderSettings,
+  persistOAuthCredential,
+  prepareProviderConnectionProbe,
   recordProviderConnectionCheck,
+  setProviderApiKey,
   upsertProviderConfig,
 } = await import('../../src/main/agent/capabilities/agentSettings');
 
@@ -118,8 +123,116 @@ describe('provider connection check', () => {
     expect(await connectionCheck('openai')).toBeUndefined();
   });
 
+  test('the automatic probe snapshot carries the stored custom endpoint', async () => {
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', enabled: true });
+    const probe = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    expect(probe.input).toEqual({
+      providerId: 'openai',
+      baseUrl: 'https://proxy.example.com/v1',
+    });
+    expect(probe.matchesStoredConnection).toBe(true);
+  });
+
+  test('endpoint and credential mutations advance the identity and clear the verdict', async () => {
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', enabled: true });
+    await recordProviderConnectionCheck('openai', { success: true });
+    const initial = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    await setProviderApiKey('openai', 'stored-key');
+    const afterKey = await prepareProviderConnectionProbe({ providerId: 'openai' });
+    expect(afterKey.connectionGeneration).toBeGreaterThan(initial.connectionGeneration!);
+    expect(await connectionCheck('openai')).toBeUndefined();
+
+    await recordProviderConnectionCheck('openai', { success: true });
+    await deleteProviderApiKey('openai');
+    const afterDelete = await prepareProviderConnectionProbe({ providerId: 'openai' });
+    expect(afterDelete.connectionGeneration).toBeGreaterThan(afterKey.connectionGeneration!);
+    expect(await connectionCheck('openai')).toBeUndefined();
+
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: true });
+    await recordProviderConnectionCheck('anthropic', { success: true });
+    const beforeOAuth = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+    await persistOAuthCredential('anthropic', { access: 'access', refresh: 'refresh', expires: 42 });
+    const afterOAuth = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+    expect(afterOAuth.connectionGeneration).toBeGreaterThan(beforeOAuth.connectionGeneration!);
+    expect(await connectionCheck('anthropic')).toBeUndefined();
+  });
+
+  test('a probe from an older connection generation cannot overwrite the new row', async () => {
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: 'https://old.example.com/v1', enabled: true });
+    const oldProbe = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: 'https://new.example.com/v1', enabled: true });
+    expect(await recordProviderConnectionCheck(
+      'openai',
+      { success: false, statusCode: 401 },
+      oldProbe.connectionGeneration,
+    )).toBe(false);
+    expect(await connectionCheck('openai')).toBeUndefined();
+  });
+
+  test('a probe from a deleted row cannot overwrite a recreated provider', async () => {
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
+    const deletedProbe = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    await deleteProviderConfig('openai');
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
+
+    expect(await recordProviderConnectionCheck(
+      'openai',
+      { success: false, statusCode: 401 },
+      deletedProbe.connectionGeneration,
+    )).toBe(false);
+    expect(await connectionCheck('openai')).toBeUndefined();
+  });
+
+  test('explicit tests persist only when endpoint and key match the stored connection', async () => {
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', enabled: true });
+    await setProviderApiKey('openai', 'stored-key');
+
+    const stored = await prepareProviderConnectionProbe({
+      providerId: 'openai',
+      baseUrl: 'https://proxy.example.com/v1',
+      apiKey: 'stored-key',
+      baseUrlOverride: true,
+      apiKeyOverride: true,
+    });
+    expect(stored.matchesStoredConnection).toBe(true);
+
+    const unsavedEndpoint = await prepareProviderConnectionProbe({
+      providerId: 'openai',
+      baseUrl: 'https://other.example.com/v1',
+      apiKey: 'stored-key',
+      baseUrlOverride: true,
+      apiKeyOverride: true,
+    });
+    expect(unsavedEndpoint.matchesStoredConnection).toBe(false);
+
+    const unsavedKey = await prepareProviderConnectionProbe({
+      providerId: 'openai',
+      baseUrl: 'https://proxy.example.com/v1',
+      apiKey: 'unsaved-key',
+      baseUrlOverride: true,
+      apiKeyOverride: true,
+    });
+    expect(unsavedKey.matchesStoredConnection).toBe(false);
+  });
+
+  test('clearing a Base URL tests the official endpoint instead of reusing the stored proxy', async () => {
+    await upsertProviderConfig({ providerId: 'anthropic', baseUrl: 'https://proxy.example.com/v1', enabled: true });
+    const probe = await prepareProviderConnectionProbe({
+      providerId: 'anthropic',
+      baseUrl: '',
+      baseUrlOverride: true,
+    });
+
+    expect(probe.input).toEqual({ providerId: 'anthropic' });
+    expect(probe.matchesStoredConnection).toBe(false);
+  });
+
   test('recording against a provider with no row is a no-op, not a crash', async () => {
-    await recordProviderConnectionCheck('never-configured', { success: true });
+    expect(await recordProviderConnectionCheck('never-configured', { success: true })).toBe(false);
     expect(await connectionCheck('never-configured')).toBeUndefined();
   });
 });

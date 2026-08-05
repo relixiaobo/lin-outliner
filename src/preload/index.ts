@@ -320,11 +320,6 @@ const api = {
   // the stored mode so the settings control can reflect the current pick.
   getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
   setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
-  // Opt-in OS-notification preference for off-floor task delivery (default off).
-  getNotificationPrefs: () =>
-    ipcRenderer.invoke('lin:get-notification-prefs') as Promise<{ osNotificationsEnabled: boolean }>,
-  setNotificationPrefs: (prefs: { osNotificationsEnabled: boolean }) =>
-    ipcRenderer.invoke('lin:set-notification-prefs', prefs) as Promise<{ osNotificationsEnabled: boolean }>,
   clearUrlPreviewData: () =>
     ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
   clearPreviewTranslationCache: () =>

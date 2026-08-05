@@ -57,9 +57,9 @@ Run at plan time, re-run at review (2026-08-04):
   Real overlap — this plan edits the settings-window creation, the
   settings-changed broadcast, and the About menu item. Expect a rebase; none of
   the three touch the same functions.
-- **#480** (`main-agent/release-pipeline`) owns `scripts/release-notes.ts`, which
-  About's What's-New section reads. Both a collision and an ordering dependency:
-  that section builds after #480 lands. Nothing else in the plan depends on it.
+- **#480** (`main-agent/release-pipeline`) owns release publishing. About reads
+  the bundled `CHANGELOG.md` through its own shared parser, so the two changes
+  share the changelog contract but no implementation file or merge dependency.
 - No overlap on `src/renderer/ui/agent/**`, `src/core/settingsWindow.ts`, or the
   settings stylesheets — the bulk of the diff.
 - `src/core/types.ts` is touched in **three** places and is an
@@ -94,7 +94,7 @@ the preview popover now get a home.
 inline.** The rule, stated so it can be applied to the next group rather than
 argued case by case: *a collection the user installs or connects, unbounded in
 size and carrying its own lifecycle, becomes a sub-page; a bounded set of
-settings stays inline.* Skills (install, update, trust, uninstall) and model
+settings stays inline.* Skills (install, enable, update, uninstall) and model
 services (connect, enable, remove) are collections; Memory (three rows) and
 Permissions (three rows) are settings. The earlier draft drilled Skills but left
 model services inline, which was an asymmetry with no rule behind it.
@@ -157,22 +157,41 @@ what is this, what changed, and how do I reach you.
 4. **Contact & support** — Help and Report an issue (both exist in the native
    Help menu and are repeated here because nobody looks in a menu bar for
    support), plus the product's own channels.
-5. **Legal** — open-source acknowledgements and a one-line privacy statement,
-   worth stating because it is true and unusual: diagnostics are local-only and
-   never uploaded.
+5. **Legal** — the project's MIT license and a one-line privacy statement, worth
+   stating because it is true and unusual: diagnostics are local-only and never
+   uploaded. A dependency-license inventory does not exist yet, so the row must
+   not claim to be an open-source acknowledgement while linking to the README.
 
-**Release notes come from `CHANGELOG.md`** through `scripts/release-notes.ts`,
-not a separate hand-written file — already-ratified reasoning in #480: two
-descriptions of one release drift, and the one nobody maintains is the one users
-read. The in-app rendering differs from the GitHub release body in one way, it
-**omits the `Internal` category**, which exists to hold entries written for us
-rather than for users. Rendering reuses the markdown pipeline the file preview
-ships.
+**Release notes come from the bundled `CHANGELOG.md`** through a shared core
+parser, not a separate hand-written file — already-ratified reasoning in #480:
+two descriptions of one release drift, and the one nobody maintains is the one
+users read. The parser extracts bracketed release sections with the Markdown
+lexer, omits each `Internal` category, prefers the running app version and falls
+back to `Unreleased`. The fallback is labelled as the running version's
+development train, rather than presented as an unbound bucket. Rendering reuses
+the markdown pipeline the file preview ships; multiple releases use a native
+select on the same page. Release notes are collapsed by default and expand into
+a bounded, keyboard-scrollable reading region, so a long development changelog
+cannot make the whole About page several screens tall.
 
 The native **About Tenon** menu item stops opening the OS panel and opens this
 page. Two About surfaces would be the duplication this redesign exists to remove,
 and the OS panel cannot hold release notes or support links;
 `setAboutPanelOptions` stays for the metadata the OS reads elsewhere.
+
+**Release-train contract.** `package.json.version` names the train currently in
+development and is the authority behind Electron's `app.getVersion()` /
+`AppInfo.version`. While that train is open, public notes accumulate under
+`[Unreleased]`; About presents them as `<version> development`. Closing a train is
+one release commit: move those public notes to `[x.y.z] - YYYY-MM-DD`, keep the
+package version at `x.y.z`, and tag that exact commit `vX.Y.Z`. The release
+pipeline from #480 rejects a tag/package mismatch. The next development commit
+advances `package.json.version` before new product work enters `[Unreleased]`, so
+the app, changelog, build, tag, and GitHub release all name one train. Patch trains
+contain compatible fixes, minor trains contain compatible product capability,
+and a major train is reserved for an intentional incompatible product or data
+contract. Pipeline automation and the main-owned changelog remain #480/main
+scope; this PR consumes that contract without duplicating release machinery.
 
 ### 3. One commit model
 
@@ -204,6 +223,10 @@ question (a write on the user path must degrade, not throw):
 - **Serialized per key.** The write queue the Skill toggles already use is
   extended to provider enable (defect 8), so two fast toggles cannot race and each
   write builds on what main actually stored rather than on a stale read.
+- **Provider snapshots stay ordered.** Provider commands return the whole settings
+  collection even when they change one field. Their IPC steps therefore share one
+  response queue, so a stale Set active, Remove, Refresh, or image-model response
+  cannot overwrite a later row toggle.
 - **Never disabled mid-flight.** The current code disables only the footer while
   saving, which taught users nothing; a queued control stays live because the
   queue, not the UI, enforces ordering.
@@ -473,9 +496,9 @@ What stays: the provenance record itself — it also holds `agentHash` and
 Blast radius, measured: `agentSkills.ts` (~24 references) and
 `tests/core/agentSkills.test.ts` (~65) as the bulk, then
 `SettingsSkillLibrarySection.tsx`, `main.ts` IPC, `outlinerMock.ts`, the DOM
-snapshots, and `src/core/types.ts`. `ThreadService.refreshTrustRecords()` exists
-only to propagate acceptance made outside a Thread and is expected to fall out as
-dead code; verify at build time rather than assuming.
+snapshots, and `src/core/types.ts`. The runtime refresh exists to propagate
+provenance changes across live Threads. Undo still needs that reload, so it becomes
+`AgentSkillRuntime.refreshProvenanceRecords()` rather than being deleted.
 
 ### 12. Spec updates (same change, A6)
 

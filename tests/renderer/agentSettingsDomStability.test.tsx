@@ -10,6 +10,16 @@ import { parseHTML } from 'linkedom';
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: (providerId: string) => `<svg data-fixture-logo="${providerId}"></svg>`,
 }));
+mock.module('../../CHANGELOG.md?raw', () => ({
+  default: `# Changelog
+
+## [Unreleased]
+
+### Changed
+
+- Deterministic release-note fixture.
+`,
+}));
 import type {
   AgentCapabilitySettingsView,
   AgentProviderSettingsView,
@@ -122,7 +132,6 @@ function skill(overrides: Partial<SkillDefinition> & Pick<SkillDefinition, 'name
     hasUserSpecifiedDescription: true,
     userInvocable: true,
     modelInvocable: true,
-    ratified: true,
     allowedTools: [],
     argumentNames: [],
     execution: 'inline',
@@ -134,13 +143,12 @@ function skill(overrides: Partial<SkillDefinition> & Pick<SkillDefinition, 'name
 
 const ALL_SKILLS: SkillDefinition[] = [
   skill({ name: 'skillify', source: 'built-in' }),
-  skill({ name: 'user-notes', source: 'user', contentHash: 'a'.repeat(64), accepted: true }),
-  skill({ name: 'project-lint', source: 'project', contentHash: 'b'.repeat(64), ratified: false }),
+  skill({ name: 'user-notes', source: 'user', contentHash: 'a'.repeat(64) }),
+  skill({ name: 'project-lint', source: 'project', contentHash: 'b'.repeat(64) }),
   skill({
-    name: 'project-unratified',
+    name: 'project-undoable',
     source: 'project',
     contentHash: 'c'.repeat(64),
-    ratified: false,
     canUndoLastAgentEdit: true,
   }),
   skill({ name: 'pdf', source: 'managed', managedContentHash: 'd'.repeat(64) }),
@@ -151,6 +159,7 @@ const MANAGED_SKILLS: ManagedSkillView[] = [
     id: 'managed-pdf',
     name: 'pdf',
     description: 'Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.',
+    userInvocable: true,
     repository: 'https://github.com/relixiaobo/linlab-skills',
     subdirectory: 'pdf',
     trackingRef: 'main',
@@ -268,14 +277,34 @@ describe('settings page DOM', () => {
     const rendered = await renderCategory({ category: 'general' });
     expect(rendered.document.querySelector('.settings-nav-badge')).toBeNull();
   });
+
+  test('scrolls to and briefly marks a contextual settings anchor', async () => {
+    let scrolledTarget: HTMLElement | null = null;
+    const rendered = await renderCategory(
+      { category: 'agent', anchor: 'agent-access' },
+      MANAGED_SKILLS,
+      (target) => { scrolledTarget = target; },
+    );
+
+    expect(scrolledTarget?.getAttribute('data-settings-anchor')).toBe('agent-access');
+    expect(rendered.document.querySelector('[data-settings-anchor="agent-access"]')?.classList)
+      .toContain('is-settings-anchor-target');
+  });
 });
 
 async function renderCategory(
   target: SettingsOpenTarget,
   managedSkills: ManagedSkillView[] = MANAGED_SKILLS,
+  onScrollIntoView?: (target: HTMLElement) => void,
 ): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  if (onScrollIntoView) {
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value(this: HTMLElement) { onScrollIntoView(this); },
+    });
+  }
   Object.assign(window, {
     lin: {
       initialLanguage: 'en',
@@ -288,8 +317,15 @@ async function renderCategory(
       },
       getTheme: async () => 'system',
       setTheme: async () => undefined,
-      getNotificationPrefs: async () => ({ osNotificationsEnabled: false }),
-      setNotificationPrefs: async () => undefined,
+      appInfo: async () => ({
+        name: 'Tenon',
+        version: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        electron: '39.0.0',
+        chrome: '142.0.0',
+        node: '22.0.0',
+      }),
       // Subscriptions return their unsubscribe, as the real bridge does.
       onSettingsNavigate: () => () => undefined,
       onSettingsChanged: () => () => undefined,

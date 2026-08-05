@@ -842,7 +842,6 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
                 <span class="inset-row-text is-wrap">
                   <span class="inset-row-label">/pdf<span class="settings-chip">managed</span>
                   <span class="settings-chip">Recommended</span>
-                  <span class="settings-chip">Enabled</span>
                 </span>
                 <span class="inset-row-sublabel">
                   <span class="settings-skill-description">Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.</span>
@@ -894,22 +893,22 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
         <div role="listitem" class="inset-row">
           <div class="inset-row-main is-static">
             <span class="inset-row-text is-wrap">
-              <span class="inset-row-label">/project-unratified<span class="settings-chip">project</span>
+              <span class="inset-row-label">/project-undoable<span class="settings-chip">project</span>
             </span>
             <span class="inset-row-sublabel">
-              <span class="settings-skill-description">Fixture skill project-unratified.</span>
+              <span class="settings-skill-description">Fixture skill project-undoable.</span>
             </span>
           </span>
         </div>
         <div class="inset-row-trailing">
-          <button type="button" class="settings-row-menu-trigger" aria-label="project-unratified actions" aria-haspopup="menu" aria-expanded="false">
+          <button type="button" class="settings-row-menu-trigger" aria-label="project-undoable actions" aria-haspopup="menu" aria-expanded="false">
             <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
               <circle r="1" cy="12" cx="12" />
               <circle r="1" cy="12" cx="19" />
               <circle r="1" cy="12" cx="5" />
             </svg>
           </button>
-          <button type="button" role="switch" aria-label="Toggle project-unratified" aria-checked="true">
+          <button type="button" role="switch" aria-label="Toggle project-undoable" aria-checked="true">
             <span aria-hidden="true" class="switch-mark checked">
               <span class="switch-mark-thumb">
               </span>
@@ -1046,10 +1045,31 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
             <div role="listitem" class="inset-row">
               <div class="inset-row-main is-static">
                 <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">
-                  </span>
+                  <span class="inset-row-label">Tenon</span>
+                  <span class="inset-row-sublabel">Version 0.1.0</span>
                 </span>
               </div>
+              <div class="inset-row-trailing">
+                <button type="button" class="button button-secondary button-md">Copy version info</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div data-settings-anchor="whats-new" class="inset-group">
+          <div class="inset-group-header">What’s new</div>
+          <div role="list" class="inset-card" aria-label="What’s new">
+            <div role="listitem" class="inset-row">
+              <button type="button" class="inset-row-main" aria-expanded="false" aria-controls="settings-about-release-notes">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Release notes</span>
+                  <span class="inset-row-sublabel">0.1.0 development</span>
+                </span>
+                <span aria-hidden="true" class="settings-drilldown-chevron">
+                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </span>
+              </button>
             </div>
           </div>
         </div>
@@ -1092,7 +1112,7 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
             <div role="listitem" class="inset-row">
               <button type="button" class="inset-row-main">
                 <span class="inset-row-text">
-                  <span class="inset-row-label">Open-source acknowledgements</span>
+                  <span class="inset-row-label">Tenon license</span>
                 </span>
               </button>
               <div class="inset-row-trailing">

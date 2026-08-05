@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from 'react';
-import { ChevronRightIcon, ICON_SIZE } from '../icons';
+import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { cx } from '../primitives/cx';
 
@@ -96,8 +96,14 @@ interface InsetRowProps {
   badge?: number;
   /** What the badge means, since a bare digit announces as a bare digit. */
   badgeLabel?: string;
+  /** An in-place disclosure keeps its expanded state on the row button. */
+  disclosure?: 'collapsed' | 'expanded';
+  ariaControls?: string;
   ariaLabel?: string;
   className?: string;
+  /** Row-owned feedback, kept outside the row's button so live-region semantics
+   *  remain available to assistive technology. */
+  feedback?: ReactNode;
 }
 
 // Memoized so a selection change in a long provider/skill list only re-renders
@@ -116,8 +122,11 @@ export const InsetRow = memo(function InsetRow({
   drillsDown = false,
   badge,
   badgeLabel,
+  disclosure,
+  ariaControls,
   ariaLabel,
   className,
+  feedback,
 }: InsetRowProps) {
   const body = (
     <>
@@ -137,6 +146,15 @@ export const InsetRow = memo(function InsetRow({
           <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
         </span>
       ) : null}
+      {disclosure ? (
+        <span className="settings-drilldown-chevron" aria-hidden="true">
+          {disclosure === 'expanded' ? (
+            <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+          ) : (
+            <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+          )}
+        </span>
+      ) : null}
     </>
   );
 
@@ -147,7 +165,9 @@ export const InsetRow = memo(function InsetRow({
     >
       {onSelect ? (
         <ButtonControl
+          aria-controls={ariaControls}
           aria-current={selected ? 'true' : undefined}
+          aria-expanded={disclosure ? disclosure === 'expanded' : undefined}
           aria-label={ariaLabel}
           className="inset-row-main"
           disabled={disabled}
@@ -159,6 +179,7 @@ export const InsetRow = memo(function InsetRow({
         <div className="inset-row-main is-static">{body}</div>
       )}
       {trailing ? <div className="inset-row-trailing">{trailing}</div> : null}
+      {feedback ? <div className="inset-row-feedback">{feedback}</div> : null}
     </div>
   );
 });

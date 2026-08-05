@@ -21,7 +21,6 @@ const {
   loadAppPreferences,
   resetAppPreferencesForTests,
   saveLanguagePreference,
-  saveOsNotificationsPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
@@ -46,10 +45,9 @@ describe('app preferences persistence', () => {
       autoTranslateEpubs: true,
       autoTranslateUrls: true,
     });
-    saveOsNotificationsPreference(true);
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"osNotificationsEnabled":true}');
+    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true}');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
@@ -57,14 +55,13 @@ describe('app preferences persistence', () => {
       translationModel: 'openai/gpt-4.1-mini',
       autoTranslateUrls: true,
       autoTranslateEpubs: true,
-      osNotificationsEnabled: true,
     });
   });
 
   test('defaults older files to Follow Agent with automatic translation off', async () => {
     await writeFile(
       path.join(userData, 'app-preferences.json'),
-      '{"theme":"system","language":null,"translationLanguage":null,"osNotificationsEnabled":false}',
+      '{"theme":"system","language":null,"translationLanguage":null}',
     );
     resetAppPreferencesForTests();
 
