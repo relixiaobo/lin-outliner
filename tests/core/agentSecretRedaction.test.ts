@@ -68,6 +68,10 @@ const REDACTION_CONTRACT = {
     },
     { name: 'Bearer token', value: { content: `Bearer ${'d'.repeat(24)}` } },
     {
+      name: 'environment credential assignment',
+      value: { command: 'PGPASSWORD=hunter2hunter2hunter2 psql' },
+    },
+    {
       name: 'JSON-encoded credentials',
       value: {
         body: JSON.stringify({
@@ -117,6 +121,12 @@ const REDACTION_CONTRACT = {
         }, null, 2),
       },
     },
+    {
+      name: 'benign environment assignments',
+      value: {
+        command: 'MAX_NEW_TOKENS=512 BUDGET_TOKENS=4096 TOKENIZER_ENABLED=true SECRETARY=release-coordinator npm test',
+      },
+    },
   ],
 } as const;
 
@@ -155,7 +165,9 @@ describe('agent secret redaction', () => {
   test('redacts explicit bearer, JWT, and environment credential assignments in memory text', () => {
     expect(redactSecretLikeContent("curl -H 'Authorization: Bearer ghp_0123456789abcdefghij'"))
       .not.toContain('ghp_0123456789abcdefghij');
-    expect(redactSecretLikeContent('PGPASSWORD=hunter2hunter2hunter2')).toContain('[redacted secret-like content]');
+    const environmentAssignment = 'PGPASSWORD=hunter2hunter2hunter2 psql';
+    expect(containsSecretLikeContent(environmentAssignment)).toBe(true);
+    expect(redactSecretLikeContent(environmentAssignment)).toBe('[redacted secret-like content] psql');
     expect(redactSecretLikeContent('token eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2'))
       .toContain('[redacted secret-like content]');
   });

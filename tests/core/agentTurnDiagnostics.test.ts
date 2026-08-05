@@ -352,6 +352,8 @@ describe('Turn diagnostics', () => {
 
   test('redacts structured secrets from canonical messages and post-adapter requests', async () => {
     const rawSecret = 'generic-model-secret';
+    const environmentSecret = 'hunter2hunter2hunter2';
+    const command = `PGPASSWORD=${environmentSecret} psql`;
     const jsonShapedContent = '{\n  "token": "placeholder1234"\n}';
     const toolMessage: AssistantMessage = {
       ...assistantMessage(''),
@@ -359,7 +361,7 @@ describe('Turn diagnostics', () => {
         type: 'toolCall',
         id: 'secret-call',
         name: 'alpha',
-        arguments: { api_key: rawSecret, query: 'keep' },
+        arguments: { api_key: rawSecret, command, query: 'keep' },
       }],
       stopReason: 'toolUse',
     };
@@ -393,28 +395,38 @@ describe('Turn diagnostics', () => {
       input: [{
         type: 'function_call',
         name: 'alpha',
-        arguments: JSON.stringify({ api_key: rawSecret, content: jsonShapedContent, query: 'keep' }),
+        arguments: JSON.stringify({ api_key: rawSecret, command, content: jsonShapedContent, query: 'keep' }),
       }],
       metadata: { session_token: rawSecret },
     });
     const firstRawRequest = providerRequest(2_048);
     await collector.captureProviderRequest(firstRawRequest);
     expect(firstRawRequest.metadata.session_token).toBe(rawSecret);
-    expect(JSON.parse(firstRawRequest.input[0]!.arguments)).toMatchObject({ api_key: rawSecret });
+    expect(JSON.parse(firstRawRequest.input[0]!.arguments)).toMatchObject({ api_key: rawSecret, command });
     prepare(collector, [toolMessage], 0, 20);
     await collector.captureProviderRequest(providerRequest(4_096));
 
     const payload = collector.payload();
     expect(JSON.stringify(payload)).not.toContain(rawSecret);
+    expect(JSON.stringify(payload)).not.toContain(environmentSecret);
     expect(payload.canonicalMessages[0]?.value).toMatchObject({
-      content: [{ arguments: { api_key: '[redacted]', query: 'keep' } }],
+      content: [{ arguments: {
+        api_key: '[redacted]',
+        command: '[redacted secret-like content] psql',
+        query: 'keep',
+      } }],
     });
     expect(materializeRequest(payload, 0)).toMatchObject({
       max_completion_tokens: 2_048,
       budget_tokens: 4_096,
       cache_read_input_tokens: 900,
       input: [{
-        arguments: JSON.stringify({ api_key: '[redacted]', content: jsonShapedContent, query: 'keep' }),
+        arguments: JSON.stringify({
+          api_key: '[redacted]',
+          command: '[redacted secret-like content] psql',
+          content: jsonShapedContent,
+          query: 'keep',
+        }),
       }],
       metadata: { session_token: '[redacted]' },
     });

@@ -218,6 +218,29 @@ describe('native turn kernel parity', () => {
     });
   });
 
+  test('stops admitting a truncated batch after cancellation', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'cut-one', name: 'cut', arguments: { partial: true } },
+        { type: 'toolCall', id: 'cut-two', name: 'cut', arguments: { partial: true } },
+      ], 'length')),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [tool('cut')] });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'tool_call_admission' && event.toolCallId === 'cut-one') runtime.abort();
+    });
+
+    await runtime.prompt(USER);
+
+    expect(events.filter((event) => event.type === 'tool_call_admission').map((event) => event.toolCallId))
+      .toEqual(['cut-one']);
+    expect(events.filter((event) => event.type === 'tool_execution_end').map((event) => event.toolCallId))
+      .toEqual(['cut-one']);
+    expect(JSON.stringify(runtime.state.messages)).not.toContain('cut-two');
+  });
+
   test('replaces one schema-invalid bash call with correction evidence before the next request', async () => {
     let executed = false;
     const bash = parameterTool('bash', {

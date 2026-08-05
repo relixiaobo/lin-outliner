@@ -89,21 +89,12 @@ export function containsSecretLikeContent(content: string): boolean {
   PARTIAL_PRIVATE_KEY_HEADER.lastIndex = 0;
   if (PARTIAL_PRIVATE_KEY_HEADER.test(content)) return true;
   if (secretlintRanges(content).length > 0) return true;
-  return patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS).length > 0;
+  if (patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS).length > 0) return true;
+  return environmentAssignmentRanges(content).length > 0;
 }
 
 export function redactSecretLikeContent(content: string): string {
-  const redacted = redactKnownCredentialText(content);
-  ENV_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
-  return redacted.replace(
-    ENV_SECRET_ASSIGNMENT_PATTERN,
-    (match, key: string, _quote: string, value: string) => {
-      const confidence = secretStringFieldConfidence(key);
-      return confidence && isCredentialCandidateString(value, confidence)
-        ? REDACTED_SECRET_LIKE_CONTENT
-        : match;
-    },
-  );
+  return redactKnownCredentialText(content);
 }
 
 export interface SecretRedactionResult<T> {
@@ -265,7 +256,11 @@ function applyJsonReplacements(content: string, replacements: readonly JsonRepla
 }
 
 function redactKnownCredentialText(content: string): string {
-  const ranges = [...secretlintRanges(content), ...patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS)];
+  const ranges = [
+    ...secretlintRanges(content),
+    ...patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS),
+    ...environmentAssignmentRanges(content),
+  ];
   if (ranges.length === 0) return content;
   let redacted = content;
   for (const range of mergeRanges(ranges).sort((left, right) => right.start - left.start)) {
@@ -347,6 +342,7 @@ class CooperativeSecretScanner {
     const ranges = [
       ...await secretlintRangesCooperatively(content, this),
       ...patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS),
+      ...environmentAssignmentRanges(content),
     ];
     if (ranges.length === 0) return content;
     let redacted = content;
@@ -375,6 +371,21 @@ function patternRanges(content: string, patterns: readonly RegExp[]): TextRange[
       if (start === undefined || match[0].length === 0) continue;
       ranges.push({ start, end: start + match[0].length });
     }
+  }
+  return ranges;
+}
+
+function environmentAssignmentRanges(content: string): TextRange[] {
+  ENV_SECRET_ASSIGNMENT_PATTERN.lastIndex = 0;
+  const ranges: TextRange[] = [];
+  for (const match of content.matchAll(ENV_SECRET_ASSIGNMENT_PATTERN)) {
+    const start = match.index;
+    const key = match[1];
+    const value = match[3];
+    if (start === undefined || !key || !value) continue;
+    const confidence = secretStringFieldConfidence(key);
+    if (!confidence || !isCredentialCandidateString(value, confidence)) continue;
+    ranges.push({ start, end: start + match[0].length });
   }
   return ranges;
 }

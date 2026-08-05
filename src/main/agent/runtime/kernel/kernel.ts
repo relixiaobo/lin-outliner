@@ -136,7 +136,7 @@ export async function runKernel(
     hasMoreToolCalls = false;
     if (toolCalls.length > 0) {
       const batch = message.stopReason === 'length'
-        ? await failTruncatedToolCalls(context, toolCalls, emit, options.admitToolCall)
+        ? await failTruncatedToolCalls(context, toolCalls, signal, emit, options.admitToolCall)
         : await executeToolCalls(context, toolCalls, signal, emit, options.admitToolCall);
       toolResults.push(...batch.messages);
       hasMoreToolCalls = !batch.terminate && !signal.aborted;
@@ -283,18 +283,21 @@ type FinalizedToolEntry = FinalizedToolCall | (() => Promise<FinalizedToolCall>)
 async function failTruncatedToolCalls(
   context: KernelContext,
   toolCalls: CanonicalizedToolCall[],
+  signal: AbortSignal,
   emit: KernelEventSink,
   admit: KernelAgentOptions['admitToolCall'],
 ): Promise<ExecutedToolBatch> {
   const messages: ToolResultMessage[] = [];
   const admissions: ToolCallAdmissionRecord[] = [];
   for (const { providerToolCallId, toolCall } of toolCalls) {
+    if (signal.aborted) break;
     const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
     const request = await rejectedToolCallAdmissionRequest(
       toolCall,
       tool ? canonicalToolIdentity(tool) : null,
       'truncatedArguments',
     );
+    if (signal.aborted) break;
     const admission = await admitAndEmit(request, providerToolCallId, admit, emit);
     admissions.push(admission);
     const finalized: FinalizedToolCall = {

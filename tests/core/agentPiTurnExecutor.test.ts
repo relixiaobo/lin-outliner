@@ -3028,10 +3028,11 @@ describe('PiTurnExecutor provider payload', () => {
     expect(providerCalls).toBe(2);
   });
 
-  test('uses a raw OpenAI key only for the live Turn and redacted history afterward', async () => {
+  test('uses raw environment credentials only for the live Turn and redacted history afterward', async () => {
     const fixture = createContext();
     const secret = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
-    const command = `OPENAI_API_KEY=${secret} curl https://api.openai.com/v1/models`;
+    const environmentSecret = 'hunter2hunter2hunter2';
+    const command = `OPENAI_API_KEY=${secret} PGPASSWORD=${environmentSecret} curl https://api.openai.com/v1/models`;
     const executions: unknown[] = [];
     const bash = {
       name: 'bash',
@@ -3085,7 +3086,9 @@ describe('PiTurnExecutor provider payload', () => {
 
     expect(executions).toEqual([{ command }]);
     expect(JSON.stringify(providerContexts[1])).toContain(secret);
+    expect(JSON.stringify(providerContexts[1])).toContain(environmentSecret);
     expect(JSON.stringify(fixture.recorder.orderedItems())).not.toContain(secret);
+    expect(JSON.stringify(fixture.recorder.orderedItems())).not.toContain(environmentSecret);
     expect(fixture.recorder.orderedItems()).toContainEqual(expect.objectContaining({
       type: 'commandExecution',
       modelCall: expect.objectContaining({ disposition: 'redactedReplay' }),
@@ -3096,6 +3099,7 @@ describe('PiTurnExecutor provider payload', () => {
       items: fixture.recorder.orderedItems(),
     }]);
     expect(JSON.stringify(historical)).not.toContain(secret);
+    expect(JSON.stringify(historical)).not.toContain(environmentSecret);
     expect(JSON.stringify(historical)).toContain('[redacted secret-like content]');
     expect(JSON.stringify(historical)).toContain('replay notice');
   });
