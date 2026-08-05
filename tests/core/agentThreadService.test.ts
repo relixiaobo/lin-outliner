@@ -416,6 +416,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     });
     const instructionsRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
@@ -1331,6 +1332,7 @@ describe('ThreadService', () => {
       kind: 'compactionRestoredState',
       activeSkills: [],
       activeObservations: [],
+      degradations: [],
     });
     expect(JSON.stringify(executor.projected)).toContain('lossy_derived_context=true');
     expect(JSON.stringify(executor.projected)).toContain('Continue after provider overflow.');
@@ -3056,6 +3058,99 @@ describe('ThreadService', () => {
     await opened.service.close();
   });
 
+  test('forks and starts a child with a model-visible marker when context payloads are unavailable', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const completed = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create context that will become unavailable' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const sourceContext = fixture.executor.contexts[0]!;
+    const userItem = sourceContext.turn.items.find((item) => item.type === 'userMessage');
+    if (!userItem || userItem.type !== 'userMessage') throw new Error('Expected source user Item.');
+    const evidence = await sourceContext.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: userItem.acceptedAt,
+      utcInstant: '2026-08-05T00:00:00.000Z',
+      localDate: '2026-08-05',
+      localTime: '08:00:00',
+      timeZone: 'Asia/Shanghai',
+      utcOffsetMinutes: 480,
+      locale: 'zh-CN',
+      workingDirectory: root.cwd,
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+      todayNodeTitle: null,
+    }, 'Environment that will become unavailable');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    await rm(join(
+      fixture.root,
+      'agent',
+      'payloads',
+      root.id,
+      'context',
+      `${evidence.payloadRef.id}.json`,
+    ));
+    expect(await fixture.stores.payloads.readContext(root.id, evidence.payloadRef)).toBeNull();
+
+    const fork = (await fixture.service.forkThread({
+      threadId: root.id,
+      boundary: { kind: 'afterTurn', turnId: completed.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    expect(await fixture.stores.payloads.readContext(fork.id, evidence.payloadRef)).toBeNull();
+    const forkProjection = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(forkProjection)).toContain('Context degradation');
+    expect(JSON.stringify(forkProjection)).toContain(evidence.payloadRef.id);
+
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate from degraded context' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'missing-context-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-context-spawn',
+      taskName: 'missing_context_child',
+      message: 'Continue from degraded context',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.service.readThread({ threadId: child.thread.id }).thread.id).toBe(child.thread.id);
+    const childProjection = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(childProjection)).toContain('Context degradation');
+    expect(JSON.stringify(childProjection)).toContain(evidence.payloadRef.id);
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
   test('forks and starts a child with typed evidence when a tool-output payload is unavailable', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -4011,8 +4106,8 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('removes a staged child, copied payloads, and its newly created pool when admission fails', async () => {
-    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 100 });
+  test('starts a child with typed evidence when an inherited managed resource is unavailable', async () => {
+    const fixture = await createFixture();
     const root = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
@@ -4045,16 +4140,81 @@ describe('ThreadService', () => {
     });
     expect(await fixture.stores.payloads.deleteResource(root.id, imageRef)).toBe(true);
     await recordCollaborationSpawnBoundary(context, 'copy-failure-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'copy-failure-spawn',
+      taskName: 'copy_failure',
+      message: 'Continue without the unavailable image',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const projected = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[1]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(projected)).toContain('resultPayloadUnavailable');
+    expect(fixture.service.readThread({ threadId: child.thread.id }).thread.id).toBe(child.thread.id);
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(0);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('removes a staged child, copied payloads, and its newly created pool when admission fails', async () => {
+    const prompt = 'Fail after copying inherited context';
+    const fixture = await createFixture(undefined, {
+      resolveSubagentTokenBudget: () => 100,
+      resolveUserContent: (content) => {
+        const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+        if (text === prompt) throw new Error('simulated child admission failure');
+        return content;
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with copied context' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    await context.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: active.turn.startedAt,
+      utcInstant: '2026-08-05T00:00:00.000Z',
+      localDate: '2026-08-05',
+      localTime: '08:00:00',
+      timeZone: 'Asia/Shanghai',
+      utcOffsetMinutes: 480,
+      locale: 'zh-CN',
+      workingDirectory: root.cwd,
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+      todayNodeTitle: null,
+    }, 'Context copied before admission');
+    await recordCollaborationSpawnBoundary(context, 'admission-failure-spawn');
     const notifications: AgentCoreNotification[] = [];
     fixture.service.subscribe((notification) => notifications.push(notification));
 
     await expect(fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
       senderTurnId: active.turn.id,
-      parentItemId: 'copy-failure-spawn',
-      taskName: 'copy_failure',
-      message: 'Must fail before child admission',
-    })).rejects.toThrow('Missing inherited managed resource');
+      parentItemId: 'admission-failure-spawn',
+      taskName: 'admission_failure',
+      message: prompt,
+    })).rejects.toThrow('simulated child admission failure');
 
     const stagedChild = notifications.find((notification) => (
       notification.type === 'thread/started' && notification.threadId !== root.id

@@ -1,15 +1,124 @@
 import { describe, expect, test } from 'bun:test';
 import {
   containsSecretLikeContent,
+  DIAGNOSTIC_SECRET_REDACTION_OMISSION,
   elideLargeBlobs,
-  redactJsonEncodedSecretValues,
-  redactSecretKeyedValues,
   redactSecretLikeContent,
-  redactSecretLikeJson,
+  redactSecretLikeJsonAsync,
+  redactSecretLikeJsonForDiagnostics,
 } from '../../src/main/agent/capabilities/agentSecretRedaction';
 
 const OPENAI_KEY = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
 const ANTHROPIC_KEY = `sk-ant-api03-${'C'.repeat(93)}AA`;
+const CREDENTIAL_VALUE = 'credential-value-0123456789';
+const SHORT_PRIVATE_KEY = [
+  '-----BEGIN EC PRIVATE KEY-----',
+  'secret material',
+  '-----END EC PRIVATE KEY-----',
+].join('\n');
+
+const REDACTION_CONTRACT = {
+  mustRedact: [
+    ...[
+      'x-api-key',
+      'X-Api-Key',
+      'credentials',
+      'api_key',
+      'apikey',
+      'APIKEY',
+      'APIKey',
+      'openai_api_key',
+      'anthropic_api_key',
+      'OPENAI_API_KEY',
+      'aws_secret_access_key',
+      'secret_key',
+      'secretKey',
+      'session_token',
+      'bot_token',
+      'authtoken',
+      'accesstoken',
+      'gh_token',
+      'npm_token',
+      'jwt_secret',
+      'webhook_secret',
+      'app_secret',
+      'shared_secret',
+      'oauth_secret',
+      'user_password',
+      'db_password',
+      'admin_password',
+      'basic_auth_password',
+      'password_hash',
+      'root_passwd',
+      'smtp_pwd',
+      'private_key',
+      'ssh_private_key',
+      'privateKeyPem',
+      'proxy_authorization',
+      'X-Authorization',
+    ].map((key) => ({ name: `field:${key}`, value: { [key]: CREDENTIAL_VALUE } })),
+    { name: 'short EC private key', value: { content: SHORT_PRIVATE_KEY } },
+    { name: 'short RSA private key', value: { content: SHORT_PRIVATE_KEY.replaceAll('EC', 'RSA') } },
+    { name: 'legacy sk-24', value: { content: `sk-${'A'.repeat(24)}` } },
+    { name: 'legacy sk-48', value: { content: `sk-${'B'.repeat(48)}` } },
+    { name: 'short GitHub token', value: { content: `ghp_${'c'.repeat(20)}` } },
+    {
+      name: 'JWT',
+      value: { content: 'eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0NTY3ODkw.SflKxwRJSMeKKF2' },
+    },
+    { name: 'Bearer token', value: { content: `Bearer ${'d'.repeat(24)}` } },
+    {
+      name: 'JSON-encoded credentials',
+      value: {
+        body: JSON.stringify({
+          client_secret: 'client-secret-0123456789',
+          password: 'password-value-0123456789',
+        }),
+      },
+    },
+  ],
+  mustPreserve: [
+    ...[
+      ['token_budget', 8_192],
+      ['max_total_tokens', 8_192],
+      ['max_new_tokens', 512],
+      ['budget_tokens', 4_096],
+      ['tokens', 4_096],
+      ['maxTokens', 2_048],
+      ['totalTokens', 1_024],
+      ['usedTokens', 128],
+      ['tokenCount', 64],
+      ['cacheReadInputTokens', 32],
+      ['cache_creation_input_tokens', 16],
+      ['authorization_url', 'https://example.test/oauth/authorize'],
+      ['passwordPolicy', 'at least twelve characters'],
+      ['password_policy_enabled', true],
+      ['passwordless', true],
+      ['secretary', { name: 'Ada' }],
+      ['secretName', 'release-signing'],
+      ['credentials', 'include'],
+      ['credentials', 'same-origin'],
+      ['credentials', 'browser-default'],
+      ['credentials', 'same-origin-with-fallback'],
+      ['pageToken', 'CAESB0FCQ0RFRkc'],
+      ['token', 'hello'],
+      ['token', 'abcdefghijklmnopqrstuvwx'],
+      ['tokenizerEnabled', true],
+      ['password', 12_345],
+      ['authorization', false],
+    ].map(([key, value]) => ({ name: `field:${String(key)}`, value: { [String(key)]: value } })),
+    {
+      name: 'design-token JSON',
+      value: {
+        content: JSON.stringify({
+          ink: '#111111',
+          tokens: { spacing: 8, color: 'rose' },
+          secretary: { name: 'Ada' },
+        }, null, 2),
+      },
+    },
+  ],
+} as const;
 
 describe('agent secret redaction', () => {
   test('detects truncated private key headers for skill write rejection', () => {
@@ -20,8 +129,10 @@ describe('agent secret redaction', () => {
   });
 
   test('does not hard-block ambiguous credential-like prose', () => {
-    expect(containsSecretLikeContent('token=abcdefghijklmnop')).toBe(false);
-    expect(containsSecretLikeContent('password=not-a-real-credential')).toBe(false);
+    for (const content of ['token=abcdefghijklmnop', 'password=not-a-real-credential']) {
+      expect(containsSecretLikeContent(content)).toBe(false);
+      expect(redactSecretLikeContent(content)).toBe(content);
+    }
   });
 
   test('uses Secretlint to redact complete credential formats from free text', () => {
@@ -41,7 +152,7 @@ describe('agent secret redaction', () => {
     expect(redacted).toEndWith('[redacted secret-like content]\nafter');
   });
 
-  test('redacts explicit bearer, JWT, and password assignments in memory text', () => {
+  test('redacts explicit bearer, JWT, and environment credential assignments in memory text', () => {
     expect(redactSecretLikeContent("curl -H 'Authorization: Bearer ghp_0123456789abcdefghij'"))
       .not.toContain('ghp_0123456789abcdefghij');
     expect(redactSecretLikeContent('PGPASSWORD=hunter2hunter2hunter2')).toContain('[redacted secret-like content]');
@@ -49,115 +160,23 @@ describe('agent secret redaction', () => {
       .toContain('[redacted secret-like content]');
   });
 
-  test('redactSecretKeyedValues changes only credential-candidate strings', () => {
-    expect(redactSecretKeyedValues({
-      api_key: 'live-value',
-      nested: { authorization: 'live-value', safe: 'keep' },
-      token: 4_096,
-      secret: false,
-      credentials: { name: 'ordinary' },
-      api_keys: ['ambiguous-value'],
-    })).toEqual({
-      api_key: '[redacted]',
-      nested: { authorization: '[redacted]', safe: 'keep' },
-      token: 4_096,
-      secret: false,
-      credentials: { name: 'ordinary' },
-      api_keys: ['ambiguous-value'],
-    });
-  });
-
-  test('redacts table-driven credential string field spellings', () => {
-    const keys = [
-      'secret_key',
-      'secretKey',
-      'session_token',
-      'bot_token',
-      'private_key',
-      'APIKey',
-      'apikey',
-      'APIKEY',
-      'authtoken',
-      'accesstoken',
-      'api_token',
-      'oauthToken',
-      'authorizationHeader',
-      'x-api-key',
-      'credentials',
-      'openai_api_key',
-      'anthropic_api_key',
-      'OPENAI_API_KEY',
-      'aws_secret_access_key',
-      'user_password',
-      'db_password',
-      'admin_password',
-      'basic_auth_password',
-      'password_hash',
-      'root_passwd',
-      'smtp_pwd',
-      'jwt_secret',
-      'webhook_secret',
-      'app_secret',
-      'shared_secret',
-      'oauth_secret',
-      'ssh_private_key',
-      'privateKeyPem',
-      'auth_key',
-      'clientKey',
-      'encryption_key',
-      'signingKey',
-      'validation_token',
-      'gh_token',
-      'npm_token',
-      'proxy_authorization',
-      'X-Authorization',
-    ];
-
-    for (const key of keys) {
-      const result = redactSecretLikeJson({ [key]: 'do-not-persist' });
-      expect(result.value, key).toEqual({ [key]: '[redacted]' });
-      expect(result.redactedPaths, key).toEqual([`/${key}`]);
+  test('enforces the independent bidirectional redaction contract on the durable scanner', async () => {
+    for (const fixture of REDACTION_CONTRACT.mustRedact) {
+      const result = await redactSecretLikeJsonAsync(fixture.value);
+      expect(result.redactedPaths.length, fixture.name).toBeGreaterThan(0);
+      expect(JSON.stringify(result.value), fixture.name).not.toBe(JSON.stringify(fixture.value));
+    }
+    for (const fixture of REDACTION_CONTRACT.mustPreserve) {
+      expect(await redactSecretLikeJsonAsync(fixture.value), fixture.name).toEqual({
+        value: fixture.value,
+        redactedPaths: [],
+      });
     }
   });
 
-  test('passes table-driven benign secret-like fields and non-string shapes unchanged', () => {
-    const value = {
-      max_new_tokens: 512,
-      budget_tokens: 4_096,
-      tokens: 4_096,
-      usedTokens: 128,
-      max_completion_tokens: 2_048,
-      cache_read_input_tokens: 900,
-      tokenizerEnabled: true,
-      secretary: { name: 'Ada' },
-      authorization_url: 'https://example.test/oauth/authorize',
-      authorizationEndpoint: 'https://example.test/oauth/authorize',
-      passwordPolicy: 'at least twelve characters',
-      secretPolicy: 'rotate every ninety days',
-      tokenType: 'input',
-      waitingForAuthorization: true,
-      api_keys: ['ambiguous-value'],
-      secret: false,
-      authorization: null,
-      token: 0,
-      credentials: { name: 'ordinary' },
-      numericToken: '4096',
-      exponentToken: '1e6',
-      hexadecimalToken: '0x1000',
-      separatedNumericToken: '4_096',
-      placeholderToken: '${OPENAI_API_KEY}',
-      dollarToken: '$OPENAI_API_KEY',
-      windowsToken: '%OPENAI_API_KEY%',
-      mustacheToken: '{{ OPENAI_API_KEY }}',
-      angleToken: '<OPENAI_API_KEY>',
-    };
-
-    expect(redactSecretLikeJson(value)).toEqual({ value, redactedPaths: [] });
-  });
-
-  test('uses Secretlint value signatures even under neutral field names', () => {
+  test('uses Secretlint value signatures even under neutral field names', async () => {
     const content = `first=${OPENAI_KEY}\nsecond=${ANTHROPIC_KEY}`;
-    const result = redactSecretLikeJson({ value: OPENAI_KEY, content });
+    const result = await redactSecretLikeJsonAsync({ value: OPENAI_KEY, content });
 
     expect(result.redactedPaths).toEqual(['/value', '/content']);
     expect(result.value.value).toBe('[redacted secret-like content]');
@@ -165,26 +184,31 @@ describe('agent secret redaction', () => {
     expect(result.value.content).not.toContain(ANTHROPIC_KEY);
   });
 
-  test('does not let content disable Secretlint credential detection', () => {
+  test('does not let content disable Secretlint credential detection', async () => {
     const content = `<!-- secretlint-disable -->\n${OPENAI_KEY}`;
 
-    expect(redactSecretLikeJson({ content }).value.content).toBe(
+    expect((await redactSecretLikeJsonAsync({ content })).value.content).toBe(
       '<!-- secretlint-disable -->\n[redacted secret-like content]',
     );
   });
 
-  test('keeps commands, source, and design-token JSON exact when no known credential matches', () => {
+  test('keeps commands, source, and design-token JSON exact when no known credential matches', async () => {
     const command = "sed -i 's/token=old/token=abcdefghijklmnop/' config.ini";
     const source = 'const token = "placeholder1234";';
-    const tokensFile = JSON.stringify({ ink: '#111111', tokens: { space: 8 }, secretary: { name: 'Ada' } }, null, 2);
+    const tokensFile = JSON.stringify({
+      ink: '#111111',
+      tokens: { space: 8 },
+      secretary: { name: 'Ada' },
+      password: 'not-a-real-credential',
+    }, null, 2);
 
-    expect(redactSecretLikeJson({ command, source, content: tokensFile })).toEqual({
+    expect(await redactSecretLikeJsonAsync({ command, source, content: tokensFile })).toEqual({
       value: { command, source, content: tokensFile },
       redactedPaths: [],
     });
   });
 
-  test('redacts only direct string values at the serialized provider-arguments boundary', () => {
+  test('redacts only direct string values at the serialized provider-arguments boundary', async () => {
     const nestedBody = '{\n  "client_secret": "nested-ambiguous-value",\n  "safe": "keep"\n}';
     const encoded = [
       '{',
@@ -197,8 +221,10 @@ describe('agent secret redaction', () => {
       `  "body": ${JSON.stringify(nestedBody)}`,
       '}',
     ].join('\n');
-    const redacted = redactJsonEncodedSecretValues(encoded);
+    const result = await redactSecretLikeJsonAsync({ arguments: encoded });
+    const redacted = result.value.arguments;
 
+    expect(result.redactedPaths).toEqual(['/arguments']);
     expect(redacted).toContain('"client_secret" : "[redacted]"');
     expect(redacted).toContain('"password": "[redacted]"');
     expect(redacted).toContain('"provider_value": "[redacted secret-like content]"');
@@ -208,18 +234,17 @@ describe('agent secret redaction', () => {
     expect(redacted).toContain(JSON.stringify(nestedBody));
   });
 
-  test('does not recursively reinterpret JSON stored inside an ordinary string field', () => {
+  test('does not recursively reinterpret JSON stored inside an ordinary string field', async () => {
     const body = '{\n  "client_secret": "nested-ambiguous-value",\n  "safe": "keep"\n}';
     const encoded = JSON.stringify({ body, query: 'keep' }, null, 2);
 
-    expect(redactSecretLikeJson({ arguments: encoded })).toEqual({
+    expect(await redactSecretLikeJsonAsync({ arguments: encoded })).toEqual({
       value: { arguments: encoded },
       redactedPaths: [],
     });
-    expect(redactJsonEncodedSecretValues(encoded)).toBe(encoded);
   });
 
-  test('fails open for malformed or pathologically deep serialized JSON', () => {
+  test('fails open for malformed or pathologically deep serialized JSON', async () => {
     const malformed = '{"password":"unterminated"';
     const depth = 100_000;
     const encoded = '['.repeat(depth)
@@ -227,16 +252,44 @@ describe('agent secret redaction', () => {
       + ']'.repeat(depth);
 
     expect(() => JSON.parse(encoded)).not.toThrow();
-    expect(redactJsonEncodedSecretValues(malformed)).toBe(malformed);
-    expect(redactJsonEncodedSecretValues(encoded)).toBe(encoded);
-    expect(redactSecretLikeJson({ body: encoded })).toEqual({
+    expect(await redactSecretLikeJsonAsync({ body: malformed })).toEqual({
+      value: { body: malformed },
+      redactedPaths: [],
+    });
+    expect(await redactSecretLikeJsonAsync({ body: encoded })).toEqual({
       value: { body: encoded },
       redactedPaths: [],
     });
   });
 
-  test('reports a redaction path only when the persisted value changes', () => {
-    expect(redactSecretLikeJson({ secret: '[redacted]', authorization: null, token: 0 })).toEqual({
+  test('keeps durable scans fail-open and types diagnostic whole-payload omission explicitly', async () => {
+    const unscannable = new Proxy<Record<string, unknown>>({}, {
+      ownKeys: () => { throw new Error('unscannable'); },
+    });
+
+    const durable = await redactSecretLikeJsonAsync(unscannable);
+    expect(durable.value).toBe(unscannable);
+    expect(durable.redactedPaths).toEqual([]);
+    expect(await redactSecretLikeJsonForDiagnostics(unscannable)).toEqual({
+      value: DIAGNOSTIC_SECRET_REDACTION_OMISSION,
+      redactedPaths: [''],
+    });
+  });
+
+  test('applies the diagnostic scan budget before parsing serialized JSON arguments', async () => {
+    const encoded = JSON.stringify({ password: 'x'.repeat(70_000) });
+    const result = await redactSecretLikeJsonForDiagnostics({ arguments: encoded });
+
+    expect(result).toEqual({
+      value: {
+        arguments: `[diagnostic text omitted after secret-scan budget: ${encoded.length} chars]`,
+      },
+      redactedPaths: ['/arguments'],
+    });
+  });
+
+  test('reports a redaction path only when the persisted value changes', async () => {
+    expect(await redactSecretLikeJsonAsync({ secret: '[redacted]', authorization: null, token: 0 })).toEqual({
       value: { secret: '[redacted]', authorization: null, token: 0 },
       redactedPaths: [],
     });

@@ -475,6 +475,11 @@ describe('native turn kernel parity', () => {
     expect(events.filter((event) => event.type === 'tool_execution_end')).toMatchObject([
       { toolCallId: 'cancel-one', isError: true, result: { content: [{ text: 'Operation aborted' }] } },
     ]);
+    expect(runtime.state.messages.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall').map((part) => part.id)
+        : []
+    ))).toEqual(['cancel-one']);
     expect(JSON.stringify(runtime.state.messages)).not.toContain('invalidArguments');
   });
 

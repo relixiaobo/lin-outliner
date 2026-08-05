@@ -807,6 +807,7 @@ describe('Codex Agent Core protocol codec', () => {
           outputRef: { id: OUTPUT_ID, mimeType: 'text/plain', byteLength: 12, summary: 'Output' },
           projectionRef: projectionContextRef,
         }],
+        degradations: [],
       },
       {
         schemaVersion: 1,
@@ -867,6 +868,15 @@ describe('Codex Agent Core protocol codec', () => {
       ...restored,
       activeObservations: [restored.activeObservations[0], restored.activeObservations[0]],
     })).toThrow('duplicate keys');
+    const degradation = {
+      code: 'payloadUnavailable' as const,
+      source: 'toolOutputProjection',
+      reference: OUTPUT_ID,
+    };
+    expect(() => decodeThreadContextPayload({
+      ...restored,
+      degradations: [degradation, degradation],
+    })).toThrow('duplicate entries');
     expect(() => decodeThreadContextPayload({
       ...restored,
       activeSkills: [{ ...restored.activeSkills[0], payloadRef: userViewContextRef }],

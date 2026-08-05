@@ -187,6 +187,11 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      const disableDiagnostics = (error: unknown) => {
+        if (!diagnostics.available) return;
+        diagnostics.disable();
+        context.onTurnDiagnosticsError(error);
+      };
       const reasoningReplay = internalMemory ? null : new ActiveTurnReasoningReplay(context.turn.id);
       const liveModelToolCalls = new Map<string, LiveModelToolCall>();
       const normalizer = new PiEventNormalizer(context, {
@@ -256,9 +261,15 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           };
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
-        onPayload: (payload, model) => {
+        onPayload: async (payload, model) => {
           const transformed = agentProviderPayload(payload, model, stablePrompt);
-          diagnostics.captureProviderRequest(transformed ?? payload);
+          if (diagnostics.available) {
+            try {
+              await diagnostics.captureProviderRequest(transformed ?? payload);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          }
           return transformed;
         },
         onResponse: (response) => diagnostics.captureTransportResponse(response),
@@ -320,7 +331,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return { status: 'interrupted' };
       }
       unsubscribe = agent.subscribe(async (event) => {
-        diagnostics.captureEvent(event);
+        if (diagnostics.available) {
+          try {
+            await diagnostics.captureEvent(event);
+          } catch (error) {
+            disableDiagnostics(error);
+          }
+        }
         normalizer.handle(event);
         await normalizer.flush();
       });
@@ -328,7 +345,14 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted && agent) {
-          agent.steer(message, () => diagnostics.setSteeringDelivered(activityIndex, true));
+          agent.steer(message, () => {
+            if (!diagnostics.available) return;
+            try {
+              diagnostics.setSteeringDelivered(activityIndex, true);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          });
         }
       });
       await agent.prompt(prompt);
@@ -1153,6 +1177,7 @@ async function executionDetails(
 }> {
   let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
   const refresh = async () => {
+    if (!diagnostics.available) return null;
     try {
       diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
     } catch (error) {

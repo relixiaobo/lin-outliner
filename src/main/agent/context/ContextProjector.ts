@@ -12,6 +12,7 @@ import type {
 import type {
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
+  ContextDegradationCheckpointEntry,
   ContextAuthority,
   ContextPayloadKind,
   ContextPurpose,
@@ -43,10 +44,15 @@ import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
 import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
 import { assertCanonicalUserContent } from './userContentIntegrity';
 import {
-  boundedJsonSummary,
+  contextDegradation,
+  renderContextDegradation,
+} from './ContextDegradation';
+import {
+  boundedRedactedJsonSummary,
   evidenceCorrection,
   redactedReplayMarker,
 } from '../runtime/toolCallHistory';
+import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 
 interface ProjectionResources {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
@@ -152,6 +158,13 @@ export class CanonicalContextProjector {
     this.unavailableToolOutputProjectionItems.clear();
     for (const turn of turns) {
       for (const item of turn.items) {
+        if (item.type === 'contextReset') {
+          this.toolOutputProjections.clear();
+          this.unavailableToolOutputProjections.clear();
+          this.conflictingToolOutputProjections.clear();
+          this.unavailableToolOutputProjectionItems.clear();
+          continue;
+        }
         if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
         const declaredKeys = item.outputRefs.map(outputReferenceKey);
         const markUnavailable = () => {
@@ -196,7 +209,11 @@ export class CanonicalContextProjector {
     let timestamp = fallbackTimestamp;
     for (const item of items) {
       if (item.type === 'contextEvidence') {
-        for (const part of await this.projectEvidence(item)) {
+        const parts = await this.projectEvidence(item).catch(() => [this.degradationPart(
+          item.kind,
+          contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
+        )]);
+        for (const part of parts) {
           if (part.type === 'contextBlock') {
             contextBlocks.push(part);
           } else {
@@ -294,9 +311,17 @@ export class CanonicalContextProjector {
         if (item.kind === 'inheritedContext') {
           if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
           else flushAssistant();
-          const payload = await this.readEvidencePayload(item);
-          if (payload.kind !== 'inheritedContext') {
-            throw new Error(`Inherited context kind mismatch: ${item.payloadRef.id}`);
+          const payload = await this.readEvidencePayload(item).catch(() => null);
+          if (!payload || payload.kind !== 'inheritedContext') {
+            appendContextParts([this.degradationPart(
+              'inheritedContext',
+              contextDegradation(
+                payload ? 'payloadInvalid' : 'payloadUnavailable',
+                'inheritedContext',
+                item.payloadRef.id,
+              ),
+            )]);
+            continue;
           }
           const inheritedProjector = new CanonicalContextProjector(this.model, this.resources, this.options);
           const inherited = await inheritedProjector.projectTurnsWithBoundaries(payload.turns);
@@ -310,8 +335,17 @@ export class CanonicalContextProjector {
             this.unavailableToolOutputProjectionItems.has(item.id)
             || item.outputRefs.some((ref) => this.unavailableToolOutputProjections.has(outputReferenceKey(ref)))
           )
-        ) continue;
-        appendContextParts(await this.projectEvidence(item));
+        ) {
+          appendContextParts([this.degradationPart(
+            'toolOutputProjection',
+            contextDegradation('payloadUnavailable', 'toolOutputProjection', item.payloadRef.id),
+          )]);
+          continue;
+        }
+        appendContextParts(await this.projectEvidence(item).catch(() => [this.degradationPart(
+          item.kind,
+          contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
+        )]));
         continue;
       }
       if (item.type === 'userMessage') {
@@ -337,7 +371,10 @@ export class CanonicalContextProjector {
         continue;
       }
       if (item.type === 'contextCompaction') {
-        appendContextParts(await this.projectCompaction(item, sourceTurns));
+        appendContextParts(await this.projectCompaction(item, sourceTurns).catch(() => [this.degradationPart(
+          'compactionRestoredState',
+          contextDegradation('payloadInvalid', 'compactionRestoredState', item.restoredStateRef.id),
+        )]));
         continue;
       }
       if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
@@ -395,14 +432,50 @@ export class CanonicalContextProjector {
     item: ContextCompactionThreadItem,
     sourceTurns: readonly Turn[],
   ): Promise<ProjectedContextPart[]> {
-    const summary = await this.readCompactionPayload(item, item.summaryRef, 'compactionSummary');
-    const restored = await this.readCompactionPayload(item, item.restoredStateRef, 'compactionRestoredState');
-    const content: ProjectedContextPart[] = [contextBlock(
+    const content: ProjectedContextPart[] = [];
+    const renderedDegradations = new Set<string>();
+    const pushDegradation = (
+      kind: ContextPayloadKind,
+      degradation: ContextDegradationCheckpointEntry,
+    ) => {
+      const key = JSON.stringify([degradation.code, degradation.source, degradation.reference]);
+      if (renderedDegradations.has(key)) return;
+      renderedDegradations.add(key);
+      content.push(this.degradationPart(kind, degradation));
+    };
+    const summary = await this.readCompactionPayload(
+      item,
+      item.summaryRef,
       'compactionSummary',
-      `source=${summary.source}\nlossy_derived_context=true\n${summary.text}`,
-      'untrusted',
-      'observation',
-    )];
+    ).catch(() => null);
+    if (summary) {
+      content.push(contextBlock(
+        'compactionSummary',
+        `source=${summary.source}\nlossy_derived_context=true\n${summary.text}`,
+        'untrusted',
+        'observation',
+      ));
+    } else {
+      pushDegradation(
+        'compactionSummary',
+        contextDegradation('payloadUnavailable', 'compactionSummary', item.summaryRef.id),
+      );
+    }
+    const restored = await this.readCompactionPayload(
+      item,
+      item.restoredStateRef,
+      'compactionRestoredState',
+    ).catch(() => null);
+    if (!restored) {
+      pushDegradation(
+        'compactionRestoredState',
+        contextDegradation('payloadUnavailable', 'compactionRestoredState', item.restoredStateRef.id),
+      );
+      return content;
+    }
+    for (const degradation of restored.degradations) {
+      pushDegradation('compactionRestoredState', degradation);
+    }
 
     const skillCatalog = await restoreSkillCatalogCheckpoint(
       sourceTurns,
@@ -410,6 +483,9 @@ export class CanonicalContextProjector {
       restored,
       this.resources.readContext,
     );
+    for (const degradation of skillCatalog.degradations) {
+      pushDegradation('skillCatalog', degradation);
+    }
     if (skillCatalog.catalogHash) {
       content.push(contextBlock('skillCatalog', renderSkillCatalog({
         schemaVersion: 1,
@@ -427,6 +503,9 @@ export class CanonicalContextProjector {
       restored,
       this.resources.readContext,
     );
+    for (const degradation of roleCatalog.degradations) {
+      pushDegradation('roleCatalog', degradation);
+    }
     if (roleCatalog.catalogHash) {
       content.push(contextBlock('roleCatalog', renderRoleCatalog({
         schemaVersion: 1,
@@ -439,42 +518,73 @@ export class CanonicalContextProjector {
     }
 
     if (restored.userViewBaselineRef) {
-      const baseline = await this.readCompactionPayload(item, restored.userViewBaselineRef, 'userView');
-      const rendered = renderUserView(null, baseline);
-      if (!rendered.application) throw new Error('Restored user-view baseline did not produce a snapshot.');
-      content.push(contextBlock('userView', rendered.application, 'application', 'observation', [
-        'restored_after_compaction=true',
-      ]));
-      if (rendered.untrusted) {
-        content.push(contextBlock('userView', rendered.untrusted, 'untrusted', 'observation', [
+      const baseline = await this.readCompactionPayload(
+        item,
+        restored.userViewBaselineRef,
+        'userView',
+      ).catch(() => null);
+      const rendered = baseline ? renderUserView(null, baseline) : null;
+      if (!baseline || !rendered?.application) {
+        pushDegradation(
+          'userView',
+          contextDegradation('payloadUnavailable', 'userView', restored.userViewBaselineRef.id),
+        );
+      } else {
+        content.push(contextBlock('userView', rendered.application, 'application', 'observation', [
           'restored_after_compaction=true',
         ]));
+        if (rendered.untrusted) {
+          content.push(contextBlock('userView', rendered.untrusted, 'untrusted', 'observation', [
+            'restored_after_compaction=true',
+          ]));
+        }
+        this.previousUserView = baseline;
       }
-      this.previousUserView = baseline;
     }
     if (restored.additionalContextBaselineRef) {
       const baseline = await this.readCompactionPayload(
         item,
         restored.additionalContextBaselineRef,
         'additionalContext',
-      );
-      if (baseline.threadState === null) {
-        throw new Error('Restored additional-context baseline does not contain Thread state.');
+      ).catch(() => null);
+      if (!baseline || baseline.threadState === null) {
+        pushDegradation(
+          'additionalContext',
+          contextDegradation(
+            baseline ? 'checkpointMismatch' : 'payloadUnavailable',
+            'additionalContext',
+            restored.additionalContextBaselineRef.id,
+          ),
+        );
+      } else {
+        content.push(...this.projectAdditionalThreadState(
+          baseline.threadState,
+          ['restored_after_compaction=true'],
+        ));
       }
-      content.push(...this.projectAdditionalThreadState(
-        baseline.threadState,
-        ['restored_after_compaction=true'],
-      ));
     }
     for (const checkpoint of restored.activeSkills) {
-      const skill = await this.readCompactionPayload(item, checkpoint.payloadRef, 'skillInvocation');
+      const skill = await this.readCompactionPayload(
+        item,
+        checkpoint.payloadRef,
+        'skillInvocation',
+      ).catch(() => null);
       if (
-        skill.execution !== 'inline'
+        !skill
+        || skill.execution !== 'inline'
         || skill.name !== checkpoint.name
         || skill.identity !== checkpoint.identity
         || skill.contentHash !== checkpoint.contentHash
       ) {
-        throw new Error(`Restored active Skill does not match its checkpoint: ${checkpoint.name}`);
+        pushDegradation(
+          'skillInvocation',
+          contextDegradation(
+            skill ? 'checkpointMismatch' : 'payloadUnavailable',
+            'skillInvocation',
+            checkpoint.payloadRef.id,
+          ),
+        );
+        continue;
       }
       content.push(contextBlock('skillInvocation', skill.instructions, 'application', 'instruction', [
         `name=${skill.name}`,
@@ -482,11 +592,30 @@ export class CanonicalContextProjector {
       ]));
     }
     for (const observation of restored.activeObservations) {
-      const projection = await this.readCompactionPayload(item, observation.projectionRef, 'toolOutputProjection');
-      if (!outputReferencesEqual(projection.outputRef, observation.outputRef)) {
-        throw new Error(`Restored observation does not match its frozen projection: ${observation.key}`);
+      const projection = await this.readCompactionPayload(
+        item,
+        observation.projectionRef,
+        'toolOutputProjection',
+      ).catch(() => null);
+      if (!projection || !outputReferencesEqual(projection.outputRef, observation.outputRef)) {
+        pushDegradation(
+          'toolOutputProjection',
+          contextDegradation(
+            projection ? 'checkpointMismatch' : 'payloadUnavailable',
+            'toolOutputProjection',
+            observation.projectionRef.id,
+          ),
+        );
+        continue;
       }
-      const text = await projectedToolOutputText(projection, this.resources);
+      const text = await projectedToolOutputText(projection, this.resources).catch(() => null);
+      if (text === null) {
+        pushDegradation(
+          'toolOutputProjection',
+          contextDegradation('payloadUnavailable', 'toolOutput', observation.outputRef.id),
+        );
+        continue;
+      }
       content.push(contextBlock('toolOutputProjection', [
         `tool=${observation.tool}`,
         `subject=${observation.subject}`,
@@ -497,7 +626,18 @@ export class CanonicalContextProjector {
       ].join('\n'), 'untrusted', 'observation'));
     }
     if (item.instructionsRef) {
-      const instructions = await this.readCompactionPayload(item, item.instructionsRef, 'compactionInstructions');
+      const instructions = await this.readCompactionPayload(
+        item,
+        item.instructionsRef,
+        'compactionInstructions',
+      ).catch(() => null);
+      if (!instructions) {
+        pushDegradation(
+          'compactionInstructions',
+          contextDegradation('payloadUnavailable', 'compactionInstructions', item.instructionsRef.id),
+        );
+        return content;
+      }
       for (const entry of instructions.entries) {
         content.push(contextBlock(
           instructions.kind,
@@ -524,6 +664,19 @@ export class CanonicalContextProjector {
     assertContextPayloadDependencies(item, payload);
     this.payloads.set(ref.id, payload);
     return payload as Extract<ThreadContextPayload, { readonly kind: K }>;
+  }
+
+  private degradationPart(
+    kind: ContextPayloadKind,
+    degradation: ContextDegradationCheckpointEntry,
+  ): ProjectedContextBlock {
+    return contextBlock(
+      kind,
+      renderContextDegradation(degradation),
+      'application',
+      'observation',
+      ['degraded_context=true'],
+    );
   }
 
   private async projectEvidence(
@@ -658,12 +811,17 @@ export class CanonicalContextProjector {
       let path: string | null = null;
       if (resource.resourceRef) {
         path = await this.resources.resolveResourceObservationPath(resource.resourceRef);
-        if (!path) throw new Error(`Referenced resource payload is unavailable: ${resource.nodeId}`);
+        if (!path) {
+          content.push(this.degradationPart(
+            'referencedResources',
+            contextDegradation('payloadUnavailable', 'referencedResource', resource.resourceRef.id),
+          ));
+        }
       }
       content.push(contextBlock('referencedResources', [
         `node_id=${resource.nodeId}`,
         `node_type=${resource.nodeType}`,
-        `availability=${resource.unavailableReason ?? (resource.resourceRef ? 'available' : 'identity-only')}`,
+        `availability=${resource.unavailableReason ?? (path ? 'available' : resource.resourceRef ? 'missing' : 'identity-only')}`,
         path ? `readable_path=${path}` : null,
         resource.contentTruncated ? 'snapshot_content_truncated=true' : null,
       ].filter((line): line is string => line !== null).join('\n'), 'application', 'observation'));
@@ -681,8 +839,14 @@ export class CanonicalContextProjector {
         resource.content ? `snapshot_content:\n${resource.content}` : null,
       ].filter((line): line is string => line !== null).join('\n'), 'untrusted', 'observation'));
       if (resource.inlineImage && resource.resourceRef) {
-        const bytes = await this.resources.readResource(resource.resourceRef);
-        if (!bytes) throw new Error(`Referenced image payload is unavailable: ${resource.nodeId}`);
+        const bytes = await this.resources.readResource(resource.resourceRef).catch(() => null);
+        if (!bytes) {
+          content.push(this.degradationPart(
+            'referencedResources',
+            contextDegradation('payloadUnavailable', 'referencedImage', resource.resourceRef.id),
+          ));
+          continue;
+        }
         content.push({
           type: 'contextImage',
           content: { type: 'image', data: bytes.toString('base64'), mimeType: resource.resourceRef.mimeType },
@@ -698,7 +862,11 @@ export async function serializeUserContent(
   content: readonly ThreadUserContent[],
   resources: Pick<ProjectionResources, 'readResource' | 'resolveResourceObservationPath'>,
 ): Promise<Array<TextContent | ImageContent>> {
-  assertCanonicalUserContent(content);
+  try {
+    assertCanonicalUserContent(content);
+  } catch (error) {
+    console.warn('[agent] Projecting degraded canonical user content', error);
+  }
   const attachments: Array<{
     readonly part: Extract<ThreadUserContent, { readonly type: 'attachment' }>;
     readonly location: string;
@@ -715,8 +883,11 @@ export async function serializeUserContent(
       case 'attachment': {
         const location = part.source.kind === 'localFile'
           ? part.source.path
-          : await resources.resolveResourceObservationPath(part.source.ref);
-        if (!location) throw new Error(`Managed attachment payload is unavailable or corrupt: ${part.name}`);
+          : await resources.resolveResourceObservationPath(part.source.ref).catch(() => null);
+        if (!location) {
+          narrative.push(`[Attachment unavailable: ${part.name}]`);
+          break;
+        }
         narrative.push(formatFileReferenceMarker(
           part.name,
           location,
@@ -737,9 +908,15 @@ export async function serializeUserContent(
   for (const { part, location } of attachments) {
     if (part.mimeType.startsWith('image/')) {
       const promptImage = part.promptImage;
-      if (!promptImage) throw new Error(`Canonical image attachment is missing its prompt snapshot: ${part.name}`);
-      const image = await resources.readResource(promptImage);
-      if (!image) throw new Error(`Attachment prompt image is unavailable or corrupt: ${part.name}`);
+      if (!promptImage) {
+        converted.push({ type: 'text', text: `[Attachment image snapshot unavailable: ${part.name}]` });
+        continue;
+      }
+      const image = await resources.readResource(promptImage).catch(() => null);
+      if (!image) {
+        converted.push({ type: 'text', text: `[Attachment image snapshot unavailable: ${part.name}]` });
+        continue;
+      }
       converted.push({
         type: 'text',
         text: [
@@ -1047,7 +1224,7 @@ async function historyTool(
   } else {
     const stored = item.modelCall;
     if (stored.disposition === 'evidenceOnly') {
-      return { kind: 'evidence', text: historicalToolEvidence(item, stored.reason) };
+      return { kind: 'evidence', text: await historicalToolEvidence(item, stored.reason) };
     }
     const source = modelCallArgumentSource(stored);
     providerName = stored.providerName;
@@ -1056,19 +1233,19 @@ async function historyTool(
     } else {
       const payload = await resources.readContext(source.ref).catch(() => null);
       if (!payload || payload.kind !== 'toolCallArguments') {
-        return { kind: 'evidence', text: historicalToolEvidence(item, 'argumentPayloadUnavailable') };
+        return { kind: 'evidence', text: await historicalToolEvidence(item, 'argumentPayloadUnavailable') };
       }
       args = payload.value;
     }
   }
   if (projectionUnavailable) {
-    return { kind: 'evidence', text: historicalToolEvidence(item, 'resultPayloadUnavailable') };
+    return { kind: 'evidence', text: await historicalToolEvidence(item, 'resultPayloadUnavailable') };
   }
   let resultContent: Array<TextContent | ImageContent>;
   try {
     resultContent = await historyToolResultContent(item, resources, projection);
   } catch {
-    return { kind: 'evidence', text: historicalToolEvidence(item, 'resultPayloadUnavailable') };
+    return { kind: 'evidence', text: await historicalToolEvidence(item, 'resultPayloadUnavailable') };
   }
   const marker = !liveCall && item.modelCall.disposition === 'redactedReplay'
     ? { type: 'text' as const, text: redactedReplayMarker(item.id, item.modelCall.redactedPaths) }
@@ -1088,37 +1265,51 @@ async function historyTool(
   };
 }
 
-function historicalToolEvidence(
+async function historicalToolEvidence(
   item: HistoryToolItem,
   reason: import('../../../core/agent/protocol').ModelToolCallEvidenceReason,
-): string {
+): Promise<string> {
   const stored = item.modelCall;
   const identity = stored.identity;
+  const identityValue: JsonValue = identity
+    ? { namespace: identity.namespace, name: identity.name }
+    : null;
   const argumentSummary = stored.disposition === 'evidenceOnly'
     ? stored.redactedArgumentsSummary
     : (() => {
-        const source = modelCallArgumentSource(stored);
-        return source.storage === 'inline'
-          ? boundedJsonSummary(source.value)
+      const source = modelCallArgumentSource(stored);
+      return source.storage === 'inline'
+          ? source.value
           : { unavailablePayloadRef: source.ref.id };
       })();
   const correction = stored.disposition === 'evidenceOnly'
     ? stored.correction
     : evidenceCorrection(reason);
-  const visibleOutput = reason === 'resultPayloadUnavailable'
-    ? { unavailable: 'frozen tool-result projection' }
-    : boundedJsonSummary(toolItemVisibleOutputText(item), 8 * 1024);
-  return `[Historical tool-call evidence: ${JSON.stringify({
-    callId: boundedJsonSummary(item.id, 2 * 1024),
-    identity: boundedJsonSummary(identity, 2 * 1024),
+  const evidence = (await redactSecretLikeJsonAsync({
+    callId: item.id,
+    identity: identityValue,
     providerName: stored.providerName,
     reason,
-    redactedArgumentsSummary: boundedJsonSummary(argumentSummary, 8 * 1024),
+    redactedArgumentsSummary: argumentSummary,
     outcome: {
       status: item.status,
-      visibleOutput,
+      visibleOutput: reason === 'resultPayloadUnavailable'
+        ? { unavailable: 'frozen tool-result projection' }
+        : toolItemVisibleOutputText(item),
     },
     correction,
+  })).value;
+  return `[Historical tool-call evidence: ${JSON.stringify({
+    callId: boundedRedactedJsonSummary(evidence.callId, 2 * 1024),
+    identity: boundedRedactedJsonSummary(evidence.identity, 2 * 1024),
+    providerName: evidence.providerName,
+    reason: evidence.reason,
+    redactedArgumentsSummary: boundedRedactedJsonSummary(evidence.redactedArgumentsSummary, 8 * 1024),
+    outcome: {
+      status: evidence.outcome.status,
+      visibleOutput: boundedRedactedJsonSummary(evidence.outcome.visibleOutput, 8 * 1024),
+    },
+    correction: evidence.correction,
   })}]`;
 }
 

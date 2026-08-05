@@ -260,10 +260,11 @@ consulting the current registry or schema; the schema digest is audit evidence o
 The whole call/result pair degrades to typed evidence only when a persisted argument,
 complete output, or image dependency is unavailable. Item-specific fields are
 presentation and audit projections only; no reverse mapper may recreate model
-arguments from them. Fork and child inheritance treat semantic context and compaction
-payloads as strong dependencies, but missing tool-argument and complete-output payloads
-are recoverable: they retain each canonical reference and the later projector performs
-typed degradation instead of aborting the user operation.
+arguments from them. Payload shape and dependency checks are strict at publication and
+decode. Fork and child inheritance then treat missing semantic context, compaction,
+managed-resource, tool-argument, and complete-output copies as recoverable: they retain
+each canonical reference and the later projector emits typed call evidence or a bounded
+context-degradation marker instead of aborting the user operation.
 The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
 fallback decoder, inspection helper, or replay path; pre-release userData is reset when
 the format changes. Payload-backed arguments are available to renderer detail and Turn
@@ -281,15 +282,20 @@ request, but later Turns and every durable surface see only the frozen dispositi
 Cancellation stops each batch loop before it admits any remaining call, so those calls
 create neither Items nor argument payloads.
 The recommended Secretlint scanner preset identifies known credential formats, with
-supplemental Bearer and JWT signatures. Structured redaction normalizes complete
+supplemental complete private-key, legacy `sk-`, short GitHub-token, Bearer, and JWT
+signatures. Structured redaction normalizes complete
 camelCase, snake_case, kebab-case, and unseparated credential-field spellings, but changes
-a field only when its value is a credential-candidate string. Non-string shapes, numeric
-strings, and environment placeholders pass unchanged. Ordinary command and file strings
-use only high-confidence value signatures. Provider diagnostics additionally apply a
-formatting-preserving structural pass to the outer serialized function-call arguments;
-strings nested inside that JSON are never reinterpreted as another JSON document.
+a field only when its value is a credential-candidate string. Ambiguous bare
+`credentials` and `token` fields require at least 20 opaque characters containing both
+letters and digits. Non-string shapes, numeric strings, and environment placeholders
+pass unchanged. Ordinary command and file strings use only high-confidence value
+signatures. Formatting-preserving JSON-key inspection is limited to serialized `args`,
+`arguments`, `body`, and `payload` strings; strings nested inside that JSON are never
+reinterpreted as another JSON document.
 Secretlint rule exceptions, unsupported asynchronous rules, malformed JSON, and scanner
-depth failures pass through unchanged. Redaction paths list only values that actually
+depth failures pass through unchanged. Durable scanning yields cooperatively. Diagnostic
+copies use one 64,000-character scan budget and typed omission markers without changing
+live provider bytes or fingerprints. Redaction paths list only values that actually
 changed, and diagnostic decoding is never a replay authority.
 
 Provider call IDs are canonicalized before admission. The first non-empty unused ID is

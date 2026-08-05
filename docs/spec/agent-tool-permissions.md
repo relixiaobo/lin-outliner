@@ -109,15 +109,17 @@ into replay. The
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
-The recommended Secretlint scanner preset identifies known credential formats, with
-supplemental Bearer and JWT signatures. Structured redaction requires both a normalized
-credential field name and a credential-candidate string; numbers, booleans, nulls,
-objects, arrays, numeric strings, and placeholders remain ordinary. Free-form command and
-file text changes only for high-confidence value signatures. Provider diagnostics scan
-the outer serialized function-call arguments without recursively interpreting nested JSON
-strings. Rule, parse, and depth failures pass through unchanged, so ambiguous input does
-not become a capability denial. A JSON pointer is recorded only when the persisted value
-actually differs from its source.
+The recommended Secretlint scanner preset plus complete private-key, legacy `sk-`, short
+GitHub-token, Bearer, and JWT signatures identify known credential formats. Structured
+redaction requires both a normalized credential field name and a credential-candidate
+string; ambiguous bare `credentials` and `token` values additionally require at least 20
+opaque characters containing letters and digits. Numbers, booleans, nulls, objects,
+arrays, numeric strings, placeholders, and ambiguous free text remain ordinary. JSON-key
+inspection is limited to serialized `args`, `arguments`, `body`, and `payload` strings
+and never recursively interprets nested JSON strings. Rule, parse, and depth failures pass
+through unchanged, so ambiguity cannot become a capability denial. Diagnostic copies are
+budgeted and cooperative and never alter live provider bytes or request fingerprints. A
+JSON pointer is recorded only when the persisted value actually differs from its source.
 
 ## Shared Resource Concurrency
 

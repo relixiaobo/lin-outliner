@@ -6,7 +6,6 @@ import {
 import { streamWithPolicy } from './retryPolicy';
 import {
   redactSecretLikeContent,
-  redactSecretLikeJson,
 } from '../../capabilities/agentSecretRedaction';
 import type {
   AgentTool,
@@ -23,6 +22,8 @@ import {
   evidenceCorrection,
   modelToolSchemaDigest,
   persistenceFailureAdmission,
+  prepareToolCallArguments,
+  rewriteAssistantToolCallHistory,
   toolCallEvidenceText,
   transientToolCallAdmission,
   type ToolCallAdmissionDecision,
@@ -139,7 +140,7 @@ export async function runKernel(
         : await executeToolCalls(context, toolCalls, signal, emit, options.admitToolCall);
       toolResults.push(...batch.messages);
       hasMoreToolCalls = !batch.terminate && !signal.aborted;
-      const liveAssistant = liveAssistantToolHistory(message, batch.admissions);
+      const liveAssistant = rewriteAssistantToolCallHistory(message, batch.admissions);
       context.messages[context.messages.length - 1] = liveAssistant;
       newMessages[newMessages.length - 1] = liveAssistant;
       for (const result of batch.historyMessages) {
@@ -289,17 +290,12 @@ async function failTruncatedToolCalls(
   const admissions: ToolCallAdmissionRecord[] = [];
   for (const { providerToolCallId, toolCall } of toolCalls) {
     const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
-    const admission = await admitAndEmit({
-      toolCallId: toolCall.id,
-      providerName: toolCall.name,
-      outcome: {
-        type: 'rejected',
-        identity: tool ? canonicalToolIdentity(tool) : null,
-        arguments: toolCall.arguments,
-        reason: 'truncatedArguments',
-        correction: evidenceCorrection('truncatedArguments'),
-      },
-    }, providerToolCallId, admit, emit);
+    const request = await rejectedToolCallAdmissionRequest(
+      toolCall,
+      tool ? canonicalToolIdentity(tool) : null,
+      'truncatedArguments',
+    );
+    const admission = await admitAndEmit(request, providerToolCallId, admit, emit);
     admissions.push(admission);
     const finalized: FinalizedToolCall = {
       toolCall,
@@ -440,17 +436,7 @@ async function prepareToolCall(
       kind: 'immediate',
       result: errorToolResult('Tool is not exposed by the active registry.'),
       isError: true,
-      admission: {
-        toolCallId: toolCall.id,
-        providerName: toolCall.name,
-        outcome: {
-          type: 'rejected',
-          identity: null,
-          arguments: toolCall.arguments,
-          reason: 'unresolvedTool',
-          correction: evidenceCorrection('unresolvedTool'),
-        },
-      },
+      admission: await rejectedToolCallAdmissionRequest(toolCall, null, 'unresolvedTool'),
     };
   }
   const identity = canonicalToolIdentity(tool);
@@ -462,15 +448,17 @@ async function prepareToolCall(
       ? toolCall
       : { ...toolCall, arguments: preparedArguments as Record<string, any> };
     const args = validateToolArguments(tool, preparedCall);
-    const canonicalArguments = JSON.parse(JSON.stringify(args ?? null)) as import('../../../../core/agent/protocol').JsonValue;
-    const canonicalCall = { ...toolCall, arguments: canonicalArguments as Record<string, any> };
-    const redacted = redactSecretLikeJson(canonicalArguments);
+    const admissionArguments = await prepareToolCallArguments(args ?? null);
+    const canonicalCall = {
+      ...toolCall,
+      arguments: admissionArguments.arguments as Record<string, any>,
+    };
     let redactedArgumentsReplayable = true;
-    if (redacted.redactedPaths.length > 0) {
+    if (admissionArguments.redactedPaths.length > 0) {
       try {
         validateToolArguments(tool, {
           ...canonicalCall,
-          arguments: redacted.value as Record<string, any>,
+          arguments: admissionArguments.redactedArguments as Record<string, any>,
         });
       } catch {
         redactedArgumentsReplayable = false;
@@ -487,7 +475,9 @@ async function prepareToolCall(
         outcome: {
           type: 'admitted',
           identity,
-          arguments: canonicalArguments,
+          arguments: admissionArguments.arguments,
+          redactedArguments: admissionArguments.redactedArguments,
+          redactedPaths: admissionArguments.redactedPaths,
           schemaDigest: modelToolSchemaDigest(tool.parameters),
           redactedArgumentsReplayable,
         },
@@ -498,19 +488,28 @@ async function prepareToolCall(
       kind: 'immediate',
       result: errorToolResult(errorMessage(error)),
       isError: true,
-      admission: {
-        toolCallId: toolCall.id,
-        providerName: toolCall.name,
-        outcome: {
-          type: 'rejected',
-          identity,
-          arguments: toolCall.arguments,
-          reason: 'invalidArguments',
-          correction: evidenceCorrection('invalidArguments'),
-        },
-      },
+      admission: await rejectedToolCallAdmissionRequest(toolCall, identity, 'invalidArguments'),
     };
   }
+}
+
+async function rejectedToolCallAdmissionRequest(
+  toolCall: AgentToolCall,
+  identity: import('../../../../core/agent/protocol').ModelToolIdentity | null,
+  reason: Extract<ToolCallAdmissionRequest['outcome'], { readonly type: 'rejected' }>['reason'],
+): Promise<ToolCallAdmissionRequest> {
+  const redacted = await prepareToolCallArguments(toolCall.arguments);
+  return {
+    toolCallId: toolCall.id,
+    providerName: toolCall.name,
+    outcome: {
+      type: 'rejected',
+      identity,
+      redactedArguments: redacted.redactedArguments,
+      reason,
+      correction: evidenceCorrection(reason),
+    },
+  };
 }
 
 function abortedPreparedToolCall(prepared: PreparedToolCall): FinalizedToolCall {
@@ -591,38 +590,6 @@ async function admitAndEmit(
     toolCallId: request.toolCallId,
     decision,
   };
-}
-
-function liveAssistantToolHistory(
-  message: AssistantMessage,
-  admissions: readonly ToolCallAdmissionRecord[],
-): AssistantMessage {
-  const content: AssistantMessage['content'] = [];
-  let admissionIndex = 0;
-  for (const part of message.content) {
-    if (part.type !== 'toolCall') {
-      content.push(part);
-      continue;
-    }
-    const admission = admissions[admissionIndex];
-    admissionIndex += 1;
-    if (!admission) continue;
-    const { modelCall } = admission.decision;
-    if (!admission.decision.execute) {
-      content.push({
-        type: 'text' as const,
-        text: modelCall.disposition === 'evidenceOnly'
-          ? toolCallEvidenceText(admission.toolCallId, modelCall)
-          : `[Tool call ${admission.toolCallId} was not executed.]`,
-      });
-      continue;
-    }
-    content.push({
-      ...part,
-      id: admission.toolCallId,
-    });
-  }
-  return { ...message, content };
 }
 
 function historicalToolCallIds(messages: readonly Message[]): Set<string> {

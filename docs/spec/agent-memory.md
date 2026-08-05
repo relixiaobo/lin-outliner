@@ -125,7 +125,8 @@ the general interactive-agent prompt. Strict bounded JSON produces zero or more
 source-date episode groups. Every headline, episode, belief, question, and
 guidance statement carries a non-empty, exact set of supplied `originItemId`
 values from that source date; lineage is recorded per statement rather than per
-day. Secret-like content is redacted before publication.
+day. Known credential formats and high-confidence secret assignments are redacted before
+publication; ambiguous prose passes unchanged rather than blocking Memory publication.
 A no-signal result withdraws that source's old generated lineage and schedules
 global cleanup.
 

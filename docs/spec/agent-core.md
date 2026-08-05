@@ -103,6 +103,11 @@ one durable full-or-inline projection before the first provider request that can
 it; later budget pressure, restart, rollback, fork, and replay reuse that decision.
 Provider planning consumes only this reduced canonical Item sequence. There is no
 runtime-only context state, reminder parser, or alternate message store.
+Payload publication and full-Thread decode enforce exact kinds, dependencies, and
+reachable compaction cursors. After admission, unavailable inspection payloads are a
+runtime degradation rather than a dead Thread: reducers clear or skip only affected
+state, restored checkpoints carry typed degradation entries, and projection emits a
+bounded marker that tells the model to re-inspect current state.
 
 Every nested context payload, managed resource, or complete tool output named by a
 context payload is also an explicit dependency on its owning context Item through
@@ -392,15 +397,19 @@ references them. Execution-time context publication writes the payload and its I
 under the Thread mutex; failed publication and Turn terminalization prune any context
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
-than truncation. The recommended Secretlint preset and supplemental Bearer/JWT signatures
-redact known credential formats before either the Item or payload becomes durable.
+than truncation. The recommended Secretlint preset plus complete private-key, legacy
+`sk-`, short GitHub-token, Bearer, and JWT signatures redact known credential formats
+before either the Item or payload becomes durable.
 Structured fields change only when both the normalized terminal field name identifies a
 credential and the value is a credential-candidate string; non-string shapes, numeric
-strings, placeholders, and ambiguous free-form content pass unchanged. Provider
-diagnostics structurally scan only the outer serialized function-call arguments while
-preserving unrelated formatting and never reinterpret nested JSON strings. Rule
-exceptions, unsupported asynchronous rules, malformed JSON, and scanner depth failures
-all fail open. The diagnostic copy never becomes Item or replay data. Redacted replay
+strings, placeholders, and ambiguous free-form content pass unchanged. Ambiguous bare
+`credentials` and `token` fields require at least 20 opaque characters containing both
+letters and digits. Serialized JSON key inspection is limited to `args`, `arguments`,
+`body`, and `payload` strings, preserves unrelated formatting, and never reinterprets
+nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed JSON,
+and scanner depth failures all fail open. Durable scanning yields cooperatively;
+diagnostic copies additionally have one 64,000-character budget and use an omission
+marker beyond it. The diagnostic copy never becomes Item or replay data. Redacted replay
 compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
@@ -427,10 +436,11 @@ closes. Startup and rollback remove stale staging data plus managed resources, c
 payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
 history. Forks copy only payloads referenced by inherited Items and Turn execution into
 their own directory with a distinct inode, so provenance remains shared while mutation
-and deletion remain Thread-local. Semantic context and compaction payloads are required
-for the copied history shape. Missing tool-argument and complete-output payloads are
-recoverable: fork and child inheritance retain the canonical references, skip unavailable
-copies, and let provider projection degrade each call/result pair to typed evidence.
+and deletion remain Thread-local. Fork and child inheritance attempt every referenced
+semantic context, compaction, managed-resource, tool-argument, and complete-output copy.
+Missing copies are recoverable: canonical references remain on the copied Items, tool
+dependencies become typed call/result evidence, and semantic dependencies become bounded
+context-degradation markers rather than aborting the user operation.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.

@@ -115,7 +115,9 @@ Access capability evaluation. A Skill never bypasses explicit blocks.
 The reducer reconstructs catalog state and the latest active inline invocation for each
 canonical name from Thread-owned payload Items. It validates any existing compaction
 checkpoint against full prior catalog entries and invocation payload references and
-fails closed rather than inventing display metadata from a sparse checkpoint.
+records a typed degradation rather than inventing display metadata from a sparse or
+unavailable checkpoint. The affected catalog or invocation is omitted until a later
+baseline restores it; the provider request, compaction, fork, and delegation continue.
 
 The provider projector selects the latest context epoch and replaces compacted raw
 history with the summary plus validated checkpoint. It restores the exact active inline

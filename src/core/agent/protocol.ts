@@ -833,6 +833,19 @@ export interface ActiveObservationCheckpointEntry {
   readonly projectionRef: ThreadContextPayloadReference;
 }
 
+export type ContextDegradationCode =
+  | 'payloadUnavailable'
+  | 'payloadInvalid'
+  | 'journalDiscontinuity'
+  | 'checkpointMismatch'
+  | 'projectionConflict';
+
+export interface ContextDegradationCheckpointEntry {
+  readonly code: ContextDegradationCode;
+  readonly source: string;
+  readonly reference: string;
+}
+
 export interface CompactionRestoredStateContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'compactionRestoredState';
@@ -844,6 +857,7 @@ export interface CompactionRestoredStateContextPayload {
   readonly userViewBaselineRef: ThreadContextPayloadReference | null;
   readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
+  readonly degradations: readonly ContextDegradationCheckpointEntry[];
 }
 
 export interface CompactionInstructionsContextPayload {

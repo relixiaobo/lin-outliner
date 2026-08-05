@@ -104,7 +104,7 @@ describe('Turn diagnostics', () => {
     });
 
     prepare(collector, [firstMessage], 0, 120, [firstProvenance]);
-    collector.captureProviderRequest({
+    await collector.captureProviderRequest({
       model: model.id,
       input: [firstProviderMessage],
       contents: [{
@@ -133,7 +133,7 @@ describe('Turn diagnostics', () => {
         'set-cookie': 'private-cookie',
       },
     });
-    collector.captureEvent({
+    await collector.captureEvent({
       type: 'message_end',
       message: assistantMessage('First response'),
     } as AgentEvent);
@@ -150,7 +150,7 @@ describe('Turn diagnostics', () => {
       firstProvenance,
       [{ source: 'userInput' }],
     ]);
-    collector.captureProviderRequest({
+    await collector.captureProviderRequest({
       model: model.id,
       input: [firstProviderMessage, secondMessage],
       temperature: 0.2,
@@ -345,7 +345,7 @@ describe('Turn diagnostics', () => {
     })).toThrow('expected at least one context entry');
   });
 
-  test('redacts structured secrets from canonical messages and post-adapter requests', () => {
+  test('redacts structured secrets from canonical messages and post-adapter requests', async () => {
     const rawSecret = 'generic-model-secret';
     const jsonShapedContent = '{\n  "token": "placeholder1234"\n}';
     const toolMessage: AssistantMessage = {
@@ -392,9 +392,12 @@ describe('Turn diagnostics', () => {
       }],
       metadata: { session_token: rawSecret },
     });
-    collector.captureProviderRequest(providerRequest(2_048));
+    const firstRawRequest = providerRequest(2_048);
+    await collector.captureProviderRequest(firstRawRequest);
+    expect(firstRawRequest.metadata.session_token).toBe(rawSecret);
+    expect(JSON.parse(firstRawRequest.input[0]!.arguments)).toMatchObject({ api_key: rawSecret });
     prepare(collector, [toolMessage], 0, 20);
-    collector.captureProviderRequest(providerRequest(4_096));
+    await collector.captureProviderRequest(providerRequest(4_096));
 
     const payload = collector.payload();
     expect(JSON.stringify(payload)).not.toContain(rawSecret);
@@ -414,7 +417,7 @@ describe('Turn diagnostics', () => {
       .not.toBe(payload.providerCalls[1]?.requestFingerprint);
   });
 
-  test('records retry, compaction, steering, and transient tools as ordered activities', () => {
+  test('records retry, compaction, steering, and transient tools as ordered activities', async () => {
     const firstMessage: UserMessage = {
       role: 'user',
       content: [{ type: 'text', text: 'Start.' }],
@@ -447,11 +450,11 @@ describe('Turn diagnostics', () => {
     });
 
     prepare(collector, [firstMessage], 0, 10);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
     collector.captureProviderRetry({ kind: 'request', attempt: 1, maxRetries: 2 }, 11);
 
     prepare(collector, [firstMessage], 0, 10);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
     collector.captureContextCompaction({
       id: 'overflow-compaction',
       trigger: 'providerOverflow',
@@ -468,8 +471,8 @@ describe('Turn diagnostics', () => {
     collector.setSteeringDelivered(steeringActivity, true);
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
-    collector.captureEvent({
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    await collector.captureEvent({
       type: 'message_end',
       message: assistantMessage('Planning'),
     } as AgentEvent);
@@ -483,7 +486,7 @@ describe('Turn diagnostics', () => {
     collector.captureToolExecutionCompleted('plan-call', false, 22);
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
     collector.captureToolExecutionStarted(
       'plan-call',
       'update_plan',

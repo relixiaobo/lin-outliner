@@ -294,6 +294,10 @@ describe('context compaction reducer', () => {
 
     expect(plan).not.toBeNull();
     expect(plan?.restoredState.activeObservations).toEqual([]);
+    expect(plan?.restoredState.degradations).toContainEqual(expect.objectContaining({
+      code: 'payloadUnavailable',
+      source: 'toolOutputProjection',
+    }));
   });
 
   test('keeps conflicting frozen projections unavailable after later duplicates', async () => {
@@ -334,6 +338,135 @@ describe('context compaction reducer', () => {
 
     expect(plan).not.toBeNull();
     expect(plan?.restoredState.activeObservations).toEqual([]);
+    expect(plan?.restoredState.degradations).toContainEqual(expect.objectContaining({
+      code: 'projectionConflict',
+      source: 'toolOutputProjection',
+    }));
+  });
+
+  test('accepts a valid frozen projection after context reset clears an earlier conflict', async () => {
+    const store = createPayloadStore();
+    const observed = observation(
+      store,
+      'reset-conflicting-observation',
+      'file_read',
+      { file_path: '/workspace/reset-conflicting.txt' },
+      'First frozen snapshot',
+    );
+    const firstEvidence = observed.items[1];
+    if (!firstEvidence || firstEvidence.type !== 'contextEvidence') {
+      throw new Error('Expected the observation projection evidence.');
+    }
+    const conflictingRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef: observed.outputRef,
+      projection: { type: 'inline', text: 'Conflicting frozen snapshot' },
+    });
+    const conflict: ContextEvidenceThreadItem = {
+      ...firstEvidence,
+      id: 'reset-conflicting-projection',
+      provenance: provenance('reset-conflicting-projection'),
+      payloadRef: conflictingRef,
+    };
+    const beforeReset = turn(1, [...observed.items, conflict]);
+    const reset: ThreadItem = {
+      type: 'contextReset',
+      id: 'projection-reset',
+      provenance: provenance('projection-reset'),
+      clearedThrough: { turnId: beforeReset.id, itemId: conflict.id },
+    };
+    const recoveredTool: ThreadItem = {
+      ...observed.items[0]!,
+      id: 'recovered-observation',
+      provenance: provenance('recovered-observation'),
+    };
+    const recoveredProjection: ContextEvidenceThreadItem = {
+      ...firstEvidence,
+      id: 'recovered-projection',
+      provenance: provenance('recovered-projection'),
+    };
+
+    const plan = await planContextCompaction({
+      turns: [beforeReset, turn(2, [reset, recoveredTool, recoveredProjection])],
+      readContext: store.read,
+    });
+
+    expect(plan?.restoredState.activeObservations).toEqual([expect.objectContaining({
+      key: 'file:/workspace/reset-conflicting.txt',
+      projectionRef: observed.projectionRef,
+    })]);
+    expect(plan?.restoredState.degradations).toEqual([]);
+  });
+
+  test('records unavailable compaction, Skill, and additional-context payloads without aborting', async () => {
+    const store = createPayloadStore();
+    const skillItem = contextEvidence(store, skillInvocation('7', 'Unavailable instructions'), 'missing-skill');
+    const additionalItem = contextEvidence(store, {
+      schemaVersion: 1,
+      kind: 'additionalContext',
+      turnEntries: [],
+      threadState: [{
+        key: 'policy',
+        source: 'test',
+        authority: 'application',
+        purpose: 'instruction',
+        text: 'Unavailable policy',
+      }],
+    }, 'missing-additional-context');
+    store.remove(skillItem.payloadRef);
+    store.remove(additionalItem.payloadRef);
+    const summaryRef = store.put({
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+      source: 'deterministic',
+      text: 'Prior summary',
+    });
+    const restoredStateRef = store.put({
+      schemaVersion: 1,
+      kind: 'compactionRestoredState',
+      skillCatalogHash: null,
+      announcedSkills: [],
+      activeSkills: [],
+      roleCatalogHash: null,
+      announcedRoles: [],
+      userViewBaselineRef: null,
+      additionalContextBaselineRef: null,
+      activeObservations: [],
+      degradations: [],
+    });
+    store.remove(restoredStateRef);
+    const priorTurn = turn(1, [userMessage('Prior request', 'prior-request')]);
+    const compaction: ThreadItem = {
+      type: 'contextCompaction',
+      id: 'missing-restored-state',
+      provenance: provenance('missing-restored-state'),
+      trigger: 'manual',
+      coveredFrom: { turnId: priorTurn.id, itemId: 'prior-request' },
+      coveredThrough: { turnId: priorTurn.id, itemId: 'prior-request' },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef: null,
+      contextRefs: [summaryRef, restoredStateRef],
+      resourceRefs: [],
+      outputRefs: [],
+    };
+
+    const plan = await planContextCompaction({
+      turns: [
+        priorTurn,
+        turn(2, [compaction, skillItem, additionalItem, userMessage('Continue', 'continue')]),
+      ],
+      readContext: store.read,
+    });
+
+    expect(plan).not.toBeNull();
+    expect(plan?.restoredState.degradations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'payloadUnavailable', source: 'compactionRestoredState' }),
+      expect.objectContaining({ code: 'payloadUnavailable', source: 'skillInvocation' }),
+      expect.objectContaining({ code: 'payloadUnavailable', source: 'additionalContext' }),
+    ]));
   });
 
   test('restores the latest active Skill from the effective preserved tail', async () => {
@@ -376,6 +509,7 @@ describe('context compaction reducer', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     });
     const summaryRef = store.put({
       schemaVersion: 1,

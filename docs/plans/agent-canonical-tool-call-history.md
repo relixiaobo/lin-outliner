@@ -295,16 +295,20 @@ Model-supplied arguments pass a high-confidence redaction policy before
 persistence. Admitted calls whose values change use
 `redactedReplay`; rejected calls retain only evidence. Host-injected secrets
 remain outside model calls. Secretlint's recommended scanner preset identifies known
-provider keys, private keys, and connection-string formats; supplemental Bearer and JWT
-signatures cover the durable formats the preset does not. Structured redaction requires
-both a credential field name and a credential-candidate string value. Numbers, booleans,
-nulls, objects, arrays, numeric strings, and environment placeholders pass unchanged, as
-do ambiguous free-form command and file contents. Provider diagnostics structurally scan
-only the adapter's outer serialized function-call arguments and never reinterpret a JSON
-string nested inside an ordinary value. Scanner exceptions, unsupported asynchronous
-rules, malformed JSON, and formatting-scan depth failures all pass the source through
-unchanged. Ambiguity therefore favors execution and fidelity rather than blocking or
-whole-value redaction. A redaction path exists only when its value changed.
+provider keys, private keys, and connection-string formats. Supplemental complete
+private-key blocks, legacy `sk-` keys, short GitHub tokens, Bearer values, and JWTs cover
+durable formats outside the preset's reliable range. Structured redaction requires both
+a credential field name and a credential-candidate string value. Strong field names
+accept any non-placeholder string; ambiguous bare `credentials` and `token` fields
+require an opaque value of at least 20 characters containing both letters and digits.
+Numbers, booleans, nulls, objects, arrays, numeric strings, environment placeholders,
+and ambiguous free-form command or file content pass unchanged. JSON-key inspection is
+limited to serialized strings held by `args`, `arguments`, `body`, or `payload`; a JSON
+string nested inside an ordinary value is never reinterpreted. Scanner exceptions,
+unsupported asynchronous rules, malformed JSON, and formatting-scan depth failures all
+pass the source through unchanged. Ambiguity therefore favors execution and fidelity
+rather than blocking or whole-value redaction. A redaction path exists only when its
+value changed.
 
 ### Argument storage and lifecycle
 
@@ -312,11 +316,12 @@ Small ordinary JSON arguments stay inline. Arguments above the inline bound use
 a content-addressed, Thread-owned JSON payload with an exact codec and digest;
 they are not truncated into a different value. The reference participates in
 the same dependency enumeration and deletion lifecycle as other Thread-owned
-context resources. Fork and child inheritance copy argument and complete-output payloads
-when available. An unavailable argument or output payload is a weak history dependency:
-the copied Item retains its reference and later projects typed evidence rather than
-aborting the user operation. The semantic context and compaction payloads themselves
-remain strong dependencies.
+context resources. Fork and child inheritance copy argument, complete-output, semantic
+context, compaction, and managed-resource payloads when available. Unavailable copies
+remain referenced by the copied Item and do not abort fork or delegation. Provider
+projection emits typed call/result evidence for missing tool dependencies and bounded
+context-degradation markers for missing semantic state. Strict payload shape and
+dependency checks remain fail-closed only at publication and decode boundaries.
 
 Before every provider submission, replay loads the frozen provider name and
 arguments and resolves every persisted call/result dependency, including argument,
@@ -350,7 +355,11 @@ replay/evidence disposition, and bounded redacted validation errors. They never
 capture raw secret-bearing values or host-only environment. JSON-encoded argument
 strings are structurally redacted without reformatting, including at known provider
 function-call boundaries; non-JSON opaque strings remain byte-preserving except for
-high-confidence credential formats. Memory extraction
+high-confidence credential formats. Diagnostic scanning has one 64,000-character budget
+per provider copy, omits text beyond that budget, and yields cooperatively while running
+scanner rules. An unexpected whole-copy failure stores one typed omission marker rather
+than failing the provider call. Redaction operates on a detached copy: the live request,
+its cache-control fields, and its fingerprint source remain unchanged. Memory extraction
 may summarize completed outcomes but cannot reconstruct calls from presentation
 fields.
 
@@ -362,7 +371,10 @@ unit after the owning assistant batch's complete call/results. It never splits t
 assistant message or duplicates its signed thinking. Restart, fork, current Turn tool loops, retry, and post-compaction
 projection must therefore make the same replay decision from the same persisted
 facts. Compaction skips unreadable frozen projections and treats conflicting projections
-as permanently unavailable for that reduction instead of aborting every later Turn.
+as unavailable for that context epoch instead of aborting every later Turn. Its restored
+state records deduplicated degradation entries for missing or mismatched Skill, Role,
+view, additional-context, inherited-context, and observation payloads; a reset or later
+valid compaction starts a fresh reduction baseline.
 
 ### Current, changed, and preserved behavior
 
@@ -394,6 +406,9 @@ Expected production ownership:
 - `src/main/agent/context/{ContextProjector,contextDependencies,ContextCompaction}.ts`:
   envelope-only replay, dependency preflight, graceful evidence fallback, and
   payload lifecycle.
+- `src/main/agent/capabilities/agentSecretRedaction.ts`, `package.json`, and
+  `bun.lock`: the pinned Secretlint scanner preset, narrow supplemental signatures,
+  fail-open structured policy, and cooperative diagnostic copy.
 - `src/main/agent/thread/TranscriptRenderer.ts` and
   `src/main/agent/extensions/memory/Phase1.ts`: consume canonical/evidence
   arguments without reverse reconstruction.
@@ -405,7 +420,7 @@ Expected production ownership:
 - Focused Core, renderer-selector, codec, persistence, context, transcript, and
   native-kernel tests.
 
-No `src/core/commands.ts`, `src/core/types.ts`, dependency, build configuration,
+No `src/core/commands.ts`, `src/core/types.ts`, build configuration,
 `docs/TASKS.md`, or `CHANGELOG.md` change belongs to the dev implementation PR.
 Main owns board/changelog updates at merge.
 
@@ -430,7 +445,8 @@ Main owns board/changelog updates at merge.
 - **AC-06:** Retired tools and incompatible current schemas do not change past
   exchanges. Missing/corrupt argument, full-output, or image payloads produce
   diagnostics plus typed pair-level evidence without throwing, orphaning a tool
-  result, or contaminating later requests.
+  result, or contaminating later requests. Missing semantic context instead emits a
+  bounded degradation marker and omits only the unavailable state.
 - **AC-07:** Large arguments remain exact through Thread-owned payload storage and fork;
   no bounded/truncated value is presented as the original call.
 - **AC-08:** An admitted call with secret-like model arguments persists as
@@ -465,11 +481,16 @@ Main owns board/changelog updates at merge.
 - **AC-15:** The new envelope has no legacy reader or call reconstructor. A tool
   Item without `modelCall` fails strict decode; pre-release userData is wiped when
   the format lands instead of carrying a compatibility layer.
-- **AC-16:** A missing tool-argument or complete-output payload does not abort fork or
-  child inheritance. The copied Item retains the unavailable reference and provider
-  projection emits typed evidence. Inline arguments remain complete in renderer detail
-  and copy; loaded payload-backed values use the display bound, while pending or missing
+- **AC-16:** A missing tool-argument, complete-output, semantic-context, compaction, or
+  managed-resource payload does not abort fork or child inheritance. The copied Item
+  retains the unavailable reference; provider projection emits typed evidence or a
+  context-degradation marker. Inline arguments remain complete in renderer detail and
+  copy; loaded payload-backed values use the display bound, while pending or missing
   values use one typed unavailable representation on both surfaces.
+- **AC-17:** Diagnostics never mutate the provider payload or request fingerprint input.
+  Ordinary and same-Turn tool-loop cache prefixes retain their original bytes. A known
+  credential appears as a durable placeholder only from the next Turn onward, so the
+  suffix after that call may incur one unavoidable cross-Turn cache miss.
 
 ### Risks and mitigations
 

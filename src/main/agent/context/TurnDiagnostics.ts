@@ -23,8 +23,7 @@ import type {
   TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
 import {
-  redactJsonEncodedSecretValues,
-  redactSecretLikeJson,
+  redactSecretLikeJsonForDiagnostics,
 } from '../capabilities/agentSecretRedaction';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
@@ -113,6 +112,7 @@ export class TurnDiagnosticsCollector {
   private readonly activities: MutableActivity[] = [];
   private preparedPlan: PreparedProviderPlan | null = null;
   private providerContext: Context | null = null;
+  private disabled = false;
 
   constructor(private readonly input: TurnDiagnosticsCollectorInput) {
     this.activities.push({
@@ -125,6 +125,14 @@ export class TurnDiagnosticsCollector {
     });
   }
 
+  get available(): boolean {
+    return !this.disabled;
+  }
+
+  disable(): void {
+    this.disabled = true;
+  }
+
   prepareProviderPlan(plan: PreparedProviderPlan): void {
     this.preparedPlan = plan;
   }
@@ -133,15 +141,23 @@ export class TurnDiagnosticsCollector {
     this.providerContext = context;
   }
 
-  captureProviderRequest(payload: unknown): void {
+  async captureProviderRequest(payload: unknown): Promise<void> {
     if (!this.preparedPlan) throw new Error('Provider request diagnostics are missing the prepared context plan.');
     if (!this.providerContext) throw new Error('Provider request diagnostics are missing the provider context.');
-    const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
-    const normalizedRequest = redactSecretLikeJson(
-      redactProviderSerializedArguments(jsonValue(payload, true)),
-    ).value;
+    const normalizedRequest = jsonValue(payload, true);
+    const diagnostic = await redactSecretLikeJsonForDiagnostics({
+      messages: this.providerContext.messages.map((message) => jsonValue(message, true)),
+      request: normalizedRequest,
+    });
+    const diagnosticOmitted = typeof diagnostic.value === 'string';
+    const diagnosticMessages = diagnosticOmitted ? [] : diagnostic.value.messages;
+    const messageIds = this.providerContext.messages.map((message, messageIndex) => this.rememberMessage(
+      message,
+      diagnosticMessages[messageIndex] ?? '[diagnostic message omitted]',
+    ));
+    const redactedRequest = diagnosticOmitted ? diagnostic.value : diagnostic.value.request;
     const index = this.providerCalls.length;
     this.bindPendingActivities(index);
     this.providerCalls.push({
@@ -161,7 +177,7 @@ export class TurnDiagnosticsCollector {
       reservedOutputTokens: this.preparedPlan.budget.reservedOutputTokens,
       commonPrefixMessageCount: commonPrefixLength(previous, messageIds),
       request: this.rememberProviderRequest(
-        normalizedRequest,
+        redactedRequest,
         this.providerContext.messages,
         this.preparedPlan.messagePartProvenance,
       ),
@@ -290,7 +306,7 @@ export class TurnDiagnosticsCollector {
     };
   }
 
-  captureEvent(event: AgentEvent): void {
+  async captureEvent(event: AgentEvent): Promise<void> {
     if (event.type !== 'message_end' || event.message.role !== 'assistant') return;
     const call = [...this.providerCalls].reverse().find((candidate) => candidate.response === null);
     if (!call) return;
@@ -308,7 +324,7 @@ export class TurnDiagnosticsCollector {
         totalTokens: event.message.usage.totalTokens,
         cost: { ...event.message.usage.cost },
       },
-      value: redactSecretLikeJson(jsonValue(event.message, true)).value,
+      value: (await redactSecretLikeJsonForDiagnostics(jsonValue(event.message, true))).value,
     };
   }
 
@@ -380,8 +396,7 @@ export class TurnDiagnosticsCollector {
     }
   }
 
-  private rememberMessage(message: Message): string {
-    const value = redactSecretLikeJson(jsonValue(message, true)).value;
+  private rememberMessage(message: Message, value: JsonValue): string {
     const id = fingerprint(stableJson(value));
     if (!this.canonicalMessages.has(id)) {
       this.canonicalMessages.set(id, {
@@ -632,27 +647,6 @@ function jsonValue(value: unknown, omitImageBytes: boolean, nestedImageContainer
     }
   }
   return result;
-}
-
-function redactProviderSerializedArguments(value: JsonValue): JsonValue {
-  if (Array.isArray(value)) return value.map(redactProviderSerializedArguments);
-  if (!isRecord(value)) return value;
-  const serializedArguments = typeof value.arguments === 'string'
-    && (
-      value.type === 'function_call'
-      || value.type === 'tool_call'
-      || typeof value.name === 'string'
-    );
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-    key,
-    key === 'arguments' && serializedArguments
-      ? redactSerializedProviderArguments(entry as string)
-      : redactProviderSerializedArguments(entry as JsonValue),
-  ]));
-}
-
-function redactSerializedProviderArguments(value: string): string {
-  return redactJsonEncodedSecretValues(value);
 }
 
 function directImageBase64(

@@ -237,9 +237,9 @@ one model-visible identity grammar and exact user order without parsing markers 
 into canonical state. Resolved canonical input
 requires every image to carry
 a Thread-owned image `promptImage` and forbids `promptImage` on non-images. Admission
-rejects an invalid shape before publishing the user Item, and projection fails closed if
-corrupt canonical history violates the same invariant; an image never degrades to a
-mutable file-path fallback.
+rejects an invalid shape before publishing the user Item. If an admitted image snapshot
+later becomes unavailable, projection emits an explicit unavailable marker and
+continues; it never falls back to mutable file-path bytes.
 
 Attachment sources are reference-only. `localFile` records a canonical live
 path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
@@ -482,6 +482,11 @@ catalogs, active Skill instructions, the latest view baseline, and active observ
 compacting that result again preserves the same state until later canonical Items change
 or invalidate it. Every nested context/output dependency is validated before the new
 checkpoint is admitted.
+If a previously admitted inspection payload later becomes unavailable or disagrees with
+its checkpoint, reduction records a typed degradation entry and clears or skips only the
+affected catalog, baseline, or observation. Projection renders the deduplicated marker;
+compaction, fork, and delegation remain usable. Strict dependency rejection remains at
+payload publication and Thread decode, not on the provider-request path.
 
 A successful non-preview `node_create`, `node_edit`, or `node_delete` invalidates all
 active Node observations because one bounded `node_read` can project descendants,
@@ -542,6 +547,12 @@ new affinity. Ordinary Turns, steering, restart, compaction, and changes to the 
 tree's grouping `sessionId` retain it. Tools are sorted by exact canonical name before
 Agent construction, so equivalent registries serialize identically regardless of
 assembly order.
+Diagnostic redaction never participates in provider serialization, cache-control
+selection, request fingerprints, or affinity. Exact admitted arguments remain in the
+same-Turn transient overlay, so ordinary requests and immediate tool-loop prefixes are
+unchanged. On a later Turn, a recognized credential is represented only by its durable
+placeholder; the provider prefix after that historical call can miss once, which is the
+necessary cost of not persisting the credential.
 
 Anthropic Messages requests use at most four cache-control breakpoints. The stable
 prompt's structured blocks split it into protected L0 firmware and the remaining stable
@@ -592,8 +603,14 @@ ambiguous values and scanner failures pass unchanged. Raw recognized credentials
 credentials are not diagnostic history.
 Canonical-message snapshots and post-adapter request fragments are redacted only in the
 diagnostic copy immediately before persistence. Serialized function-call arguments are
-scanned only at their outer adapter boundary and nested JSON strings are left intact. The
-live provider request remains unchanged.
+scanned only at their outer adapter boundary and nested JSON strings are left intact.
+Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
+diagnostics, scanner work yields cooperatively, and an unexpected whole-copy failure
+stores a typed omission marker. The live provider request and the raw normalized value
+used for its fingerprint remain unchanged.
+If diagnostic preparation or provenance alignment itself fails, the collector is
+disabled for that Turn and `diagnosticsRef` remains null; provider transport, event
+normalization, and the Turn continue.
 
 The post-adapter provider payload is observed after compatibility, reasoning-summary,
 and cache-breakpoint policy and immediately before provider transport. Diagnostics

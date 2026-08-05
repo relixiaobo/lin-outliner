@@ -13,8 +13,11 @@ import {
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
 } from '../../../core/agent/protocol';
-import { redactSecretLikeJson } from '../capabilities/agentSecretRedaction';
-import type { AgentTool } from './kernel/types';
+import {
+  redactSecretLikeContent,
+  redactSecretLikeJsonAsync,
+} from '../capabilities/agentSecretRedaction';
+import type { AgentTool, AssistantMessage } from './kernel/types';
 
 export interface ToolCallAdmissionRequest {
   readonly toolCallId: string;
@@ -24,13 +27,15 @@ export interface ToolCallAdmissionRequest {
         readonly type: 'admitted';
         readonly identity: ModelToolIdentity;
         readonly arguments: JsonValue;
+        readonly redactedArguments: JsonValue;
+        readonly redactedPaths: readonly string[];
         readonly schemaDigest: string;
         readonly redactedArgumentsReplayable: boolean;
       }
     | {
         readonly type: 'rejected';
         readonly identity: ModelToolIdentity | null;
-        readonly arguments: unknown;
+        readonly redactedArguments: JsonValue;
         readonly reason: Extract<
           ModelToolCallEvidenceReason,
           'unresolvedTool' | 'invalidArguments' | 'truncatedArguments'
@@ -46,14 +51,47 @@ export interface ToolCallAdmissionDecision {
   readonly execute: boolean;
 }
 
+export interface AssistantToolCallAdmission {
+  readonly toolCallId: string;
+  readonly decision: ToolCallAdmissionDecision;
+}
+
+export function rewriteAssistantToolCallHistory(
+  message: AssistantMessage,
+  admissions: readonly AssistantToolCallAdmission[],
+): AssistantMessage {
+  const content: AssistantMessage['content'] = [];
+  let admissionIndex = 0;
+  for (const part of message.content) {
+    if (part.type !== 'toolCall') {
+      content.push(part);
+      continue;
+    }
+    const admission = admissions[admissionIndex];
+    admissionIndex += 1;
+    if (!admission) continue;
+    const { modelCall } = admission.decision;
+    if (!admission.decision.execute) {
+      content.push({
+        type: 'text',
+        text: modelCall.disposition === 'evidenceOnly'
+          ? toolCallEvidenceText(admission.toolCallId, modelCall)
+          : `[Tool call ${admission.toolCallId} was not executed.]`,
+      });
+      continue;
+    }
+    content.push({ ...part, id: admission.toolCallId });
+  }
+  return { ...message, content };
+}
+
 export async function persistToolCallAdmission(
   request: ToolCallAdmissionRequest,
   persistArguments: (value: JsonValue) => Promise<ThreadContextPayloadReference>,
 ): Promise<ToolCallAdmissionDecision> {
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
-  const redacted = redactSecretLikeJson(request.outcome.arguments);
-  const durableValue = redacted.value;
-  if (redacted.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
+  const durableValue = request.outcome.redactedArguments;
+  if (request.outcome.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
     return incompatibleRedactedAdmission(request, durableValue);
   }
   let source: ModelToolCallArguments;
@@ -62,14 +100,14 @@ export async function persistToolCallAdmission(
   } catch {
     return persistenceRejectedAdmission(request, durableValue);
   }
-  if (redacted.redactedPaths.length > 0) {
+  if (request.outcome.redactedPaths.length > 0) {
     return {
       modelCall: {
         disposition: 'redactedReplay',
         identity: request.outcome.identity,
         providerName: request.providerName,
         redactedArguments: source,
-        redactedPaths: redacted.redactedPaths,
+        redactedPaths: request.outcome.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
       },
       displayArguments: durableValue,
@@ -91,19 +129,19 @@ export async function persistToolCallAdmission(
 
 export function transientToolCallAdmission(request: ToolCallAdmissionRequest): ToolCallAdmissionDecision {
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
-  const redacted = redactSecretLikeJson(request.outcome.arguments);
-  if (redacted.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
-    return incompatibleRedactedAdmission(request, redacted.value);
+  const durableValue = request.outcome.redactedArguments;
+  if (request.outcome.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
+    return incompatibleRedactedAdmission(request, durableValue);
   }
-  const source = inlineModelToolCallArguments(redacted.value);
-  if (!source) return persistenceRejectedAdmission(request, redacted.value);
-  const modelCall = redacted.redactedPaths.length > 0
+  const source = inlineModelToolCallArguments(durableValue);
+  if (!source) return persistenceRejectedAdmission(request, durableValue);
+  const modelCall = request.outcome.redactedPaths.length > 0
     ? {
         disposition: 'redactedReplay' as const,
         identity: request.outcome.identity,
         providerName: request.providerName,
         redactedArguments: source,
-        redactedPaths: redacted.redactedPaths,
+        redactedPaths: request.outcome.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
       }
     : {
@@ -115,7 +153,7 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
       };
   return {
     modelCall,
-    displayArguments: redacted.value,
+    displayArguments: durableValue,
     execute: true,
   };
 }
@@ -124,8 +162,21 @@ export function persistenceFailureAdmission(
   request: ToolCallAdmissionRequest,
 ): ToolCallAdmissionDecision {
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
-  const redacted = redactSecretLikeJson(request.outcome.arguments).value;
-  return persistenceRejectedAdmission(request, redacted);
+  return persistenceRejectedAdmission(request, request.outcome.redactedArguments);
+}
+
+export async function prepareToolCallArguments(value: unknown): Promise<{
+  readonly arguments: JsonValue;
+  readonly redactedArguments: JsonValue;
+  readonly redactedPaths: readonly string[];
+}> {
+  const argumentsValue = jsonValue(value);
+  const redacted = await redactSecretLikeJsonAsync(argumentsValue);
+  return {
+    arguments: argumentsValue,
+    redactedArguments: redacted.value,
+    redactedPaths: redacted.redactedPaths,
+  };
 }
 
 export function modelToolSchemaDigest(schema: unknown): string {
@@ -140,11 +191,10 @@ export function canonicalToolIdentity(tool: AgentTool): ModelToolIdentity {
     : { namespace: tool.name.slice(0, separator), name: tool.name.slice(separator + 2) };
 }
 
-export function boundedJsonSummary(
-  value: unknown,
+export function boundedRedactedJsonSummary(
+  normalized: JsonValue,
   maxBytes = MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
 ): JsonValue {
-  const normalized = redactSecretLikeJson(jsonValue(value)).value;
   const encoded = JSON.stringify(normalized);
   const originalBytes = utf8Bytes(encoded);
   if (originalBytes <= maxBytes) return normalized;
@@ -206,7 +256,7 @@ export function toolCallEvidenceText(
 
 function rejectedAdmission(request: ToolCallAdmissionRequest): ToolCallAdmissionDecision {
   if (request.outcome.type !== 'rejected') throw new Error('Expected a rejected tool-call admission.');
-  const summary = boundedJsonSummary(request.outcome.arguments);
+  const summary = boundedRedactedJsonSummary(request.outcome.redactedArguments);
   return {
     modelCall: {
       disposition: 'evidenceOnly',
@@ -226,16 +276,17 @@ function persistenceRejectedAdmission(
   redactedArguments: JsonValue,
 ): ToolCallAdmissionDecision {
   if (request.outcome.type !== 'admitted') throw new Error('Expected an admitted tool-call request.');
+  const summary = boundedRedactedJsonSummary(redactedArguments);
   return {
     modelCall: {
       disposition: 'evidenceOnly',
       identity: request.outcome.identity,
       providerName: boundedEvidenceText(request.providerName, MAX_MODEL_TOOL_PROVIDER_NAME_BYTES),
-      redactedArgumentsSummary: boundedJsonSummary(redactedArguments),
+      redactedArgumentsSummary: summary,
       reason: 'argumentPersistenceUnavailable',
       correction: evidenceCorrection('argumentPersistenceUnavailable'),
     },
-    displayArguments: boundedJsonSummary(redactedArguments),
+    displayArguments: summary,
     execute: false,
   };
 }
@@ -250,7 +301,7 @@ function incompatibleRedactedAdmission(
       disposition: 'evidenceOnly',
       identity: request.outcome.identity,
       providerName: request.providerName,
-      redactedArgumentsSummary: boundedJsonSummary(redactedArguments),
+      redactedArgumentsSummary: boundedRedactedJsonSummary(redactedArguments),
       reason: 'schemaIncompatible',
       correction: 'The executed values were redacted and cannot be replayed. Preserve the outcome as evidence only.',
     },
@@ -306,7 +357,7 @@ function boundedUtf8Text(value: string, maxBytes: number): string {
 }
 
 function boundedEvidenceText(value: string, maxBytes: number): string {
-  return boundedUtf8Text(redactSecretLikeJson(value).value, maxBytes);
+  return boundedUtf8Text(redactSecretLikeContent(value), maxBytes);
 }
 
 function serializedBytes(value: JsonValue): number {

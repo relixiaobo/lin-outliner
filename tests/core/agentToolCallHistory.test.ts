@@ -9,6 +9,7 @@ import {
 import {
   modelToolSchemaDigest,
   persistToolCallAdmission,
+  prepareToolCallArguments,
   transientToolCallAdmission,
   type ToolCallAdmissionRequest,
 } from '../../src/main/agent/runtime/toolCallHistory';
@@ -29,7 +30,7 @@ describe('canonical model tool-call admission', () => {
       max_total_tokens: 80_000,
     } as const;
     const ordinary = await persistToolCallAdmission(
-      admittedRequest(ordinaryArguments),
+      await admittedRequest(ordinaryArguments),
       async () => { throw new Error('Small arguments must stay inline.'); },
     );
     expect(ordinary).toEqual({
@@ -50,7 +51,7 @@ describe('canonical model tool-call admission', () => {
       nested: { 'secret/key~': 'do-not-persist' },
     } as const;
     const redacted = await persistToolCallAdmission(
-      admittedRequest(secretArguments),
+      await admittedRequest(secretArguments),
       async () => { throw new Error('Small arguments must stay inline.'); },
     );
     expect(redacted.modelCall).toMatchObject({
@@ -76,7 +77,7 @@ describe('canonical model tool-call admission', () => {
     } as const;
 
     const decision = await persistToolCallAdmission(
-      admittedRequest(argumentsValue),
+      await admittedRequest(argumentsValue),
       async () => { throw new Error('Small arguments must stay inline.'); },
     );
 
@@ -90,7 +91,7 @@ describe('canonical model tool-call admission', () => {
     });
   });
 
-  test('keeps JSON-shaped body content exact instead of recursively interpreting it', async () => {
+  test('redacts direct credentials in a JSON-shaped argument string', async () => {
     const body = [
       '{',
       '  "client_secret" : "9f3a2c8d5e71b04a",',
@@ -99,25 +100,30 @@ describe('canonical model tool-call admission', () => {
       '}',
     ].join('\n');
     const decision = await persistToolCallAdmission(
-      admittedRequest({ body }),
+      await admittedRequest({ body }),
       async () => { throw new Error('Small arguments must stay inline.'); },
     );
 
+    const redactedBody = body
+      .replace('9f3a2c8d5e71b04a', '[redacted]')
+      .replace('s3cr3t-value-1234', '[redacted]');
     expect(decision).toMatchObject({
       execute: true,
-      displayArguments: { body },
+      displayArguments: { body: redactedBody },
       modelCall: {
-        disposition: 'replayable',
-        arguments: { storage: 'inline', value: { body } },
+        disposition: 'redactedReplay',
+        redactedArguments: { storage: 'inline', value: { body: redactedBody } },
+        redactedPaths: ['/body'],
       },
     });
-    expect(decision.displayArguments).toEqual({ body });
+    expect(JSON.stringify(decision)).not.toContain('9f3a2c8d5e71b04a');
+    expect(JSON.stringify(decision)).not.toContain('s3cr3t-value-1234');
   });
 
   test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {
     const secret = 'abcdefghijklmnop';
     const decision = await persistToolCallAdmission(
-      admittedRequest({ authorization: secret }, false),
+      await admittedRequest({ authorization: secret }, false),
       async () => { throw new Error('Evidence-only arguments must not allocate a payload.'); },
     );
 
@@ -144,7 +150,8 @@ describe('canonical model tool-call admission', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
     };
-    const durable = await persistToolCallAdmission(admittedRequest(argumentsValue), async (value) => {
+    const request = await admittedRequest(argumentsValue);
+    const durable = await persistToolCallAdmission(request, async (value) => {
       persisted = value;
       return payloadRef;
     });
@@ -159,7 +166,7 @@ describe('canonical model tool-call admission', () => {
       },
     });
 
-    const transient = transientToolCallAdmission(admittedRequest(argumentsValue));
+    const transient = transientToolCallAdmission(request);
     expect(transient).toMatchObject({
       execute: false,
       modelCall: {
@@ -179,7 +186,7 @@ describe('canonical model tool-call admission', () => {
       outcome: {
         type: 'rejected',
         identity: null,
-        arguments: { value: '界'.repeat(20_000) },
+        redactedArguments: { value: '界'.repeat(20_000) },
         reason: 'invalidArguments',
         correction: '改'.repeat(8_000),
       },
@@ -199,17 +206,20 @@ describe('canonical model tool-call admission', () => {
   });
 });
 
-function admittedRequest(
+async function admittedRequest(
   argumentsValue: JsonValue,
   redactedArgumentsReplayable = true,
-): ToolCallAdmissionRequest {
+): Promise<ToolCallAdmissionRequest> {
+  const redacted = await prepareToolCallArguments(argumentsValue);
   return {
     toolCallId: 'call-1',
     providerName: 'bash',
     outcome: {
       type: 'admitted',
       identity: { namespace: null, name: 'bash' },
-      arguments: argumentsValue,
+      arguments: redacted.arguments,
+      redactedArguments: redacted.redactedArguments,
+      redactedPaths: redacted.redactedPaths,
       schemaDigest: SCHEMA_DIGEST,
       redactedArgumentsReplayable,
     },

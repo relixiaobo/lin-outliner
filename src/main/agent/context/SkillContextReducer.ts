@@ -1,5 +1,6 @@
 import type {
   ContextCursor,
+  ContextDegradationCheckpointEntry,
   SkillCatalogContextPayload,
   SkillCatalogEntry,
   SkillInvocationContextPayload,
@@ -9,6 +10,11 @@ import type {
 } from '../../../core/agent/protocol';
 import { selectEffectiveContext } from './ContextEpoch';
 import { readInheritedContextPayload } from './InheritedContext';
+import {
+  appendContextDegradations,
+  contextDegradation,
+  recordContextDegradation,
+} from './ContextDegradation';
 
 const CORE_FILE_PATH_TOOLS = new Set([
   'file_delete',
@@ -23,6 +29,7 @@ export interface SkillContextState {
   readonly catalogHash: string | null;
   readonly catalogEntries: ReadonlyMap<string, SkillCatalogEntry>;
   readonly activeInvocations: ReadonlyMap<string, SkillInvocationContextPayload>;
+  readonly degradations: readonly ContextDegradationCheckpointEntry[];
 }
 
 export async function reduceSkillContext(
@@ -32,6 +39,7 @@ export async function reduceSkillContext(
   let catalogHash: string | null = null;
   const catalogEntries = new Map<string, SkillCatalogEntry>();
   const activeInvocations = new Map<string, SkillInvocationContextPayload>();
+  const degradations: ContextDegradationCheckpointEntry[] = [];
 
   for (const turn of selectEffectiveContext(turns).turns) {
     for (const item of turn.items) {
@@ -39,20 +47,39 @@ export async function reduceSkillContext(
         catalogHash = null;
         catalogEntries.clear();
         activeInvocations.clear();
+        degradations.length = 0;
         continue;
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
+        if (!inherited) {
+          catalogHash = null;
+          catalogEntries.clear();
+          activeInvocations.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
         const state = await reduceSkillContext(inherited.turns, readContext);
         catalogHash = state.catalogHash;
         replaceMap(catalogEntries, state.catalogEntries);
         replaceMap(activeInvocations, state.activeInvocations);
+        appendContextDegradations(degradations, state.degradations);
         continue;
       }
       if (item.type === 'contextCompaction') {
-        const restored = await readContext(item.restoredStateRef);
+        const restored = await readContext(item.restoredStateRef).catch(() => null);
         if (!restored || restored.kind !== 'compactionRestoredState') {
-          throw new Error(`Compaction Skill checkpoint is unavailable: ${item.restoredStateRef.id}`);
+          catalogHash = null;
+          catalogEntries.clear();
+          activeInvocations.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'compactionRestoredState', item.restoredStateRef.id),
+          );
+          continue;
         }
         const checkpoint = await restoreSkillCatalogCheckpoint(
           turns,
@@ -63,18 +90,27 @@ export async function reduceSkillContext(
         catalogEntries.clear();
         for (const [name, entry] of checkpoint.catalogEntries) catalogEntries.set(name, entry);
         catalogHash = checkpoint.catalogHash;
+        appendContextDegradations(degradations, checkpoint.degradations);
         activeInvocations.clear();
         for (const checkpoint of restored.activeSkills) {
-          const active = await readContext(checkpoint.payloadRef);
+          const active = await readContext(checkpoint.payloadRef).catch(() => null);
           if (!active || active.kind !== 'skillInvocation' || active.execution !== 'inline') {
-            throw new Error(`Compaction Skill checkpoint is unavailable: ${checkpoint.payloadRef.id}`);
+            recordContextDegradation(
+              degradations,
+              contextDegradation('payloadUnavailable', 'skillInvocation', checkpoint.payloadRef.id),
+            );
+            continue;
           }
           if (
             active.name !== checkpoint.name
             || active.identity !== checkpoint.identity
             || active.contentHash !== checkpoint.contentHash
           ) {
-            throw new Error(`Compaction Skill checkpoint does not match its invocation: ${checkpoint.name}`);
+            recordContextDegradation(
+              degradations,
+              contextDegradation('checkpointMismatch', 'skillInvocation', checkpoint.name),
+            );
+            continue;
           }
           activeInvocations.set(active.name, active);
         }
@@ -84,13 +120,25 @@ export async function reduceSkillContext(
         item.type !== 'contextEvidence'
         || (item.kind !== 'skillCatalog' && item.kind !== 'skillInvocation')
       ) continue;
-      const payload = await readContext(item.payloadRef);
-      if (!payload) throw new Error(`Canonical context payload is unavailable: ${item.payloadRef.id}`);
+      const payload = await readContext(item.payloadRef).catch(() => null);
+      if (!payload) {
+        recordContextDegradation(
+          degradations,
+          contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
+        );
+        continue;
+      }
       if (payload.kind === 'skillCatalog') {
         if (payload.mode === 'baseline') {
           catalogEntries.clear();
         } else if (catalogHash !== payload.previousCatalogHash) {
-          throw new Error('Skill catalog journal does not continue from the canonical catalog hash.');
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('journalDiscontinuity', 'skillCatalog', item.payloadRef.id),
+          );
+          continue;
         }
         applyCatalogEntries(catalogEntries, payload.entries);
         catalogHash = payload.catalogHash;
@@ -103,35 +151,71 @@ export async function reduceSkillContext(
     }
   }
 
-  return { catalogHash, catalogEntries, activeInvocations };
+  return { catalogHash, catalogEntries, activeInvocations, degradations };
 }
+
+type SkillCatalogReduction = Pick<SkillContextState, 'catalogHash' | 'catalogEntries' | 'degradations'>;
 
 async function reduceSkillCatalogThroughCursor(
   turns: readonly Turn[],
   cursor: ContextCursor,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<Pick<SkillContextState, 'catalogHash' | 'catalogEntries'>> {
+): Promise<SkillCatalogReduction> {
   let catalogHash: string | null = null;
   const catalogEntries = new Map<string, SkillCatalogEntry>();
+  const degradations: ContextDegradationCheckpointEntry[] = [];
   let reached = false;
   for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type === 'contextReset') {
         catalogHash = null;
         catalogEntries.clear();
+        degradations.length = 0;
       } else if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
+        if (!inherited) {
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          if (turn.id === cursor.turnId && item.id === cursor.itemId) {
+            reached = true;
+            break;
+          }
+          continue;
+        }
         const state = await reduceSkillContext(inherited.turns, readContext);
         catalogHash = state.catalogHash;
         replaceMap(catalogEntries, state.catalogEntries);
+        appendContextDegradations(degradations, state.degradations);
       } else if (item.type === 'contextEvidence' && item.kind === 'skillCatalog') {
-        const payload = await readContext(item.payloadRef);
+        const payload = await readContext(item.payloadRef).catch(() => null);
         if (!payload || payload.kind !== 'skillCatalog') {
-          throw new Error(`Skill catalog payload is unavailable: ${item.payloadRef.id}`);
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'skillCatalog', item.payloadRef.id),
+          );
+          if (turn.id === cursor.turnId && item.id === cursor.itemId) {
+            reached = true;
+            break;
+          }
+          continue;
         }
         if (payload.mode === 'baseline') catalogEntries.clear();
         else if (catalogHash !== payload.previousCatalogHash) {
-          throw new Error('Skill catalog journal does not continue from the canonical catalog hash.');
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('journalDiscontinuity', 'skillCatalog', item.payloadRef.id),
+          );
+          if (turn.id === cursor.turnId && item.id === cursor.itemId) {
+            reached = true;
+            break;
+          }
+          continue;
         }
         applyCatalogEntries(catalogEntries, payload.entries);
         catalogHash = payload.catalogHash;
@@ -144,9 +228,14 @@ async function reduceSkillCatalogThroughCursor(
     if (reached) break;
   }
   if (!reached) {
-    throw new Error(`Compaction Skill covered cursor is unreachable: ${cursor.turnId}/${cursor.itemId}`);
+    catalogHash = null;
+    catalogEntries.clear();
+    recordContextDegradation(
+      degradations,
+      contextDegradation('checkpointMismatch', 'skillCatalogCursor', `${cursor.turnId}/${cursor.itemId}`),
+    );
   }
-  return { catalogHash, catalogEntries };
+  return { catalogHash, catalogEntries, degradations };
 }
 
 export async function restoreSkillCatalogCheckpoint(
@@ -154,13 +243,21 @@ export async function restoreSkillCatalogCheckpoint(
   cursor: ContextCursor,
   restored: Extract<ThreadContextPayload, { readonly kind: 'compactionRestoredState' }>,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<Pick<SkillContextState, 'catalogHash' | 'catalogEntries'>> {
+): Promise<SkillCatalogReduction> {
   const journal = await reduceSkillCatalogThroughCursor(turns, cursor, readContext);
+  const invalid = (reference: string): SkillCatalogReduction => {
+    const degradations = [...journal.degradations];
+    recordContextDegradation(
+      degradations,
+      contextDegradation('checkpointMismatch', 'skillCatalog', reference),
+    );
+    return { catalogHash: null, catalogEntries: new Map(), degradations };
+  };
   if (journal.catalogHash !== restored.skillCatalogHash) {
-    throw new Error('Compaction Skill checkpoint does not match the canonical catalog journal.');
+    return invalid(restored.skillCatalogHash ?? 'null');
   }
   if (restored.announcedSkills.length !== journal.catalogEntries.size) {
-    throw new Error('Compaction Skill checkpoint does not contain the complete announced catalog.');
+    return invalid('announcedSkills');
   }
   const announcedNames = new Set<string>();
   for (const checkpoint of restored.announcedSkills) {
@@ -171,7 +268,7 @@ export async function restoreSkillCatalogCheckpoint(
       || entry.identity !== checkpoint.identity
       || entry.contentHash !== checkpoint.contentHash
     ) {
-      throw new Error(`Compaction Skill catalog entry is unavailable: ${checkpoint.name}`);
+      return invalid(checkpoint.name);
     }
     announcedNames.add(checkpoint.name);
   }

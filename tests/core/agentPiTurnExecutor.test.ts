@@ -205,7 +205,7 @@ describe('PiTurnExecutor event normalization', () => {
       outcome: {
         type: 'rejected',
         identity: null,
-        arguments: { authorization: secret },
+        redactedArguments: { authorization: '[redacted]' },
         reason: 'unresolvedTool',
         correction: 'Choose an exposed tool.',
       },
@@ -549,17 +549,21 @@ describe('PiTurnExecutor event normalization', () => {
     ]);
   });
 
-  test('rejects non-canonical image attachment shapes instead of projecting a file fallback', async () => {
-    await expect(serializeUserContent([{
+  test('degrades non-canonical attachment shapes without blocking provider projection', async () => {
+    const missingSnapshot = await serializeUserContent([{
       type: 'attachment',
       id: 'missing-prompt-image',
       name: 'source.png',
       mimeType: 'image/png',
       sizeBytes: 4096,
       source: { kind: 'localFile', path: '/outside/source.png' },
-    }], fixtureResources())).rejects.toThrow('missing its prompt snapshot');
+    }], fixtureResources());
+    expect(missingSnapshot).toContainEqual({
+      type: 'text',
+      text: '[Attachment image snapshot unavailable: source.png]',
+    });
 
-    await expect(serializeUserContent([{
+    const unexpectedSnapshot = await serializeUserContent([{
       type: 'attachment',
       id: 'unexpected-prompt-image',
       name: 'report.pdf',
@@ -572,7 +576,16 @@ describe('PiTurnExecutor event normalization', () => {
         byteLength: 8,
         fileName: 'prompt.png',
       },
-    }], fixtureResources())).rejects.toThrow('Non-image attachment cannot carry a prompt image');
+    }], fixtureResources());
+    expect(unexpectedSnapshot).toContainEqual({
+      type: 'text',
+      text: [
+        '[Attachment: report.pdf, application/pdf, 512 bytes]',
+        'Readable path: /workspace/report.pdf',
+        'Use file_read with this path to inspect the attachment.',
+      ].join('\n'),
+    });
+    expect(JSON.stringify(unexpectedSnapshot)).not.toContain('prompt.png');
   });
 
   test('adds one deterministic intent for attachment and Node-only input', async () => {
@@ -787,6 +800,39 @@ describe('PiTurnExecutor event normalization', () => {
       },
     });
     expect(fixture.diagnosticsErrors).toEqual([failure]);
+  });
+
+  test('keeps the provider request alive when diagnostics capture fails', async () => {
+    const fixture = createContext();
+    let payloadHookError: unknown = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createGateway: (hooks) => ({
+        stream: ({ model }) => {
+          const stream = createAssistantMessageEventStream();
+          const message = assistantMessage([{ type: 'text', text: 'Completed without diagnostics.' }]);
+          queueMicrotask(async () => {
+            try {
+              await hooks.onPayload?.({ model: model.id }, model);
+            } catch (error) {
+              payloadHookError = error;
+            }
+            emitAssistantMessage(stream, message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    const result = await executor.execute(fixture.context);
+
+    expect(payloadHookError).toBeNull();
+    expect(result).toMatchObject({ status: 'completed', execution: { diagnosticsRef: null } });
+    expect(fixture.diagnosticsPayloads).toEqual([]);
+    expect(fixture.diagnosticsErrors).toHaveLength(1);
+    expect(String(fixture.diagnosticsErrors[0])).toContain('missing the provider context');
   });
 
   test('keeps late steering diagnostics undelivered when no provider call consumes it', async () => {
@@ -1366,6 +1412,7 @@ describe('PiTurnExecutor event normalization', () => {
         outputRef,
         projectionRef: projectionItem.payloadRef,
       }],
+      degradations: [],
     });
     const compactTurnId = uuidV7(1_719_990_100_000);
     const compactItemId = uuidV7(1_719_990_100_001);
@@ -1612,6 +1659,7 @@ describe('PiTurnExecutor event normalization', () => {
           userViewBaselineRef: null,
           additionalContextBaselineRef: null,
           activeObservations: [],
+          degradations: [],
         });
         const id = fixture.recorder.createItemId();
         const item = {
@@ -2303,6 +2351,8 @@ describe('PiTurnExecutor event normalization', () => {
           type: 'admitted',
           identity: { namespace: null, name: 'file_read' },
           arguments: largeArguments,
+          redactedArguments: largeArguments,
+          redactedPaths: [],
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
           redactedArgumentsReplayable: true,
         },
@@ -2430,6 +2480,8 @@ describe('PiTurnExecutor event normalization', () => {
         type: 'admitted',
         identity: { namespace: null, name: 'file_write' },
         arguments: argumentsValue,
+        redactedArguments: argumentsValue,
+        redactedPaths: [],
         schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         redactedArgumentsReplayable: true,
       },

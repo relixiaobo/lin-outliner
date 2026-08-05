@@ -387,7 +387,7 @@ export class SubagentCollaboration {
       )));
       for (const ref of requiredContextRefs) {
         if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited context payload: ${ref.id}`);
+          console.warn(`[agent] Child retained unavailable inherited context payload: ${ref.id}`);
         }
       }
       for (const ref of toolArgumentRefs) {
@@ -398,7 +398,7 @@ export class SubagentCollaboration {
       }
       for (const ref of resourceRefs) {
         if (!await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited managed resource: ${ref.id}`);
+          console.warn(`[agent] Child retained unavailable inherited managed resource: ${ref.id}`);
         }
       }
       for (const ref of outputRefs) {
@@ -1165,34 +1165,25 @@ async function expandForContextDependencies(
 ): Promise<number> {
   let start = expandForCompactionCursors(turns, initialStart);
   for (;;) {
-    try {
-      const selected = turns.slice(start);
-      await Promise.all([
-        reduceSkillContext(selected, readContext),
-        reduceRoleContext(selected, readContext),
-      ]);
-      return start;
-    } catch (error) {
-      const kind = catalogJournalBoundaryKind(error);
-      if (start === 0 || kind === null) throw error;
-      const preceding = previousCatalogStateTurn(turns, start, kind);
-      if (preceding < 0) throw error;
-      start = expandForCompactionCursors(turns, preceding);
-    }
+    const selected = turns.slice(start);
+    const [skills, roles] = await Promise.all([
+      reduceSkillContext(selected, readContext),
+      reduceRoleContext(selected, readContext),
+    ]);
+    const kind = skills.degradations.some((entry) => (
+      entry.code === 'journalDiscontinuity' && entry.source === 'skillCatalog'
+    ))
+      ? 'skillCatalog' as const
+      : roles.degradations.some((entry) => (
+          entry.code === 'journalDiscontinuity' && entry.source === 'roleCatalog'
+        ))
+        ? 'roleCatalog' as const
+        : null;
+    if (start === 0 || kind === null) return start;
+    const preceding = previousCatalogStateTurn(turns, start, kind);
+    if (preceding < 0) return start;
+    start = expandForCompactionCursors(turns, preceding);
   }
-}
-
-function catalogJournalBoundaryKind(
-  error: unknown,
-): Extract<ContextEvidenceKind, 'skillCatalog' | 'roleCatalog'> | null {
-  if (!(error instanceof Error)) return null;
-  if (error.message === 'Skill catalog journal does not continue from the canonical catalog hash.') {
-    return 'skillCatalog';
-  }
-  if (error.message === 'Role catalog journal does not continue from the canonical catalog hash.') {
-    return 'roleCatalog';
-  }
-  return null;
 }
 
 function previousCatalogStateTurn(

@@ -390,16 +390,23 @@ export class ThreadCatalogOps {
       for (const item of copiedTurn.items) {
         for (const ref of itemResourceReferences(item)) {
           const copied = await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
-          if (!copied) throw new Error(`Missing managed resource payload: ${ref.id}`);
+          if (!copied) console.warn(`[agent] Fork retained unavailable managed resource: ${ref.id}`);
         }
         if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
           const directContextRefs = item.type === 'contextEvidence'
             ? [item.payloadRef]
             : [item.summaryRef, item.restoredStateRef, ...(item.instructionsRef ? [item.instructionsRef] : [])];
           for (const ref of directContextRefs) {
-            const payload = await this.core.payloads.readContext(sourceThreadId, ref);
-            if (!payload) throw new Error(`Missing context payload: ${ref.id}`);
-            assertContextPayloadDependencies(item, payload);
+            const payload = await this.core.payloads.readContext(sourceThreadId, ref).catch(() => null);
+            if (!payload) {
+              console.warn(`[agent] Fork retained unavailable context payload: ${ref.id}`);
+              continue;
+            }
+            try {
+              assertContextPayloadDependencies(item, payload);
+            } catch (error) {
+              console.warn(`[agent] Fork retained context payload with unavailable dependencies: ${ref.id}`, error);
+            }
           }
           for (const ref of item.outputRefs) {
             await copyOutput(ref);
@@ -409,7 +416,7 @@ export class ThreadCatalogOps {
         const requiredContextKeys = new Set(requiredContextRefs.map(contextPayloadReferenceKey));
         for (const ref of requiredContextRefs) {
           const payloadCopied = await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref);
-          if (!payloadCopied) throw new Error(`Missing context payload: ${ref.id}`);
+          if (!payloadCopied) console.warn(`[agent] Fork retained unavailable context payload: ${ref.id}`);
         }
         for (const ref of itemToolArgumentPayloadReferences(item)) {
           if (requiredContextKeys.has(contextPayloadReferenceKey(ref))) continue;

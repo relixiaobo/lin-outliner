@@ -2102,7 +2102,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
         'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef',
-        'additionalContextBaselineRef', 'activeObservations',
+        'additionalContextBaselineRef', 'activeObservations', 'degradations',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -2142,10 +2142,20 @@ function decodeCompactionRestoredState(
       entry,
       `contextPayload.activeObservations[${index}]`,
     ));
+  const degradations = arrayValue(record.degradations, 'contextPayload.degradations')
+    .map((entry, index) => decodeContextDegradationCheckpoint(
+      entry,
+      `contextPayload.degradations[${index}]`,
+    ));
   requireUnique(announcedSkills.map((entry) => entry.name), 'contextPayload.announcedSkills', 'Skill names');
   requireUnique(activeSkills.map((entry) => entry.name), 'contextPayload.activeSkills', 'Skill names');
   requireUnique(announcedRoles.map((entry) => entry.name), 'contextPayload.announcedRoles', 'Role names');
   requireUnique(activeObservations.map((entry) => entry.key), 'contextPayload.activeObservations', 'keys');
+  requireUnique(
+    degradations.map((entry) => JSON.stringify([entry.code, entry.source, entry.reference])),
+    'contextPayload.degradations',
+    'entries',
+  );
   return deepFreeze({
     schemaVersion: 1,
     kind,
@@ -2172,6 +2182,7 @@ function decodeCompactionRestoredState(
           'contextPayload.additionalContextBaselineRef',
         ),
     activeObservations,
+    degradations,
   });
 }
 
@@ -2411,6 +2422,22 @@ function decodeActiveObservationCheckpoint(value: unknown, path: string) {
       'toolOutputProjection',
       `${path}.projectionRef`,
     ),
+  };
+}
+
+function decodeContextDegradationCheckpoint(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['code', 'source', 'reference'], path);
+  return {
+    code: enumValue(record.code, [
+      'payloadUnavailable',
+      'payloadInvalid',
+      'journalDiscontinuity',
+      'checkpointMismatch',
+      'projectionConflict',
+    ], `${path}.code`),
+    source: nonEmptyTrimmedString(record.source, `${path}.source`),
+    reference: nonEmptyTrimmedString(record.reference, `${path}.reference`),
   };
 }
 

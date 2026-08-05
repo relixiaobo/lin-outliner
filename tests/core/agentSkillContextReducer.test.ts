@@ -131,6 +131,7 @@ describe('Skill context reducer', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     };
     const compactedTurnId = turnId(1);
     const turns = [turn([
@@ -156,15 +157,21 @@ describe('Skill context reducer', () => {
     const mismatched = { ...restoredState, skillCatalogHash: hash('9') };
     const mismatchedBaseline = store.evidence(baseline);
     const mismatchedTurnId = turnId(2);
-    await expect(reduceSkillContext([
+    const mismatchedState = await reduceSkillContext([
       turn([
         mismatchedBaseline,
         store.compaction(mismatched, mismatchedTurnId, mismatchedBaseline.id),
       ], mismatchedTurnId),
-    ], store.read)).rejects.toThrow('does not match the canonical catalog journal');
+    ], store.read);
+    expect(mismatchedState.catalogHash).toBeNull();
+    expect(mismatchedState.catalogEntries.size).toBe(0);
+    expect(mismatchedState.degradations).toContainEqual(expect.objectContaining({
+      code: 'checkpointMismatch',
+      source: 'skillCatalog',
+    }));
   });
 
-  test('fails closed when a delta journal skips its previous hash', async () => {
+  test('degrades and requests a fresh baseline when a delta journal skips its previous hash', async () => {
     const store = contextStore();
     const baseline = catalog('1', [entry('alpha', 'a1')]);
     const broken: SkillCatalogContextPayload = {
@@ -173,9 +180,15 @@ describe('Skill context reducer', () => {
       previousCatalogHash: hash('9'),
     };
 
-    await expect(reduceSkillContext([
+    const state = await reduceSkillContext([
       turn([store.evidence(baseline), store.evidence(broken)]),
-    ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
+    ], store.read);
+    expect(state.catalogHash).toBeNull();
+    expect(state.catalogEntries.size).toBe(0);
+    expect(state.degradations).toContainEqual(expect.objectContaining({
+      code: 'journalDiscontinuity',
+      source: 'skillCatalog',
+    }));
   });
 
   test('observes successful Core file paths from bounded Items without reading argument payloads', () => {

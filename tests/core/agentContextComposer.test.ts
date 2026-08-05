@@ -360,7 +360,7 @@ describe('canonical context projection', () => {
     expect(messageText(messages[2]!)).toContain('lifetime=thread');
   });
 
-  test('rejects payload dependencies omitted from the canonical Item graph', async () => {
+  test('projects a marker when payload dependencies are omitted from the canonical Item graph', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const resourceRef = {
       id: 'f'.repeat(64),
@@ -384,9 +384,11 @@ describe('canonical context projection', () => {
       }],
     }, 'missing-resource-dependency');
 
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
       turn(1, [item, userItem('user-1', 1_720_000_000_123, 'Inspect the image')], true),
-    ])).rejects.toThrow('missing from Item resourceRefs');
+    ]);
+    expect(messages.map(messageText).join('\n')).toContain('Context degradation');
+    expect(messages.map(messageText).join('\n')).toContain(item.payloadRef.id);
   });
 
   test('projects referenced Node resources through the same file marker contract', async () => {
@@ -1227,6 +1229,7 @@ describe('canonical context projection', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     });
     const compactionItem: ThreadItem = {
       type: 'contextCompaction',
@@ -1331,6 +1334,7 @@ describe('canonical context projection', () => {
       userViewBaselineRef: viewItem.payloadRef,
       additionalContextBaselineRef: additionalItem.payloadRef,
       activeObservations: [],
+      degradations: [],
     });
     const compactionItem: ThreadItem = {
       type: 'contextCompaction',
@@ -1382,7 +1386,7 @@ describe('canonical context projection', () => {
     expect(changedText).toContain('timezone=UTC');
   });
 
-  test('rejects compaction checkpoints that disagree with their Skill or observation payload', async () => {
+  test('marks compaction checkpoints that disagree with their Skill or observation payload', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const original = turn(20, [userItem('checkpoint-user', 1_720_000_600_123, 'Checkpoint source')], true);
     const summaryRef = storePayload(payloads, {
@@ -1424,6 +1428,7 @@ describe('canonical context projection', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     });
     const skillCompaction: ThreadItem = {
       type: 'contextCompaction',
@@ -1444,10 +1449,12 @@ describe('canonical context projection', () => {
       resourceRefs: [],
       outputRefs: [],
     };
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    const skillMessages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
       original,
       turn(21, [skillCompaction], true),
-    ])).rejects.toThrow('Restored active Skill does not match its checkpoint: alpha');
+    ]);
+    expect(skillMessages.map(messageText).join('\n')).toContain('checkpointMismatch');
+    expect(skillMessages.map(messageText).join('\n')).toContain(activeSkillRef.id);
 
     const projectedOutputRef = {
       id: 'c'.repeat(64),
@@ -1482,6 +1489,7 @@ describe('canonical context projection', () => {
         outputRef: checkpointOutputRef,
         projectionRef,
       }],
+      degradations: [],
     });
     const observationCompaction: ThreadItem = {
       ...skillCompaction,
@@ -1495,10 +1503,12 @@ describe('canonical context projection', () => {
       contextRefs: [projectionRef],
       outputRefs: [checkpointOutputRef, projectedOutputRef],
     };
-    await expect(new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+    const observationMessages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
       original,
       turn(22, [observationCompaction], true),
-    ])).rejects.toThrow('Restored observation does not match its frozen projection');
+    ]);
+    expect(observationMessages.map(messageText).join('\n')).toContain('checkpointMismatch');
+    expect(observationMessages.map(messageText).join('\n')).toContain(projectionRef.id);
   });
 });
 

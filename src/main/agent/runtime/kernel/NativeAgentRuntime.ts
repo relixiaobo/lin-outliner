@@ -7,7 +7,7 @@ import type {
   KernelAgentOptions,
   Message,
 } from './types';
-import { toolCallEvidenceText } from '../toolCallHistory';
+import { rewriteAssistantToolCallHistory } from '../toolCallHistory';
 
 type MutableAgentState = { -readonly [Key in keyof AgentState]: AgentState[Key] };
 
@@ -182,38 +182,10 @@ export class NativeAgentRuntime {
     const message = this.mutableState.messages[index];
     const source = this.pendingAssistantAdmissionSource;
     if (!message || message.role !== 'assistant' || !source) return;
-    let toolCallIndex = 0;
-    const content: typeof source.content = [];
-    for (const part of source.content) {
-      if (part.type !== 'toolCall') {
-        content.push(part);
-        continue;
-      }
-      const event = this.pendingAssistantAdmissions[toolCallIndex];
-      toolCallIndex += 1;
-      if (!event) {
-        content.push(part);
-        continue;
-      }
-      const modelCall = event.decision.modelCall;
-      if (!event.decision.execute) {
-        content.push({
-          type: 'text',
-          text: modelCall.disposition === 'evidenceOnly'
-            ? toolCallEvidenceText(event.toolCallId, modelCall)
-            : `[Tool call ${event.toolCallId} was not executed.]`,
-        });
-        continue;
-      }
-      content.push({
-        ...part,
-        id: event.toolCallId,
-      });
-    }
-    this.mutableState.messages[index] = { ...message, content };
-    if (this.pendingAssistantAdmissions.length >= toolCallIndex) {
-      this.pendingAssistantAdmissionSource = this.mutableState.messages[index] as AssistantMessage;
-    }
+    this.mutableState.messages[index] = rewriteAssistantToolCallHistory(
+      source,
+      this.pendingAssistantAdmissions,
+    );
   }
 
   private recordToolResultHistoryDecision(toolCallId: string, include: boolean): void {
