@@ -23,13 +23,29 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (authored `generated-image-resources` #489, plan only — implementation unclaimed; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448; agent-canonical-tool-call-history #483) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425, agent-execution-interaction-consistency #438, agent-reasoning-replay-fidelity #465, pi-ai-0.83-upgrade #487) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. **The "authoritative live state is the open PRs" claim is only true once a dev opens its Draft PR** — on 2026-08-03 two devs were building with the PR queue empty, so this table and the status tags below were the only radar. A dev that has started without claiming is the gap this table exists to cover.)*
 
 ## In progress
+
+**`agent-canonical-tool-call-history` shipped (#483, codex-3, 2026-08-05)** and is
+archived `done` (`docs/plans/archive/agent-canonical-tool-call-history.md`). Tool
+history now records the exact admitted model call instead of reconstructing arguments
+from presentation Items: each call freezes a `replayable`, `redactedReplay`, or
+`evidenceOnly` disposition before execution, and later projection, compaction, fork,
+diagnostics, transcript, and UI paths consume that same authority. This removes the
+self-reinforcing `bash` loop that invented `cwd`, dropped valid arguments, and taught
+the model to repeat schema-invalid calls. Secret-bearing arguments stay exact only in
+the active Turn; durable history and diagnostics retain a structure-preserving redacted
+copy, while missing payloads degrade to typed evidence instead of killing a Turn.
+**Gate: repeated protocol/security review passes.** The final focused pass at
+`6e0657c4` closed environment-assignment redaction across synchronous, cooperative,
+and diagnostic paths; stopped truncated batches after cancellation; and confirmed the
+PM-approved dependency exception. Typecheck, core and renderer suites, `docs:check`,
+diff check, and all five remote E2E samples passed before merge.
 
 **`unified-command-surface` design merged (#485, cc, 2026-08-04)** — plan and
 comment/spec alignment only; no product behaviour changed. The old `Target × Verb`
@@ -612,27 +628,16 @@ before any directional/security-sensitive build.
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
   loading. Depends on `skill-path-ownership`.
-- **agent-canonical-tool-call-history** (P1, `draft` — plan PR **#482** merged 2026-08-03,
-  codex-3) — make the exact admitted tool call the sole authority for tool history.
-  `ContextProjector.historyToolArguments()` currently reverse-engineers a model call from the
-  presentation Item: `commandExecution` becomes `{ command, cwd }` — inventing a `cwd` the
-  strict `bash` schema rejects (`additionalProperties: false`) while dropping the valid
-  `description` — and `fileChange` becomes a fabricated `{ changes }` no file schema accepts.
-  Compounding it, `startedToolItem` gives raw `input.cwd` precedence over `context.thread.cwd`
-  and `tool_execution_start` fires *before* `prepareToolCall` validates, so the model's own
-  rejected value is persisted as the audit record and replayed as a few-shot example — a
-  self-reinforcing loop that cost the packaged-task incident 64 pre-execution rejections and
-  ~$2.17. Fix: one immutable `modelCall` envelope per tool Item with three dispositions
-  (`replayable` / `redactedReplay` / `evidenceOnly`), a kernel admission event ahead of
-  execution-start, current-registry validation before every submission, and a pair-level
-  preflight that degrades to typed evidence rather than throwing on the user path (A12).
-  Secret-bearing model arguments (`Authorization: Bearer …`, `sk-…`) replay redacted with an
-  atomic marker instead of vanishing, closing an existing leak without teaching the model that
-  a command it ran never happened. `historyToolArguments`/`historyToolIdentity` are deleted and
-  AC-10 makes the empty `rg` the completion test (A11). **Shape (a): ONE complete feature in
-  ONE PR** — the PM ruled against splitting the large-argument payload store into its own PR.
-  **Gate at implementation:** `/code-review ultra` (protocol surface).
-  See `docs/plans/agent-canonical-tool-call-history.md`.
+- **agent-canonical-tool-call-history** (P1, `done` 2026-08-05; plan PR #482,
+  implementation PR #483, codex-3) — the exact admitted call is now the sole authority
+  for model-visible tool history. Immutable `modelCall` envelopes freeze exact replay,
+  marked redacted replay, or typed evidence before execution; large arguments remain
+  Thread-owned, and projection no longer invents `cwd`, drops valid arguments, or uses
+  presentation Items as a reverse mapper. Batch admission observes cancellation, corrupt
+  inspection-only payloads degrade instead of throwing on the user path, and recognized
+  credentials never enter durable Items, diagnostics, transcripts, or later provider
+  requests. Design folded into `docs/spec/agent-*.md`; plan archived at
+  `docs/plans/archive/agent-canonical-tool-call-history.md`.
 - **agent-context-integrity** (P1, `done` 2026-07-29; PRs #440, #441, #444) —
   restored the complete canonical model-context contract. PR 1 (#440): strict
   evidence Items and codecs, Thread-owned verified context payloads, typed
@@ -856,8 +861,9 @@ see *Recently completed*.
   orphaned resource and a dead path. Caps **degrade** (persist what fits, report the rest via
   `status`/`warnings`) rather than fail closed — A12's fail-closed clause is scoped to corrupt
   data, and turn execution is named among the paths that must degrade. Success signal: the
-  `pruneAgentScratch` special case disappears. **Sequencing: land after #483 or rebase onto it**
-  (it changes the tool-call protocol/codec). Shared-surface contacts, both deliberate:
+  `pruneAgentScratch` special case disappears. **Sequencing dependency satisfied:** #483
+  merged 2026-08-05; implementation starts from current `main`. Shared-surface contacts,
+  both deliberate:
   `PiTurnExecutor`'s tool-output image branch and `createThreadImageGenerationRuntime`'s
   signature. **Two gate refinements to fold in while building**, agreed at the plan gate and
   recorded in [#489's review](https://github.com/relixiaobo/lin-outliner/pull/489#issuecomment-5174369261):

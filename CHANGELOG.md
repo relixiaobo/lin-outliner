@@ -125,6 +125,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent tool history now replays what actually ran (PR #483, codex-3)** — the
+  model no longer learns schema-invalid calls from UI records that invented a
+  `cwd`, omitted valid arguments, or guessed file-operation shapes. Every admitted
+  call now freezes its exact canonical arguments and identity before execution;
+  later requests, context compaction, forks, transcripts, diagnostics, and tool
+  details all read that same record. Large arguments remain exact through
+  Thread-owned payloads, while missing or corrupt inspection data becomes bounded
+  evidence instead of breaking the Turn. Calls containing recognized credentials
+  still execute once with their original values in the active Turn, but only a
+  marked, structure-preserving redacted call and its real result survive into
+  durable history. Rejected and truncated calls produce typed correction evidence,
+  and stopping a Turn prevents the rest of either sequential, parallel, or
+  truncated batches from being admitted.
+
 - **The reading column is centered again when scrollbars take space (PR #479,
   codex)** — the outliner panel reserved its scrollbar gutter with
   `scrollbar-gutter: stable`, which reserves the inline-end edge only. With
