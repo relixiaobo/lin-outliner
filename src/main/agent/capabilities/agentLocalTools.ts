@@ -53,6 +53,7 @@ export interface AgentFileReadImageObservation {
   readonly bytes: Uint8Array;
   readonly mimeType: AgentImageMediaType;
   readonly dimensions?: ImageDimensions;
+  readonly sourceDimensions?: ImageDimensions;
 }
 
 export type AgentFileReadImageNormalizer = (input: {
@@ -118,6 +119,7 @@ interface FileReadImageData {
     type: AgentImageMediaType;
     originalSize: number;
     dimensions?: ImageDimensions;
+    sourceDimensions?: ImageDimensions;
   };
 }
 
@@ -898,7 +900,7 @@ function createFileReadTool(
         if (params.pages !== undefined && ext !== '.pdf') {
           throw new LocalToolFailure('invalid_args', 'The pages parameter is only valid for PDF files.', 'Remove pages or pass a .pdf file path.');
         }
-        const imageType = IMAGE_MEDIA_TYPES.get(ext);
+        const imageType = await imageMediaTypeForFile(filePath, IMAGE_MEDIA_TYPES.get(ext));
         if (imageType) {
           const observation = await readImageObservation(
             filePath,
@@ -915,6 +917,7 @@ function createFileReadTool(
               type: observation.mimeType,
               originalSize: fileStat.size,
               dimensions: observation.dimensions,
+              sourceDimensions: observation.sourceDimensions,
             },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
@@ -2187,13 +2190,52 @@ export function readAgentImageDimensions(buffer: Buffer, mediaType: string): Ima
   return undefined;
 }
 
+export function readAgentImageMediaType(buffer: Buffer): AgentImageMediaType | undefined {
+  if (buffer.length >= 8
+    && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buffer.length >= 6
+    && (buffer.toString('ascii', 0, 6) === 'GIF87a' || buffer.toString('ascii', 0, 6) === 'GIF89a')) {
+    return 'image/gif';
+  }
+  if (buffer.length >= 12
+    && buffer.toString('ascii', 0, 4) === 'RIFF'
+    && buffer.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  return undefined;
+}
+
+async function imageMediaTypeForFile(
+  filePath: string,
+  fallback: AgentImageMediaType | undefined,
+): Promise<AgentImageMediaType | undefined> {
+  const handle = await open(filePath, 'r');
+  try {
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(head, 0, head.byteLength, 0);
+    return readAgentImageMediaType(head.subarray(0, bytesRead)) ?? fallback;
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readImageObservation(
   filePath: string,
   sourceBytes: number,
   sourceMimeType: AgentImageMediaType,
   normalizer: AgentFileReadImageNormalizer | undefined,
   signal?: AbortSignal,
-): Promise<{ readonly bytes: Buffer; readonly mimeType: AgentImageMediaType; readonly dimensions?: ImageDimensions }> {
+): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: AgentImageMediaType;
+  readonly dimensions?: ImageDimensions;
+  readonly sourceDimensions?: ImageDimensions;
+}> {
   if (sourceBytes <= 0) {
     throw new LocalToolFailure('image_decode_failed', `Image is empty: ${filePath}`);
   }
@@ -2232,7 +2274,12 @@ async function readImageObservation(
       'Use an image converter to resize the source, then read the derived image.',
     );
   }
-  return { bytes, mimeType: observation.mimeType, ...(dimensions ? { dimensions } : {}) };
+  return {
+    bytes,
+    mimeType: observation.mimeType,
+    ...(dimensions ? { dimensions } : {}),
+    ...(observation.sourceDimensions ? { sourceDimensions: observation.sourceDimensions } : {}),
+  };
 }
 
 async function readRawImageObservation(
@@ -2253,6 +2300,7 @@ async function readRawImageObservation(
     bytes,
     mimeType: sourceMimeType,
     dimensions: readAgentImageDimensions(bytes, sourceMimeType),
+    sourceDimensions: readAgentImageDimensions(bytes, sourceMimeType),
   };
 }
 
@@ -3154,7 +3202,26 @@ function visibleFileEdit(data: FileEditData) {
 function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } {
   switch (data.type) {
     case 'image':
-      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+      const observationDimensions = data.file.dimensions;
+      const sourceDimensions = data.file.sourceDimensions ?? observationDimensions;
+      const scaleX = sourceDimensions && observationDimensions
+        ? sourceDimensions.width / observationDimensions.width
+        : undefined;
+      const scaleY = sourceDimensions && observationDimensions
+        ? sourceDimensions.height / observationDimensions.height
+        : undefined;
+      return {
+        file: {
+          filePath: data.file.filePath,
+          originalSize: data.file.originalSize,
+          observationDimensions,
+          sourceDimensions,
+          ...(scaleX !== undefined && scaleY !== undefined ? {
+            sourcePixelsPerObservationPixel: { x: scaleX, y: scaleY },
+            observationToSource: [scaleX, 0, 0, scaleY, 0, 0],
+          } : {}),
+        },
+      };
     case 'pdf':
       return {
         file: {

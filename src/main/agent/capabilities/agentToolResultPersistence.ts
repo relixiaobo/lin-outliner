@@ -6,8 +6,11 @@ import {
   TOOL_RESULT_VERSION,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { decodeThreadImageArtifactReference } from '../../../core/agent/codec';
+import type { ThreadImageArtifactReference } from '../../../core/agent/protocol';
 
 export interface PersistedToolResultDetailsInput {
+  toolNamespace: string | null;
   toolName: string;
   details?: unknown;
 }
@@ -20,8 +23,8 @@ export interface PersistedGeneratedImageDetailsData {
 }
 
 export interface PersistedGeneratedImageDetailsImage {
-  path: string;
-  markdownImage?: string;
+  providerIndex: number;
+  artifactRef: ThreadImageArtifactReference;
   mimeType?: string;
   byteLength?: number;
   width?: number;
@@ -31,8 +34,43 @@ export interface PersistedGeneratedImageDetailsImage {
 export function persistedToolResultDetails(input: PersistedToolResultDetailsInput): unknown | undefined {
   const details = input.details;
   if (!isToolEnvelope(details)) return undefined;
-  if (input.toolName !== GENERATE_IMAGE_TOOL_NAME || details.tool !== GENERATE_IMAGE_TOOL_NAME) return undefined;
+  if (
+    input.toolNamespace !== null
+    || input.toolName !== GENERATE_IMAGE_TOOL_NAME
+    || details.tool !== GENERATE_IMAGE_TOOL_NAME
+  ) return undefined;
   return persistedGenerateImageDetails(details);
+}
+
+export function persistedToolResultText(input: {
+  readonly toolNamespace: string | null;
+  readonly toolName: string;
+  readonly text: string;
+}): string {
+  if (input.toolNamespace !== null || input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  try {
+    const visible = JSON.parse(input.text) as unknown;
+    if (
+      !isRecord(visible)
+      || visible.ok !== true
+      || !isRecord(visible.data)
+      || !Array.isArray(visible.data.images)
+    ) return input.text;
+    if (visible.data.images.length === 0) return input.text;
+    const images = visible.data.images.map((image) => {
+      if (!isRecord(image)) return image;
+      const persisted = { ...image };
+      delete persisted.path;
+      return persisted;
+    });
+    return JSON.stringify({
+      ...visible,
+      data: { ...visible.data, images },
+      instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use the adjacent readable path for file operations when available.',
+    }, null, 2);
+  } catch {
+    return input.text;
+  }
 }
 
 function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<PersistedGeneratedImageDetailsData> | undefined {
@@ -64,16 +102,21 @@ function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<Pers
 
 function persistedGeneratedImage(image: unknown): PersistedGeneratedImageDetailsImage | null {
   if (!isRecord(image)) return null;
-  const path = requiredString(image.path);
-  if (!path) return null;
-  const markdownImage = optionalString(image.markdownImage);
+  const providerIndex = optionalPositiveInteger(image.providerIndex);
+  if (providerIndex === undefined || image.artifactRef === undefined) return null;
+  let artifactRef: ThreadImageArtifactReference;
+  try {
+    artifactRef = decodeThreadImageArtifactReference(image.artifactRef, 'generatedImage.artifactRef');
+  } catch {
+    return null;
+  }
   const mimeType = optionalString(image.mimeType);
   const byteLength = optionalPositiveNumber(image.byteLength);
   const width = optionalPositiveNumber(image.width);
   const height = optionalPositiveNumber(image.height);
   return {
-    path,
-    ...(markdownImage ? { markdownImage } : {}),
+    providerIndex,
+    artifactRef,
     ...(mimeType ? { mimeType } : {}),
     ...(byteLength !== undefined ? { byteLength } : {}),
     ...(width !== undefined ? { width } : {}),
@@ -91,6 +134,10 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalPositiveNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function optionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

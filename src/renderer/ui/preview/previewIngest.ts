@@ -8,12 +8,14 @@ import { api } from '../../api/client';
 // that it is the ingested state of the same unified file surface.
 
 /**
- * True when a non-node source can be copied into the asset store: a trusted live local
- * file or a Thread-owned resource. An `asset` is already a node, and a remote `url` is
- * not fetchable yet.
+ * True when a resolved non-node source can be copied into the asset store: a trusted
+ * live local file, a materialized Thread image artifact, or a Thread-owned resource.
+ * An `asset` is already a node, and a remote `url` is not fetchable yet.
  */
 export function canAddPreviewTargetToOutline(target: PreviewTarget): boolean {
-  return target.kind === 'local-file' && (!target.resourceRef || Boolean(target.threadId));
+  if (target.kind !== 'local-file' || target.entryKind !== 'file') return false;
+  if (target.resourceRef || target.imageArtifactRef) return Boolean(target.threadId);
+  return true;
 }
 
 /**
@@ -27,6 +29,7 @@ export async function ingestPreviewTargetToAsset(target: PreviewTarget): Promise
         ? api.ingestThreadResourceToAsset(target.threadId, target.resourceRef)
         : null;
     }
+    if (target.imageArtifactRef && !target.threadId) return null;
     // Full-file copy, no size cap, gated to the agent's trusted roots (the same gate
     // that let the file be previewed in the first place).
     return api.ingestLocalFileToAsset(target.path);

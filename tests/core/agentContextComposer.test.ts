@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { Api, Message, Model, TextContent } from '@earendil-works/pi-ai';
 import { encodeThreadContextPayload } from '../../src/core/agent/codec';
@@ -22,6 +22,7 @@ import {
   composeStablePrompt,
 } from '../../src/main/agent/context/stablePrompt';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
@@ -609,7 +610,7 @@ describe('canonical context projection', () => {
     expect(await new CanonicalContextProjector(model, resources).projectTurns([terminal])).toEqual(projected);
   });
 
-  test('keeps ordered dynamic tool image identity adjacent to immutable image bytes', async () => {
+  test('projects image observations with stable identity, best-rendition paths, and coordinate geometry', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const managedRef: ThreadResourceReference = {
       id: 'd'.repeat(64),
@@ -623,6 +624,25 @@ describe('canonical context projection', () => {
       byteLength: 3,
       fileName: 'local-snapshot.jpg',
     };
+    const managedArtifact = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: {
+        kind: 'threadPayload',
+        ref: { ...managedRef, id: 'c'.repeat(64), byteLength: 20, fileName: 'chart-original.webp' },
+      },
+      observation: managedRef,
+      sourceDimensions: { width: 4_000, height: 2_000 },
+      observationDimensions: { width: 2_000, height: 1_000 },
+    });
+    const localArtifact = createImageArtifactReference({
+      createdAt: 2,
+      retention: 'external',
+      original: { kind: 'localFile', path: '/workspace/output/raw.jpg' },
+      observation: localSnapshotRef,
+      sourceDimensions: { width: 2_000, height: 1_000 },
+      observationDimensions: { width: 1_000, height: 500 },
+    });
     const tool: ThreadItem = {
       type: 'dynamicToolCall',
       id: 'tool-images',
@@ -631,41 +651,108 @@ describe('canonical context projection', () => {
         originTurnId: uuidV7(1_720_000_100_001),
         originItemId: 'tool-images',
       },
-      namespace: 'visual',
-      tool: 'render',
+      namespace: null,
+      tool: 'generate_image',
       arguments: {},
       status: 'completed',
       outputRef: null,
       contentItems: [
         {
           type: 'image',
-          source: { kind: 'threadPayload', ref: managedRef },
+          artifactRef: managedArtifact,
           alt: 'Rendered chart',
         },
         {
           type: 'image',
-          source: { kind: 'localFile', path: '/workspace/output/raw.jpg' },
-          promptImage: localSnapshotRef,
+          artifactRef: localArtifact,
         },
       ],
       success: true,
       durationMs: 1,
       modelCall: projectionModelCall('visual__render', {}),
     };
-    const resources = projectionResources(payloads, new Map([
-      [managedRef.id, Buffer.from('chart')],
-      [localSnapshotRef.id, Buffer.from('raw')],
-    ]));
+    let pathResolutions = 0;
+    const resources = {
+      ...projectionResources(payloads, new Map([
+        [managedRef.id, Buffer.from('chart')],
+        [localSnapshotRef.id, Buffer.from('raw')],
+      ])),
+      resolveImageArtifactPath: async (artifact: typeof managedArtifact) => {
+        pathResolutions += 1;
+        return artifact.id === managedArtifact.id
+          ? '/scratch/thread/image-artifacts/managed/image'
+          : '/scratch/thread/image-artifacts/local/image';
+      },
+    };
 
     const messages = await new CanonicalContextProjector(model, resources).projectTurns([
       turn(1, [userItem('user-images', 1_720_000_000_123, 'Render both.'), tool], true),
     ]);
     const result = messages.find((message) => message.role === 'toolResult');
     expect(result?.content).toEqual([
-      { type: 'text', text: '[Image output: Rendered chart (chart.png), image/png, 5 bytes]' },
+      {
+        type: 'text',
+        text: [
+          `[Image output: Rendered chart (artifact:${managedArtifact.id}), artifact=${managedArtifact.id}, image/png, 5 observation bytes]`,
+          'Readable path: /scratch/thread/image-artifacts/managed/image',
+          'Image geometry: observation=2000x1000; source=4000x2000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+        ].join('\n'),
+      },
       { type: 'image', data: Buffer.from('chart').toString('base64'), mimeType: 'image/png' },
-      { type: 'text', text: '[Image output: /workspace/output/raw.jpg, image/jpeg, 3 bytes]' },
+      {
+        type: 'text',
+        text: [
+          `[Image output: artifact:${localArtifact.id}, artifact=${localArtifact.id}, image/jpeg, 3 observation bytes]`,
+          'Readable path: /scratch/thread/image-artifacts/local/image',
+          'Image geometry: observation=1000x500; source=2000x1000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+        ].join('\n'),
+      },
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
+    ]);
+    expect(pathResolutions).toBe(2);
+
+    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const pathlessMessages = await new CanonicalContextProjector(model, {
+        ...resources,
+        resolveImageArtifactPath: async () => {
+          throw new Error('EIO');
+        },
+      }).projectTurns([
+        turn(1, [userItem('user-images-pathless', 1_720_000_000_124, 'Render both.'), tool], true),
+      ]);
+      const pathlessResult = pathlessMessages.find((message) => message.role === 'toolResult');
+      expect(pathlessResult?.content).toHaveLength(4);
+      expect(JSON.stringify(pathlessResult?.content)).toContain(Buffer.from('chart').toString('base64'));
+      expect(JSON.stringify(pathlessResult?.content)).not.toContain('Readable path:');
+      expect(warningLog).toHaveBeenCalledWith(
+        '[agent][context-projection] image artifact path unavailable',
+        expect.objectContaining({ artifactId: managedArtifact.id, surface: 'tool-history' }),
+      );
+    } finally {
+      warningLog.mockRestore();
+    }
+
+    const unavailableMessages = await new CanonicalContextProjector(
+      model,
+      projectionResources(payloads),
+    ).projectTurns([
+      turn(1, [userItem('user-images-missing', 1_720_000_000_125, 'Render both.'), tool], true),
+    ]);
+    const unavailableResult = unavailableMessages.find((message) => message.role === 'toolResult');
+    expect(unavailableResult?.content).toEqual([
+      {
+        type: 'text',
+        text: `[Image output unavailable or corrupt: Rendered chart (artifact:${managedArtifact.id}), artifact=${managedArtifact.id}]`,
+      },
+      {
+        type: 'text',
+        text: `[Image output unavailable or corrupt: artifact:${localArtifact.id}, artifact=${localArtifact.id}]`,
+      },
     ]);
   });
 
@@ -1787,6 +1874,7 @@ function projectionResources(
     readOutput: async (ref: { readonly id: string }) => outputs.get(ref.id) ?? null,
     readResource: async (ref: ThreadResourceReference) => resources.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
   };
 }
 

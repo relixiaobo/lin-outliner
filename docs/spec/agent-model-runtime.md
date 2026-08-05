@@ -229,17 +229,22 @@ projects as `[[node:<label>^<node-id>]]` at its original position. The serialize
 those markers with the surrounding text into one user narrative, preserving whitespace
 and position. It then appends one independent attachment block per file in attachment
 order: name, MIME type, source byte length, readable path, file/directory tool guidance,
-and any bounded extracted text. An image attachment block is followed by its immutable
-prompt snapshot bytes. The inline marker and the independent resource block are both
+and any bounded extracted text. An image attachment block reports its stable artifact
+id, source and observation dimensions, both scale factors, and the full
+observation-to-source matrix, then includes only its immutable observation bytes. The
+inline marker and the independent resource block are both
 required: the marker preserves what the user wrote and where, while the resource block
 describes what the model can inspect. Multiple files, Nodes, and images therefore retain
 one model-visible identity grammar and exact user order without parsing markers back
-into canonical state. Resolved canonical input
-requires every image to carry
-a Thread-owned image `promptImage` and forbids `promptImage` on non-images. Admission
-rejects an invalid shape before publishing the user Item. If an admitted image snapshot
-later becomes unavailable, projection emits an explicit unavailable marker and
-continues; it never falls back to mutable file-path bytes.
+into canonical state. Resolved canonical input requires every image to carry an
+immutable `artifactRef`, requires its artifact original to match the attachment source,
+and forbids an artifact on non-images. Admission rejects an invalid shape before
+publishing the user Item. If corrupt canonical history violates the invariant or an
+admitted observation later becomes unavailable, projection emits an explicit textual
+marker and continues; it never falls back to mutable original-path bytes. Failure to
+materialize a readable artifact path is weaker than rendition loss: projection records
+the error, labels only the path as unavailable, and still includes retained observation
+bytes.
 
 Attachment sources are reference-only. `localFile` records a canonical live
 path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
@@ -346,23 +351,31 @@ inheritance use the same bytes while the complete `outputRef` remains available 
 inspection and checkpoint dependencies.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
-data URL. Existing readable outputs such as `file_read` and generated-image files
-retain a typed `localFile` source for UI/file operations plus a Thread-owned
-`promptImage` snapshot of the exact bytes exposed to the provider. Other provider
-images use their content-addressed `threadPayload` source as that snapshot.
+data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the
+artifact's Thread-owned observation is the exact bounded image exposed to the provider,
+while its optional original remains available to file-oriented consumers. The adjacent
+provider text identifies the artifact and reports source size, observation size, both
+scale factors, and the observation-to-source affine matrix. This gives the model enough
+information to relate the bounded observation to the admitted source-image pixel plane.
+The runtime does not inspect, validate, convert, or rewrite later tool arguments.
 Event admission, the payload store, and the canonical Item codec independently
 require an image MIME type; invalid MIME metadata produces a structured omission
 instead of a provider image block.
 Base64 length is validated before decoding, with independent per-image and
 per-tool-call byte budgets. Invalid, oversized, over-count, over-total, and Thread-quota
 images produce one structured omission summary instead of failing the complete tool
-result. Binary `data` fields are replaced before full textual output persistence, so
-neither small nor large base64 images leak into text payloads. Forking copies managed
-sources and local-image prompt snapshots under the target Thread while preserving the
-same references; external readable file paths remain unchanged. A
-Thread-scoped preview resolves managed images to disposable scratch copies rather than
-exposing canonical resource paths. Deleting a Thread deletes only that Thread's payload
-directory.
+result. Images within the generic source budgets pass through the common 2,000 px /
+4.5 MiB normalizer before persistence. Binary `data` fields are replaced before full
+textual output persistence, so neither small nor large base64 images leak into text
+payloads. Forking copies each available managed rendition under the target Thread while
+preserving the same artifact reference; a missing image rendition is skipped rather
+than aborting the fork. This exception is based on actual artifact use, not MIME type;
+an ordinary referenced `image/*` resource remains required. Inherited-context scans are
+recursive, so the same distinction governs child copying and pressure retention. A
+Thread-scoped preview resolves the best available rendition to
+a stable disposable scratch materialization rather than exposing canonical resource
+paths. Deleting a Thread deletes only that Thread's payload directory and materialized
+copies; it never touches an external original.
 
 ## Tools And Causation
 

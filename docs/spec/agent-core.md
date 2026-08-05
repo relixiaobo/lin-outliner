@@ -116,14 +116,39 @@ dependency graph instead of parsing payload-private JSON. A tool Item whose cano
 arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference directly;
 that reference participates in the same reachability, fork-copy, rollback, and startup
 reconciliation graph.
-Dynamic tool images carry a typed `localFile` or `threadPayload` source. A managed image
-uses that Thread-owned reference as its provider snapshot. A local image retains its
-live path for user actions and also carries a mandatory Thread-owned `promptImage`
-snapshot for exact provider replay. The owning Item lists every managed source or
-prompt snapshot in `resourceRefs`, including images nested inside inherited context.
-Fork and child ownership copy those content-addressed resources without rewriting the
-private payload, so provider-visible bytes and digests remain cache-stable after source
-Thread deletion.
+Every admitted image has one immutable `ThreadImageArtifactReference`. The reference
+contains a stable artifact id, creation time, retention class, optional original source,
+mandatory Thread-owned observation, and geometry mapping observation pixels to the
+admitted source plane. Image attachments keep their ordinary file source for file
+semantics and add an `artifactRef`; dynamic-tool image content stores only its
+`artifactRef` and optional alt text. Paths are access handles, never image identity.
+
+The four retention classes are `external` for user/workspace-owned originals,
+`durable` for Tenon-owned user uploads, `tiered` for reclaimable generated originals,
+and `observationOnly` when no separate original exists. The observation is normalized
+at ingress to at most 2,000 px per edge and 4.5 MiB, then content-addressed before the
+image enters canonical history. Provider projection always reads that observation.
+Missing original bytes fall back to the observation; missing observation bytes produce
+an unavailable-image identity and do not invalidate the surrounding Item, Turn, fork,
+or inherited-context copy. Available image renditions are copied into a fork without
+rewriting the immutable artifact reference; absent renditions are skipped. Ordinary
+managed dependencies not used exclusively as artifact renditions remain protected from
+image-retention reclamation, including referenced Outliner resources whose MIME type is
+`image/*`. Resource-role classification recursively reads inherited-context payloads and
+treats a missing or corrupt payload's declared resources as protected. Unavailable bytes
+degrade at runtime through the same inspection-payload policy above.
+
+Generic tool-output images are admitted as bounded provider-visible snapshots: at most
+16 images, 10 MiB of source data per image, and 20 MiB of source data per call, with
+strict base64 and image-MIME validation at the tool-result boundary. Each accepted image
+then passes through the common 2,000 px / 4.5 MiB observation normalizer and is
+content-addressed in the Thread resource store. The persistence boundary verifies that
+the returned MIME type and geometry match the normalized bytes.
+Typed Thread quota and filesystem-capacity errors degrade to `quotaExceeded`; unrelated
+storage failures retain their identity. Generated-image originals are not tool-output
+snapshots and do not use the generic 10 MiB source limit: `generate_image` writes the
+source bytes as a Thread resource, creates the bounded observation from those bytes, and
+reuses that canonical observation when its tool result is recorded.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
@@ -383,7 +408,7 @@ agent/
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
 owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
 the history source of truth. Complete textual tool outputs, managed attachment inputs,
-managed tool images, semantic context payloads, and immutable Turn diagnostics live in
+image-artifact renditions, semantic context payloads, and immutable Turn diagnostics live in
 the Thread-owned payload directory; canonical Items and terminal Turn execution retain
 typed content-addressed references.
 Context writes
@@ -392,7 +417,7 @@ verify digest and byte length, while text also selects storage by the referenced
 MIME type. Managed input admission reserves quota before
 writing, stages chunks under a non-canonical `.staging` directory, and publishes
 only a complete digest-verified resource. Failed content admission immediately
-removes prompt snapshots created by that attempt unless canonical history already
+removes image observations created by that attempt unless canonical history already
 references them. Execution-time context publication writes the payload and its Item
 under the Thread mutex; failed publication and Turn terminalization prune any context
 payload not reachable from the canonical Item graph. Inline model-call arguments are
@@ -425,11 +450,30 @@ collection. Successful writes cache file identity and digest in memory. A cold
 read or any inode, size, ctime, or mtime change streams SHA-256 again before the
 resource is returned, so same-length replacement cannot bypass integrity checks.
 Canonical managed-resource paths stay private to the payload store. Consumers
-that need a filesystem path receive an independent scratch observation: model
-execution owns a Turn-scoped copy, while Preview/Open/Reveal share a stable
-detached copy per attachment or resource identity, reclaimed by scratch TTL. Resource garbage
-collection uses the physical key (content hash plus safe filename), independently
-of logical MIME metadata.
+that need a filesystem path receive an independent scratch materialization: model
+execution owns a Turn-scoped workspace, while Preview/Open/Reveal share a stable
+detached copy per attachment, resource, or image-artifact identity. An image artifact
+materializes the best available rendition in original-then-observation order at one
+stable extensionless path, so reclaiming a WebP original and falling back to a PNG
+observation does not change the access handle or misstate the bytes. Preview and
+`file_read` determine image MIME from the rendition bytes. These reproducible copies
+follow the seven-day scratch TTL; canonical originals and observations do not. A
+materialization error during provider projection is recorded and degrades only the
+readable-path hint; available observation bytes and the surrounding Turn still project.
+
+Per Thread, canonical image retention has a 5 GiB target, 6 GiB soft watermark, and
+8 GiB hard resource budget. Crossing the soft watermark reclaims least-recently-used,
+then largest, `tiered` originals older than 30 days until the target is reached. A write
+that would cross the hard budget first reclaims any remaining `tiered` originals and
+then least-recently-used observations until the write fits. External originals and
+`durable` originals are never automatically deleted. Resource access updates durable
+atime metadata for this ordering without making a valid read fail. Canonical artifact
+references remain unchanged through `FULL -> OBSERVATION_ONLY -> UNAVAILABLE`.
+Retention inventory recursively includes artifacts nested in inherited-context payloads,
+while generic resources and durable originals remain protected. Missing or corrupt
+payloads protect their complete declared resource manifest.
+Resource garbage collection uses the physical key (content hash plus safe filename),
+independently of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which
 follow the same Thread deletion lifecycle and are removed when the service
 closes. Startup and rollback remove stale staging data plus managed resources, context

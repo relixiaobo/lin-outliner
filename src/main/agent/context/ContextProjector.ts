@@ -25,6 +25,7 @@ import type {
   ThreadContextPayloadReference,
   ToolOutputProjectionContextPayload,
   ThreadItem,
+  ThreadImageArtifactReference,
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
@@ -59,6 +60,7 @@ interface ProjectionResources {
   readOutput(ref: ToolOutputProjectionContextPayload['outputRef']): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
+  resolveImageArtifactPath(artifact: ThreadImageArtifactReference): Promise<string | null>;
 }
 
 export interface LiveModelToolCall {
@@ -860,7 +862,10 @@ export class CanonicalContextProjector {
 
 export async function serializeUserContent(
   content: readonly ThreadUserContent[],
-  resources: Pick<ProjectionResources, 'readResource' | 'resolveResourceObservationPath'>,
+  resources: Pick<
+    ProjectionResources,
+    'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
+  >,
 ): Promise<Array<TextContent | ImageContent>> {
   try {
     assertCanonicalUserContent(content);
@@ -869,7 +874,7 @@ export async function serializeUserContent(
   }
   const attachments: Array<{
     readonly part: Extract<ThreadUserContent, { readonly type: 'attachment' }>;
-    readonly location: string;
+    readonly location: string | null;
   }> = [];
   const narrative: string[] = [];
   for (const part of content) {
@@ -881,18 +886,27 @@ export async function serializeUserContent(
         narrative.push(formatNodeReferenceMarker(part.note ?? part.nodeId, part.nodeId));
         break;
       case 'attachment': {
-        const location = part.source.kind === 'localFile'
-          ? part.source.path
-          : await resources.resolveResourceObservationPath(part.source.ref).catch(() => null);
+        const location = part.artifactRef
+          ? await resolveImageArtifactPathForProjection(
+              resources,
+              part.artifactRef,
+              'user-attachment',
+            )
+          : part.source.kind === 'localFile'
+            ? part.source.path
+            : await resources.resolveResourceObservationPath(part.source.ref).catch(() => null);
         if (!location) {
-          narrative.push(`[Attachment unavailable: ${part.name}]`);
-          break;
+          narrative.push(part.artifactRef
+            ? `[Image attachment: ${part.name}; readable path unavailable]`
+            : `[Attachment unavailable: ${part.name}]`);
+          if (!part.artifactRef) break;
+        } else {
+          narrative.push(formatFileReferenceMarker(
+            part.name,
+            location,
+            part.mimeType === 'inode/directory' ? 'directory' : 'file',
+          ));
         }
-        narrative.push(formatFileReferenceMarker(
-          part.name,
-          location,
-          part.mimeType === 'inode/directory' ? 'directory' : 'file',
-        ));
         attachments.push({ part, location });
         break;
       }
@@ -907,25 +921,34 @@ export async function serializeUserContent(
 
   for (const { part, location } of attachments) {
     if (part.mimeType.startsWith('image/')) {
-      const promptImage = part.promptImage;
-      if (!promptImage) {
-        converted.push({ type: 'text', text: `[Attachment image snapshot unavailable: ${part.name}]` });
+      const artifact = part.artifactRef;
+      if (!artifact) {
+        converted.push({ type: 'text', text: `[Attachment image artifact unavailable or corrupt: ${part.name}]` });
         continue;
       }
-      const image = await resources.readResource(promptImage).catch(() => null);
+      const image = await resources.readResource(artifact.observation).catch(() => null);
       if (!image) {
-        converted.push({ type: 'text', text: `[Attachment image snapshot unavailable: ${part.name}]` });
+        converted.push({
+          type: 'text',
+          text: `[Attachment image unavailable or corrupt: ${part.name}; artifact=${artifact.id}]`,
+        });
         continue;
       }
       converted.push({
         type: 'text',
         text: [
           `[Attachment image: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]`,
-          `Readable path: ${location}`,
-          'The following image is the immutable prompt snapshot for this attachment.',
+          `Artifact: ${artifact.id}`,
+          ...(location ? [`Readable path: ${location}`] : []),
+          imageArtifactGeometryText(artifact),
+          'The following image is the immutable model observation for this attachment.',
         ].join('\n'),
       });
-      converted.push({ type: 'image', data: image.toString('base64'), mimeType: promptImage.mimeType });
+      converted.push({
+        type: 'image',
+        data: image.toString('base64'),
+        mimeType: artifact.observation.mimeType,
+      });
       continue;
     }
     converted.push({
@@ -1195,6 +1218,10 @@ function assistantHistoryMessage(
 export type HistoryToolItem = Extract<ThreadItem, {
   type: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch';
 }>;
+type DynamicToolImageContent = Extract<
+  NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number],
+  { type: 'image' }
+>;
 
 function isToolItem(item: ThreadItem): item is HistoryToolItem {
   return item.type === 'commandExecution'
@@ -1208,7 +1235,10 @@ function isToolItem(item: ThreadItem): item is HistoryToolItem {
 async function historyTool(
   item: HistoryToolItem,
   timestamp: number,
-  resources: Pick<ProjectionResources, 'readContext' | 'readOutput' | 'readResource'>,
+  resources: Pick<
+    ProjectionResources,
+    'readContext' | 'readOutput' | 'readResource' | 'resolveImageArtifactPath'
+  >,
   projection: ToolOutputProjectionContextPayload | null,
   projectionUnavailable: boolean,
   liveCall: LiveModelToolCall | null,
@@ -1315,7 +1345,7 @@ async function historicalToolEvidence(
 
 async function historyToolResultContent(
   item: HistoryToolItem,
-  resources: Pick<ProjectionResources, 'readOutput' | 'readResource'>,
+  resources: Pick<ProjectionResources, 'readOutput' | 'readResource' | 'resolveImageArtifactPath'>,
   projection: ToolOutputProjectionContextPayload | null,
 ): Promise<Array<TextContent | ImageContent>> {
   const projectedText = await projectedToolOutputText(projection, resources);
@@ -1328,11 +1358,23 @@ async function historyToolResultContent(
       } else if (part.type === 'json') {
         if (projectedText === null) content.push({ type: 'text', text: JSON.stringify(part.value) });
       } else {
-        const ref = 'promptImage' in part ? part.promptImage : part.source.ref;
-        const bytes = await resources.readResource(ref);
-        if (!bytes) throw new Error(`Tool image payload is unavailable or corrupt: ${ref.fileName}`);
-        content.push({ type: 'text', text: dynamicToolImageIdentity(part, ref) });
-        content.push({ type: 'image', data: bytes.toString('base64'), mimeType: ref.mimeType });
+        const artifact = part.artifactRef;
+        const bytes = await resources.readResource(artifact.observation);
+        if (!bytes) {
+          content.push({ type: 'text', text: dynamicToolImageUnavailableIdentity(part) });
+          continue;
+        }
+        const readablePath = await resolveImageArtifactPathForProjection(
+          resources,
+          artifact,
+          'tool-history',
+        );
+        content.push({ type: 'text', text: dynamicToolImageIdentity(part, readablePath) });
+        content.push({
+          type: 'image',
+          data: bytes.toString('base64'),
+          mimeType: artifact.observation.mimeType,
+        });
       }
     }
     if (content.length > 0) return content;
@@ -1352,13 +1394,63 @@ async function projectedToolOutputText(
 }
 
 export function dynamicToolImageIdentity(
-  part: Extract<NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number], { type: 'image' }>,
-  ref: ThreadResourceReference,
+  part: DynamicToolImageContent,
+  readablePath: string | null = null,
 ): string {
-  const source = part.source.kind === 'localFile' ? part.source.path : part.source.ref.fileName;
+  const label = dynamicToolImageLabel(part);
+  const artifact = part.artifactRef;
+  return [
+    `[Image output: ${label}, artifact=${artifact.id}, ${artifact.observation.mimeType}, ${artifact.observation.byteLength} observation bytes]`,
+    ...(readablePath ? [`Readable path: ${readablePath}`] : []),
+    imageArtifactGeometryText(artifact),
+  ].join('\n');
+}
+
+function dynamicToolImageUnavailableIdentity(
+  part: DynamicToolImageContent,
+): string {
+  const artifact = part.artifactRef;
+  return `[Image output unavailable or corrupt: ${dynamicToolImageLabel(part)}, artifact=${artifact.id}]`;
+}
+
+async function resolveImageArtifactPathForProjection(
+  resources: Pick<ProjectionResources, 'resolveImageArtifactPath'>,
+  artifact: ThreadImageArtifactReference,
+  surface: 'user-attachment' | 'tool-history',
+): Promise<string | null> {
+  try {
+    return await resources.resolveImageArtifactPath(artifact);
+  } catch (error) {
+    console.warn('[agent][context-projection] image artifact path unavailable', {
+      artifactId: artifact.id,
+      surface,
+      error,
+    });
+    return null;
+  }
+}
+
+function dynamicToolImageLabel(
+  part: DynamicToolImageContent,
+): string {
+  const source = `artifact:${part.artifactRef.id}`;
   const alt = part.alt?.trim().replace(/\s+/g, ' ');
-  const label = alt && alt !== source ? `${alt} (${source})` : alt || source;
-  return `[Image output: ${label}, ${ref.mimeType}, ${ref.byteLength} bytes]`;
+  return alt && alt !== source ? `${alt} (${source})` : alt || source;
+}
+
+function imageArtifactGeometryText(artifact: ThreadImageArtifactReference): string {
+  const geometry = artifact.geometry;
+  const scaleX = geometry.sourceWidth / geometry.observationWidth;
+  const scaleY = geometry.sourceHeight / geometry.observationHeight;
+  return [
+    `Image geometry: observation=${geometry.observationWidth}x${geometry.observationHeight}; source=${geometry.sourceWidth}x${geometry.sourceHeight}`,
+    `Source pixels per observation pixel: x=${formatGeometryNumber(scaleX)}, y=${formatGeometryNumber(scaleY)}`,
+    `Observation-to-source matrix: [${geometry.observationToSource.map(formatGeometryNumber).join(', ')}]`,
+  ].join('\n');
+}
+
+function formatGeometryNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(6).replace(/0+$/u, '').replace(/\.$/u, '');
 }
 
 export function toolItemVisibleOutputText(item: HistoryToolItem): string {

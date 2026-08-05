@@ -1667,13 +1667,12 @@ function ToolOutputImage({
   const label = image.alt || toolOutputImageLabel(image);
   const target = useMemo(() => ({
     kind: 'local-file' as const,
-    path: image.source.kind === 'localFile' ? image.source.path : image.source.ref.fileName,
+    path: image.artifactRef.id,
     entryKind: 'file' as const,
     label,
-    ...(image.source.kind === 'threadPayload'
-      ? { threadId, resourceRef: image.source.ref }
-      : {}),
-  }), [image.source, label, threadId]);
+    threadId,
+    imageArtifactRef: image.artifactRef,
+  }), [image.artifactRef, label, threadId]);
   const preview = usePreviewObjectUrl(target, { mimeType: 'image/*' });
   return (
     <button
@@ -1688,13 +1687,11 @@ function ToolOutputImage({
 }
 
 function toolOutputImageKey(image: Extract<DynamicToolOutputContent, { type: 'image' }>): string {
-  return image.source.kind === 'localFile'
-    ? `local:${image.source.path}`
-    : `thread:${image.source.ref.id}:${image.source.ref.fileName}`;
+  return `artifact:${image.artifactRef.id}`;
 }
 
 function toolOutputImageLabel(image: Extract<DynamicToolOutputContent, { type: 'image' }>): string {
-  return image.source.kind === 'localFile' ? image.source.path : image.source.ref.fileName;
+  return image.artifactRef.observation.fileName;
 }
 
 function ImageViewItem({ path }: { readonly path: string }) {

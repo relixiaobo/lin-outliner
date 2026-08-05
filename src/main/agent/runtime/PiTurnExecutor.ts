@@ -29,12 +29,13 @@ import type {
   SkillInvocationContextPayload,
   SubagentExecutionState,
   ThreadItem,
+  ThreadImageArtifactReference,
   ThreadItemOutputReference,
   Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
 import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
-import { decodeThreadContextPayload } from '../../../core/agent/codec';
+import { decodeThreadContextPayload, decodeThreadImageArtifactReference } from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
@@ -65,9 +66,15 @@ import {
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
-import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
+import {
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../capabilities/agentToolResultPersistence';
+import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
+import { createImageArtifactReference, ImageObservationNormalizationError } from '../imageArtifacts';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
   measureToolPayloadImage,
 } from '../persistence/ToolPayloadStore';
 import {
@@ -1282,14 +1289,17 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  if (!output.text) return null;
+  const text = item.type === 'dynamicToolCall'
+    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
+    : output.text;
+  if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
-  const normalized = output.text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/\s+/g, ' ').trim();
   const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
   return context.persistOutputText(
     item.id,
-    output.text,
+    text,
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
@@ -1456,11 +1466,18 @@ async function dynamicOutput(
     imageByteLimit: 0,
     callByteLimit: 0,
     quotaExceeded: 0,
+    dimensionsUnavailable: 0,
+    normalizationFailed: 0,
   };
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const text = boundedText(part.text, remainingText);
+      const persisted = persistedToolResultText({
+        toolNamespace: item.namespace,
+        toolName: item.tool,
+        text: part.text,
+      });
+      const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
     }
@@ -1485,25 +1502,50 @@ async function dynamicOutput(
         omittedImages.invalidMimeType += 1;
         continue;
       }
-      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
-        if (isThreadResourceQuotaError(error)) return null;
+      const observationBytes = Buffer.from(part.data, 'base64');
+      const observationDimensions = readAgentImageDimensions(observationBytes, mimeType);
+      if (!observationDimensions) {
+        omittedImages.dimensionsUnavailable += 1;
+        continue;
+      }
+      const persistedArtifact = toolImageArtifact(item.namespace, item.tool, result, sourceImageIndex);
+      const canonicalObservation = persistedArtifact
+        && persistedArtifact.observation.mimeType === mimeType
+        && persistedArtifact.observation.byteLength === observationBytes.byteLength
+        && persistedArtifact.geometry.observationWidth === observationDimensions.width
+        && persistedArtifact.geometry.observationHeight === observationDimensions.height
+        ? await context.readResource(persistedArtifact.observation).catch(() => null)
+        : null;
+      if (canonicalObservation?.equals(observationBytes)) {
+        persistedImageBytes += measurement.byteLength;
+        content.push({ type: 'image', artifactRef: persistedArtifact! });
+        persistedImages += 1;
+        continue;
+      }
+      const persisted = await context.persistOutputImage(observationBytes, mimeType).catch((error: unknown) => {
+        if (error instanceof ThreadResourceQuotaError) return 'quotaExceeded' as const;
+        if (error instanceof ImageObservationNormalizationError) return 'normalizationFailed' as const;
         throw error;
       });
-      if (!promptImage) {
-        omittedImages.quotaExceeded += 1;
+      if (persisted === 'quotaExceeded' || persisted === 'normalizationFailed') {
+        omittedImages[persisted] += 1;
         continue;
       }
       persistedImageBytes += measurement.byteLength;
-      if (existingPath) {
-        content.push({
-          type: 'image',
-          source: { kind: 'localFile', path: existingPath },
-          promptImage,
-        });
-      } else {
-        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
-      }
+      const existingPath = toolImagePath(item.namespace, item.tool, result);
+      const artifactRef = createImageArtifactReference({
+        retention: existingPath ? 'external' : 'observationOnly',
+        original: existingPath ? { kind: 'localFile', path: existingPath } : null,
+        observation: persisted.observation,
+        sourceDimensions: toolImageSourceDimensions(
+          item.namespace,
+          item.tool,
+          result,
+          persisted.sourceDimensions,
+        ),
+        observationDimensions: persisted.observationDimensions,
+      });
+      content.push({ type: 'image', artifactRef });
       persistedImages += 1;
     }
   }
@@ -1522,7 +1564,11 @@ async function dynamicOutput(
       },
     });
   }
-  const persistedDetails = persistedToolResultDetails({ toolName: item.tool, details: result.details });
+  const persistedDetails = persistedToolResultDetails({
+    toolNamespace: item.namespace,
+    toolName: item.tool,
+    details: result.details,
+  });
   if (persistedDetails !== undefined) {
     content.push({ type: 'json', value: boundedJsonValue(persistedDetails, MAX_PERSISTED_TOOL_OUTPUT_CHARS) });
   } else if (content.length === 0 && result.details !== undefined) {
@@ -1531,38 +1577,74 @@ async function dynamicOutput(
   return content;
 }
 
+function toolImagePath(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+): string | null {
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data)) return null;
+  if (toolNamespace === null && toolName === 'file_read' && isRecord(details.data.file)) {
+    if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
+      return details.data.file.filePath;
+    }
+  }
+  return null;
+}
+
+function toolImageArtifact(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  imageIndex: number,
+): ThreadImageArtifactReference | null {
+  if (toolNamespace !== null || toolName !== 'generate_image') return null;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !Array.isArray(details.data.images)) return null;
+  const image = details.data.images.find((candidate) => (
+    isRecord(candidate) && candidate.previewIndex === imageIndex
+  ));
+  if (!isRecord(image) || image.artifactRef === undefined) return null;
+  try {
+    return decodeThreadImageArtifactReference(image.artifactRef, 'generateImage.artifactRef');
+  } catch {
+    return null;
+  }
+}
+
+function toolImageSourceDimensions(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  fallback: { readonly width: number; readonly height: number },
+): { readonly width: number; readonly height: number } {
+  if (toolNamespace !== null || toolName !== 'file_read') return fallback;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !isRecord(details.data.file)) return fallback;
+  const dimensions = details.data.file.sourceDimensions;
+  if (!isRecord(dimensions)) return fallback;
+  return typeof dimensions.width === 'number' && typeof dimensions.height === 'number'
+    && Number.isSafeInteger(dimensions.width) && dimensions.width > 0
+    && Number.isSafeInteger(dimensions.height) && dimensions.height > 0
+    ? { width: dimensions.width, height: dimensions.height }
+    : fallback;
+}
+
 type ImageOmissionReason =
   | 'countLimit'
   | 'invalidBase64'
   | 'invalidMimeType'
   | 'imageByteLimit'
   | 'callByteLimit'
-  | 'quotaExceeded';
+  | 'quotaExceeded'
+  | 'dimensionsUnavailable'
+  | 'normalizationFailed';
 
 function dynamicImageMimeType(value: unknown): string | null {
   if (value === undefined) return 'image/png';
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
-}
-
-function isThreadResourceQuotaError(error: unknown): boolean {
-  return error instanceof Error && /\bquota\b/iu.test(error.message);
-}
-
-function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
-  const details = toolDetails(result);
-  if (!isRecord(details) || !isRecord(details.data)) return null;
-  if (toolName === 'file_read' && isRecord(details.data.file)) {
-    if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
-      return details.data.file.filePath;
-    }
-  }
-  if (toolName === 'generate_image' && Array.isArray(details.data.images)) {
-    const image = details.data.images[imageIndex];
-    if (isRecord(image) && typeof image.path === 'string') return image.path;
-  }
-  return null;
 }
 
 function boundedJsonValue(

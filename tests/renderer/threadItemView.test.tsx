@@ -388,6 +388,50 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
   });
 
+  test('renders dynamic tool images from their stable artifact identity', async () => {
+    const item: ThreadItem = {
+      ...base('dynamic-image-1'),
+      type: 'dynamicToolCall',
+      status: 'completed',
+      outputRef: null,
+      namespace: null,
+      tool: 'inspect_image',
+      arguments: {},
+      contentItems: [{
+        type: 'image',
+        alt: 'Inspection result',
+        artifactRef: {
+          id: 'f'.repeat(64),
+          createdAt: 1,
+          retention: 'observationOnly',
+          original: null,
+          observation: {
+            id: 'e'.repeat(64),
+            mimeType: 'image/png',
+            byteLength: 70,
+            fileName: 'prompt.png',
+          },
+          geometry: {
+            sourceWidth: 3_840,
+            sourceHeight: 2_160,
+            observationWidth: 1_920,
+            observationHeight: 1_080,
+            observationToSource: [2, 0, 0, 2, 0, 0],
+          },
+        },
+      }],
+      success: true,
+      durationMs: 4,
+      modelCall: replayableModelCall('inspect_image', {}),
+    };
+    const rendered = renderItem(item, { expanded: true });
+    await flush();
+
+    const image = rendered.document.querySelector<HTMLButtonElement>('.thread-tool-image');
+    expect(image?.getAttribute('aria-label')).toBe('Inspection result');
+    expect(image?.querySelector('svg')).not.toBeNull();
+  });
+
   test('colours only the failure tally in a group summary, not the whole line', async () => {
     const items = [
       command({ id: 'command-1', status: 'completed' }),

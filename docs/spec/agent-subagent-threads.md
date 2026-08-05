@@ -373,12 +373,15 @@ content, reasoning summaries, complete tool exchanges, images, attachments,
 compaction/reset semantics, the source Thread ID, and the exact covered-through cursor.
 It is model context, not a duplicate visible child transcript.
 
-Before child admission, main republishes the payload and copies every nested context,
-resource, and complete-output dependency into child ownership. Content-addressed
-references and payload digests remain stable; only ownership changes. Admission fails
-and cleans the staged child if any dependency cannot be copied. The child therefore
-remains projectable and its managed images remain previewable after the parent Thread is
-deleted.
+Before child admission, main republishes the payload and copies every available nested
+context, resource, and complete-output dependency into child ownership. Content-addressed
+references and payload digests remain stable; only ownership changes. Missing inspection
+payloads remain referenced and project as typed degradation evidence rather than blocking
+child admission. Recursive payload classification feeds retention independently: a
+child's inherited tiered originals and observations remain pressure-reclaimable while
+generic and durable dependencies, including ordinary managed images, stay protected. The
+child therefore remains projectable and its available managed images remain previewable
+after the parent Thread is deleted.
 
 Inherited payloads are reducer input, not projector-only message bundles. Skill and Role
 catalog reduction, active inline Skill recovery, user-view baseline selection, and
@@ -386,7 +389,7 @@ file/Node observation recovery recursively consume their effective typed Turns. 
 compaction checkpoints those inherited states with child-owned references; a later
 compaction consumes the prior checkpoint, so repeated compaction does not silently drop
 the inherited state. Conflicting frozen projections or unavailable nested dependencies
-fail closed.
+degrade with explicit model-visible evidence.
 
 Although the inherited Item and the child's task share the first active Turn, they are
 separate budget units. The protected active boundary starts at the first current

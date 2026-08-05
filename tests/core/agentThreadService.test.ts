@@ -17,7 +17,10 @@ import type {
   AgentCoreNotification,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
+  ThreadFileSource,
+  ThreadImageArtifactReference,
   ThreadItem,
+  ThreadResourceReference,
   Turn,
 } from '../../src/core/agent/protocol';
 import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
@@ -41,11 +44,15 @@ import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type {
   ThreadNameGenerationContext,
   ThreadNameGenerator,
+  PersistedOutputImageObservation,
   TurnExecutionContext,
   TurnExecutionResult,
   TurnExecutor,
 } from '../../src/main/agent/runtime/types';
-import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
+import {
+  PiEventNormalizer,
+  persistCompletedToolContext,
+} from '../../src/main/agent/runtime/PiTurnExecutor';
 import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
@@ -63,9 +70,14 @@ import {
   subagentTranscriptRoot,
 } from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
-import { replayableModelCall } from '../fixtures/agentToolCallHistory';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
+const ONE_PIXEL_PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==',
+  'base64',
+);
 const FORK_PAYLOAD_TOOL_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -241,19 +253,106 @@ class ForkPayloadExecutor extends ControlledExecutor {
       'text/plain',
       'Complete inherited output',
     );
-    const imageRef = await context.persistOutputImage(
-      Buffer.from('inherited image').toString('base64'),
+    const persistedImage = await context.persistOutputImage(
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
     );
     await context.recorder.completed({
       ...started,
       status: 'completed',
       outputRef,
-      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
+      contentItems: [{ type: 'image', artifactRef: outputImageArtifact(persistedImage) }],
       success: true,
       durationMs: 1,
     });
     return completedExecutionResult();
+  }
+}
+
+class GeneratedImageHistoryExecutor implements TurnExecutor {
+  readonly contexts: TurnExecutionContext[] = [];
+  sourcePath: string | null = null;
+  private readonly completions = new Map<number, (result: TurnExecutionResult) => void>();
+
+  async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    const index = this.contexts.push(context) - 1;
+    if (index !== 0) {
+      return new Promise<TurnExecutionResult>((resolve) => this.completions.set(index, resolve));
+    }
+
+    const original = await context.persistOutputResource(
+      ONE_PIXEL_PNG_BYTES,
+      'image/png',
+      'generated-original.png',
+    );
+    const observation = await context.persistOutputImage(ONE_PIXEL_PNG_BYTES, 'image/png');
+    const artifactRef = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: { kind: 'threadPayload', ref: original },
+      observation: observation.observation,
+      sourceDimensions: observation.sourceDimensions,
+      observationDimensions: observation.observationDimensions,
+    });
+    const path = await context.resolveImageArtifactPath(artifactRef);
+    if (!path) throw new Error('Generated image path was not materialized');
+    this.sourcePath = path;
+    const image = {
+      providerIndex: 1,
+      previewIndex: 0,
+      artifactRef,
+      path,
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      width: 1,
+      height: 1,
+    };
+    const normalizer = new PiEventNormalizer(context);
+    normalizer.handle(toolAdmissionEvent(
+      'generated-image-call',
+      'generate_image',
+      { prompt: 'A red square' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'generated-image-call',
+      toolName: 'generate_image',
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ok: true, tool: 'generate_image', data: { images: [image] } }),
+        }, {
+          type: 'image',
+          data: ONE_PIXEL_PNG_BYTES.toString('base64'),
+          mimeType: 'image/png',
+        }],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          version: 1,
+          status: 'success',
+          data: {
+            providerId: 'openai',
+            modelId: 'gpt-image-2',
+            modelName: 'GPT Image 2',
+            images: [image],
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+    return completedExecutionResult();
+  }
+
+  finish(index: number): void {
+    const complete = this.completions.get(index);
+    if (!complete) throw new Error(`Executor call ${index} is not waiting`);
+    complete(completedExecutionResult());
+  }
+
+  async waitUntilWaiting(index: number): Promise<void> {
+    while (!this.completions.has(index)) await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }
 
@@ -264,8 +363,8 @@ class ForkLocalImageExecutor implements TurnExecutor {
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     try {
       const itemId = context.recorder.createItemId();
-      const promptImage = await context.persistOutputImage(
-        Buffer.from('local image provider snapshot').toString('base64'),
+      const persistedImage = await context.persistOutputImage(
+        ONE_PIXEL_PNG_BYTES,
         'image/png',
       );
       const started: ThreadItem = {
@@ -288,8 +387,10 @@ class ForkLocalImageExecutor implements TurnExecutor {
         status: 'completed',
         contentItems: [{
           type: 'image',
-          source: { kind: 'localFile', path: '/workspace/local.png' },
-          promptImage,
+          artifactRef: outputImageArtifact(
+            persistedImage,
+            { kind: 'localFile', path: '/workspace/local.png' },
+          ),
         }],
         success: true,
         durationMs: 1,
@@ -324,7 +425,7 @@ class FailingImageExecutor extends ControlledExecutor {
 
   override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     this.imageRef = await context.persistOutputImage(
-      Buffer.from('orphaned image').toString('base64'),
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
     );
     throw new Error('Tool failed after persisting an image');
@@ -435,10 +536,11 @@ class ContextPayloadExecutor extends ControlledExecutor {
       resourceRefs: [resourceRef],
       outputRefs: [outputRef],
     });
-    const inheritedImageRef = await context.persistOutputImage(
-      Buffer.from('nested inherited image').toString('base64'),
+    const inheritedImage = await context.persistOutputImage(
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
     );
+    const inheritedImageArtifact = outputImageArtifact(inheritedImage);
     const inheritedTurnId = uuidV7();
     const inheritedItemId = uuidV7();
     const inheritedTurn: Turn = {
@@ -458,7 +560,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
         outputRef: null,
         contentItems: [{
           type: 'image',
-          source: { kind: 'threadPayload', ref: inheritedImageRef },
+          artifactRef: inheritedImageArtifact,
         }],
         success: true,
         durationMs: 1,
@@ -494,7 +596,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       payloadRef: inheritedPayloadRef,
       summary: 'Inherited context with a managed image',
       contextRefs: [],
-      resourceRefs: [inheritedImageRef],
+      resourceRefs: [inheritedImageArtifact.observation],
       outputRefs: [],
     });
     const resetId = context.recorder.createItemId();
@@ -1346,6 +1448,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => reopened.stores.payloads.readTextReference(thread.id, ref),
       readResource: (ref) => reopened.stores.payloads.readResource(thread.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(turns);
     expect(replayed).toEqual(executor.projected);
     await reopened.service.close();
@@ -2741,16 +2844,16 @@ describe('ThreadService', () => {
     const nestedImage = inheritedPayload.turns[0]?.items
       .find((item) => item.type === 'dynamicToolCall')
       ?.contentItems?.find((content) => content.type === 'image');
-    if (!nestedImage || nestedImage.source.kind !== 'threadPayload') {
+    if (!nestedImage) {
       throw new Error('Fork inherited context image reference missing');
     }
-    expect(nestedImage.source.ref).toEqual(forkInherited.resourceRefs[0]);
-    expect(await stores.payloads.readResource(fork.id, nestedImage.source.ref))
-      .toEqual(Buffer.from('nested inherited image'));
-    const previewFile = await service.resolveThreadResourceFile(fork.id, nestedImage.source.ref);
+    expect(nestedImage.artifactRef.observation).toEqual(forkInherited.resourceRefs[0]);
+    expect(await stores.payloads.readResource(fork.id, nestedImage.artifactRef.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
+    const previewFile = await service.resolveThreadResourceFile(fork.id, nestedImage.artifactRef.observation);
     if (!previewFile) throw new Error('Fork inherited context image preview missing');
     expect(previewFile.path).not.toContain(join('payloads', fork.id));
-    expect(await readFile(previewFile.path, 'utf8')).toBe('nested inherited image');
+    expect(await readFile(previewFile.path)).toEqual(ONE_PIXEL_PNG_BYTES);
     await service.close();
   });
 
@@ -2856,6 +2959,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(turns);
     expect(JSON.stringify(projected)).toContain('Fork-owned Skill description.');
     expect(JSON.stringify(projected)).toContain('Use the fork-owned Skill instructions.');
@@ -2901,16 +3005,17 @@ describe('ThreadService', () => {
     if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
 
     expect(forkItem.provenance).toEqual(sourceItem.provenance);
-    expect(forkImage.source).toEqual(sourceItem.contentItems?.find((content) => content.type === 'image')?.source);
+    expect(forkImage.artifactRef).toEqual(
+      sourceItem.contentItems?.find((content) => content.type === 'image')?.artifactRef,
+    );
     expect(await opened.service.readItemOutput({
       threadId: fork.id,
       turnId: forkTurn.id,
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
-    if (forkImage.source.kind !== 'threadPayload') throw new Error('Fork image is not Thread-owned');
-    expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
-      .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.artifactRef.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
     expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
       schemaVersion: 1,
       kind: 'toolCallArguments',
@@ -2954,8 +3059,8 @@ describe('ThreadService', () => {
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
-    expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
-      .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.artifactRef.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
     expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
       schemaVersion: 1,
       kind: 'toolCallArguments',
@@ -2978,8 +3083,8 @@ describe('ThreadService', () => {
       itemId: forkItem.id,
       outputId: forkItem.outputRef.id,
     })).toMatchObject({ output: { text: 'complete inherited output' } });
-    expect(await reopened.stores.payloads.readResource(fork.id, forkImage.source.ref))
-      .toEqual(Buffer.from('inherited image'));
+    expect(await reopened.stores.payloads.readResource(fork.id, forkImage.artifactRef.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
     expect(await reopened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
       schemaVersion: 1,
       kind: 'toolCallArguments',
@@ -2992,6 +3097,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => reopened.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => reopened.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }, [forkPayloadProjectionTool()]).projectTurns(restartedTurns);
     const replayedCall = projected.flatMap((message) => (
       typeof message.content === 'string'
@@ -3052,6 +3158,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => opened.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => opened.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(projected)).toContain('argumentPayloadUnavailable');
     expect(projected.some((message) => message.role === 'toolResult')).toBe(false);
@@ -3115,6 +3222,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(forkProjection)).toContain('Context degradation');
     expect(JSON.stringify(forkProjection)).toContain(evidence.payloadRef.id);
@@ -3209,6 +3317,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(forkProjection)).toContain('resultPayloadUnavailable');
     expect(JSON.stringify(forkProjection)).not.toContain('mutable fallback must not replay');
@@ -3251,6 +3360,102 @@ describe('ThreadService', () => {
     ]);
     await fixture.service.close();
   });
+  test('projects only target-owned readable paths after generated-image fork and inheritance', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(rootPath);
+    const executor = new GeneratedImageHistoryExecutor();
+    const opened = await openFixture(rootPath, executor, () => 1_720_000_000_000);
+    await opened.service.initialize();
+    const source = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: rootPath,
+    })).thread;
+    const generated = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Generate a red square' }],
+    });
+    await opened.service.waitForIdle(source.id);
+    if (!executor.sourcePath) throw new Error('Source generated-image path missing');
+    const sourceTurn = opened.service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
+    const sourceItem = sourceTurn.items.find((item) => item.type === 'dynamicToolCall');
+    if (!sourceItem?.outputRef) throw new Error('Source generated-image output missing');
+    expect(await opened.stores.payloads.readTextReference(source.id, sourceItem.outputRef))
+      .not.toContain(executor.sourcePath);
+
+    const fork = (await opened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: generated.turn.id },
+    })).thread;
+    const forkTurns = opened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const forkArtifact = forkTurns[0]!.items
+      .find((item) => item.type === 'dynamicToolCall')
+      ?.contentItems?.find((content) => content.type === 'image')?.artifactRef;
+    if (!forkArtifact) throw new Error('Fork generated-image artifact missing');
+    const forkFile = await opened.service.resolveImageArtifactFile(fork.id, forkArtifact);
+    if (!forkFile) throw new Error('Fork generated-image path missing');
+    const projectedFork = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => opened.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => opened.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => opened.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async (artifact) => (
+        await opened.service.resolveImageArtifactFile(fork.id, artifact)
+      )?.path ?? null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(projectedFork)).toContain(forkFile.path);
+    expect(JSON.stringify(projectedFork)).not.toContain(executor.sourcePath);
+
+    const active = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Delegate the generated image' }],
+    });
+    await executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(executor.contexts[1]!, 'generated-image-spawn');
+    const child = await opened.service.spawnCollaborationAgent({
+      senderThreadId: source.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'generated-image-spawn',
+      taskName: 'generated_image_child',
+      message: 'Inspect the inherited generated image',
+      forkTurns: 'all',
+    });
+    await executor.waitUntilWaiting(2);
+    const inheritedEvidence = child.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!inheritedEvidence || inheritedEvidence.type !== 'contextEvidence') {
+      throw new Error('Child inherited context missing');
+    }
+    const inherited = await opened.stores.payloads.readContext(child.thread.id, inheritedEvidence.payloadRef);
+    if (!inherited || inherited.kind !== 'inheritedContext') throw new Error('Child inherited payload missing');
+    const childArtifact = inherited.turns.flatMap((turn) => turn.items)
+      .find((item) => item.type === 'dynamicToolCall' && item.tool === 'generate_image')
+      ?.contentItems?.find((content) => content.type === 'image')?.artifactRef;
+    if (!childArtifact) throw new Error('Child generated-image artifact missing');
+    const childFile = await opened.service.resolveImageArtifactFile(child.thread.id, childArtifact);
+    if (!childFile) throw new Error('Child generated-image path missing');
+    const projectedChild = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => opened.stores.payloads.readContext(child.thread.id, ref),
+      readOutput: (ref) => opened.stores.payloads.readTextReference(child.thread.id, ref),
+      readResource: (ref) => opened.stores.payloads.readResource(child.thread.id, ref),
+      resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async (artifact) => (
+        await opened.service.resolveImageArtifactFile(child.thread.id, artifact)
+      )?.path ?? null,
+    }).projectTurns([child.turn]);
+    expect(JSON.stringify(projectedChild)).toContain(childFile.path);
+    expect(JSON.stringify(projectedChild)).not.toContain(executor.sourcePath);
+
+    executor.finish(2);
+    executor.finish(1);
+    await Promise.all([
+      opened.service.waitForIdle(child.thread.id),
+      opened.service.waitForIdle(source.id),
+    ]);
+    await opened.service.close();
+  });
 
   test('copies local tool image provider snapshots into a fork', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
@@ -3279,13 +3484,159 @@ describe('ThreadService', () => {
     const forkItem = opened.service.readThread({ threadId: fork.id, includeTurns: true })
       .thread.turns![0]!.items.find((item) => item.type === 'dynamicToolCall');
     const forkImage = forkItem?.contentItems?.find((content) => content.type === 'image');
-    if (!forkImage || !('promptImage' in forkImage)) throw new Error('Fork local image snapshot missing');
+    if (!forkImage) throw new Error('Fork local image snapshot missing');
 
     await opened.service.deleteThread(source.id);
-    expect(forkImage.source).toEqual({ kind: 'localFile', path: '/workspace/local.png' });
-    expect(await opened.stores.payloads.readResource(fork.id, forkImage.promptImage))
-      .toEqual(Buffer.from('local image provider snapshot'));
+    expect(forkImage.artifactRef.original).toEqual({ kind: 'localFile', path: '/workspace/local.png' });
+    expect(await opened.stores.payloads.readResource(fork.id, forkImage.artifactRef.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
     await opened.service.close();
+  });
+
+  test('normalizes oversized output images before persistence and returns both geometries', async () => {
+    const sourceBytes = pngFixture(3_840, 2_160);
+    const observationBytes = pngFixture(1_920, 1_080);
+    let normalizedSource: Buffer | null = null;
+    const fixture = await createFixture(undefined, {
+      normalizeOutputImage: async ({ bytes, mimeType }) => {
+        normalizedSource = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return {
+          bytes: observationBytes,
+          mimeType,
+          sourceDimensions: { width: 3_840, height: 2_160 },
+          observationDimensions: { width: 1_920, height: 1_080 },
+        };
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Inspect a 4K tool image' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const persisted = await fixture.executor.contexts[0]!.persistOutputImage(
+      sourceBytes,
+      'image/png',
+    );
+
+    expect(normalizedSource).toEqual(sourceBytes);
+    expect(persisted).toMatchObject({
+      sourceDimensions: { width: 3_840, height: 2_160 },
+      observationDimensions: { width: 1_920, height: 1_080 },
+    });
+    expect(await fixture.stores.payloads.readResource(thread.id, persisted.observation))
+      .toEqual(observationBytes);
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('forks image history when the observation rendition is already unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const opened = await openFixture(root, new ForkPayloadExecutor(), () => 1_720_000_000_000);
+    await opened.service.initialize();
+    const source = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    const accepted = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Create an image artifact' }],
+    });
+    await opened.service.waitForIdle(source.id);
+    const sourceImage = opened.service.readThread({ threadId: source.id, includeTurns: true })
+      .thread.turns![0]!.items
+      .find((item) => item.type === 'dynamicToolCall')
+      ?.contentItems?.find((content) => content.type === 'image');
+    if (!sourceImage) throw new Error('Source image artifact missing');
+    expect(await opened.stores.payloads.deleteResource(source.id, sourceImage.artifactRef.observation)).toBe(true);
+
+    const fork = (await opened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkImage = opened.service.readThread({ threadId: fork.id, includeTurns: true })
+      .thread.turns![0]!.items
+      .find((item) => item.type === 'dynamicToolCall')
+      ?.contentItems?.find((content) => content.type === 'image');
+
+    expect(forkImage?.artifactRef).toEqual(sourceImage.artifactRef);
+    expect(await opened.stores.payloads.readResource(fork.id, sourceImage.artifactRef.observation)).toBeNull();
+    await opened.service.close();
+  });
+
+  test('degrades a fork when a missing image is both an artifact rendition and an ordinary resource', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Inspect the referenced image' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const resourceRef = await fixture.stores.payloads.writeResource(
+      source.id,
+      ONE_PIXEL_PNG_BYTES,
+      'image/png',
+      'referenced-node.png',
+    );
+    const artifactRef = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'observationOnly',
+      original: null,
+      observation: resourceRef,
+      sourceDimensions: { width: 1, height: 1 },
+      observationDimensions: { width: 1, height: 1 },
+    });
+    const toolId = fixture.executor.contexts[0]!.recorder.createItemId();
+    await fixture.executor.contexts[0]!.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: fixture.executor.contexts[0]!.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'file_read',
+      arguments: {},
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'image', artifactRef }],
+      success: true,
+      durationMs: 1,
+      modelCall: replayableModelCall('file_read', {}),
+    });
+    await recordReferencedImageEvidence(fixture.executor.contexts[0]!, fixture.stores.payloads, resourceRef);
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(source.id);
+    expect(await fixture.stores.payloads.deleteResource(source.id, resourceRef)).toBe(true);
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const projected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(projected)).toContain('Image output unavailable or corrupt');
+    expect(JSON.stringify(projected)).toContain(resourceRef.id);
+    await fixture.service.close();
   });
 
   test('removes a newly written tool image when no canonical Item references it', async () => {
@@ -3308,7 +3659,7 @@ describe('ThreadService', () => {
     await opened.service.waitForIdle(thread.id);
 
     if (!executor.imageRef) throw new Error('Failing executor did not write its image');
-    expect(await opened.stores.payloads.readResource(thread.id, executor.imageRef)).toBeNull();
+    expect(await opened.stores.payloads.readResource(thread.id, executor.imageRef.observation)).toBeNull();
     await opened.service.close();
   });
 
@@ -3343,7 +3694,7 @@ describe('ThreadService', () => {
     await service.close();
   });
 
-  test('copies inherited managed attachments and prompt snapshots into a fork', async () => {
+  test('copies inherited managed image originals and observations into a fork', async () => {
     const fixture = await createFixture();
     const source = (await fixture.service.startThread({
       source: 'app',
@@ -3353,13 +3704,13 @@ describe('ThreadService', () => {
     })).thread;
     const sourceRef = await fixture.service.writeThreadResource(
       source.id,
-      Buffer.from('original image'),
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
       'source.png',
     );
     const promptRef = await fixture.service.writeThreadResource(
       source.id,
-      Buffer.from('prompt image'),
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
       'prompt.png',
     );
@@ -3372,7 +3723,14 @@ describe('ThreadService', () => {
         mimeType: 'image/png',
         sizeBytes: sourceRef.byteLength,
         source: { kind: 'threadPayload', ref: sourceRef },
-        promptImage: promptRef,
+        artifactRef: createImageArtifactReference({
+          createdAt: 1,
+          retention: 'durable',
+          original: { kind: 'threadPayload', ref: sourceRef },
+          observation: promptRef,
+          sourceDimensions: { width: 1, height: 1 },
+          observationDimensions: { width: 1, height: 1 },
+        }),
       }],
     });
     await fixture.executor.waitUntilWaiting();
@@ -3385,8 +3743,8 @@ describe('ThreadService', () => {
     })).thread;
     await fixture.service.deleteThread(source.id);
 
-    expect(await fixture.service.readThreadResource(fork.id, sourceRef)).toEqual(Buffer.from('original image'));
-    expect(await fixture.service.readThreadResource(fork.id, promptRef)).toEqual(Buffer.from('prompt image'));
+    expect(await fixture.service.readThreadResource(fork.id, sourceRef)).toEqual(ONE_PIXEL_PNG_BYTES);
+    expect(await fixture.service.readThreadResource(fork.id, promptRef)).toEqual(ONE_PIXEL_PNG_BYTES);
     await fixture.service.close();
   });
 
@@ -4120,10 +4478,11 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting();
     const context = fixture.executor.contexts[0]!;
-    const imageRef = await context.persistOutputImage(
-      Buffer.from('dependency removed before copy').toString('base64'),
+    const persistedImage = await context.persistOutputImage(
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
     );
+    const artifactRef = outputImageArtifact(persistedImage);
     await context.recorder.completedImmediately({
       type: 'dynamicToolCall',
       id: 'managed-image-item',
@@ -4133,12 +4492,12 @@ describe('ThreadService', () => {
       arguments: { file_path: '/workspace/missing.png' },
       status: 'completed',
       outputRef: null,
-      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
+      contentItems: [{ type: 'image', artifactRef }],
       success: true,
       durationMs: 1,
       modelCall: replayableModelCall('file_read', { file_path: '/workspace/missing.png' }),
     });
-    expect(await fixture.stores.payloads.deleteResource(root.id, imageRef)).toBe(true);
+    expect(await fixture.stores.payloads.deleteResource(root.id, artifactRef.observation)).toBe(true);
     await recordCollaborationSpawnBoundary(context, 'copy-failure-spawn');
 
     const child = await fixture.service.spawnCollaborationAgent({
@@ -4153,7 +4512,8 @@ describe('ThreadService', () => {
       projectionModel(),
       fixture.executor.contexts[1]!,
     ).projectTurns([child.turn]);
-    expect(JSON.stringify(projected)).toContain('resultPayloadUnavailable');
+    expect(JSON.stringify(projected)).toContain('Image output unavailable or corrupt');
+    expect(JSON.stringify(projected)).toContain(artifactRef.id);
     expect(fixture.service.readThread({ threadId: child.thread.id }).thread.id).toBe(child.thread.id);
 
     fixture.executor.finish(1);
@@ -4583,6 +4943,170 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('starts child inheritance with degradation when an ordinary image resource is missing', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Establish referenced image context' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const resourceRef = await fixture.stores.payloads.writeResource(
+      root.id,
+      ONE_PIXEL_PNG_BYTES,
+      'image/png',
+      'referenced-node.png',
+    );
+    await recordReferencedImageEvidence(fixture.executor.contexts[0]!, fixture.stores.payloads, resourceRef);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with inherited context' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'missing-image-spawn');
+    expect(await fixture.stores.payloads.deleteResource(root.id, resourceRef)).toBe(true);
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-image-spawn',
+      taskName: 'missing_image_child',
+      message: 'Use the referenced image',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const projected = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(projected)).toContain('Context degradation');
+    expect(JSON.stringify(projected)).toContain(resourceRef.id);
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('reclaims a tiered original nested in inherited child context under pressure', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(rootPath);
+    const now = 10_000;
+    const stores = createStores(rootPath, {
+      now: () => now,
+      imageRetention: {
+        targetBytes: 200_000,
+        softBytes: 300_000,
+        hardBytes: 500_000,
+        minOriginalAgeMs: 1_000,
+      },
+    });
+    const executor = new ControlledExecutor();
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(rootPath, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(rootPath, 'app-data')),
+      now: () => now,
+    });
+    await service.initialize();
+    const root = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: rootPath,
+    })).thread;
+    await service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create a tiered image artifact' }],
+    });
+    await executor.waitUntilWaiting(0);
+    const parentContext = executor.contexts[0]!;
+    const original = await parentContext.persistOutputResource(
+      Buffer.alloc(250_000, 1),
+      'image/png',
+      'generated-original.png',
+    );
+    const observation = await parentContext.persistOutputResource(
+      Buffer.alloc(5_000, 2),
+      'image/png',
+      'generated-observation.png',
+    );
+    const artifactRef = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: { kind: 'threadPayload', ref: original },
+      observation,
+      sourceDimensions: { width: 2, height: 2 },
+      observationDimensions: { width: 1, height: 1 },
+    });
+    const toolId = parentContext.recorder.createItemId();
+    await parentContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: parentContext.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'generate_image',
+      arguments: {},
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'image', artifactRef }],
+      success: true,
+      durationMs: 1,
+      modelCall: replayableModelCall('generate_image', {}),
+    });
+    executor.finish(0);
+    await service.waitForIdle(root.id);
+
+    const active = await service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with the generated image' }],
+    });
+    await executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(executor.contexts[1]!, 'retention-spawn');
+    const child = await service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'retention-spawn',
+      taskName: 'retention_child',
+      message: 'Inspect the inherited image',
+      forkTurns: 'all',
+    });
+    await executor.waitUntilWaiting(2);
+    expect(await stores.payloads.readResource(child.thread.id, original)).toEqual(Buffer.alloc(250_000, 1));
+    expect(await stores.payloads.readResource(child.thread.id, observation)).toEqual(Buffer.alloc(5_000, 2));
+
+    const incoming = await stores.payloads.writeResource(
+      child.thread.id,
+      Buffer.alloc(100_000, 3),
+      'application/octet-stream',
+      'incoming.bin',
+    );
+
+    expect(await stores.payloads.readResource(child.thread.id, original)).toBeNull();
+    expect(await stores.payloads.readResource(child.thread.id, observation)).toEqual(Buffer.alloc(5_000, 2));
+    expect(await stores.payloads.readResource(child.thread.id, incoming)).toEqual(Buffer.alloc(100_000, 3));
+
+    executor.finish(2);
+    executor.finish(1);
+    await Promise.all([
+      service.waitForIdle(child.thread.id),
+      service.waitForIdle(root.id),
+    ]);
+    await service.close();
+  });
+
   test('inherits none, N, or all structured parent Turns with child-owned payloads', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -4611,10 +5135,11 @@ describe('ThreadService', () => {
       'text/plain',
       'Inherited tool output',
     );
-    const imageRef = await parentContext.persistOutputImage(
-      Buffer.from('inherited-managed-image').toString('base64'),
+    const persistedImage = await parentContext.persistOutputImage(
+      ONE_PIXEL_PNG_BYTES,
       'image/png',
     );
+    const imageArtifact = outputImageArtifact(persistedImage);
     const sharedResourceBytes = Buffer.from('same resource bytes');
     const typedImageRef = await fixture.stores.payloads.writeResource(
       root.id,
@@ -4656,7 +5181,7 @@ describe('ThreadService', () => {
       arguments: { file_path: '/workspace/inherited.png' },
       status: 'completed',
       outputRef,
-      contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
+      contentItems: [{ type: 'image', artifactRef: imageArtifact }],
       success: true,
       durationMs: 1,
       modelCall: replayableModelCall('file_read', { file_path: '/workspace/inherited.png' }),
@@ -4739,7 +5264,7 @@ describe('ThreadService', () => {
     expect(allEvidence).toMatchObject({
       type: 'contextEvidence',
       kind: 'inheritedContext',
-      resourceRefs: [imageRef, typedImageRef, typedBinaryRef],
+      resourceRefs: [imageArtifact.observation, typedImageRef, typedBinaryRef],
       outputRefs: [outputRef, plainOutputRef, jsonOutputRef, alternateSummaryOutputRef],
     });
     expect(oneEvidence).toMatchObject({ type: 'contextEvidence', kind: 'inheritedContext' });
@@ -4766,8 +5291,8 @@ describe('ThreadService', () => {
     expect(await fixture.stores.payloads.readContext(inheritedAll.thread.id, allEvidence.payloadRef)).toEqual(allPayload);
     expect(await fixture.stores.payloads.readTextReference(inheritedAll.thread.id, outputRef))
       .toBe('COMPLETE INHERITED TOOL OUTPUT');
-    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, imageRef))
-      .toEqual(Buffer.from('inherited-managed-image'));
+    expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, imageArtifact.observation))
+      .toEqual(ONE_PIXEL_PNG_BYTES);
     expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedImageRef))
       .toEqual(sharedResourceBytes);
     expect(await fixture.stores.payloads.readResource(inheritedAll.thread.id, typedBinaryRef))
@@ -4795,7 +5320,7 @@ describe('ThreadService', () => {
       'user', 'assistant', 'user', 'assistant', 'toolResult', 'user',
     ]);
     expect(JSON.stringify(projected)).toContain('COMPLETE INHERITED TOOL OUTPUT');
-    expect(JSON.stringify(projected)).toContain(Buffer.from('inherited-managed-image').toString('base64'));
+    expect(JSON.stringify(projected)).toContain(ONE_PIXEL_PNG_BYTES.toString('base64'));
 
     fixture.executor.finish(2);
     fixture.executor.finish(3);
@@ -4930,6 +5455,7 @@ describe('ThreadService', () => {
       readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
       readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(forkProjected)).toContain('argumentPayloadUnavailable');
     await fixture.service.close();
@@ -8828,6 +9354,7 @@ async function createFixture(
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
+    | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'
   > = {},
 ): Promise<Fixture> {
@@ -8843,7 +9370,7 @@ async function createFixture(
 
 async function openFixture(
   root: string,
-  executor: ControlledExecutor,
+  executor: TurnExecutor,
   clock: () => number,
   extensions?: ExtensionRegistry,
   options: Pick<
@@ -8859,6 +9386,7 @@ async function openFixture(
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
+    | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
@@ -8881,7 +9409,31 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   while (!predicate()) await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function createStores(root: string): ThreadServiceStores {
+function outputImageArtifact(
+  persisted: PersistedOutputImageObservation,
+  original: ThreadFileSource | null = null,
+): ThreadImageArtifactReference {
+  return createImageArtifactReference({
+    createdAt: 1,
+    retention: original?.kind === 'localFile' ? 'external' : 'observationOnly',
+    original,
+    observation: persisted.observation,
+    sourceDimensions: persisted.sourceDimensions,
+    observationDimensions: persisted.observationDimensions,
+  });
+}
+
+function pngFixture(width: number, height: number): Buffer {
+  const bytes = Buffer.from(ONE_PIXEL_PNG_BYTES);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
+function createStores(
+  root: string,
+  payloadOptions: ConstructorParameters<typeof ToolPayloadStore>[1] = {},
+): ThreadServiceStores {
   mkdirSync(join(root, 'agent'), { recursive: true });
   const statePath = join(root, 'agent', 'state.sqlite');
   const historyPath = join(root, 'agent', 'thread_history.sqlite');
@@ -8893,7 +9445,7 @@ function createStores(root: string): ThreadServiceStores {
     rollout: new RolloutStore(join(root, 'agent', 'rollouts')),
     goals: new GoalStore(goalsPath, goalsDatabase),
     subagentBudgets: new SubagentRequestLedger(goalsDatabase),
-    payloads: new ToolPayloadStore(join(root, 'agent', 'payloads')),
+    payloads: new ToolPayloadStore(join(root, 'agent', 'payloads'), payloadOptions),
   };
 }
 
@@ -8989,6 +9541,40 @@ async function recordCollaborationSpawnBoundary(
       message: 'Test collaboration spawn',
       fork_turns: 'all',
     }),
+  });
+}
+
+async function recordReferencedImageEvidence(
+  context: TurnExecutionContext,
+  payloads: ToolPayloadStore,
+  resourceRef: ThreadResourceReference,
+): Promise<void> {
+  const payloadRef = await payloads.writeContext(context.thread.id, {
+    schemaVersion: 1,
+    kind: 'referencedResources',
+    resources: [{
+      nodeId: 'image-node',
+      nodeType: 'image',
+      title: 'Referenced image',
+      breadcrumb: [],
+      content: '',
+      contentTruncated: false,
+      resourceRef,
+      inlineImage: true,
+      unavailableReason: null,
+    }],
+  });
+  const itemId = context.recorder.createItemId();
+  await context.recorder.completedImmediately({
+    type: 'contextEvidence',
+    id: itemId,
+    provenance: context.recorder.localProvenance(itemId),
+    kind: 'referencedResources',
+    payloadRef,
+    summary: 'Referenced image',
+    contextRefs: [],
+    resourceRefs: [resourceRef],
+    outputRefs: [],
   });
 }
 

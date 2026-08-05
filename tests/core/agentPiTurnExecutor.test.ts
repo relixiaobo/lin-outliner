@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   AgentEvent,
   AgentTool,
@@ -15,7 +15,10 @@ import type {
   ContextEvidenceThreadItem,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadFileSource,
+  ThreadImageArtifactReference,
   ThreadItem,
+  ThreadResourceReference,
   Turn,
   TurnDiagnosticsPayload,
 } from '../../src/core/agent/protocol';
@@ -41,9 +44,11 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import {
   persistToolCallAdmission,
   transientToolCallAdmission,
@@ -58,6 +63,10 @@ const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
   new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
   'utf8',
 )) as { itemDiagnostics: unknown };
+const ONE_PIXEL_PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 describe('PiTurnExecutor event normalization', () => {
   test('serializes stream events and records authoritative message and command Items', async () => {
@@ -511,13 +520,19 @@ describe('PiTurnExecutor event normalization', () => {
     expect(await serializeUserContent(input, resources)).toEqual(content);
   });
 
-  test('encodes only the persisted prompt image at the provider boundary', async () => {
-    const promptImage = {
+  test('encodes only the persisted image observation at the provider boundary', async () => {
+    const observation = {
       id: 'c'.repeat(64),
       mimeType: 'image/png',
-      byteLength: 8,
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'prompt.png',
     };
+    const artifactRef = imageArtifact(
+      { kind: 'localFile', path: '/outside/source.png' },
+      observation,
+      { width: 4_000, height: 2_000 },
+      { width: 2_000, height: 1_000 },
+    );
     const content = await serializeUserContent([{
       type: 'attachment',
       id: 'attachment-image',
@@ -525,10 +540,11 @@ describe('PiTurnExecutor event normalization', () => {
       mimeType: 'image/png',
       sizeBytes: 4096,
       source: { kind: 'localFile', path: '/outside/source.png' },
-      promptImage,
+      artifactRef,
     }], {
-      readResource: async (ref) => ref.id === promptImage.id ? Buffer.from('snapshot') : null,
+      readResource: async (ref) => ref.id === observation.id ? ONE_PIXEL_PNG_BYTES : null,
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => '/outside/source.png',
     });
 
     expect(content).toEqual([
@@ -539,14 +555,69 @@ describe('PiTurnExecutor event normalization', () => {
       },
       {
         type: 'text',
-        text: '[Attachment image: source.png, image/png, 4096 bytes]\nReadable path: /outside/source.png\nThe following image is the immutable prompt snapshot for this attachment.',
+        text: [
+          '[Attachment image: source.png, image/png, 4096 bytes]',
+          `Artifact: ${artifactRef.id}`,
+          'Readable path: /outside/source.png',
+          'Image geometry: observation=2000x1000; source=4000x2000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+          'The following image is the immutable model observation for this attachment.',
+        ].join('\n'),
       },
       {
         type: 'image',
-        data: Buffer.from('snapshot').toString('base64'),
+        data: ONE_PIXEL_PNG_BYTES.toString('base64'),
         mimeType: 'image/png',
       },
     ]);
+  });
+
+  test('keeps an image observation when its readable path cannot be materialized', async () => {
+    const observation = {
+      id: 'f'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'prompt.png',
+    };
+    const artifactRef = imageArtifact(
+      { kind: 'localFile', path: '/outside/source.png' },
+      observation,
+    );
+    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const content = await serializeUserContent([{
+        type: 'attachment',
+        id: 'attachment-image',
+        name: 'source.png',
+        mimeType: 'image/png',
+        sizeBytes: 4096,
+        source: { kind: 'localFile', path: '/outside/source.png' },
+        artifactRef,
+      }], {
+        readResource: async () => ONE_PIXEL_PNG_BYTES,
+        resolveResourceObservationPath: async () => null,
+        resolveImageArtifactPath: async () => {
+          throw new Error('ENOSPC');
+        },
+      });
+
+      expect(content).toEqual(expect.arrayContaining([
+        { type: 'text', text: '[Image attachment: source.png; readable path unavailable]' },
+        {
+          type: 'image',
+          data: ONE_PIXEL_PNG_BYTES.toString('base64'),
+          mimeType: 'image/png',
+        },
+      ]));
+      expect(JSON.stringify(content)).not.toContain('[Unavailable image attachment:');
+      expect(warningLog).toHaveBeenCalledWith(
+        '[agent][context-projection] image artifact path unavailable',
+        expect.objectContaining({ artifactId: artifactRef.id, surface: 'user-attachment' }),
+      );
+    } finally {
+      warningLog.mockRestore();
+    }
   });
 
   test('degrades non-canonical attachment shapes without blocking provider projection', async () => {
@@ -560,7 +631,7 @@ describe('PiTurnExecutor event normalization', () => {
     }], fixtureResources());
     expect(missingSnapshot).toContainEqual({
       type: 'text',
-      text: '[Attachment image snapshot unavailable: source.png]',
+      text: '[Attachment image artifact unavailable or corrupt: source.png]',
     });
 
     const unexpectedSnapshot = await serializeUserContent([{
@@ -570,13 +641,19 @@ describe('PiTurnExecutor event normalization', () => {
       mimeType: 'application/pdf',
       sizeBytes: 512,
       source: { kind: 'localFile', path: '/workspace/report.pdf' },
-      promptImage: {
-        id: 'e'.repeat(64),
-        mimeType: 'image/png',
-        byteLength: 8,
-        fileName: 'prompt.png',
-      },
-    }], fixtureResources());
+      artifactRef: imageArtifact(
+        { kind: 'localFile', path: '/workspace/report.pdf' },
+        {
+          id: 'e'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+          fileName: 'prompt.png',
+        },
+      ),
+    }], {
+      ...fixtureResources(),
+      resolveImageArtifactPath: async () => '/workspace/report.pdf',
+    });
     expect(unexpectedSnapshot).toContainEqual({
       type: 'text',
       text: [
@@ -605,17 +682,23 @@ describe('PiTurnExecutor event normalization', () => {
         mimeType: 'image/png',
         sizeBytes: 8,
         source: { kind: 'localFile', path: '/workspace/diagram.png' },
-        promptImage: {
-          id: 'd'.repeat(64),
-          mimeType: 'image/png',
-          byteLength: 8,
-          fileName: 'diagram.png',
-        },
+        artifactRef: imageArtifact(
+          { kind: 'localFile', path: '/workspace/diagram.png' },
+          {
+            id: 'd'.repeat(64),
+            mimeType: 'image/png',
+            byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+            fileName: 'diagram.png',
+          },
+        ),
       },
       { type: 'nodeReference', nodeId: 'node-1' },
     ], {
-      readResource: async () => Buffer.from('snapshot'),
+      readResource: async () => ONE_PIXEL_PNG_BYTES,
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async (artifact) => artifact.original?.kind === 'localFile'
+        ? artifact.original.path
+        : null,
     });
 
     expect(content[0]).toEqual({
@@ -626,7 +709,7 @@ describe('PiTurnExecutor event normalization', () => {
       'Please review the attached files, attached images and referenced Outliner Nodes.',
       '[[file:report.pdf^%2Fworkspace%2Freport.pdf]][[file:diagram.png^%2Fworkspace%2Fdiagram.png]][[node:node-1^node-1]]',
       '[Attachment: report.pdf, application/pdf, 10 bytes]\nReadable path: /workspace/report.pdf\nUse file_read with this path to inspect the attachment.',
-      '[Attachment image: diagram.png, image/png, 8 bytes]\nReadable path: /workspace/diagram.png\nThe following image is the immutable prompt snapshot for this attachment.',
+      expect.stringContaining('[Attachment image: diagram.png, image/png, 8 bytes]\nArtifact: '),
     ]);
     expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
   });
@@ -2057,7 +2140,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('replays tool images from Thread-owned snapshots at the next provider boundary', async () => {
     const fixture = createContext();
-    const imageBytes = Buffer.from('provider-visible-image');
+    const imageBytes = ONE_PIXEL_PNG_BYTES;
     const imageBase64 = imageBytes.toString('base64');
     const imageRef = {
       id: 'c'.repeat(64),
@@ -2068,12 +2151,18 @@ describe('PiTurnExecutor event normalization', () => {
     let persistedImage: Buffer | null = null;
     let listener: ((event: AgentEvent) => void | Promise<void>) | null = null;
     const providerContexts: Message[][] = [];
+    const persistOutputImage = async (bytes: Uint8Array) => {
+      persistedImage = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return {
+        observation: imageRef,
+        observationBytes: persistedImage,
+        sourceDimensions: { width: 1, height: 1 },
+        observationDimensions: { width: 1, height: 1 },
+      };
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async (dataBase64) => {
-        persistedImage = Buffer.from(dataBase64, 'base64');
-        return imageRef;
-      },
+      persistOutputImage,
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
@@ -2121,8 +2210,11 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [{
         type: 'image',
-        source: { kind: 'localFile', path: '/workspace/diagram.png' },
-        promptImage: imageRef,
+        artifactRef: expect.objectContaining({
+          retention: 'external',
+          original: { kind: 'localFile', path: '/workspace/diagram.png' },
+          observation: imageRef,
+        }),
       }],
     });
     expect(fixture.recorder.orderedItems()[1]).toMatchObject({
@@ -2136,6 +2228,177 @@ describe('PiTurnExecutor event normalization', () => {
       data: imageBase64,
       mimeType: 'image/png',
     }]));
+  });
+
+  test('records generated artifacts matched by explicit preview index', async () => {
+    const fixture = createContext();
+    const imageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
+    const missingPreviewPath = '/scratch/generated-images/turn/image-0.png';
+    const previewedPath = '/scratch/generated-images/turn/image-1.png';
+    const observation = {
+      id: createHash('sha256').update(ONE_PIXEL_PNG_BYTES).digest('hex'),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'tool-output.png',
+    };
+    const generatedArtifact = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: {
+        kind: 'threadPayload',
+        ref: {
+          id: 'f'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+          fileName: 'original.png',
+        },
+      },
+      observation,
+      sourceDimensions: { width: 1, height: 1 },
+      observationDimensions: { width: 1, height: 1 },
+    });
+    const images = [{
+      providerIndex: 1,
+      path: missingPreviewPath,
+      mimeType: 'image/png',
+      byteLength: 12_000_000,
+    }, {
+      providerIndex: 2,
+      path: previewedPath,
+      mimeType: 'image/png',
+      byteLength: 13_000_000,
+      previewIndex: 0,
+      artifactRef: generatedArtifact,
+    }];
+    const normalizer = new PiEventNormalizer({
+      ...fixture.context,
+      readResource: async (ref) => ref.id === observation.id ? ONE_PIXEL_PNG_BYTES : null,
+    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-generate-image',
+      'generate_image',
+      { prompt: 'A red square' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-generate-image',
+      toolName: 'generate_image',
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            data: { images },
+          }),
+        }, {
+          type: 'image',
+          data: imageBase64,
+          mimeType: 'image/png',
+        }],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          version: 1,
+          status: 'success',
+          data: {
+            providerId: 'openai',
+            modelId: 'gpt-image-2',
+            modelName: 'GPT Image 2',
+            images,
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    const persistedItem = JSON.stringify(item);
+    expect(persistedItem).not.toContain(missingPreviewPath);
+    expect(persistedItem).not.toContain(previewedPath);
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      tool: 'generate_image',
+      contentItems: expect.arrayContaining([{
+        type: 'image',
+        artifactRef: generatedArtifact,
+      }]),
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected generated image output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(missingPreviewPath);
+    expect(persistedOutput).not.toContain(previewedPath);
+    expect(persistedOutput).toContain('Use the adjacent readable path');
+  });
+
+  test('preserves namespaced generate_image text at both persistence boundaries', async () => {
+    const fixture = createContext();
+    const pluginPreview = ONE_PIXEL_PNG_BYTES.toString('base64');
+    const pluginText = JSON.stringify({
+      ok: true,
+      data: {
+        images: [{
+          path: 'https://plugin.example/image-1',
+          id: 'plugin-image-1',
+          caption: 'Plugin-owned caption',
+        }],
+      },
+      instructions: 'Keep plugin fields.',
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent(
+      'call-plugin-image',
+      'myplugin__generate_image',
+      { prompt: 'A plugin image' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-plugin-image',
+      toolName: 'myplugin__generate_image',
+      result: {
+        content: [
+          { type: 'text', text: pluginText },
+          { type: 'image', data: pluginPreview, mimeType: 'image/png' },
+        ],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          data: {
+            images: [{
+              id: 'plugin-image-1',
+              path: '/plugin-owned/path.png',
+              previewIndex: 0,
+            }],
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(JSON.stringify(item)).not.toContain('/plugin-owned/path.png');
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      namespace: 'myplugin',
+      tool: 'generate_image',
+      contentItems: [
+        { type: 'text', text: pluginText },
+        {
+          type: 'image',
+          artifactRef: expect.objectContaining({
+            retention: 'observationOnly',
+            original: null,
+          }),
+        },
+      ],
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected namespaced image output reference');
+    }
+    expect(await fixture.context.readOutput(item.outputRef)).toContain(pluginText);
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -2333,11 +2596,11 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(messages)).not.toContain('Need documentation');
   });
 
-  test('bounds persisted tool projections and stores typed image sources instead of base64', async () => {
+  test('bounds persisted tool projections and stores image artifacts instead of base64', async () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
     const oversized = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
-    const fileImageBase64 = Buffer.from('file-image-secret').toString('base64');
+    const fileImageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
     const largeArguments = { file_path: '/workspace/large.png', echoed: oversized };
     normalizer.handle({
       type: 'tool_call_admission',
@@ -2393,13 +2656,13 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         content: Array.from({ length: MAX_PERSISTED_TOOL_OUTPUT_IMAGES + 5 }, (_, index) => ({
           type: 'image' as const,
-          data: Buffer.from(`image-${index}`).toString('base64'),
+          data: pngFixture(index + 1, 1).toString('base64'),
           mimeType: 'image/png',
         })),
       },
       isError: false,
     });
-    const nearLimitImage = 'A'.repeat(Math.floor(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4);
+    const nearLimitImage = pngFixture(1, 1, MAX_TOOL_PAYLOAD_IMAGE_BYTES - 1).toString('base64');
     normalizer.handle(toolAdmissionEvent('call-image-budget-4', 'inspect_large_images', {}));
     normalizer.handle({
       type: 'tool_execution_end',
@@ -2427,12 +2690,15 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [
         { type: 'text' },
-        {
-          type: 'image',
-          source: { kind: 'localFile', path: '/workspace/large.png' },
-          promptImage: { id: 'b'.repeat(64) },
-        },
+        { type: 'image' },
       ],
+    });
+    if (fileRead?.type !== 'dynamicToolCall' || fileRead.contentItems?.[1]?.type !== 'image') {
+      throw new Error('Expected persisted file_read image artifact.');
+    }
+    expect(fileRead.contentItems[1].artifactRef).toMatchObject({
+      original: { kind: 'localFile', path: '/workspace/large.png' },
+      observation: { id: expect.any(String) },
     });
     expect(JSON.stringify(fileRead)).not.toContain(fileImageBase64);
     expect(JSON.stringify((fileRead as Extract<typeof fileRead, { type: 'dynamicToolCall' }>).arguments).length)
@@ -2445,7 +2711,9 @@ describe('PiTurnExecutor event normalization', () => {
     const imageContent = (images as Extract<typeof images, { type: 'dynamicToolCall' }>).contentItems!;
     const persistedImages = imageContent.filter((content) => content.type === 'image');
     expect(persistedImages).toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
-    expect(persistedImages.every((content) => content.source.kind === 'threadPayload')).toBe(true);
+    expect(persistedImages.every((content) => (
+      content.artifactRef.retention === 'observationOnly' && content.artifactRef.original === null
+    ))).toBe(true);
     expect(imageContent.at(-1)).toMatchObject({
       type: 'json',
       value: { imagesOmitted: 5, reasons: { countLimit: 5 } },
@@ -2514,13 +2782,14 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('never persists inline image bytes as text and reports snapshot quota omission', async () => {
     const fixture = createContext();
-    const imageBase64 = Buffer.from('small-image-bytes').toString('base64');
+    const imageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
     let completeOutput = '';
+    const persistOutputImage = async () => {
+      throw new ThreadResourceQuotaError();
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async () => {
-        throw new Error('Managed attachment exceeds the Thread storage quota.');
-      },
+      persistOutputImage,
       persistOutputText: async (_itemId, text, mimeType, summary) => {
         completeOutput = text;
         return {
@@ -3449,6 +3718,21 @@ function createContext(): {
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
+  const persistOutputImage = async (input: Uint8Array, mimeType: string) => {
+    const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+    const dimensions = imageDimensions(bytes);
+    return {
+      observation: {
+        id: createHash('sha256').update(bytes).digest('hex'),
+        mimeType,
+        byteLength: bytes.byteLength,
+        fileName: 'tool-output.png',
+      },
+      observationBytes: bytes,
+      sourceDimensions: dimensions,
+      observationDimensions: dimensions,
+    };
+  };
   const context: TurnExecutionContext = {
     thread,
     turn,
@@ -3468,12 +3752,14 @@ function createContext(): {
     readContext: async () => null,
     readOutput: async (ref) => outputPayloads.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
     readResource: async () => null,
-    persistOutputImage: async () => ({
-      id: 'b'.repeat(64),
-      mimeType: 'image/png',
-      byteLength: 12,
-      fileName: 'tool-output.png',
+    persistOutputImage,
+    persistOutputResource: async (bytes, mimeType, fileName) => ({
+      id: createHash('sha256').update(bytes).digest('hex'),
+      mimeType,
+      byteLength: bytes.byteLength,
+      fileName,
     }),
     persistOutputText: async (_itemId, text, mimeType, summary) => {
       const id = createHash('sha256').update(text).digest('hex');
@@ -3578,7 +3864,39 @@ function fixtureResources() {
   return {
     readResource: async () => null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
   };
+}
+
+function imageArtifact(
+  original: ThreadFileSource | null,
+  observation: ThreadResourceReference,
+  sourceDimensions = { width: 1, height: 1 },
+  observationDimensions = { width: 1, height: 1 },
+): ThreadImageArtifactReference {
+  return createImageArtifactReference({
+    createdAt: 1,
+    retention: original?.kind === 'localFile' ? 'external' : 'observationOnly',
+    original,
+    observation,
+    sourceDimensions,
+    observationDimensions,
+  });
+}
+
+function pngFixture(width = 1, height = 1, byteLength = ONE_PIXEL_PNG_BYTES.byteLength): Buffer {
+  const bytes = Buffer.alloc(Math.max(byteLength, ONE_PIXEL_PNG_BYTES.byteLength));
+  ONE_PIXEL_PNG_BYTES.copy(bytes);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
+function imageDimensions(bytes: Buffer): { width: number; height: number } {
+  if (bytes.byteLength < 24 || bytes.toString('ascii', 1, 4) !== 'PNG') {
+    throw new Error('Test image is not a PNG fixture.');
+  }
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
 function testTool(name: string, description: string): AgentTool {

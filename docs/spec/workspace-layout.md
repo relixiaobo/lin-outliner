@@ -826,7 +826,10 @@ saves the source into the document as a file node. It is offered for the kinds
 that can be copied into the asset store: `local-file` (full-file ingest, gated to
 the agent's trusted roots) and `agent-payload` (a typed, admission-bounded Thread
 resource). `url` is not yet ingestable. Anything the preview can resolve, it can
-ingest through the same authorization boundary. For a typed Thread resource, the
+ingest through the same authorization boundary. The action is enabled only after
+source resolution and submits the normalized source target, so a Thread image
+artifact uses its materialized trusted path rather than its stable artifact ID as a
+filesystem path. For a typed Thread resource, the
 renderer sends only `(threadId, resourceRef)` through the dedicated asset command;
 main reauthorizes the reference against the Thread Item graph and buffer-ingests the
 verified managed bytes without accepting or returning a path. The 20 MiB read cap

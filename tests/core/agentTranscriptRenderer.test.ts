@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import type {
   ThreadContextPayloadReference,
+  ThreadImageArtifactReference,
   ThreadItem,
   ThreadItemOutputReference,
   Turn,
@@ -23,6 +24,25 @@ import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 const THREAD_ID = 'thread-child';
 const TURN_ID = 'turn-child-1';
 const BASH_OUTPUT = outputReference('bash-output', 'a.ts\nb.ts');
+const IMAGE_ARTIFACT = {
+  id: 'f'.repeat(64),
+  createdAt: 1,
+  retention: 'observationOnly',
+  original: null,
+  observation: {
+    id: 'e'.repeat(64),
+    mimeType: 'image/png',
+    byteLength: 128,
+    fileName: 'chart.png',
+  },
+  geometry: {
+    sourceWidth: 4_000,
+    sourceHeight: 2_000,
+    observationWidth: 2_000,
+    observationHeight: 1_000,
+    observationToSource: [2, 0, 0, 2, 0, 0],
+  },
+} as const satisfies ThreadImageArtifactReference;
 
 describe('transcript renderer', () => {
   test('renders a golden brief transcript over every Item shape', async () => {
@@ -78,7 +98,10 @@ b.ts
 args: {"file_path":"/w/a.ts"}
 output:
 export const a = 1;
-[Image output: preview (chart.png), image/png, 128 bytes]
+[Image output: preview (artifact:${'f'.repeat(64)}), artifact=${'f'.repeat(64)}, image/png, 128 observation bytes]
+Image geometry: observation=2000x1000; source=4000x2000
+Source pixels per observation pixel: x=2, y=2
+Observation-to-source matrix: [2, 0, 0, 2, 0, 0]
 
 ### Tool collaboration.spawn_agent — completed
 args: {"task_name":"parser","message":"Audit the parser.","fork_turns":"all"}
@@ -283,10 +306,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
         {
           type: 'image',
           alt: 'preview',
-          source: {
-            kind: 'threadPayload',
-            ref: { id: 'image-id', mimeType: 'image/png', byteLength: 128, fileName: 'chart.png' },
-          },
+          artifactRef: IMAGE_ARTIFACT,
         },
       ],
       success: true,

@@ -119,6 +119,47 @@ the model.
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
 
+`generate_image` separates the provider's original artifact from the bounded image shown
+to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
+boundary and writes the original directly into the Thread resource store. That original
+is the `tiered` rendition of one immutable image artifact; it is not subject to the
+generic 10 MiB per-image and 20 MiB per-call inline tool-output limits, so detailed 4K
+originals remain intact until storage pressure makes them reclaimable.
+
+The same admission creates a model observation at no more than 2,000 px per edge and
+4.5 MiB. The result returns a stable `artifactId`, a rematerializable readable path, the
+source and observation dimensions, source-pixels-per-observation-pixel scales, and the
+full observation-to-source affine matrix. Only the observation bytes are emitted as
+provider image content. An explicit preview index maps that content back to sparse
+provider results, and event admission verifies the bytes against the already-persisted
+canonical artifact before reusing it. A failed sibling therefore cannot select the wrong
+artifact, and a canonical observation is never encoded a second time merely to record
+the tool result. Original or observation admission failure omits only that output and
+leaves unreferenced writes for normal Turn cleanup. Typed Thread-resource quota and
+filesystem-capacity errors degrade generic image persistence to `quotaExceeded`;
+unrelated storage errors retain their identity.
+
+Generated local images are displayed automatically, so the tool returns no Markdown image
+syntax and does not ask the model to repeat them. When the user names a destination, the
+model copies the returned path with the ordinary shell. File operations, Preview, copy,
+export, and edit input resolve the original first and the observation second. Both
+renditions materialize at the same stable extensionless artifact path, and consumers
+sniff actual image bytes rather than trusting the path suffix. Persisted slim details
+and persisted model-facing result text retain artifact identity and image metadata, not
+the live path. Historical projection derives its only readable path from the artifact in
+the current Thread. If materialization fails, projection records the failure, omits that
+path, and still sends an available bounded observation; if the observation is missing,
+it emits an unavailable identity without failing the Thread. Generated originals are reclaimed only by the
+Thread's pressure-based image retention policy; the seven-day TTL applies only to
+reproducible scratch materializations.
+
+Image artifacts expose the observation dimensions, source dimensions, scale factors,
+and exact observation-to-source transform to the model. This is sufficient to relate
+positions in the bounded observation to the admitted source-image pixel plane and to
+diagnose scaling mistakes. The image artifact layer does not inspect, validate, convert,
+or rewrite later tool arguments. Any additional coordinate semantics belong to the tool
+that consumes them.
+
 Import commit requires a matching, unexpired preview identity. It writes one
 staging subtree through the Outliner host and verifies the materialized counts.
 The write carries the executing Item's causation.

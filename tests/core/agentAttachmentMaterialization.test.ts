@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  AGENT_GENERATED_IMAGE_DIR,
   AGENT_SCRATCH_TTL_MS,
   createManagedAttachmentObservation,
   isPathInside,
@@ -47,19 +46,20 @@ describe('agent scratch lifecycle', () => {
     }
   });
 
-  test('keeps generated image artifacts out of generic scratch TTL pruning', async () => {
+  test('prunes expired generated image leftovers like every other scratch area', async () => {
     const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
     const now = Date.now();
     const expiredSeconds = (now - AGENT_SCRATCH_TTL_MS - 1000) / 1000;
-    const generatedDir = path.join(scratchRoot, AGENT_GENERATED_IMAGE_DIR, 'run-1');
+    const generatedDir = path.join(scratchRoot, 'generated-images', 'run-1');
     await mkdir(generatedDir, { recursive: true });
     const generatedPath = path.join(generatedDir, 'image.png');
     await writeFile(generatedPath, 'image bytes');
     await utimes(generatedPath, expiredSeconds, expiredSeconds);
+    await utimes(path.dirname(generatedPath), expiredSeconds, expiredSeconds);
 
     await pruneAgentScratch(scratchRoot, now);
 
-    expect(await readdir(generatedDir)).toEqual(['image.png']);
+    await expect(readdir(generatedDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   test('pruneAgentScratch is a no-op when the scratch root does not exist', async () => {
@@ -119,6 +119,58 @@ describe('agent scratch lifecycle', () => {
     expect(secondPath).toContain(`/${secondRef.id}/${secondRef.fileName}`);
     expect(firstPath).not.toBe(secondPath);
     await observation.dispose();
+  });
+
+  test('keeps an artifact path stable when its original falls back to a differently encoded observation', async () => {
+    const scratchRoot = await mkdtempRoot('lin-agent-scratch-');
+    const original = {
+      id: 'c'.repeat(64),
+      mimeType: 'image/webp',
+      byteLength: 8,
+      fileName: 'source.webp',
+    };
+    const prompt = {
+      id: 'd'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: 11,
+      fileName: 'prompt.png',
+    };
+    const artifact = {
+      id: 'e'.repeat(64),
+      createdAt: 1,
+      retention: 'tiered' as const,
+      original: { kind: 'threadPayload' as const, ref: original },
+      observation: prompt,
+      geometry: {
+        sourceWidth: 4_000,
+        sourceHeight: 2_000,
+        observationWidth: 2_000,
+        observationHeight: 1_000,
+        observationToSource: [2, 0, 0, 2, 0, 0] as const,
+      },
+    };
+    const materialize = (originalAvailable: boolean) => createManagedAttachmentObservation(
+      scratchRoot,
+      async (ref, targetDirectory) => {
+        if (ref.id === original.id && !originalAvailable) return null;
+        const file = path.join(targetDirectory, ref.fileName);
+        await writeFile(file, ref.id === original.id ? 'original' : 'observation');
+        return file;
+      },
+      { stableWorkspaceKey: 'thread-1' },
+    );
+
+    const full = materialize(true);
+    const fullPath = await full.resolveArtifactPath(artifact);
+    expect(path.basename(fullPath!)).toBe('image');
+    expect(await readFile(fullPath!, 'utf8')).toBe('original');
+    await full.dispose();
+
+    const fallback = materialize(false);
+    const fallbackPath = await fallback.resolveArtifactPath(artifact);
+    expect(fallbackPath).toBe(fullPath);
+    expect(await readFile(fallbackPath!, 'utf8')).toBe('observation');
+    await fallback.dispose();
   });
 
   async function mkdtempRoot(prefix: string): Promise<string> {
