@@ -13,6 +13,7 @@ import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/T
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
 
@@ -661,6 +662,7 @@ function commandLifecycle(threadId: string): AgentCoreNotification[] {
     aggregatedOutput: null,
     exitCode: null,
     durationMs: null,
+    modelCall: replayableModelCall('bash', { command: 'bun run typecheck' }),
   };
   const item: ThreadItem = { ...running, status: 'completed', exitCode: 0, durationMs: 10 };
   const startedTurn: Turn = {

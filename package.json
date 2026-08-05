@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.83.0",
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.4",
     "defuddle": "0.18.1",
     "foliate-js": "^1.0.1",
     "linkedom": "0.18.12",
@@ -66,6 +67,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",
+    "@secretlint/types": "13.0.4",
     "@types/node": "^25.7.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

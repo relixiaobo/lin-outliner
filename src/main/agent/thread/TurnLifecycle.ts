@@ -993,6 +993,11 @@ export class TurnLifecycle {
             mimeType,
             summary,
           ),
+          persistToolCallArguments: (value) => this.core.payloads.writeContext(active.threadId, {
+            schemaVersion: 1,
+            kind: 'toolCallArguments',
+            value,
+          }),
           persistContextEvidence: (payload, summary) => this.persistExecutionContextEvidence(
             active,
             thread,

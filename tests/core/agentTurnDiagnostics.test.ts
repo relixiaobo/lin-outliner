@@ -9,6 +9,10 @@ import {
   encodeTurnDiagnosticsPayload,
 } from '../../src/core/agent/codec';
 import { TurnDiagnosticsCollector } from '../../src/main/agent/context/TurnDiagnostics';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+} from '../fixtures/agentToolCallHistory';
 
 const model = {
   id: 'test-model',
@@ -100,7 +104,7 @@ describe('Turn diagnostics', () => {
     });
 
     prepare(collector, [firstMessage], 0, 120, [firstProvenance]);
-    collector.captureProviderRequest({
+    await collector.captureProviderRequest({
       model: model.id,
       input: [firstProviderMessage],
       contents: [{
@@ -129,18 +133,24 @@ describe('Turn diagnostics', () => {
         'set-cookie': 'private-cookie',
       },
     });
-    collector.captureEvent({
+    await collector.captureEvent({
       type: 'message_end',
       message: assistantMessage('First response'),
     } as AgentEvent);
-    collector.captureToolExecutionStarted('tool-call-1', 'alpha', 'tool-item-1', 21);
+    collector.captureToolExecutionStarted(
+      'tool-call-1',
+      'alpha',
+      'tool-item-1',
+      replayableModelCall('alpha', {}),
+      21,
+    );
     collector.captureToolExecutionCompleted('tool-call-1', false, 22);
 
     prepare(collector, [firstMessage, secondMessage], 1, 160, [
       firstProvenance,
       [{ source: 'userInput' }],
     ]);
-    collector.captureProviderRequest({
+    await collector.captureProviderRequest({
       model: model.id,
       input: [firstProviderMessage, secondMessage],
       temperature: 0.2,
@@ -291,6 +301,9 @@ describe('Turn diagnostics', () => {
           callId: 'tool-call-1',
           toolName: 'alpha',
           itemId: 'tool-item-1',
+          admissionDisposition: 'replayable',
+          canonicalIdentity: { namespace: null, name: 'alpha' },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
           startedAt: 21,
           completedAt: 22,
           status: 'completed',
@@ -337,7 +350,91 @@ describe('Turn diagnostics', () => {
     })).toThrow('expected at least one context entry');
   });
 
-  test('records retry, compaction, steering, and transient tools as ordered activities', () => {
+  test('redacts structured secrets from canonical messages and post-adapter requests', async () => {
+    const rawSecret = 'generic-model-secret';
+    const environmentSecret = 'hunter2hunter2hunter2';
+    const command = `PGPASSWORD=${environmentSecret} psql`;
+    const jsonShapedContent = '{\n  "token": "placeholder1234"\n}';
+    const toolMessage: AssistantMessage = {
+      ...assistantMessage(''),
+      content: [{
+        type: 'toolCall',
+        id: 'secret-call',
+        name: 'alpha',
+        arguments: { api_key: rawSecret, command, query: 'keep' },
+      }],
+      stopReason: 'toolUse',
+    };
+    const collector = new TurnDiagnosticsCollector({
+      contextEpochId: 'initial',
+      cacheAffinity: 'c'.repeat(64),
+      configuration: {
+        profileName: 'default',
+        developerInstructions: [],
+        model: model.id,
+        reasoningEffort: 'medium',
+        tools: ['alpha'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      },
+      stablePrompt: null,
+      tools: [tool('alpha')],
+      model,
+      thinkingLevel: 'medium',
+      providerOptions: {},
+      initialInput: { acceptedAt: 10, itemIds: ['initial-user'] },
+    });
+
+    prepare(collector, [toolMessage], 0, 20);
+    const providerRequest = (maxCompletionTokens: number) => ({
+      model: model.id,
+      max_completion_tokens: maxCompletionTokens,
+      budget_tokens: maxCompletionTokens * 2,
+      cache_read_input_tokens: 900,
+      input: [{
+        type: 'function_call',
+        name: 'alpha',
+        arguments: JSON.stringify({ api_key: rawSecret, command, content: jsonShapedContent, query: 'keep' }),
+      }],
+      metadata: { session_token: rawSecret },
+    });
+    const firstRawRequest = providerRequest(2_048);
+    await collector.captureProviderRequest(firstRawRequest);
+    expect(firstRawRequest.metadata.session_token).toBe(rawSecret);
+    expect(JSON.parse(firstRawRequest.input[0]!.arguments)).toMatchObject({ api_key: rawSecret, command });
+    prepare(collector, [toolMessage], 0, 20);
+    await collector.captureProviderRequest(providerRequest(4_096));
+
+    const payload = collector.payload();
+    expect(JSON.stringify(payload)).not.toContain(rawSecret);
+    expect(JSON.stringify(payload)).not.toContain(environmentSecret);
+    expect(payload.canonicalMessages[0]?.value).toMatchObject({
+      content: [{ arguments: {
+        api_key: '[redacted]',
+        command: '[redacted secret-like content] psql',
+        query: 'keep',
+      } }],
+    });
+    expect(materializeRequest(payload, 0)).toMatchObject({
+      max_completion_tokens: 2_048,
+      budget_tokens: 4_096,
+      cache_read_input_tokens: 900,
+      input: [{
+        arguments: JSON.stringify({
+          api_key: '[redacted]',
+          command: '[redacted secret-like content] psql',
+          content: jsonShapedContent,
+          query: 'keep',
+        }),
+      }],
+      metadata: { session_token: '[redacted]' },
+    });
+    expect(payload.providerCalls[0]?.requestFingerprint)
+      .not.toBe(payload.providerCalls[1]?.requestFingerprint);
+  });
+
+  test('records retry, compaction, steering, and transient tools as ordered activities', async () => {
     const firstMessage: UserMessage = {
       role: 'user',
       content: [{ type: 'text', text: 'Start.' }],
@@ -370,11 +467,11 @@ describe('Turn diagnostics', () => {
     });
 
     prepare(collector, [firstMessage], 0, 10);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
     collector.captureProviderRetry({ kind: 'request', attempt: 1, maxRetries: 2 }, 11);
 
     prepare(collector, [firstMessage], 0, 10);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage] });
     collector.captureContextCompaction({
       id: 'overflow-compaction',
       trigger: 'providerOverflow',
@@ -391,17 +488,29 @@ describe('Turn diagnostics', () => {
     collector.setSteeringDelivered(steeringActivity, true);
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
-    collector.captureEvent({
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    await collector.captureEvent({
       type: 'message_end',
       message: assistantMessage('Planning'),
     } as AgentEvent);
-    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 21);
+    collector.captureToolExecutionStarted(
+      'plan-call',
+      'update_plan',
+      null,
+      replayableModelCall('update_plan', {}),
+      21,
+    );
     collector.captureToolExecutionCompleted('plan-call', false, 22);
 
     prepare(collector, [firstMessage, steeringMessage], 0, 12);
-    collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
-    collector.captureToolExecutionStarted('plan-call', 'update_plan', null, 31);
+    await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
+    collector.captureToolExecutionStarted(
+      'plan-call',
+      'update_plan',
+      null,
+      replayableModelCall('update_plan', {}),
+      31,
+    );
     collector.finalizeOpenToolExecutions('completed', 32);
 
     const payload = collector.payload();

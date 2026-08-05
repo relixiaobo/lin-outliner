@@ -67,6 +67,52 @@ describe('tool-output projection freezing', () => {
       projection: { type: 'full' },
     })]);
   });
+
+  test('does not abort or refreeze an output whose prior projection payload is unavailable', async () => {
+    const outputRef = outputReference('e', 800);
+    const payloadRef = contextReference('f', 'toolOutputProjection');
+    const priorEvidence = evidence('missing-projection', payloadRef, outputRef);
+    const published: ThreadContextPayload[] = [];
+
+    await expect(freezePendingToolOutputProjections({
+      turns: [turn('missing-turn', [priorEvidence, completedTool('same-output-tool', outputRef)])],
+      model,
+      readContext: async () => null,
+      persist: async (payload) => {
+        published.push(payload);
+        return evidence('unexpected-projection', contextReference('1', payload.kind), payload.outputRef);
+      },
+    })).resolves.toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  test('does not abort or overwrite conflicting frozen projections', async () => {
+    const outputRef = outputReference('2', 800);
+    const first = {
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    };
+    const second = {
+      ...first,
+      projection: { type: 'inline' as const, text: 'Conflicting snapshot' },
+    };
+    const firstRef = contextReference('3', first.kind);
+    const secondRef = contextReference('4', second.kind);
+    const payloads = new Map([[firstRef.id, first], [secondRef.id, second]]);
+
+    await expect(freezePendingToolOutputProjections({
+      turns: [turn('conflict-turn', [
+        evidence('first-projection', firstRef, outputRef),
+        evidence('second-projection', secondRef, outputRef),
+        completedTool('same-conflicting-output', outputRef),
+      ])],
+      model,
+      readContext: async (ref) => payloads.get(ref.id) ?? null,
+      persist: async () => { throw new Error('Conflicting output must not be refrozen.'); },
+    })).resolves.toEqual([]);
+  });
 });
 
 function turn(seed: string, items: readonly ThreadItem[]): Turn {

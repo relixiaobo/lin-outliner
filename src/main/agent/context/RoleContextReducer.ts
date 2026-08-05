@@ -1,5 +1,6 @@
 import type {
   ContextCursor,
+  ContextDegradationCheckpointEntry,
   RoleCatalogContextPayload,
   RoleCatalogEntry,
   ThreadContextPayload,
@@ -8,10 +9,16 @@ import type {
 } from '../../../core/agent/protocol';
 import { selectEffectiveContext } from './ContextEpoch';
 import { readInheritedContextPayload } from './InheritedContext';
+import {
+  appendContextDegradations,
+  contextDegradation,
+  recordContextDegradation,
+} from './ContextDegradation';
 
 export interface RoleContextState {
   readonly catalogHash: string | null;
   readonly catalogEntries: ReadonlyMap<string, RoleCatalogEntry>;
+  readonly degradations: readonly ContextDegradationCheckpointEntry[];
 }
 
 export async function reduceRoleContext(
@@ -20,25 +27,43 @@ export async function reduceRoleContext(
 ): Promise<RoleContextState> {
   let catalogHash: string | null = null;
   const catalogEntries = new Map<string, RoleCatalogEntry>();
+  const degradations: ContextDegradationCheckpointEntry[] = [];
 
   for (const turn of selectEffectiveContext(turns).turns) {
     for (const item of turn.items) {
       if (item.type === 'contextReset') {
         catalogHash = null;
         catalogEntries.clear();
+        degradations.length = 0;
         continue;
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
+        if (!inherited) {
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
         const state = await reduceRoleContext(inherited.turns, readContext);
         catalogHash = state.catalogHash;
         replaceMap(catalogEntries, state.catalogEntries);
+        appendContextDegradations(degradations, state.degradations);
         continue;
       }
       if (item.type === 'contextCompaction') {
-        const restored = await readContext(item.restoredStateRef);
+        const restored = await readContext(item.restoredStateRef).catch(() => null);
         if (!restored || restored.kind !== 'compactionRestoredState') {
-          throw new Error(`Compaction Role checkpoint is unavailable: ${item.restoredStateRef.id}`);
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'compactionRestoredState', item.restoredStateRef.id),
+          );
+          continue;
         }
         const checkpoint = await restoreRoleCatalogCheckpoint(
           turns,
@@ -49,55 +74,91 @@ export async function reduceRoleContext(
         catalogEntries.clear();
         for (const [name, entry] of checkpoint.catalogEntries) catalogEntries.set(name, entry);
         catalogHash = checkpoint.catalogHash;
+        appendContextDegradations(degradations, checkpoint.degradations);
         continue;
       }
       if (item.type !== 'contextEvidence' || item.kind !== 'roleCatalog') continue;
-      const payload = await readContext(item.payloadRef);
+      const payload = await readContext(item.payloadRef).catch(() => null);
       if (!payload || payload.kind !== 'roleCatalog') {
-        throw new Error(`Role catalog payload is unavailable: ${item.payloadRef.id}`);
+        recordContextDegradation(
+          degradations,
+          contextDegradation('payloadUnavailable', 'roleCatalog', item.payloadRef.id),
+        );
+        continue;
       }
       if (payload.mode === 'baseline') {
         catalogEntries.clear();
       } else if (catalogHash !== payload.previousCatalogHash) {
-        throw new Error('Role catalog journal does not continue from the canonical catalog hash.');
+        catalogHash = null;
+        catalogEntries.clear();
+        recordContextDegradation(
+          degradations,
+          contextDegradation('journalDiscontinuity', 'roleCatalog', item.payloadRef.id),
+        );
+        continue;
       }
       applyCatalogEntries(catalogEntries, payload.entries);
       catalogHash = payload.catalogHash;
     }
   }
 
-  return { catalogHash, catalogEntries };
+  return { catalogHash, catalogEntries, degradations };
 }
+
+type RoleCatalogReduction = RoleContextState;
 
 async function reduceRoleCatalogThroughCursor(
   turns: readonly Turn[],
   cursor: ContextCursor,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<RoleContextState> {
+): Promise<RoleCatalogReduction> {
   let catalogHash: string | null = null;
   const catalogEntries = new Map<string, RoleCatalogEntry>();
+  const degradations: ContextDegradationCheckpointEntry[] = [];
   let reached = false;
   for (const turn of turns) {
     for (const item of turn.items) {
       if (item.type === 'contextReset') {
         catalogHash = null;
         catalogEntries.clear();
+        degradations.length = 0;
       } else if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
-        const state = await reduceRoleContext(inherited.turns, readContext);
-        catalogHash = state.catalogHash;
-        replaceMap(catalogEntries, state.catalogEntries);
+        if (!inherited) {
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+        } else {
+          const state = await reduceRoleContext(inherited.turns, readContext);
+          catalogHash = state.catalogHash;
+          replaceMap(catalogEntries, state.catalogEntries);
+          appendContextDegradations(degradations, state.degradations);
+        }
       } else if (item.type === 'contextEvidence' && item.kind === 'roleCatalog') {
-        const payload = await readContext(item.payloadRef);
+        const payload = await readContext(item.payloadRef).catch(() => null);
         if (!payload || payload.kind !== 'roleCatalog') {
-          throw new Error(`Role catalog payload is unavailable: ${item.payloadRef.id}`);
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'roleCatalog', item.payloadRef.id),
+          );
+        } else if (payload.mode === 'baseline') {
+          catalogEntries.clear();
+          applyCatalogEntries(catalogEntries, payload.entries);
+          catalogHash = payload.catalogHash;
+        } else if (catalogHash !== payload.previousCatalogHash) {
+          catalogHash = null;
+          catalogEntries.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('journalDiscontinuity', 'roleCatalog', item.payloadRef.id),
+          );
+        } else {
+          applyCatalogEntries(catalogEntries, payload.entries);
+          catalogHash = payload.catalogHash;
         }
-        if (payload.mode === 'baseline') catalogEntries.clear();
-        else if (catalogHash !== payload.previousCatalogHash) {
-          throw new Error('Role catalog journal does not continue from the canonical catalog hash.');
-        }
-        applyCatalogEntries(catalogEntries, payload.entries);
-        catalogHash = payload.catalogHash;
       }
       if (turn.id === cursor.turnId && item.id === cursor.itemId) {
         reached = true;
@@ -107,9 +168,14 @@ async function reduceRoleCatalogThroughCursor(
     if (reached) break;
   }
   if (!reached) {
-    throw new Error(`Compaction Role covered cursor is unreachable: ${cursor.turnId}/${cursor.itemId}`);
+    catalogHash = null;
+    catalogEntries.clear();
+    recordContextDegradation(
+      degradations,
+      contextDegradation('checkpointMismatch', 'roleCatalogCursor', `${cursor.turnId}/${cursor.itemId}`),
+    );
   }
-  return { catalogHash, catalogEntries };
+  return { catalogHash, catalogEntries, degradations };
 }
 
 export async function restoreRoleCatalogCheckpoint(
@@ -117,13 +183,21 @@ export async function restoreRoleCatalogCheckpoint(
   cursor: ContextCursor,
   restored: Extract<ThreadContextPayload, { readonly kind: 'compactionRestoredState' }>,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<RoleContextState> {
+): Promise<RoleCatalogReduction> {
   const journal = await reduceRoleCatalogThroughCursor(turns, cursor, readContext);
+  const invalid = (reference: string): RoleCatalogReduction => {
+    const degradations = [...journal.degradations];
+    recordContextDegradation(
+      degradations,
+      contextDegradation('checkpointMismatch', 'roleCatalog', reference),
+    );
+    return { catalogHash: null, catalogEntries: new Map(), degradations };
+  };
   if (journal.catalogHash !== restored.roleCatalogHash) {
-    throw new Error('Compaction Role checkpoint does not match the canonical catalog journal.');
+    return invalid(restored.roleCatalogHash ?? 'null');
   }
   if (restored.announcedRoles.length !== journal.catalogEntries.size) {
-    throw new Error('Compaction Role checkpoint does not contain the complete announced catalog.');
+    return invalid('announcedRoles');
   }
   const announcedNames = new Set<string>();
   for (const checkpoint of restored.announcedRoles) {
@@ -134,7 +208,7 @@ export async function restoreRoleCatalogCheckpoint(
       || entry.identity !== checkpoint.identity
       || entry.contentHash !== checkpoint.contentHash
     ) {
-      throw new Error(`Compaction Role catalog entry is unavailable: ${checkpoint.name}`);
+      return invalid(checkpoint.name);
     }
     announcedNames.add(checkpoint.name);
   }

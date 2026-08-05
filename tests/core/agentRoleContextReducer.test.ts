@@ -58,6 +58,7 @@ describe('Role context reducer', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     };
     const compactedTurnId = turnId();
     const compacted = [turn([
@@ -78,12 +79,18 @@ describe('Role context reducer', () => {
     const mismatched = { ...restoredState, roleCatalogHash: hash('9') };
     const mismatchedBaseline = store.evidence(baseline);
     const mismatchedTurnId = turnId();
-    await expect(reduceRoleContext([
+    const mismatchedState = await reduceRoleContext([
       turn([
         mismatchedBaseline,
         store.compaction(mismatched, mismatchedTurnId, mismatchedBaseline.id),
       ], mismatchedTurnId),
-    ], store.read)).rejects.toThrow('does not match the canonical catalog journal');
+    ], store.read);
+    expect(mismatchedState.catalogHash).toBeNull();
+    expect(mismatchedState.catalogEntries.size).toBe(0);
+    expect(mismatchedState.degradations).toContainEqual(expect.objectContaining({
+      code: 'checkpointMismatch',
+      source: 'roleCatalog',
+    }));
   });
 
   test('reduces an inherited Role catalog without repeating an unchanged registry', async () => {
@@ -98,7 +105,7 @@ describe('Role context reducer', () => {
     expect(await planRoleCatalogEvidence({ turns, snapshot, readContext: store.read })).toBeNull();
   });
 
-  test('fails closed when a delta skips the previous catalog hash', async () => {
+  test('degrades and requests a fresh baseline when a delta skips the previous catalog hash', async () => {
     const store = contextStore();
     const baseline = catalog('1', [entry('default', 'a1')]);
     const broken: RoleCatalogContextPayload = {
@@ -106,9 +113,15 @@ describe('Role context reducer', () => {
       mode: 'delta',
       previousCatalogHash: hash('9'),
     };
-    await expect(reduceRoleContext([
+    const state = await reduceRoleContext([
       turn([store.evidence(baseline), store.evidence(broken)]),
-    ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
+    ], store.read);
+    expect(state.catalogHash).toBeNull();
+    expect(state.catalogEntries.size).toBe(0);
+    expect(state.degradations).toContainEqual(expect.objectContaining({
+      code: 'journalDiscontinuity',
+      source: 'roleCatalog',
+    }));
   });
 });
 

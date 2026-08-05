@@ -25,6 +25,7 @@ import type {
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
+  ModelToolCallHistory,
   SkillInvocationContextPayload,
   SubagentExecutionState,
   ThreadItem,
@@ -37,6 +38,7 @@ import { decodeThreadContextPayload } from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
+  type LiveModelToolCall,
 } from '../context/ContextProjector';
 import {
   ContextCapacityError,
@@ -84,6 +86,7 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './types';
+import { persistToolCallAdmission } from './toolCallHistory';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -184,7 +187,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      const disableDiagnostics = (error: unknown) => {
+        if (!diagnostics.available) return;
+        diagnostics.disable();
+        context.onTurnDiagnosticsError(error);
+      };
       const reasoningReplay = internalMemory ? null : new ActiveTurnReasoningReplay(context.turn.id);
+      const liveModelToolCalls = new Map<string, LiveModelToolCall>();
       const normalizer = new PiEventNormalizer(context, {
         ...(reasoningReplay ? {
           assistantCompleted: ({ itemId, message }) => reasoningReplay.retain(itemId, message),
@@ -193,6 +202,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           execution.callId,
           execution.toolName,
           execution.itemId,
+          execution.modelCall,
           execution.startedAt,
         ),
         completed: (execution) => diagnostics.captureToolExecutionCompleted(
@@ -242,6 +252,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               tools,
               prompt,
               reasoningReplay,
+              liveModelToolCalls,
               {
                 prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
                 compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
@@ -250,9 +261,15 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           };
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
-        onPayload: (payload, model) => {
+        onPayload: async (payload, model) => {
           const transformed = agentProviderPayload(payload, model, stablePrompt);
-          diagnostics.captureProviderRequest(transformed ?? payload);
+          if (diagnostics.available) {
+            try {
+              await diagnostics.captureProviderRequest(transformed ?? payload);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          }
           return transformed;
         },
         onResponse: (response) => diagnostics.captureTransportResponse(response),
@@ -287,6 +304,19 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               return compacted ? await transformContext() : null;
             }
           : undefined,
+        admitToolCall: async (request) => {
+          const decision = await persistToolCallAdmission(
+            request,
+            (value) => context.persistToolCallArguments(value),
+          );
+          if (request.outcome.type === 'admitted' && decision.execute) {
+            liveModelToolCalls.set(request.toolCallId, {
+              providerName: request.providerName,
+              arguments: request.outcome.arguments,
+            });
+          }
+          return decision;
+        },
         getApiKey: runtime.getApiKey,
         transformContext,
         sessionId: cacheAffinity,
@@ -301,7 +331,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return { status: 'interrupted' };
       }
       unsubscribe = agent.subscribe(async (event) => {
-        diagnostics.captureEvent(event);
+        if (diagnostics.available) {
+          try {
+            await diagnostics.captureEvent(event);
+          } catch (error) {
+            disableDiagnostics(error);
+          }
+        }
         normalizer.handle(event);
         await normalizer.flush();
       });
@@ -309,7 +345,14 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted && agent) {
-          agent.steer(message, () => diagnostics.setSteeringDelivered(activityIndex, true));
+          agent.steer(message, () => {
+            if (!diagnostics.available) return;
+            try {
+              diagnostics.setSteeringDelivered(activityIndex, true);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          });
         }
       });
       await agent.prompt(prompt);
@@ -369,6 +412,7 @@ async function projectCanonicalProviderContext(
   tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
   reasoningReplay: ActiveTurnReasoningReplay | null,
+  liveModelToolCalls: ReadonlyMap<string, LiveModelToolCall>,
   observer?: {
     readonly prepared?: (input: {
       readonly messages: readonly Message[];
@@ -390,7 +434,11 @@ async function projectCanonicalProviderContext(
         ],
       },
     ];
-    const projector = new CanonicalContextProjector(model, context);
+    const projector = new CanonicalContextProjector(model, context, {
+      liveToolCall: (turnId, itemId) => (
+        turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
+      ),
+    });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
     const initialUser = context.turn.items.find((item) => (
@@ -731,6 +779,7 @@ export class PiEventNormalizer {
         readonly callId: string;
         readonly toolName: string;
         readonly itemId: string | null;
+        readonly modelCall: ModelToolCallHistory;
         readonly startedAt: number;
       }) => void;
       readonly completed?: (execution: {
@@ -773,8 +822,14 @@ export class PiEventNormalizer {
       case 'message_end':
         if (event.message.role === 'assistant') await this.completeAssistant(event.message);
         return;
+      case 'tool_call_admission':
+        await this.startTool(
+          event.toolCallId,
+          event.decision.modelCall,
+          event.decision.displayArguments,
+        );
+        return;
       case 'tool_execution_start':
-        await this.startTool(event.toolCallId, event.toolName, event.args);
         return;
       case 'tool_execution_end':
         await this.completeTool(event.toolCallId, event.result, event.isError);
@@ -852,13 +907,24 @@ export class PiEventNormalizer {
     this.activeReasoningItem = null;
   }
 
-  private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
-    const identity = canonicalIdentity(providerName);
+  private async startTool(
+    callId: string,
+    modelCall: ModelToolCallHistory,
+    args: unknown,
+  ): Promise<void> {
+    const providerName = modelCall.providerName;
+    const identity = modelCall.identity ?? canonicalIdentity(providerName);
     const startedAt = Date.now();
-    const item = startedToolItem(this.context, callId, identity, args);
+    const item = startedToolItem(this.context, callId, identity, modelCall, args);
     const started = await this.context.recorder.started(item);
     this.toolItems.set(callId, { item: started, startedAt });
-    this.executionObserver?.started?.({ callId, toolName: providerName, itemId: started.id, startedAt });
+    this.executionObserver?.started?.({
+      callId,
+      toolName: providerName,
+      itemId: started.id,
+      modelCall,
+      startedAt,
+    });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
@@ -909,12 +975,14 @@ function startedToolItem(
   context: TurnExecutionContext,
   itemId: string,
   identity: { namespace: string | null; name: string },
+  modelCall: ModelToolCallHistory,
   args: unknown,
 ): ThreadItem {
   const base = {
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
     outputRef: null,
+    modelCall,
   };
   if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
@@ -948,7 +1016,7 @@ function startedToolItem(
       description: typeof input.description === 'string' && input.description.trim()
         ? boundedText(input.description.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
         : null,
-      cwd: boundedText(typeof input.cwd === 'string' ? input.cwd : context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
+      cwd: boundedText(context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
       processId: null,
       status: 'inProgress',
       commandActions: [],
@@ -968,7 +1036,7 @@ function startedToolItem(
       ...base,
       type: 'fileChange',
       changes: [{
-        path,
+        path: boundedText(path, MAX_PERSISTED_TOOL_STRING_CHARS),
         kind: identity.name === 'file_delete' ? 'delete' : identity.name === 'file_write' ? 'add' : 'update',
       }],
       status: 'inProgress',
@@ -979,7 +1047,9 @@ function startedToolItem(
     return {
       ...base,
       type: 'webSearch',
-      query: typeof input.query === 'string' ? input.query : '',
+      query: typeof input.query === 'string'
+        ? boundedText(input.query, MAX_PERSISTED_TOOL_STRING_CHARS)
+        : '',
       status: 'inProgress',
       results: [],
       error: null,
@@ -1107,6 +1177,7 @@ async function executionDetails(
 }> {
   let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
   const refresh = async () => {
+    if (!diagnostics.available) return null;
     try {
       diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
     } catch (error) {

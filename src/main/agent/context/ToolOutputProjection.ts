@@ -28,19 +28,26 @@ export async function freezePendingToolOutputProjections(input: {
   ) => Promise<ContextEvidenceThreadItem>;
 }): Promise<readonly ContextEvidenceThreadItem[]> {
   const existing = new Map<string, ToolOutputProjectionContextPayload>();
+  const unavailable = new Set<string>();
   const tools: HistoryToolItem[] = [];
   for (const turn of selectEffectiveContext(input.turns).turns) {
     for (const item of turn.items) {
       if (item.type === 'contextEvidence' && item.kind === 'toolOutputProjection') {
-        const payload = await input.readContext(item.payloadRef);
+        const payload = await input.readContext(item.payloadRef).catch(() => null);
         if (!payload || payload.kind !== 'toolOutputProjection') {
-          throw new Error(`Tool-output projection is unavailable or corrupt: ${item.payloadRef.id}`);
+          console.warn(`[agent] Frozen tool-output projection is unavailable: ${item.payloadRef.id}`);
+          for (const ref of item.outputRefs) unavailable.add(outputReferenceKey(ref));
+          continue;
         }
         const key = outputReferenceKey(payload.outputRef);
         const prior = existing.get(key);
         if (prior && JSON.stringify(prior) !== JSON.stringify(payload)) {
-          throw new Error(`Tool output has conflicting frozen projections: ${payload.outputRef.id}`);
+          console.warn(`[agent] Frozen tool-output projections conflict: ${payload.outputRef.id}`);
+          existing.delete(key);
+          unavailable.add(key);
+          continue;
         }
+        if (unavailable.has(key)) continue;
         existing.set(key, payload);
       } else if (isCompletedToolWithOutput(item)) {
         tools.push(item);
@@ -62,7 +69,9 @@ export async function freezePendingToolOutputProjections(input: {
   const published: ContextEvidenceThreadItem[] = [];
   for (const item of tools) {
     const outputRef = item.outputRef;
-    if (!outputRef || existing.has(outputReferenceKey(outputRef))) continue;
+    if (!outputRef) continue;
+    const outputKey = outputReferenceKey(outputRef);
+    if (existing.has(outputKey) || unavailable.has(outputKey)) continue;
     const fullTokens = estimateOutputReferenceTokens(outputRef.byteLength);
     const visible = toolItemVisibleOutputText(item);
     const projection: ToolOutputProjection = fullTokens <= MAX_SINGLE_FULL_OUTPUT_TOKENS

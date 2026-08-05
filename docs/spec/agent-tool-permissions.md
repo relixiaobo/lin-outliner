@@ -37,6 +37,32 @@ Selection controls availability, not host-account authority. A tool that survive
 selection runs directly; a tool that does not survive is absent or returns its
 owner's structured unavailable result.
 
+## Admission Is Not Permission
+
+Full Access authorizes a valid operation exposed in the Thread; it does not make an
+unknown tool or malformed argument object valid. Each provider call resolves the
+canonical tool, normalizes model syntax, and passes that tool's strict schema before
+capability evaluation. Unknown fields such as a model-supplied `bash.cwd` are rejected
+once as `invalidArguments`, persisted only as bounded redacted correction evidence, and
+never replayed as another tool call. The host still runs an admitted `bash` command in
+the Thread working directory, but that directory is execution context rather than a
+model argument.
+
+The phases remain observable and separate:
+
+- unresolved, truncated, or schema-invalid calls have no capability decision and no
+  execution-start event;
+- a schema-valid call matched by an explicit block retains its admitted call plus a
+  structured `operation_unavailable` result and capability audit;
+- a schema-valid unblocked call reaches the native tool under Full Access, where shell,
+  operating-system, network, provider, and service failures remain execution results.
+
+Identity resolution, strict-schema validation, and redacted-copy compatibility are
+admission-time decisions. The resulting provider-visible name, arguments, and schema
+digest are immutable history; later registry, schema, or block changes do not
+retroactively turn a past admitted exchange into a denial or erase its result. Current
+selection and blocks govern only new execution.
+
 ## Explicit Blocks
 
 Blocks operate on normalized action descriptors such as outline read/write,
@@ -73,6 +99,27 @@ Each executed or unavailable tool result records:
 Audit data is attached to structured tool details and the corresponding Item.
 Document operations also carry immutable Thread/Turn/Item causation in Core
 transaction metadata.
+
+Audit and diagnostics retain canonical identity, admission disposition, schema digest,
+and redacted observable arguments. Raw secret-like model values and host credentials do
+not enter Items, argument payloads, transcripts, renderer detail, or diagnostics. The
+diagnostic capture boundary applies formatting-preserving structural redaction to a
+provider adapter's serialized function-call argument field without promoting that copy
+into replay. The
+active Turn may retain exact admitted arguments in a transient provider-history overlay;
+that overlay is neither audit data nor durable history and disappears before any later
+Turn or restart.
+The recommended Secretlint scanner preset plus complete private-key, legacy `sk-`, short
+GitHub-token, Bearer, and JWT signatures identify known credential formats. Structured
+redaction requires both a normalized credential field name and a credential-candidate
+string; ambiguous bare `credentials` and `token` values additionally require at least 20
+opaque characters containing letters and digits. Numbers, booleans, nulls, objects,
+arrays, numeric strings, placeholders, and ambiguous free text remain ordinary. JSON-key
+inspection is limited to serialized `args`, `arguments`, `body`, and `payload` strings
+and never recursively interprets nested JSON strings. Rule, parse, and depth failures pass
+through unchanged, so ambiguity cannot become a capability denial. Diagnostic copies are
+budgeted and cooperative and never alter live provider bytes or request fingerprints. A
+JSON pointer is recorded only when the persisted value actually differs from its source.
 
 ## Shared Resource Concurrency
 

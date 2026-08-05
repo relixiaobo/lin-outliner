@@ -5,6 +5,7 @@ import type {
   ProviderRetryStatus,
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  JsonValue,
   RendererUserViewHints,
   Thread,
   ThreadConfigurationSummary,
@@ -19,6 +20,10 @@ import type {
   ThreadTurnsListResponse,
   Turn,
 } from '../../../core/agent/protocol';
+import {
+  boundedToolArgumentsForDisplay,
+  modelCallArgumentSource,
+} from '../../../core/agent/modelCallHistory';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { api } from '../../api/client';
 
@@ -71,6 +76,7 @@ export class ThreadStore {
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
   private readonly outputTextCache = new Map<string, Promise<string | null>>();
+  private readonly toolArgumentsCache = new Map<string, Promise<JsonValue | null>>();
 
   constructor(private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api) {}
 
@@ -393,6 +399,40 @@ export class ThreadStore {
         const oldestKey = this.outputTextCache.keys().next().value;
         if (oldestKey === undefined) break;
         this.outputTextCache.delete(oldestKey);
+      }
+    }
+    return pending;
+  }
+
+  readToolArguments(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<JsonValue | null> {
+    if (!('modelCall' in item)) return Promise.resolve(null);
+    if (item.modelCall.disposition === 'evidenceOnly') {
+      return Promise.resolve(item.modelCall.redactedArgumentsSummary);
+    }
+    const source = modelCallArgumentSource(item.modelCall);
+    if (source.storage === 'inline') return Promise.resolve(source.value);
+    const key = `${threadId}:${source.ref.id}`;
+    let pending = this.toolArgumentsCache.get(key);
+    if (!pending) {
+      pending = this.client.agentCoreRequest('thread/context/read', {
+        threadId,
+        turnId,
+        itemId: item.id,
+        contextId: source.ref.id,
+      }).then((response) => {
+        const context = response.context;
+        return context?.ref.id === source.ref.id && context.payload.kind === 'toolCallArguments'
+          ? boundedToolArgumentsForDisplay(context.payload.value)
+          : null;
+      }).catch(() => {
+        this.toolArgumentsCache.delete(key);
+        return null;
+      });
+      this.toolArgumentsCache.set(key, pending);
+      while (this.toolArgumentsCache.size > MAX_CACHED_TOOL_OUTPUTS) {
+        const oldestKey = this.toolArgumentsCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.toolArgumentsCache.delete(oldestKey);
       }
     }
     return pending;

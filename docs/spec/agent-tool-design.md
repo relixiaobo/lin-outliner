@@ -232,6 +232,77 @@ and lifecycle are specified in
 instructions may call other tools only when those tools survive the current
 Thread catalog and explicit blocks.
 
+## Canonical Call History
+
+Every raw provider call crosses one ordered admission boundary: resolve canonical
+identity, apply model-argument normalization, validate the exposed schema, persist the
+canonical history envelope, evaluate argument-dependent capability blocks, bind host
+execution context, then execute. Host context such as Thread `cwd`, workspace and
+scratch roots, environment, credentials, and private handles is never added to the
+model arguments. `bash` history therefore records its exact admitted `command` and
+optional model fields while `commandExecution.cwd` remains host-owned audit metadata.
+
+The immutable envelope has three dispositions:
+
+- `replayable` stores canonical identity, exact provider-visible name, exact arguments,
+  and schema digest.
+- `redactedReplay` stores canonical identity, the same frozen provider name,
+  structure-preserving redacted arguments, RFC 6901 redaction paths, and schema digest;
+  execution receives the transient validated source value.
+- `evidenceOnly` stores no replayable call, only identity when resolved, a bounded
+  secret-redacted provider name and argument summary, a stable reason, and correction.
+
+Exact JSON up to 32 KiB stays inline. Larger values use a content-addressed,
+Thread-owned `toolCallArguments` payload and participate in fork, child inheritance,
+rollback, deletion, and startup reconciliation. Truncation is never presented as an
+exact call. Projection replays the admission-time provider name and arguments without
+consulting the current registry or schema; the schema digest is audit evidence only.
+The whole call/result pair degrades to typed evidence only when a persisted argument,
+complete output, or image dependency is unavailable. Item-specific fields are
+presentation and audit projections only; no reverse mapper may recreate model
+arguments from them. Payload shape and dependency checks are strict at publication and
+decode. Fork and child inheritance then treat missing semantic context, compaction,
+managed-resource, tool-argument, and complete-output copies as recoverable: they retain
+each canonical reference and the later projector emits typed call evidence or a bounded
+context-degradation marker instead of aborting the user operation.
+The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
+fallback decoder, inspection helper, or replay path; pre-release userData is reset when
+the format changes. Payload-backed arguments are available to renderer detail and Turn
+copy only through an Item-bound main-process read of the exact reference, and are bounded
+before renderer caching, formatting, highlighting, or copying. Inline arguments remain
+complete. While a payload read is pending or unavailable, renderer detail and Turn copy
+use the same typed unavailable value and never reconstruct arguments from Item
+presentation fields.
+
+Secret redaction compatibility is decided once against the admission schema. A
+compatible copy freezes `redactedReplay`; an incompatible copy freezes executed
+`evidenceOnly` while the validated raw source still reaches the tool. The active Turn
+may overlay that raw admitted call transiently for its immediate follow-up provider
+request, but later Turns and every durable surface see only the frozen disposition.
+Cancellation stops each batch loop before it admits any remaining call, so those calls
+create neither Items nor argument payloads.
+The recommended Secretlint scanner preset identifies known credential formats, with
+supplemental complete private-key, legacy `sk-`, short GitHub-token, Bearer, and JWT
+signatures. Structured redaction normalizes complete
+camelCase, snake_case, kebab-case, and unseparated credential-field spellings, but changes
+a field only when its value is a credential-candidate string. Ambiguous bare
+`credentials` and `token` fields require at least 20 opaque characters containing both
+letters and digits. Non-string shapes, numeric strings, and environment placeholders
+pass unchanged. Ordinary command and file strings use only high-confidence value
+signatures. Formatting-preserving JSON-key inspection is limited to serialized `args`,
+`arguments`, `body`, and `payload` strings; strings nested inside that JSON are never
+reinterpreted as another JSON document.
+Secretlint rule exceptions, unsupported asynchronous rules, malformed JSON, and scanner
+depth failures pass through unchanged. Durable scanning yields cooperatively. Diagnostic
+copies use one 64,000-character scan budget and typed omission markers without changing
+live provider bytes or fingerprints. Redaction paths list only values that actually
+changed, and diagnostic decoding is never a replay authority.
+
+Provider call IDs are canonicalized before admission. The first non-empty unused ID is
+preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID
+is the only ID used by execution, Item causation, result pairing, and replay. The original
+provider ID is retained only transiently to correlate the provider response part.
+
 ## Result Contract
 
 Capability tools return native model-tool results with human-readable content
@@ -264,11 +335,12 @@ The runtime may shorten presentation without changing the recorded result.
 
 ## Execution And Audit
 
-Tool availability is computed before provider execution from the canonical
-catalog, effective configuration, Thread scope, and capability evaluation. A
-tool absent from that result is not advertised.
+Tool exposure is computed before provider execution from the canonical catalog,
+effective configuration, and Thread scope. Static blocks may remove a tool; a block
+that depends on validated arguments returns a structured unavailable result after
+admission. Schema failure is an admission error, not a capability or host denial.
 
-Every tool call creates one canonical Item. Document mutations additionally
+Every admitted or rejected tool call creates one canonical Item. Document mutations additionally
 record exact Thread/Turn/Item causation in the document operation journal. File,
 command, MCP, and dynamic-tool effects are auditable from their Items.
 
@@ -279,7 +351,10 @@ forked Thread and creates new Item identities.
 
 Tool schemas reject unknown fields and invalid bounds. Paths, URLs, shell input,
 Node scope, and structured query expressions are normalized before execution.
-Sensitive values are redacted from diagnostic output.
+Secret-like model values are structurally redacted before Item, payload, transcript,
+renderer, or diagnostics persistence. Host-injected secrets remain outside the
+canonical call. Redaction keeps the successful outcome visible through marked replay
+or executed evidence, so secrecy does not erase a side effect and induce a retry.
 
 The security model is Full Access plus explicit unavailability, as specified in
 [`agent-tool-permissions.md`](agent-tool-permissions.md). Tools do not implement

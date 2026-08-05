@@ -17,6 +17,10 @@ import {
   planSkillCatalogEvidence,
   reduceSkillContext,
 } from '../../src/main/agent/context/SkillContextReducer';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+} from '../fixtures/agentToolCallHistory';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 describe('Skill context reducer', () => {
@@ -127,6 +131,7 @@ describe('Skill context reducer', () => {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     };
     const compactedTurnId = turnId(1);
     const turns = [turn([
@@ -152,15 +157,21 @@ describe('Skill context reducer', () => {
     const mismatched = { ...restoredState, skillCatalogHash: hash('9') };
     const mismatchedBaseline = store.evidence(baseline);
     const mismatchedTurnId = turnId(2);
-    await expect(reduceSkillContext([
+    const mismatchedState = await reduceSkillContext([
       turn([
         mismatchedBaseline,
         store.compaction(mismatched, mismatchedTurnId, mismatchedBaseline.id),
       ], mismatchedTurnId),
-    ], store.read)).rejects.toThrow('does not match the canonical catalog journal');
+    ], store.read);
+    expect(mismatchedState.catalogHash).toBeNull();
+    expect(mismatchedState.catalogEntries.size).toBe(0);
+    expect(mismatchedState.degradations).toContainEqual(expect.objectContaining({
+      code: 'checkpointMismatch',
+      source: 'skillCatalog',
+    }));
   });
 
-  test('fails closed when a delta journal skips its previous hash', async () => {
+  test('degrades and requests a fresh baseline when a delta journal skips its previous hash', async () => {
     const store = contextStore();
     const baseline = catalog('1', [entry('alpha', 'a1')]);
     const broken: SkillCatalogContextPayload = {
@@ -169,12 +180,19 @@ describe('Skill context reducer', () => {
       previousCatalogHash: hash('9'),
     };
 
-    await expect(reduceSkillContext([
+    const state = await reduceSkillContext([
       turn([store.evidence(baseline), store.evidence(broken)]),
-    ], store.read)).rejects.toThrow('does not continue from the canonical catalog hash');
+    ], store.read);
+    expect(state.catalogHash).toBeNull();
+    expect(state.catalogEntries.size).toBe(0);
+    expect(state.degradations).toContainEqual(expect.objectContaining({
+      code: 'journalDiscontinuity',
+      source: 'skillCatalog',
+    }));
   });
 
-  test('observes paths only from successful Core file tools', () => {
+  test('observes successful Core file paths from bounded Items without reading argument payloads', () => {
+    const store = contextStore();
     const dynamicTool = (
       id: string,
       namespace: string | null,
@@ -192,15 +210,61 @@ describe('Skill context reducer', () => {
       contentItems: null,
       success,
       durationMs: 1,
+      modelCall: replayableModelCall(
+        namespace ? `${namespace}__${tool}` : tool,
+        { file_path: path },
+      ),
     });
+    const payloadRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/payload.ts', content: 'x'.repeat(40_000) },
+    });
+    const secondPayloadRef = store.put({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/second-payload.ts', pattern: 'canonical' },
+    });
+    const payloadBacked = dynamicTool('payload-read', null, 'file_grep', '/workspace/presentation-only.ts');
+    const secondPayloadBacked = dynamicTool(
+      'second-payload-read',
+      null,
+      'file_read',
+      '/workspace/second-presentation-only.ts',
+    );
+    if (payloadBacked.type !== 'dynamicToolCall') throw new Error('Expected a dynamic tool fixture.');
     const turns = [turn([
       dynamicTool('core-read', null, 'file_read', '/workspace/core.ts'),
+      {
+        ...payloadBacked,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_grep' },
+          providerName: 'file_grep',
+          arguments: { storage: 'payload', ref: payloadRef },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        },
+      },
+      {
+        ...secondPayloadBacked,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_read' },
+          providerName: 'file_read',
+          arguments: { storage: 'payload', ref: secondPayloadRef },
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        },
+      },
       dynamicTool('extension-read', 'example', 'file_read', '/workspace/extension.ts'),
       dynamicTool('unknown-file-tool', null, 'file_probe', '/workspace/probe.ts'),
       dynamicTool('failed-read', null, 'file_read', '/workspace/failed.ts', false),
     ])];
 
-    expect(observedSkillFilePaths(turns)).toEqual(['/workspace/core.ts']);
+    expect(observedSkillFilePaths(turns)).toEqual([
+      '/workspace/core.ts',
+      '/workspace/presentation-only.ts',
+      '/workspace/second-presentation-only.ts',
+    ]);
   });
 });
 
@@ -220,6 +284,7 @@ function contextStore() {
     return ref;
   };
   return {
+    put,
     read: async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? null,
     evidence(payload: Extract<ThreadContextPayload, { kind: 'skillCatalog' | 'skillInvocation' }>): ContextEvidenceThreadItem {
       const payloadRef = put(payload);

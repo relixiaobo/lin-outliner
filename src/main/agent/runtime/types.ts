@@ -1,6 +1,7 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   Thread,
+  JsonValue,
   ContextCursor,
   ThreadContextPayload,
   ContextEvidenceThreadItem,
@@ -54,6 +55,7 @@ export interface TurnExecutionContext {
     mimeType: ThreadItemOutputReference['mimeType'],
     summary: string,
   ): Promise<ThreadItemOutputReference>;
+  persistToolCallArguments(value: JsonValue): Promise<ThreadContextPayloadReference>;
   persistContextEvidence(
     payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,

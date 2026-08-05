@@ -26,6 +26,8 @@
  */
 import type {
   DynamicToolCallThreadItem,
+  ThreadContextPayload,
+  ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadUserContent,
@@ -35,10 +37,12 @@ import type {
 } from '../../../core/agent/protocol';
 import {
   dynamicToolImageIdentity,
-  historyToolArguments,
-  historyToolIdentity,
   toolItemVisibleOutputText,
 } from '../context/ContextProjector';
+import {
+  modelCallArgumentSource,
+  modelCallDisplayName,
+} from '../../../core/agent/modelCallHistory';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
   MAX_PERSISTED_TOOL_OUTPUT_CHARS,
@@ -50,6 +54,7 @@ import {
  * `readContext` member belongs here.
  */
 export interface TranscriptPayloadReader {
+  readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   /** Optional: `full` detail renders per-provider-call usage when available. */
   readDiagnostics?(ref: TurnDiagnosticsPayloadReference): Promise<TurnDiagnosticsPayload | null>;
@@ -245,8 +250,8 @@ async function itemLines(
     case 'dynamicToolCall':
     case 'collabAgentToolCall':
     case 'webSearch': {
-      const toolIdentity = historyToolIdentity(item);
-      const name = toolIdentity.namespace ? `${toolIdentity.namespace}.${toolIdentity.name}` : toolIdentity.name;
+      const name = modelCallDisplayName(item.modelCall);
+      const args = await transcriptToolArguments(item, reader);
       const stored = item.outputRef
         ? await reader.readOutput(item.outputRef).catch(() => null) ?? item.outputRef.summary
         : null;
@@ -261,7 +266,10 @@ async function itemLines(
         ...(detail === 'full' && item.outputRef
           ? [`outputRef: ${digest(item.outputRef.id)} (${item.outputRef.byteLength} bytes)`]
           : []),
-        `args: ${bounded(jsonLine(historyToolArguments(item)), MAX_PERSISTED_TOOL_ARGUMENT_CHARS)}`,
+        `args: ${bounded(jsonLine(args), MAX_PERSISTED_TOOL_ARGUMENT_CHARS)}`,
+        ...(item.modelCall.disposition === 'redactedReplay'
+          ? [`redactedPaths: ${jsonLine(item.modelCall.redactedPaths)}`]
+          : []),
         'output:',
         bounded(body, MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         ...images,
@@ -286,6 +294,21 @@ async function itemLines(
         + (detail === 'full' ? ` summaryRef=${digest(item.summaryRef.id)}` : ''),
       ];
   }
+}
+
+async function transcriptToolArguments(
+  item: Extract<ThreadItem, { readonly modelCall: unknown }>,
+  reader: TranscriptPayloadReader,
+): Promise<import('../../../core/agent/protocol').JsonValue> {
+  if (item.modelCall.disposition === 'evidenceOnly') {
+    return item.modelCall.redactedArgumentsSummary;
+  }
+  const source = modelCallArgumentSource(item.modelCall);
+  if (source.storage === 'inline') return source.value;
+  const payload = await reader.readContext(source.ref).catch(() => null);
+  return payload?.kind === 'toolCallArguments'
+    ? payload.value
+    : { unavailablePayloadRef: source.ref.id };
 }
 
 function userContentText(content: readonly ThreadUserContent[]): string {

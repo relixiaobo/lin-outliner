@@ -13,6 +13,7 @@ import type {
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   JsonValue,
+  ModelToolCallHistory,
   ThreadItem,
   TurnDiagnosticsPayload,
   TurnDiagnosticsActivity,
@@ -21,6 +22,9 @@ import type {
   TurnDiagnosticsProviderRequest,
   TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
+import {
+  redactSecretLikeJsonForDiagnostics,
+} from '../capabilities/agentSecretRedaction';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
@@ -68,6 +72,9 @@ type MutableToolExecution = {
   callId: string;
   toolName: string;
   itemId: string | null;
+  admissionDisposition: ModelToolCallHistory['disposition'];
+  canonicalIdentity: ModelToolCallHistory['identity'];
+  schemaDigest: string | null;
   startedAt: number;
   completedAt: number | null;
   status: Extract<TurnDiagnosticsActivity, { type: 'toolExecutionBatch' }>['executions'][number]['status'];
@@ -105,6 +112,7 @@ export class TurnDiagnosticsCollector {
   private readonly activities: MutableActivity[] = [];
   private preparedPlan: PreparedProviderPlan | null = null;
   private providerContext: Context | null = null;
+  private disabled = false;
 
   constructor(private readonly input: TurnDiagnosticsCollectorInput) {
     this.activities.push({
@@ -117,6 +125,14 @@ export class TurnDiagnosticsCollector {
     });
   }
 
+  get available(): boolean {
+    return !this.disabled;
+  }
+
+  disable(): void {
+    this.disabled = true;
+  }
+
   prepareProviderPlan(plan: PreparedProviderPlan): void {
     this.preparedPlan = plan;
   }
@@ -125,13 +141,23 @@ export class TurnDiagnosticsCollector {
     this.providerContext = context;
   }
 
-  captureProviderRequest(payload: unknown): void {
+  async captureProviderRequest(payload: unknown): Promise<void> {
     if (!this.preparedPlan) throw new Error('Provider request diagnostics are missing the prepared context plan.');
     if (!this.providerContext) throw new Error('Provider request diagnostics are missing the provider context.');
-    const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(message));
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
     const normalizedRequest = jsonValue(payload, true);
+    const diagnostic = await redactSecretLikeJsonForDiagnostics({
+      messages: this.providerContext.messages.map((message) => jsonValue(message, true)),
+      request: normalizedRequest,
+    });
+    const diagnosticOmitted = typeof diagnostic.value === 'string';
+    const diagnosticMessages = diagnosticOmitted ? [] : diagnostic.value.messages;
+    const messageIds = this.providerContext.messages.map((message, messageIndex) => this.rememberMessage(
+      message,
+      diagnosticMessages[messageIndex] ?? '[diagnostic message omitted]',
+    ));
+    const redactedRequest = diagnosticOmitted ? diagnostic.value : diagnostic.value.request;
     const index = this.providerCalls.length;
     this.bindPendingActivities(index);
     this.providerCalls.push({
@@ -151,7 +177,7 @@ export class TurnDiagnosticsCollector {
       reservedOutputTokens: this.preparedPlan.budget.reservedOutputTokens,
       commonPrefixMessageCount: commonPrefixLength(previous, messageIds),
       request: this.rememberProviderRequest(
-        normalizedRequest,
+        redactedRequest,
         this.providerContext.messages,
         this.preparedPlan.messagePartProvenance,
       ),
@@ -167,6 +193,7 @@ export class TurnDiagnosticsCollector {
     callId: string,
     toolName: string,
     itemId: string | null,
+    modelCall: ModelToolCallHistory,
     startedAt = Date.now(),
   ): void {
     const sourceCall = this.providerCalls.at(-1);
@@ -188,6 +215,9 @@ export class TurnDiagnosticsCollector {
       callId,
       toolName,
       itemId,
+      admissionDisposition: modelCall.disposition,
+      canonicalIdentity: modelCall.identity,
+      schemaDigest: modelCall.disposition === 'evidenceOnly' ? null : modelCall.schemaDigest,
       startedAt,
       completedAt: null,
       status: 'inProgress',
@@ -276,7 +306,7 @@ export class TurnDiagnosticsCollector {
     };
   }
 
-  captureEvent(event: AgentEvent): void {
+  async captureEvent(event: AgentEvent): Promise<void> {
     if (event.type !== 'message_end' || event.message.role !== 'assistant') return;
     // pi-ai uses `pending` only on partial streaming messages. Diagnostics are
     // inspection-only, so an impossible pending message_end stays unrecorded
@@ -298,7 +328,7 @@ export class TurnDiagnosticsCollector {
         totalTokens: event.message.usage.totalTokens,
         cost: { ...event.message.usage.cost },
       },
-      value: jsonValue(event.message, true),
+      value: (await redactSecretLikeJsonForDiagnostics(jsonValue(event.message, true))).value,
     };
   }
 
@@ -370,8 +400,7 @@ export class TurnDiagnosticsCollector {
     }
   }
 
-  private rememberMessage(message: Message): string {
-    const value = jsonValue(message, true);
+  private rememberMessage(message: Message, value: JsonValue): string {
     const id = fingerprint(stableJson(value));
     if (!this.canonicalMessages.has(id)) {
       this.canonicalMessages.set(id, {

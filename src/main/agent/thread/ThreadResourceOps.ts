@@ -1,5 +1,6 @@
 import { lstat,realpath,stat } from 'node:fs/promises';
 import { decodeTurn } from '../../../core/agent/codec';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import type {
 Thread,
 ThreadAttachmentContent,
@@ -65,13 +66,20 @@ export class ThreadResourceOps {
     const turn = this.core.readTurn(request.threadId, request.turnId);
     if (!turn) return { context: null };
     const item = turn.items.find((candidate) => candidate.id === request.itemId);
-    if (item?.type !== 'contextEvidence' || item.payloadRef.id !== request.contextId) {
-      return { context: null };
+    if (!item) return { context: null };
+    if (item.type === 'contextEvidence') {
+      if (item.payloadRef.id !== request.contextId) return { context: null };
+      const payload = await this.core.payloads.readContext(request.threadId, item.payloadRef);
+      if (!payload) return { context: null };
+      assertContextPayloadDependencies(item, payload);
+      return { context: { ref: item.payloadRef, payload } };
     }
-    const payload = await this.core.payloads.readContext(request.threadId, item.payloadRef);
-    if (!payload) return { context: null };
-    assertContextPayloadDependencies(item, payload);
-    return { context: { ref: item.payloadRef, payload } };
+    if (!('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') return { context: null };
+    const source = modelCallArgumentSource(item.modelCall);
+    if (source.storage !== 'payload' || source.ref.id !== request.contextId) return { context: null };
+    const payload = await this.core.payloads.readContext(request.threadId, source.ref);
+    if (!payload || payload.kind !== 'toolCallArguments') return { context: null };
+    return { context: { ref: source.ref, payload } };
   }
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
     const thread = this.core.requireThread(request.threadId).thread;

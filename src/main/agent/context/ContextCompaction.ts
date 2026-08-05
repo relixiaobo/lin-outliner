@@ -2,6 +2,7 @@ import type {
   ActiveObservationCheckpointEntry,
   CompactionRestoredStateContextPayload,
   CompactionSummaryContextPayload,
+  ContextDegradationCheckpointEntry,
   ContextCatalogCheckpointEntry,
   ContextCursor,
   ContextEvidenceThreadItem,
@@ -12,11 +13,17 @@ import type {
   ThreadItemOutputReference,
   Turn,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { reduceSkillContext } from './SkillContextReducer';
 import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
 import { toolItemVisibleOutputText, type HistoryToolItem } from './ContextProjector';
 import { readInheritedContextPayload } from './InheritedContext';
+import {
+  appendContextDegradations,
+  contextDegradation,
+  recordContextDegradation,
+} from './ContextDegradation';
 import {
   assertContextPayloadDependencies,
   contextPayloadReferenceKey,
@@ -51,9 +58,10 @@ export async function planContextCompaction(input: {
       ))
     : -1;
   if (input.preserveFrom && preserveIndex < 0) {
-    throw new Error(
-      `Compaction preserve cursor is unreachable: ${input.preserveFrom.turnId}/${input.preserveFrom.itemId}`,
+    console.warn(
+      `[agent] Skipping compaction with unreachable preserve cursor: ${input.preserveFrom.turnId}/${input.preserveFrom.itemId}`,
     );
+    return null;
   }
   const summarized = preserveIndex < 0 ? located : located.slice(0, preserveIndex);
   const visible = summarized.filter(({ item }) => isCompactionEligibleItem(item));
@@ -119,21 +127,34 @@ async function buildCompactionRestoredState(
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
 ): Promise<CompactionRestoredStateContextPayload> {
   const skillState = await reduceSkillContext(turns, readContext);
-  const invocationRefs = await activeSkillPayloadRefs(turns, readContext);
   const roleState = await reduceRoleContext(turns, readContext);
+  const degradations: ContextDegradationCheckpointEntry[] = [];
+  appendContextDegradations(degradations, skillState.degradations);
+  appendContextDegradations(degradations, roleState.degradations);
+  const invocationRefs = await activeSkillPayloadRefs(turns, readContext, degradations);
   const selected = selectEffectiveContext(turns).turns;
-  const userViewBaselineRef = await latestUserViewBaselineRef(selected, readContext);
-  const additionalContextBaselineRef = await latestAdditionalContextBaselineRef(selected, readContext);
+  const userViewBaselineRef = await latestUserViewBaselineRef(selected, readContext, degradations);
+  const additionalContextBaselineRef = await latestAdditionalContextBaselineRef(
+    selected,
+    readContext,
+    degradations,
+  );
   const activeSkills = [...skillState.activeInvocations.values()]
-    .map((skill) => {
+    .flatMap((skill) => {
       const payloadRef = invocationRefs.get(skill.name);
-      if (!payloadRef) throw new Error(`Active Skill payload reference is unavailable: ${skill.name}`);
-      return {
+      if (!payloadRef) {
+        recordContextDegradation(
+          degradations,
+          contextDegradation('payloadUnavailable', 'skillInvocation', skill.name),
+        );
+        return [];
+      }
+      return [{
         name: skill.name,
         identity: skill.identity,
         contentHash: skill.contentHash,
         payloadRef,
-      };
+      }];
     })
     .sort((left, right) => compareStableText(left.name, right.name));
   return {
@@ -150,13 +171,15 @@ async function buildCompactionRestoredState(
       .sort((left, right) => compareStableText(left.name, right.name)),
     userViewBaselineRef,
     additionalContextBaselineRef,
-    activeObservations: await reduceActiveObservations(turns, readContext),
+    activeObservations: await reduceActiveObservations(turns, readContext, degradations),
+    degradations: degradations.sort(compareContextDegradation),
   };
 }
 
 async function activeSkillPayloadRefs(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  degradations: ContextDegradationCheckpointEntry[],
 ): Promise<Map<string, ThreadContextPayloadReference>> {
   const refs = new Map<string, ThreadContextPayloadReference>();
   for (const turn of selectEffectiveContext(turns).turns) {
@@ -167,20 +190,33 @@ async function activeSkillPayloadRefs(
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
-        const inheritedRefs = await activeSkillPayloadRefs(inherited.turns, readContext);
+        if (!inherited) {
+          refs.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
+        const inheritedRefs = await activeSkillPayloadRefs(inherited.turns, readContext, degradations);
         replaceMap(refs, inheritedRefs);
         continue;
       }
       if (item.type === 'contextCompaction') {
         refs.clear();
-        const restored = await readRestoredState(item, readContext);
+        const restored = await readRestoredState(item, readContext, degradations);
+        if (!restored) continue;
         for (const skill of restored.activeSkills) refs.set(skill.name, skill.payloadRef);
         continue;
       }
       if (item.type !== 'contextEvidence' || item.kind !== 'skillInvocation') continue;
-      const payload = await readContext(item.payloadRef);
+      const payload = await readContext(item.payloadRef).catch(() => null);
       if (!payload || payload.kind !== 'skillInvocation') {
-        throw new Error(`Skill invocation payload is unavailable: ${item.payloadRef.id}`);
+        recordContextDegradation(
+          degradations,
+          contextDegradation('payloadUnavailable', 'skillInvocation', item.payloadRef.id),
+        );
+        continue;
       }
       if (payload.execution === 'inline') refs.set(payload.name, item.payloadRef);
     }
@@ -191,9 +227,10 @@ async function activeSkillPayloadRefs(
 async function reduceActiveObservations(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  degradations: ContextDegradationCheckpointEntry[],
 ): Promise<ActiveObservationCheckpointEntry[]> {
   const selected = selectEffectiveContext(turns).turns;
-  const projections = await collectToolOutputProjectionRefs(selected, readContext);
+  const projections = await collectToolOutputProjectionRefs(selected, readContext, degradations);
   const active = new Map<string, ActiveObservationCheckpointEntry>();
   for (const turn of selected) {
     for (const item of turn.items) {
@@ -203,26 +240,55 @@ async function reduceActiveObservations(
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
-        const inheritedActive = await reduceActiveObservations(inherited.turns, readContext);
+        if (!inherited) {
+          active.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
+        const inheritedActive = await reduceActiveObservations(inherited.turns, readContext, degradations);
         replaceEntries(active, inheritedActive, (entry) => entry.key);
         continue;
       }
       if (item.type === 'contextCompaction') {
-        const restored = await readRestoredState(item, readContext);
+        const restored = await readRestoredState(item, readContext, degradations);
+        if (!restored) {
+          active.clear();
+          continue;
+        }
+        appendContextDegradations(degradations, restored.degradations);
         replaceEntries(active, restored.activeObservations, (entry) => entry.key);
         continue;
       }
-      const invalidation = observationInvalidation(item);
+      const resolvedArguments = needsObservationArguments(item)
+        ? await canonicalToolArguments(item, readContext)
+        : null;
+      const invalidation = observationInvalidation(item, resolvedArguments);
       for (const invalidated of invalidation.keys) active.delete(invalidated);
-      if (invalidation.clearNodeObservations) {
+      if (invalidation.clearNodeObservations || invalidation.clearFileObservations) {
         for (const key of active.keys()) {
-          if (key.startsWith('node:')) active.delete(key);
+          if (
+            (invalidation.clearNodeObservations && key.startsWith('node:'))
+            || (invalidation.clearFileObservations && key.startsWith('file:'))
+          ) active.delete(key);
         }
       }
-      if (!isHistoryTool(item) || !item.outputRef) continue;
+      if (!isHistoryTool(item) || !item.outputRef || !resolvedArguments) continue;
       const projectionRef = projections.get(outputReferenceKey(item.outputRef));
-      if (!projectionRef) continue;
-      for (const identity of observationIdentities(item)) {
+      if (!projectionRef) {
+        recordContextDegradation(
+          degradations,
+          contextDegradation(
+            'payloadUnavailable',
+            'toolOutputProjection',
+            outputReferenceKey(item.outputRef),
+          ),
+        );
+        continue;
+      }
+      for (const identity of observationIdentities(item, resolvedArguments)) {
         active.set(identity.key, {
           key: identity.key,
           tool: identity.tool,
@@ -239,32 +305,72 @@ async function reduceActiveObservations(
 async function collectToolOutputProjectionRefs(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  degradations: ContextDegradationCheckpointEntry[],
+  projections = new Map<string, ThreadContextPayloadReference>(),
+  conflicting = new Set<string>(),
 ): Promise<Map<string, ThreadContextPayloadReference>> {
-  const projections = new Map<string, ThreadContextPayloadReference>();
   for (const turn of turns) {
     for (const item of turn.items) {
+      if (item.type === 'contextReset') {
+        projections.clear();
+        conflicting.clear();
+        continue;
+      }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
-        const nested = await collectToolOutputProjectionRefs(
+        if (!inherited) {
+          projections.clear();
+          conflicting.clear();
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
+        await collectToolOutputProjectionRefs(
           selectEffectiveContext(inherited.turns).turns,
           readContext,
+          degradations,
+          projections,
+          conflicting,
         );
-        for (const [outputKey, ref] of nested) setProjectionRef(projections, outputKey, ref);
         continue;
       }
       if (item.type === 'contextCompaction') {
-        const restored = await readRestoredState(item, readContext);
+        projections.clear();
+        conflicting.clear();
+        const restored = await readRestoredState(item, readContext, degradations);
+        if (!restored) continue;
+        appendContextDegradations(degradations, restored.degradations);
         for (const observation of restored.activeObservations) {
-          setProjectionRef(projections, outputReferenceKey(observation.outputRef), observation.projectionRef);
+          setProjectionRef(
+            projections,
+            conflicting,
+            outputReferenceKey(observation.outputRef),
+            observation.projectionRef,
+            degradations,
+          );
         }
         continue;
       }
       if (item.type !== 'contextEvidence' || item.kind !== 'toolOutputProjection') continue;
-      const payload = await readContext(item.payloadRef);
+      const payload = await readContext(item.payloadRef).catch(() => null);
       if (!payload || payload.kind !== 'toolOutputProjection') {
-        throw new Error(`Tool-output projection is unavailable: ${item.payloadRef.id}`);
+        console.warn(`[agent] Compaction skipped unavailable tool-output projection: ${item.payloadRef.id}`);
+        for (const ref of item.outputRefs) projections.delete(outputReferenceKey(ref));
+        recordContextDegradation(
+          degradations,
+          contextDegradation('payloadUnavailable', 'toolOutputProjection', item.payloadRef.id),
+        );
+        continue;
       }
-      setProjectionRef(projections, outputReferenceKey(payload.outputRef), item.payloadRef);
+      setProjectionRef(
+        projections,
+        conflicting,
+        outputReferenceKey(payload.outputRef),
+        item.payloadRef,
+        degradations,
+      );
     }
   }
   return projections;
@@ -273,6 +379,7 @@ async function collectToolOutputProjectionRefs(
 async function latestUserViewBaselineRef(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  degradations: ContextDegradationCheckpointEntry[],
 ): Promise<ThreadContextPayloadReference | null> {
   let baseline: ThreadContextPayloadReference | null = null;
   for (const turn of turns) {
@@ -283,18 +390,40 @@ async function latestUserViewBaselineRef(
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
+        if (!inherited) {
+          baseline = null;
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
         baseline = await latestUserViewBaselineRef(
           selectEffectiveContext(inherited.turns).turns,
           readContext,
+          degradations,
         );
         continue;
       }
       if (item.type === 'contextEvidence' && item.kind === 'userView') {
-        baseline = item.payloadRef;
+        const payload = await readContext(item.payloadRef).catch(() => null);
+        if (!payload || payload.kind !== 'userView') {
+          baseline = null;
+          recordContextDegradation(
+            degradations,
+            contextDegradation(
+              payload ? 'payloadInvalid' : 'payloadUnavailable',
+              'userView',
+              item.payloadRef.id,
+            ),
+          );
+        } else {
+          baseline = item.payloadRef;
+        }
         continue;
       }
       if (item.type === 'contextCompaction') {
-        baseline = (await readRestoredState(item, readContext)).userViewBaselineRef;
+        baseline = (await readRestoredState(item, readContext, degradations))?.userViewBaselineRef ?? null;
       }
     }
   }
@@ -304,6 +433,7 @@ async function latestUserViewBaselineRef(
 async function latestAdditionalContextBaselineRef(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  degradations: ContextDegradationCheckpointEntry[],
 ): Promise<ThreadContextPayloadReference | null> {
   let baseline: ThreadContextPayloadReference | null = null;
   for (const turn of turns) {
@@ -314,22 +444,40 @@ async function latestAdditionalContextBaselineRef(
       }
       if (item.type === 'contextEvidence' && item.kind === 'inheritedContext') {
         const inherited = await readInheritedContextPayload(item, readContext);
+        if (!inherited) {
+          baseline = null;
+          recordContextDegradation(
+            degradations,
+            contextDegradation('payloadUnavailable', 'inheritedContext', item.payloadRef.id),
+          );
+          continue;
+        }
         baseline = await latestAdditionalContextBaselineRef(
           selectEffectiveContext(inherited.turns).turns,
           readContext,
+          degradations,
         );
         continue;
       }
       if (item.type === 'contextEvidence' && item.kind === 'additionalContext') {
-        const payload = await readContext(item.payloadRef);
+        const payload = await readContext(item.payloadRef).catch(() => null);
         if (!payload || payload.kind !== 'additionalContext') {
-          throw new Error(`Additional-context payload is unavailable: ${item.payloadRef.id}`);
+          baseline = null;
+          recordContextDegradation(
+            degradations,
+            contextDegradation(
+              payload ? 'payloadInvalid' : 'payloadUnavailable',
+              'additionalContext',
+              item.payloadRef.id,
+            ),
+          );
+          continue;
         }
         if (payload.threadState !== null) baseline = item.payloadRef;
         continue;
       }
       if (item.type === 'contextCompaction') {
-        baseline = (await readRestoredState(item, readContext)).additionalContextBaselineRef;
+        baseline = (await readRestoredState(item, readContext, degradations))?.additionalContextBaselineRef ?? null;
       }
     }
   }
@@ -339,23 +487,50 @@ async function latestAdditionalContextBaselineRef(
 async function readRestoredState(
   item: Extract<ThreadItem, { readonly type: 'contextCompaction' }>,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
-): Promise<CompactionRestoredStateContextPayload> {
-  const restored = await readContext(item.restoredStateRef);
+  degradations: ContextDegradationCheckpointEntry[],
+): Promise<CompactionRestoredStateContextPayload | null> {
+  const restored = await readContext(item.restoredStateRef).catch(() => null);
   if (!restored || restored.kind !== 'compactionRestoredState') {
-    throw new Error(`Compaction restored-state checkpoint is unavailable: ${item.restoredStateRef.id}`);
+    recordContextDegradation(
+      degradations,
+      contextDegradation(
+        restored ? 'payloadInvalid' : 'payloadUnavailable',
+        'compactionRestoredState',
+        item.restoredStateRef.id,
+      ),
+    );
+    return null;
   }
-  assertContextPayloadDependencies(item, restored);
+  try {
+    assertContextPayloadDependencies(item, restored);
+  } catch {
+    recordContextDegradation(
+      degradations,
+      contextDegradation('payloadInvalid', 'compactionRestoredState', item.restoredStateRef.id),
+    );
+    return null;
+  }
   return restored;
 }
 
 function setProjectionRef(
   projections: Map<string, ThreadContextPayloadReference>,
+  conflicting: Set<string>,
   outputKey: string,
   ref: ThreadContextPayloadReference,
+  degradations: ContextDegradationCheckpointEntry[],
 ): void {
+  if (conflicting.has(outputKey)) return;
   const previous = projections.get(outputKey);
   if (previous && previous.id !== ref.id) {
-    throw new Error(`Tool output has conflicting frozen projections: ${outputKey}`);
+    console.warn(`[agent] Compaction skipped conflicting tool-output projections: ${outputKey}`);
+    projections.delete(outputKey);
+    conflicting.add(outputKey);
+    recordContextDegradation(
+      degradations,
+      contextDegradation('projectionConflict', 'toolOutputProjection', outputKey),
+    );
+    return;
   }
   projections.set(outputKey, ref);
 }
@@ -374,21 +549,26 @@ function replaceEntries<K, V>(
   for (const value of source) target.set(keyOf(value), value);
 }
 
-function observationIdentities(item: HistoryToolItem): Array<{ key: string; tool: string; subject: string }> {
-  if (item.type !== 'dynamicToolCall' || item.namespace !== null || item.status !== 'completed') return [];
-  const args = isRecord(item.arguments) ? item.arguments : {};
-  if (item.tool === 'file_read') {
+function observationIdentities(
+  item: HistoryToolItem,
+  resolvedArguments: CanonicalToolArgumentsResolution,
+): Array<{ key: string; tool: string; subject: string }> {
+  if (item.status !== 'completed' || item.modelCall.identity?.namespace !== null) return [];
+  if (resolvedArguments.kind !== 'canonical') return [];
+  const args = resolvedArguments.value;
+  const tool = item.modelCall.identity.name;
+  if (tool === 'file_read') {
     const path = stringArgument(args, ['file_path', 'path']);
-    return path ? [{ key: `file:${path}`, tool: item.tool, subject: path }] : [];
+    return path ? [{ key: `file:${path}`, tool, subject: path }] : [];
   }
-  if (item.tool === 'node_read') {
+  if (tool === 'node_read') {
     const nodeIds = uniqueStrings([
       ...stringArguments(args, ['node_ids', 'nodeIds']),
       ...singleStringArguments(args, ['node_id', 'nodeId', 'id']),
     ]);
     return nodeIds.map((nodeId) => ({
       key: `node:${nodeId}`,
-      tool: item.tool,
+      tool,
       subject: nodeId,
     }));
   }
@@ -398,9 +578,13 @@ function observationIdentities(item: HistoryToolItem): Array<{ key: string; tool
 interface ObservationInvalidation {
   readonly keys: readonly string[];
   readonly clearNodeObservations: boolean;
+  readonly clearFileObservations: boolean;
 }
 
-function observationInvalidation(item: ThreadItem): ObservationInvalidation {
+function observationInvalidation(
+  item: ThreadItem,
+  resolvedArguments: CanonicalToolArgumentsResolution | null,
+): ObservationInvalidation {
   if (item.type === 'fileChange') {
     return {
       keys: item.status === 'completed'
@@ -410,22 +594,60 @@ function observationInvalidation(item: ThreadItem): ObservationInvalidation {
           ])
         : [],
       clearNodeObservations: false,
+      clearFileObservations: false,
     };
   }
-  if (item.type !== 'dynamicToolCall' || item.namespace !== null) return noObservationInvalidation();
-  const args = isRecord(item.arguments) ? item.arguments : {};
+  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) {
+    return noObservationInvalidation();
+  }
   if (item.status !== 'completed' || item.success !== true) return noObservationInvalidation();
-  if (isFileMutation(item.tool)) {
-    const path = stringArgument(args, ['file_path', 'path']);
-    return { keys: path ? [`file:${path}`] : [], clearNodeObservations: false };
+  const tool = item.modelCall.identity.name;
+  const args = resolvedArguments?.value ?? null;
+  if (isFileMutation(tool)) {
+    const path = args ? stringArgument(args, ['file_path', 'path']) : null;
+    return {
+      keys: path ? [`file:${path}`] : [],
+      clearNodeObservations: false,
+      clearFileObservations: path === null,
+    };
   }
-  if (isNodeMutation(item.tool) && args.preview_only !== true) {
-    return { keys: [], clearNodeObservations: true };
+  if (isNodeMutation(tool) && args?.preview_only !== true) {
+    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
   }
-  if (item.tool === 'outline_undo_stack' && (args.action === 'undo' || args.action === 'redo')) {
-    return { keys: [], clearNodeObservations: true };
+  if (
+    tool === 'outline_undo_stack'
+    && (!args || args.action === 'undo' || args.action === 'redo')
+  ) {
+    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
   }
   return noObservationInvalidation();
+}
+
+type CanonicalToolArgumentsResolution =
+  | { readonly kind: 'canonical'; readonly value: Record<string, unknown> }
+  | { readonly kind: 'summary'; readonly value: Record<string, unknown> }
+  | { readonly kind: 'unavailable'; readonly value: null };
+
+async function canonicalToolArguments(
+  item: HistoryToolItem,
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<CanonicalToolArgumentsResolution> {
+  if (item.modelCall.disposition === 'evidenceOnly') {
+    return isRecord(item.modelCall.redactedArgumentsSummary)
+      ? { kind: 'summary', value: item.modelCall.redactedArgumentsSummary }
+      : { kind: 'unavailable', value: null };
+  }
+  const source = modelCallArgumentSource(item.modelCall);
+  let value: import('../../../core/agent/protocol').JsonValue | null;
+  if (source.storage === 'inline') {
+    value = source.value;
+  } else {
+    const payload = await readContext(source.ref).catch(() => null);
+    value = payload?.kind === 'toolCallArguments' ? payload.value : null;
+  }
+  return isRecord(value)
+    ? { kind: 'canonical', value }
+    : { kind: 'unavailable', value: null };
 }
 
 async function deterministicSummary(
@@ -497,6 +719,9 @@ async function summaryLine(
       const key = contextPayloadReferenceKey(item.payloadRef);
       if (inheritedPath.has(key)) return `Context: ${item.summary}\n[Recursive inherited context omitted.]`;
       const inherited = await readInheritedContextPayload(item, readContext);
+      if (!inherited) {
+        return `Context: ${item.summary}\n[Inherited context unavailable: ${item.payloadRef.id}]`;
+      }
       const nestedPath = new Set(inheritedPath);
       nestedPath.add(key);
       return `Context: ${item.summary}\n${await deterministicSummary(inherited.turns, readContext, nestedPath)}`;
@@ -541,8 +766,18 @@ function isNodeMutation(tool: string): boolean {
   return tool === 'node_create' || tool === 'node_edit' || tool === 'node_delete';
 }
 
+function needsObservationArguments(item: ThreadItem): item is HistoryToolItem {
+  if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) return false;
+  const tool = item.modelCall.identity.name;
+  return tool === 'file_read'
+    || tool === 'node_read'
+    || tool === 'outline_undo_stack'
+    || isFileMutation(tool)
+    || isNodeMutation(tool);
+}
+
 function noObservationInvalidation(): ObservationInvalidation {
-  return { keys: [], clearNodeObservations: false };
+  return { keys: [], clearNodeObservations: false, clearFileObservations: false };
 }
 
 function catalogCheckpoint(
@@ -587,6 +822,16 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function compareStableText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareContextDegradation(
+  left: ContextDegradationCheckpointEntry,
+  right: ContextDegradationCheckpointEntry,
+): number {
+  return compareStableText(
+    `${left.code}\u0000${left.source}\u0000${left.reference}`,
+    `${right.code}\u0000${right.source}\u0000${right.reference}`,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -31,6 +31,30 @@ use one `items/completed` event, which may publish one or more Items in canonica
 order. No initial or completion event accepts an `inProgress` executable Item.
 Completed Items and terminal Turns are immutable.
 
+Every tool Item carries one immutable `modelCall` envelope in addition to its
+type-specific audit and presentation fields. The envelope is the sole authority for
+provider tool-call history and has exactly one disposition: `replayable` stores the
+exact admitted canonical identity, provider-visible name, model arguments, and schema
+digest; `redactedReplay` freezes the same provider name and digest with a
+structure-preserving redacted value plus RFC 6901 paths; and `evidenceOnly` stores a
+bounded redacted summary, stable reason, and correction without a replayable call.
+The digest is audit evidence, not future admission authority. Historical projection
+never consults the current registry or schema to rewrite or erase an admitted exchange;
+only a missing or corrupt persisted argument/result dependency degrades the pair to
+typed evidence.
+The runtime preserves the first non-empty unused provider call ID and replaces empty or
+repeated IDs with fresh Turn-local UUIDv7 values before admission. Only the resulting
+canonical ID identifies the Item, execution causation, paired result, and replay.
+Command text, file changes, MCP/dynamic display arguments, collaboration summaries,
+results, and host execution metadata never reconstruct model arguments. In particular,
+`commandExecution.cwd` is the Thread's host-resolved working directory and is not part
+of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
+the next provider boundary observe the exact just-executed arguments. It is not durable;
+later Turns, restart, fork, and compaction use only the frozen envelope.
+The envelope is required at the codec boundary. Pre-envelope tool Items are not
+decoded, migrated, reconstructed, or routed through an alternate reader; pre-release
+userData is reset when this storage format lands.
+
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
 recorder completion. Replay and forks preserve that timestamp instead of substituting
@@ -46,7 +70,8 @@ reversed ranges.
 Context payload schema version 1 is an exact-key discriminated union, not arbitrary
 JSON. It covers environment, user view, additional context, referenced resources,
 Skill/Role catalog journals, Skill invocation, tool-output projection, inherited
-context, and the three compaction payloads. Unknown kinds, versions, and fields fail
+context, the three compaction payloads, and exact large `toolCallArguments` values.
+Unknown kinds, versions, and fields fail
 closed. Each content reference carries its payload kind, and the owning evidence or
 compaction Item validates the exact expected kind. Individual context payloads are
 limited to 16 MiB. Text entries carry source, authority, and purpose; untrusted text cannot claim
@@ -63,6 +88,9 @@ boundary. Skill and Role reducers record one catalog baseline per context epoch,
 only changed entries, restore validated compaction checkpoints, and start a new baseline
 after `contextReset`. A newly discovered Skill or Role can therefore join an existing
 Thread without rebuilding or rewriting its earlier provider prefix.
+Path-triggered Skill observation reads the bounded path already carried by successful
+Core file Items; it never decodes historical argument payloads at Turn acceptance,
+resume, or runtime preparation.
 
 The effective context begins after the latest `contextReset`. Within that epoch, the
 latest valid `contextCompaction` replaces only its exact covered range with the recorded
@@ -75,11 +103,19 @@ one durable full-or-inline projection before the first provider request that can
 it; later budget pressure, restart, rollback, fork, and replay reuse that decision.
 Provider planning consumes only this reduced canonical Item sequence. There is no
 runtime-only context state, reminder parser, or alternate message store.
+Payload publication and full-Thread decode enforce exact kinds, dependencies, and
+reachable compaction cursors. After admission, unavailable inspection payloads are a
+runtime degradation rather than a dead Thread: reducers clear or skip only affected
+state, restored checkpoints carry typed degradation entries, and projection emits a
+bounded marker that tells the model to re-inspect current state.
 
 Every nested context payload, managed resource, or complete tool output named by a
 context payload is also an explicit dependency on its owning context Item through
 `contextRefs`, `resourceRefs`, or `outputRefs`. Lifecycle operations use that canonical
-dependency graph instead of parsing payload-private JSON.
+dependency graph instead of parsing payload-private JSON. A tool Item whose canonical
+arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference directly;
+that reference participates in the same reachability, fork-copy, rollback, and startup
+reconciliation graph.
 Dynamic tool images carry a typed `localFile` or `threadPayload` source. A managed image
 uses that Thread-owned reference as its provider snapshot. A local image retains its
 live path for user actions and also carries a mandatory Thread-owned `promptImage`
@@ -231,12 +267,11 @@ Turn. One serialized steering-delivery chain preserves admission order, and
 terminalization closes steering under the Thread mutex before freezing the final Item
 list.
 
-`update_plan` is a Turn-local control tool, not a history fact. Its normalized
-checklist is published as a transient `turn/plan/updated` notification for the
-active Turn. It creates neither a `ThreadItem` nor model-history text, and a
-terminal Turn never retains it. Recorded and transient notification types are
-separate protocol subsets; rollout decoding rejects transient notification
-types even if malformed storage contains one.
+`update_plan` is an ordinary recorded tool call. Its normalized checklist is also
+published as a transient `turn/plan/updated` notification so the active-Turn pill can
+update immediately, but the transient notification is not the history authority.
+Recorded and transient notification types remain separate protocol subsets; rollout
+decoding rejects transient notification types even if malformed storage contains one.
 
 Initial preview selection is deterministic: first non-empty text, then an
 attachment name, then a Node-reference note. Whitespace is normalized and the
@@ -313,7 +348,8 @@ record.
 Forked user Items retain `acceptedAt`. Context cursors are rewritten to the copied
 Turn/Item identities. Every context payload and every dependency listed by the owning
 Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
-publication; failure deletes the staged fork. The copied Thread therefore remains
+publication, including a tool Item's canonical argument payload; failure deletes the
+staged fork. The copied Thread therefore remains
 readable after its source is deleted. Content-addressed resource references do not
 contain a Thread path and remain unchanged in the copied Items and payloads. Every
 terminal Turn's diagnostics payload is copied under the fork's ownership with the same
@@ -359,7 +395,27 @@ only a complete digest-verified resource. Failed content admission immediately
 removes prompt snapshots created by that attempt unless canonical history already
 references them. Execution-time context publication writes the payload and its Item
 under the Thread mutex; failed publication and Turn terminalization prune any context
-payload not reachable from the canonical Item graph. A newly written tool image that
+payload not reachable from the canonical Item graph. Inline model-call arguments are
+codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
+than truncation. The recommended Secretlint preset plus complete private-key, legacy
+`sk-`, short GitHub-token, Bearer, and JWT signatures redact known credential formats
+before either the Item or payload becomes durable.
+Structured fields change only when both the normalized terminal field name identifies a
+credential and the value is a credential-candidate string; non-string shapes, numeric
+strings, placeholders, and ambiguous free-form content pass unchanged. Ambiguous bare
+`credentials` and `token` fields require at least 20 opaque characters containing both
+letters and digits. Serialized JSON key inspection is limited to `args`, `arguments`,
+`body`, and `payload` strings, preserves unrelated formatting, and never reinterprets
+nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed JSON,
+and scanner depth failures all fail open. Durable scanning yields cooperatively;
+diagnostic copies additionally have one 64,000-character budget and use an omission
+marker beyond it. The diagnostic copy never becomes Item or replay data. Redacted replay
+compatibility is decided once
+against the admission schema: a compatible copy becomes `redactedReplay`; an
+incompatible copy becomes executed `evidenceOnly`, while the validated transient source
+call may still run. Evidence provider names, corrections, and argument summaries have
+independent UTF-8 bounds, and malformed redaction pointers fail at the
+codec boundary. A newly written tool image that
 no terminal Item references is reclaimed at Turn finalization; startup reconciliation
 handles crash leftovers. Every
 resource operation requires each managed path component to be a physical directory;
@@ -380,7 +436,11 @@ closes. Startup and rollback remove stale staging data plus managed resources, c
 payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
 history. Forks copy only payloads referenced by inherited Items and Turn execution into
 their own directory with a distinct inode, so provenance remains shared while mutation
-and deletion remain Thread-local.
+and deletion remain Thread-local. Fork and child inheritance attempt every referenced
+semantic context, compaction, managed-resource, tool-argument, and complete-output copy.
+Missing copies are recoverable: canonical references remain on the copied Items, tool
+dependencies become typed call/result evidence, and semantic dependencies become bounded
+context-degradation markers rather than aborting the user operation.
 If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.
@@ -390,7 +450,9 @@ Startup reconciles catalog and history projections from rollouts. A Turn left
 streamed or executable Item first receives its terminal completion fact. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
-path.
+path. New tool Items always write the required envelope, and decode rejects a tool
+Item that lacks it. Pre-release format changes use an explicit userData reset rather
+than a compatibility reader.
 
 ## Transport
 

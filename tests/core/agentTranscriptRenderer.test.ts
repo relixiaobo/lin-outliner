@@ -18,6 +18,7 @@ import {
   renderTurn,
   type TranscriptPayloadReader,
 } from '../../src/main/agent/thread/TranscriptRenderer';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const THREAD_ID = 'thread-child';
 const TURN_ID = 'turn-child-1';
@@ -68,7 +69,7 @@ List the files, then summarise.
 Check the directory first.
 
 ### Tool bash — completed
-args: {"command":"ls","cwd":"/w"}
+args: {"command":"ls"}
 output:
 a.ts
 b.ts
@@ -80,7 +81,7 @@ export const a = 1;
 [Image output: preview (chart.png), image/png, 128 bytes]
 
 ### Tool collaboration.spawn_agent — completed
-args: {"message":"Audit the parser."}
+args: {"task_name":"parser","message":"Audit the parser.","fork_turns":"all"}
 output:
 {"status":"completed","receiverThreadIds":["thread-grandchild"],"agentsStates":{"thread-grandchild":{"status":"running","taskPath":"/root/audit/parser","nickname":"Parser","role":"worker"}}}
 
@@ -167,6 +168,7 @@ Two files: a.ts and b.ts.
         contentItems: null,
         success: null,
         durationMs: null,
+        modelCall: replayableModelCall('file_grep', { pattern: 'TODO' }),
       }]),
       status: 'inProgress',
       completedAt: null,
@@ -221,6 +223,7 @@ function reader(outputs: Readonly<Record<string, string>> = {}): TranscriptPaylo
     ...Object.entries(outputs).map(([id, text]) => [outputReference(id, text).id, text] as const),
   ]);
   return {
+    readContext: async () => null,
     readOutput: async (ref: ThreadItemOutputReference) => byId.get(ref.id) ?? null,
     readDiagnostics: async () => diagnosticsPayload(),
   };
@@ -288,6 +291,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       ],
       success: true,
       durationMs: 3,
+      modelCall: replayableModelCall('file_read', { file_path: '/w/a.ts' }),
     },
     {
       type: 'collabAgentToolCall',
@@ -309,6 +313,11 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
           role: 'worker',
         },
       },
+      modelCall: replayableModelCall('collaboration__spawn_agent', {
+        task_name: 'parser',
+        message: 'Audit the parser.',
+        fork_turns: 'all',
+      }),
     },
     {
       type: 'subAgentActivity',
@@ -360,6 +369,7 @@ function bashItem(outputRef: ThreadItemOutputReference): ThreadItem {
     aggregatedOutput: 'a.ts\nb.ts',
     exitCode: 0,
     durationMs: 12,
+    modelCall: replayableModelCall('bash', { command: 'ls' }),
   };
 }
 

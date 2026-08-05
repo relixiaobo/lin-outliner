@@ -46,6 +46,8 @@ import type {
   TurnExecutor,
 } from '../../src/main/agent/runtime/types';
 import { persistCompletedToolContext } from '../../src/main/agent/runtime/PiTurnExecutor';
+import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
+import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
 import { Core } from '../../src/core/core';
@@ -61,8 +63,22 @@ import {
   subagentTranscriptRoot,
 } from '../../src/main/agent/thread/SubagentTranscriptArtifact';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
+const FORK_PAYLOAD_TOOL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    query: { type: 'string' },
+    description: { type: 'string' },
+  },
+  required: ['query'],
+} as const;
+const FORK_MODEL_ARGUMENTS = {
+  query: 'exact canonical argument '.repeat(2_000),
+  description: 'Persist, fork, restart, and replay this exact value.',
+} as const;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -199,6 +215,7 @@ class ControlledExecutor implements TurnExecutor {
 class ForkPayloadExecutor extends ControlledExecutor {
   override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     const itemId = context.recorder.createItemId();
+    const argumentRef = await context.persistToolCallArguments(FORK_MODEL_ARGUMENTS);
     const started: ThreadItem = {
       type: 'dynamicToolCall',
       id: itemId,
@@ -211,6 +228,11 @@ class ForkPayloadExecutor extends ControlledExecutor {
       contentItems: null,
       success: null,
       durationMs: null,
+      modelCall: {
+        ...replayableModelCall('test__payload', {}),
+        arguments: { storage: 'payload', ref: argumentRef },
+        schemaDigest: modelToolSchemaDigest(FORK_PAYLOAD_TOOL_SCHEMA),
+      },
     };
     await context.recorder.started(started);
     const outputRef = await context.persistOutputText(
@@ -258,6 +280,7 @@ class ForkLocalImageExecutor implements TurnExecutor {
         contentItems: null,
         success: null,
         durationMs: null,
+        modelCall: replayableModelCall('file_read', { file_path: '/workspace/local.png' }),
       };
       await context.recorder.started(started);
       await context.recorder.completed({
@@ -393,6 +416,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
+      degradations: [],
     });
     const instructionsRef = await this.payloads.writeContext(context.thread.id, {
       schemaVersion: 1,
@@ -438,6 +462,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
         }],
         success: true,
         durationMs: 1,
+        modelCall: replayableModelCall('test__nested_image', {}),
       }],
       itemsView: 'full',
       provenance: {
@@ -1307,6 +1332,7 @@ describe('ThreadService', () => {
       kind: 'compactionRestoredState',
       activeSkills: [],
       activeObservations: [],
+      degradations: [],
     });
     expect(JSON.stringify(executor.projected)).toContain('lossy_derived_context=true');
     expect(JSON.stringify(executor.projected)).toContain('Continue after provider overflow.');
@@ -2867,6 +2893,10 @@ describe('ThreadService', () => {
     const forkTurn = opened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns![0]!;
     const forkItem = forkTurn.items.find((item) => item.type === 'dynamicToolCall');
     if (!forkItem?.outputRef) throw new Error('Fork payload Item missing');
+    if (forkItem.modelCall.disposition !== 'replayable' || forkItem.modelCall.arguments.storage !== 'payload') {
+      throw new Error('Fork model-call argument payload missing');
+    }
+    const forkArgumentRef = forkItem.modelCall.arguments.ref;
     const forkImage = forkItem.contentItems?.find((content) => content.type === 'image');
     if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
 
@@ -2881,6 +2911,39 @@ describe('ThreadService', () => {
     if (forkImage.source.kind !== 'threadPayload') throw new Error('Fork image is not Thread-owned');
     expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      contextId: forkArgumentRef.id,
+    })).toEqual({
+      context: {
+        ref: forkArgumentRef,
+        payload: {
+          schemaVersion: 1,
+          kind: 'toolCallArguments',
+          value: FORK_MODEL_ARGUMENTS,
+        },
+      },
+    });
+    const unrelatedItem = forkTurn.items.find((item) => item.id !== forkItem.id)!;
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: unrelatedItem.id,
+      contextId: forkArgumentRef.id,
+    })).toEqual({ context: null });
+    expect(await opened.service.request('thread/context/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
+      contextId: 'f'.repeat(64),
+    })).toEqual({ context: null });
 
     await opened.service.deleteThread(source.id);
 
@@ -2893,6 +2956,11 @@ describe('ThreadService', () => {
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await opened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await opened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
     const crashLeftover = await opened.stores.payloads.writeText(
       fork.id,
       'uncommitted-output',
@@ -2912,8 +2980,276 @@ describe('ThreadService', () => {
     })).toMatchObject({ output: { text: 'complete inherited output' } });
     expect(await reopened.stores.payloads.readResource(fork.id, forkImage.source.ref))
       .toEqual(Buffer.from('inherited image'));
+    expect(await reopened.stores.payloads.readContext(fork.id, forkArgumentRef)).toEqual({
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: FORK_MODEL_ARGUMENTS,
+    });
     expect(await reopened.stores.payloads.readTextReference(fork.id, crashLeftover)).toBeNull();
+    const restartedTurns = reopened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const projected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => reopened.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => reopened.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => reopened.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }, [forkPayloadProjectionTool()]).projectTurns(restartedTurns);
+    const replayedCall = projected.flatMap((message) => (
+      typeof message.content === 'string'
+        ? []
+        : message.content.filter((part) => part.type === 'toolCall')
+    ))[0];
+    expect(replayedCall).toMatchObject({
+      id: forkItem.id,
+      name: 'test__payload',
+      arguments: FORK_MODEL_ARGUMENTS,
+    });
     await reopened.service.close();
+  });
+
+  test('forks with typed evidence when a tool-argument payload is unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const opened = await openFixture(root, new ForkPayloadExecutor(), () => 1_720_000_000_000);
+    await opened.service.initialize();
+    const source = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    const accepted = await opened.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Create payloads' }],
+    });
+    await opened.service.waitForIdle(source.id);
+    const sourceTurn = opened.service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
+    const sourceItem = sourceTurn.items.find((item) => item.type === 'dynamicToolCall');
+    if (
+      !sourceItem
+      || sourceItem.modelCall.disposition !== 'replayable'
+      || sourceItem.modelCall.arguments.storage !== 'payload'
+    ) throw new Error('Source model-call argument payload missing');
+    const argumentRef = sourceItem.modelCall.arguments.ref;
+    await rm(join(root, 'agent', 'payloads', source.id, 'context', `${argumentRef.id}.json`));
+    expect(await opened.stores.payloads.readContext(source.id, argumentRef)).toBeNull();
+
+    const fork = (await opened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkTurns = opened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const forkItem = forkTurns[0]!.items.find((item) => item.type === 'dynamicToolCall');
+    if (
+      !forkItem
+      || forkItem.modelCall.disposition !== 'replayable'
+      || forkItem.modelCall.arguments.storage !== 'payload'
+    ) throw new Error('Fork model-call argument reference missing');
+    expect(forkItem.modelCall.arguments.ref).toEqual(argumentRef);
+    expect(await opened.stores.payloads.readContext(fork.id, argumentRef)).toBeNull();
+
+    const projected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => opened.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => opened.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => opened.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(projected)).toContain('argumentPayloadUnavailable');
+    expect(projected.some((message) => message.role === 'toolResult')).toBe(false);
+    await opened.service.close();
+  });
+
+  test('forks and starts a child with a model-visible marker when context payloads are unavailable', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const completed = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create context that will become unavailable' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const sourceContext = fixture.executor.contexts[0]!;
+    const userItem = sourceContext.turn.items.find((item) => item.type === 'userMessage');
+    if (!userItem || userItem.type !== 'userMessage') throw new Error('Expected source user Item.');
+    const evidence = await sourceContext.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: userItem.acceptedAt,
+      utcInstant: '2026-08-05T00:00:00.000Z',
+      localDate: '2026-08-05',
+      localTime: '08:00:00',
+      timeZone: 'Asia/Shanghai',
+      utcOffsetMinutes: 480,
+      locale: 'zh-CN',
+      workingDirectory: root.cwd,
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+      todayNodeTitle: null,
+    }, 'Environment that will become unavailable');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    await rm(join(
+      fixture.root,
+      'agent',
+      'payloads',
+      root.id,
+      'context',
+      `${evidence.payloadRef.id}.json`,
+    ));
+    expect(await fixture.stores.payloads.readContext(root.id, evidence.payloadRef)).toBeNull();
+
+    const fork = (await fixture.service.forkThread({
+      threadId: root.id,
+      boundary: { kind: 'afterTurn', turnId: completed.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    expect(await fixture.stores.payloads.readContext(fork.id, evidence.payloadRef)).toBeNull();
+    const forkProjection = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(forkProjection)).toContain('Context degradation');
+    expect(JSON.stringify(forkProjection)).toContain(evidence.payloadRef.id);
+
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate from degraded context' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'missing-context-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-context-spawn',
+      taskName: 'missing_context_child',
+      message: 'Continue from degraded context',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.service.readThread({ threadId: child.thread.id }).thread.id).toBe(child.thread.id);
+    const childProjection = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(childProjection)).toContain('Context degradation');
+    expect(JSON.stringify(childProjection)).toContain(evidence.payloadRef.id);
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('forks and starts a child with typed evidence when a tool-output payload is unavailable', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const completed = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create output that will become unavailable' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const sourceContext = fixture.executor.contexts[0]!;
+    const toolId = sourceContext.recorder.createItemId();
+    const outputRef = await sourceContext.persistOutputText(
+      toolId,
+      'complete output that becomes unavailable',
+      'text/plain',
+      'Complete output',
+    );
+    await sourceContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: sourceContext.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/unavailable-output.txt' },
+      status: 'completed',
+      outputRef,
+      contentItems: [{ type: 'text', text: 'mutable fallback must not replay' }],
+      success: true,
+      durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/unavailable-output.txt' }),
+    });
+    await sourceContext.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+      outputRef,
+      projection: { type: 'full' },
+    }, 'Frozen output that becomes unavailable');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+
+    await rm(join(fixture.root, 'agent', 'payloads', root.id, `${outputRef.id}.txt`));
+    expect(await fixture.stores.payloads.readTextReference(root.id, outputRef)).toBeNull();
+
+    const fork = (await fixture.service.forkThread({
+      threadId: root.id,
+      boundary: { kind: 'afterTurn', turnId: completed.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    expect(await fixture.stores.payloads.readTextReference(fork.id, outputRef)).toBeNull();
+    const forkProjection = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(forkProjection)).toContain('resultPayloadUnavailable');
+    expect(JSON.stringify(forkProjection)).not.toContain('mutable fallback must not replay');
+
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate from recoverable history' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'missing-output-spawn');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-output-spawn',
+      taskName: 'missing_output_child',
+      message: 'Continue from recoverable history',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const inheritedItem = child.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!inheritedItem || inheritedItem.type !== 'contextEvidence') {
+      throw new Error('Expected inherited context evidence.');
+    }
+    expect(inheritedItem.outputRefs).toContainEqual(outputRef);
+    expect(await fixture.stores.payloads.readTextReference(child.thread.id, outputRef)).toBeNull();
+    const childProjection = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(childProjection)).toContain('resultPayloadUnavailable');
+    expect(JSON.stringify(childProjection)).not.toContain('mutable fallback must not replay');
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
   });
 
   test('copies local tool image provider snapshots into a fork', async () => {
@@ -3770,8 +4106,8 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('removes a staged child, copied payloads, and its newly created pool when admission fails', async () => {
-    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 100 });
+  test('starts a child with typed evidence when an inherited managed resource is unavailable', async () => {
+    const fixture = await createFixture();
     const root = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
@@ -3800,19 +4136,85 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/missing.png' }),
     });
     expect(await fixture.stores.payloads.deleteResource(root.id, imageRef)).toBe(true);
     await recordCollaborationSpawnBoundary(context, 'copy-failure-spawn');
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'copy-failure-spawn',
+      taskName: 'copy_failure',
+      message: 'Continue without the unavailable image',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const projected = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[1]!,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(projected)).toContain('resultPayloadUnavailable');
+    expect(fixture.service.readThread({ threadId: child.thread.id }).thread.id).toBe(child.thread.id);
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(0);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('removes a staged child, copied payloads, and its newly created pool when admission fails', async () => {
+    const prompt = 'Fail after copying inherited context';
+    const fixture = await createFixture(undefined, {
+      resolveSubagentTokenBudget: () => 100,
+      resolveUserContent: (content) => {
+        const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+        if (text === prompt) throw new Error('simulated child admission failure');
+        return content;
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with copied context' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    await context.persistContextEvidence({
+      schemaVersion: 1,
+      kind: 'turnEnvironment',
+      acceptedAt: active.turn.startedAt,
+      utcInstant: '2026-08-05T00:00:00.000Z',
+      localDate: '2026-08-05',
+      localTime: '08:00:00',
+      timeZone: 'Asia/Shanghai',
+      utcOffsetMinutes: 480,
+      locale: 'zh-CN',
+      workingDirectory: root.cwd,
+      conversationMode: 'interactive',
+      executionMode: 'root',
+      replyIdentity: null,
+      todayNodeId: null,
+      todayNodeTitle: null,
+    }, 'Context copied before admission');
+    await recordCollaborationSpawnBoundary(context, 'admission-failure-spawn');
     const notifications: AgentCoreNotification[] = [];
     fixture.service.subscribe((notification) => notifications.push(notification));
 
     await expect(fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
       senderTurnId: active.turn.id,
-      parentItemId: 'copy-failure-spawn',
-      taskName: 'copy_failure',
-      message: 'Must fail before child admission',
-    })).rejects.toThrow('Missing inherited managed resource');
+      parentItemId: 'admission-failure-spawn',
+      taskName: 'admission_failure',
+      message: prompt,
+    })).rejects.toThrow('simulated child admission failure');
 
     const stagedChild = notifications.find((notification) => (
       notification.type === 'thread/started' && notification.threadId !== root.id
@@ -4257,6 +4659,7 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: imageRef } }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/inherited.png' }),
     });
     await parentContext.persistContextEvidence({
       schemaVersion: 1,
@@ -4295,6 +4698,7 @@ describe('ThreadService', () => {
       contentItems: [{ type: 'text', text: 'MUST NOT BE INHERITED' }],
       success: true,
       durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/post-spawn.txt' }),
     });
     const inheritedAll = await fixture.service.spawnCollaborationAgent({
       senderThreadId: root.id,
@@ -4386,7 +4790,7 @@ describe('ThreadService', () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128_000,
       maxTokens: 8_192,
-    }, childContext).projectTurns([inheritedAll.turn]);
+    }, childContext, [historyProjectionTool('file_read')]).projectTurns([inheritedAll.turn]);
     expect(projected.map((message) => message.role)).toEqual([
       'user', 'assistant', 'user', 'assistant', 'toolResult', 'user',
     ]);
@@ -4403,6 +4807,131 @@ describe('ThreadService', () => {
       fixture.service.waitForIdle(inheritedNone.thread.id),
       fixture.service.waitForIdle(root.id),
     ]);
+    await fixture.service.close();
+  });
+
+  test('starts a child with typed evidence when inherited tool arguments are unavailable', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with recoverable history' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const parentContext = fixture.executor.contexts[0]!;
+    const argumentRef = await fixture.stores.payloads.writeContext(root.id, {
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { file_path: '/workspace/unavailable.txt' },
+    });
+    const toolId = parentContext.recorder.createItemId();
+    await parentContext.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: parentContext.recorder.localProvenance(toolId),
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/unavailable.txt' },
+      status: 'completed',
+      outputRef: null,
+      contentItems: [{ type: 'text', text: 'Historical result' }],
+      success: true,
+      durationMs: 1,
+      modelCall: {
+        ...replayableModelCall('file_read', {}),
+        arguments: { storage: 'payload', ref: argumentRef },
+      },
+    });
+    await recordCollaborationSpawnBoundary(parentContext, 'missing-argument-spawn');
+    await rm(join(fixture.root, 'agent', 'payloads', root.id, 'context', `${argumentRef.id}.json`));
+
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: active.turn.id,
+      parentItemId: 'missing-argument-spawn',
+      taskName: 'missing_argument_child',
+      message: 'Continue from recoverable history',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const inheritedItem = child.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!inheritedItem || inheritedItem.type !== 'contextEvidence') {
+      throw new Error('Expected inherited context evidence.');
+    }
+    expect(inheritedItem.contextRefs).toContainEqual(argumentRef);
+    expect(await fixture.stores.payloads.readContext(child.thread.id, argumentRef)).toBeNull();
+
+    const childContext = fixture.executor.contexts[1]!;
+    const projected = await new CanonicalContextProjector(
+      projectionModel(),
+      childContext,
+    ).projectTurns([child.turn]);
+    expect(JSON.stringify(projected)).toContain('argumentPayloadUnavailable');
+
+    await recordCollaborationSpawnBoundary(childContext, 'nested-missing-argument-spawn');
+    const grandchild = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: child.thread.id,
+      senderTurnId: child.turn.id,
+      parentItemId: 'nested-missing-argument-spawn',
+      taskName: 'nested_missing_argument_child',
+      message: 'Continue through nested recoverable history',
+      forkTurns: 'all',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    const grandchildEvidence = grandchild.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!grandchildEvidence || grandchildEvidence.type !== 'contextEvidence') {
+      throw new Error('Expected nested inherited context evidence.');
+    }
+    expect(grandchildEvidence.contextRefs).toContainEqual(argumentRef);
+    expect(await fixture.stores.payloads.readContext(grandchild.thread.id, argumentRef)).toBeNull();
+    const grandchildProjected = await new CanonicalContextProjector(
+      projectionModel(),
+      fixture.executor.contexts[2]!,
+    ).projectTurns([grandchild.turn]);
+    expect(JSON.stringify(grandchildProjected)).toContain('argumentPayloadUnavailable');
+
+    fixture.executor.finish(2);
+    fixture.executor.finish(1);
+    fixture.executor.finish(0);
+    await Promise.all([
+      fixture.service.waitForIdle(grandchild.thread.id),
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await Promise.all([
+      fixture.service.flushSubagentTranscript(child.thread.id),
+      fixture.service.flushSubagentTranscript(grandchild.thread.id),
+    ]);
+
+    const fork = (await fixture.service.forkThread({
+      threadId: child.thread.id,
+      boundary: { kind: 'afterTurn', turnId: child.turn.id },
+    })).thread;
+    const forkTurns = fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;
+    const forkEvidence = forkTurns[0]!.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'inheritedContext'
+    ));
+    if (!forkEvidence || forkEvidence.type !== 'contextEvidence') {
+      throw new Error('Expected forked inherited context evidence.');
+    }
+    expect(forkEvidence.contextRefs).toContainEqual(argumentRef);
+    expect(await fixture.stores.payloads.readContext(fork.id, argumentRef)).toBeNull();
+    const forkProjected = await new CanonicalContextProjector(projectionModel(), {
+      readContext: (ref) => fixture.stores.payloads.readContext(fork.id, ref),
+      readOutput: (ref) => fixture.stores.payloads.readTextReference(fork.id, ref),
+      readResource: (ref) => fixture.stores.payloads.readResource(fork.id, ref),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns(forkTurns);
+    expect(JSON.stringify(forkProjected)).toContain('argumentPayloadUnavailable');
     await fixture.service.close();
   });
 
@@ -7848,6 +8377,7 @@ describe('ThreadService', () => {
       contentItems: null,
       success: null,
       durationMs: null,
+      modelCall: replayableModelCall('skill', { skill: 'alpha' }),
     };
     await context.recorder.started(startedTool);
     const result = await executeTool(tools, 'skill', toolId, { skill: 'alpha' });
@@ -8205,6 +8735,16 @@ function projectionModel() {
   };
 }
 
+function forkPayloadProjectionTool(): AgentTool {
+  return {
+    name: 'test__payload',
+    label: 'payload',
+    description: 'Project the persisted argument payload.',
+    parameters: FORK_PAYLOAD_TOOL_SCHEMA as any,
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  };
+}
+
 const EXTENSION_PROBE_CONTRACT = {
   identity: { namespace: 'automation_probe', name: 'run' },
   description: 'Run the Automation extension probe.',
@@ -8267,6 +8807,7 @@ class OpenToolItemExecutor implements TurnExecutor {
       aggregatedOutput: null,
       exitCode: null,
       durationMs: null,
+      modelCall: replayableModelCall('bash', { command: 'sleep 30' }),
     });
     return completedExecutionResult();
   }
@@ -8414,6 +8955,18 @@ async function executeTool(
   return tool.execute(itemId, params);
 }
 
+function historyProjectionTool(
+  name: string,
+): import('../../src/main/agent/runtime/kernel/types').AgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} history projection fixture`,
+    parameters: { type: 'object', additionalProperties: true },
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as import('../../src/main/agent/runtime/kernel/types').AgentTool;
+}
+
 async function recordCollaborationSpawnBoundary(
   context: TurnExecutionContext,
   itemId: string,
@@ -8431,6 +8984,11 @@ async function recordCollaborationSpawnBoundary(
     reasoningEffort: null,
     agentsStates: {},
     outputRef: null,
+    modelCall: replayableModelCall('collaboration__spawn_agent', {
+      task_name: 'test_agent',
+      message: 'Test collaboration spawn',
+      fork_turns: 'all',
+    }),
   });
 }
 
@@ -8830,6 +9388,7 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
     durationMs: null,
     status: 'inProgress' as const,
     outputRef: null,
+    modelCall: replayableModelCall('file_read', { file_path: '/w/a.ts' }),
   };
   await context.recorder.started(item);
   await context.recorder.completed({
