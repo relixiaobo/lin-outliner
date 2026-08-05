@@ -1101,8 +1101,6 @@ before it reaches durable storage. The registry follows it exactly:
    ref against current subject membership and every object-valued argument ref
    against its exact ready argument slot, then produces and executes the effect
    itself.
-   projection and its own invocation record, then produces and executes the effect
-   itself.
 
 So `ActionEffectPlan` only ever travels **main → renderer**, which is the trusted
 direction. A current subject whose state/arguments changed returns `reEvaluated`;

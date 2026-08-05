@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Unified command surface contract refinement (PR #491, codex, plan-only)** —
+  makes the plan's noun/verb boundary structural: result rows, chips, and parameter
+  candidates are objects, while the active subject resolves separately typed action
+  variants. Subject results and object-valued arguments now use distinct main-owned
+  admission generations, with each argument generation scoped to its exact action,
+  subject, and parameter slot so a renderer cannot substitute a same-identity ref
+  from another membership domain. The launcher now opens before ambient context
+  resolves; a main-owned transition bound to the current `openSeq` and monotonic
+  revision installs late context without clearing input/results or stealing an
+  explicit selection. Three review passes closed seven lifecycle and admission
+  findings before merge at final head `7fe07d70`. This changes the design contract
+  only; product behaviour is unchanged and both implementation PRs remain unclaimed.
+
 - **The unified command surface now starts from one action registry (PR #485, cc,
   plan-only)** — replaces the former `Target × Verb`, habit-learning, and
   reversibility-tier design with two independently complete implementation PRs
