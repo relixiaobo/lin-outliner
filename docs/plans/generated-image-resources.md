@@ -117,11 +117,16 @@ Managed images materialize outside the private payload store under a stable
 Thread-and-artifact path. The path is keyed by artifact identity, not rendition
 identity. Re-materializing after original reclamation therefore puts observation
 bytes at the same logical path. Materializations remain disposable scratch and
-can be recreated from the retained rendition.
+can be recreated from the retained rendition. Materialization failure is recorded
+at the projection boundary and removes only the readable-path hint; retained
+observation bytes still reach the model.
 
 The generated-image result returns `artifactId` as identity and a current
-readable path as an access hint. Persisted slim details retain the artifact
-reference and image metadata, not the path.
+readable path as an access hint. Persisted slim details and model-facing result
+text retain the artifact reference or identity and image metadata, not the path.
+Historical projection derives its only readable path from the artifact in the
+Thread being projected. Preview's add action uses the resolved source target, so
+an artifact placeholder is never submitted as a local path.
 
 ### 4. Missing renditions are expected runtime state
 
@@ -134,8 +139,11 @@ FULL -> OBSERVATION_ONLY -> UNAVAILABLE
 Canonical Items and artifact references remain immutable through each state.
 Resource enumeration retains references for garbage collection, but fork and
 inherited-context copying treat artifact rendition bytes as optional: available
-renditions are copied and missing ones are skipped. Ordinary non-image managed
-resources remain required.
+renditions are copied and missing ones are skipped. Ordinary managed resources,
+including referenced Outliner images, remain protected from image-retention
+reclamation but degrade when their bytes are unavailable. Classification recursively
+reads nested inherited-context payloads; a missing or corrupt payload protects its
+declared resources rather than guessing that they are reclaimable artifacts.
 
 An externally deleted local original falls back to observation. A missing
 observation means the chat model cannot inspect the image; it does not invalidate
@@ -160,7 +168,9 @@ two earlier watermarks:
 Artifact materialization records rendition access for LRU ordering. Hard-pressure
 reclamation may remove a recent observation only to avoid making all Thread
 storage unwritable. If protected durable data alone exhausts the budget, the new
-write fails with the existing typed quota error.
+write fails with the existing typed quota error. Retention inventory recursively
+includes artifacts nested in inherited context while preserving every generic or
+durable dependency, so child Threads do not pin tiered originals forever.
 
 ### 6. Cleanup and ownership stay transactional
 

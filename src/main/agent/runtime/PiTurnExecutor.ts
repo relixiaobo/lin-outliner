@@ -66,7 +66,10 @@ import {
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
-import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
+import {
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../capabilities/agentToolResultPersistence';
 import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
 import { createImageArtifactReference, ImageObservationNormalizationError } from '../imageArtifacts';
 import {
@@ -1286,14 +1289,17 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  if (!output.text) return null;
+  const text = item.type === 'dynamicToolCall'
+    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
+    : output.text;
+  if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
-  const normalized = output.text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/\s+/g, ' ').trim();
   const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
   return context.persistOutputText(
     item.id,
-    output.text,
+    text,
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
@@ -1466,7 +1472,12 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const text = boundedText(part.text, remainingText);
+      const persisted = persistedToolResultText({
+        toolNamespace: item.namespace,
+        toolName: item.tool,
+        text: part.text,
+      });
+      const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
     }
@@ -1521,7 +1532,7 @@ async function dynamicOutput(
         continue;
       }
       persistedImageBytes += measurement.byteLength;
-      const existingPath = toolImagePath(item.namespace, item.tool, result, sourceImageIndex);
+      const existingPath = toolImagePath(item.namespace, item.tool, result);
       const artifactRef = createImageArtifactReference({
         retention: existingPath ? 'external' : 'observationOnly',
         original: existingPath ? { kind: 'localFile', path: existingPath } : null,
@@ -1570,7 +1581,6 @@ function toolImagePath(
   toolNamespace: string | null,
   toolName: string,
   result: Record<string, unknown>,
-  imageIndex: number,
 ): string | null {
   const details = toolDetails(result);
   if (!isRecord(details) || !isRecord(details.data)) return null;
@@ -1578,12 +1588,6 @@ function toolImagePath(
     if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
       return details.data.file.filePath;
     }
-  }
-  if (toolNamespace === null && toolName === 'generate_image' && Array.isArray(details.data.images)) {
-    const image = details.data.images.find((candidate) => (
-      isRecord(candidate) && candidate.previewIndex === imageIndex
-    ));
-    if (isRecord(image) && typeof image.path === 'string') return image.path;
   }
   return null;
 }

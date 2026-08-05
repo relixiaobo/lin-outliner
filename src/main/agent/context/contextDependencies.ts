@@ -18,6 +18,15 @@ interface ContextPayloadDependencies {
   readonly outputs: readonly ThreadItemOutputReference[];
 }
 
+export interface ThreadItemResourceUsage {
+  readonly artifacts: readonly ThreadImageArtifactReference[];
+  readonly genericResources: readonly ThreadResourceReference[];
+}
+
+interface ScannedThreadItemResourceUsage extends ThreadItemResourceUsage {
+  readonly complete: boolean;
+}
+
 export function itemResourceReferences(item: ThreadItem): ThreadResourceReference[] {
   let references: ThreadResourceReference[];
   if (item.type === 'userMessage') {
@@ -53,20 +62,108 @@ export function itemImageArtifactReferences(item: ThreadItem): ThreadImageArtifa
   return [];
 }
 
-export function itemProtectedResourceReferences(item: ThreadItem): ThreadResourceReference[] {
-  let references: ThreadResourceReference[];
-  if (item.type === 'userMessage') {
-    references = item.content.flatMap((content) => (
-      content.type === 'attachment' && content.source.kind === 'threadPayload'
-        ? [content.source.ref]
-        : []
+/**
+ * Classify managed resources by their semantic use, including images nested in
+ * inherited-context payloads. A missing or corrupt payload makes its owner's
+ * declared resources generic so retention and copying fail safe.
+ */
+export async function scanThreadItemResourceUsage(
+  items: readonly ThreadItem[],
+  readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+): Promise<ThreadItemResourceUsage> {
+  const payloadCache = new Map<string, ScannedThreadItemResourceUsage>();
+  const decodedPayloads = new Map<string, ThreadContextPayload | null>();
+  const visitingPayloads = new Set<string>();
+
+  const scanPayload = async (
+    ref: ThreadContextPayloadReference,
+  ): Promise<ScannedThreadItemResourceUsage> => {
+    const key = contextPayloadReferenceKey(ref);
+    const cached = payloadCache.get(key);
+    if (cached) return cached;
+    if (visitingPayloads.has(key)) return incompleteResourceUsage();
+    visitingPayloads.add(key);
+    let result: ScannedThreadItemResourceUsage;
+    try {
+      const payload = await readContext(ref);
+      decodedPayloads.set(key, payload);
+      if (!payload || payload.kind !== ref.kind) {
+        result = incompleteResourceUsage();
+      } else if (payload.kind === 'referencedResources') {
+        result = normalizeResourceUsage({
+          artifacts: [],
+          genericResources: payload.resources.flatMap((resource) => (
+            resource.resourceRef ? [resource.resourceRef] : []
+          )),
+          complete: true,
+        });
+      } else if (payload.kind === 'inheritedContext') {
+        result = await scanItems(payload.turns.flatMap((turn) => turn.items));
+      } else {
+        result = emptyResourceUsage();
+      }
+    } catch {
+      decodedPayloads.set(key, null);
+      result = incompleteResourceUsage();
+    } finally {
+      visitingPayloads.delete(key);
+    }
+    payloadCache.set(key, result);
+    return result;
+  };
+
+  const scanItem = async (item: ThreadItem): Promise<ScannedThreadItemResourceUsage> => {
+    const directArtifacts = itemImageArtifactReferences(item);
+    if (item.type !== 'contextEvidence' && item.type !== 'contextCompaction') {
+      const artifactResources = new Set(directArtifacts
+        .flatMap(imageArtifactResourceReferences)
+        .map(resourceStorageIdentity));
+      return normalizeResourceUsage({
+        artifacts: directArtifacts,
+        genericResources: itemResourceReferences(item).filter((ref) => (
+          !artifactResources.has(resourceStorageIdentity(ref))
+        )),
+        complete: true,
+      });
+    }
+
+    const declaredResources = itemResourceReferences(item);
+    const nested = emptyMutableResourceUsage();
+    const resourceBearingPayloadRefs = itemContextPayloadReferences(item).filter((ref) => (
+      ref.kind === 'referencedResources' || ref.kind === 'inheritedContext'
     ));
-  } else {
-    references = item.type === 'contextEvidence' || item.type === 'contextCompaction'
-      ? [...item.resourceRefs]
-      : [];
+    for (const ref of resourceBearingPayloadRefs) {
+      const usage = await scanPayload(ref);
+      mergeResourceUsage(nested, usage);
+      try {
+        const payload = decodedPayloads.get(contextPayloadReferenceKey(ref));
+        if (!payload || payload.kind !== ref.kind) {
+          nested.complete = false;
+        } else {
+          assertContextPayloadDependencies(item, payload);
+        }
+      } catch {
+        nested.complete = false;
+      }
+    }
+    const knownResources = new Set([
+      ...nested.artifacts.flatMap(imageArtifactResourceReferences),
+      ...nested.genericResources,
+    ].map(resourceStorageIdentity));
+    nested.genericResources.push(...declaredResources.filter((ref) => (
+      !nested.complete || !knownResources.has(resourceStorageIdentity(ref))
+    )));
+    return normalizeResourceUsage(nested);
+  };
+
+  async function scanItems(nextItems: readonly ThreadItem[]): Promise<ScannedThreadItemResourceUsage> {
+    const usage = emptyMutableResourceUsage();
+    for (const item of nextItems) mergeResourceUsage(usage, await scanItem(item));
+    return normalizeResourceUsage(usage);
   }
-  return [...new Map(references.map((ref) => [resourceReferenceKey(ref), ref])).values()];
+
+  const usage = await scanItems(items);
+  return { artifacts: usage.artifacts, genericResources: usage.genericResources };
 }
 
 export function itemContextPayloadReferences(item: ThreadItem): ThreadContextPayloadReference[] {
@@ -211,4 +308,53 @@ export function resourceReferenceKey(ref: ThreadResourceReference): string {
 
 export function outputReferenceKey(ref: ThreadItemOutputReference): string {
   return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.summary]);
+}
+
+function emptyMutableResourceUsage(): {
+  artifacts: ThreadImageArtifactReference[];
+  genericResources: ThreadResourceReference[];
+  complete: boolean;
+} {
+  return { artifacts: [], genericResources: [], complete: true };
+}
+
+function emptyResourceUsage(): ScannedThreadItemResourceUsage {
+  return { artifacts: [], genericResources: [], complete: true };
+}
+
+function incompleteResourceUsage(): ScannedThreadItemResourceUsage {
+  return { artifacts: [], genericResources: [], complete: false };
+}
+
+function mergeResourceUsage(
+  target: { artifacts: ThreadImageArtifactReference[]; genericResources: ThreadResourceReference[]; complete: boolean },
+  source: ScannedThreadItemResourceUsage,
+): void {
+  target.artifacts.push(...source.artifacts);
+  target.genericResources.push(...source.genericResources);
+  target.complete &&= source.complete;
+}
+
+function normalizeResourceUsage(
+  usage: {
+    readonly artifacts: readonly ThreadImageArtifactReference[];
+    readonly genericResources: readonly ThreadResourceReference[];
+    readonly complete: boolean;
+  },
+): ScannedThreadItemResourceUsage {
+  return {
+    artifacts: [...new Map(usage.artifacts.map((artifact) => [JSON.stringify(artifact), artifact])).values()],
+    genericResources: uniqueResourceReferences(usage.genericResources),
+    complete: usage.complete,
+  };
+}
+
+function uniqueResourceReferences(
+  references: readonly ThreadResourceReference[],
+): ThreadResourceReference[] {
+  return [...new Map(references.map((ref) => [resourceStorageIdentity(ref), ref])).values()];
+}
+
+function resourceStorageIdentity(ref: ThreadResourceReference): string {
+  return `${ref.id}\0${ref.fileName}`;
 }

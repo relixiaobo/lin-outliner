@@ -132,7 +132,10 @@ Missing original bytes fall back to the observation; missing observation bytes p
 an unavailable-image identity and do not invalidate the surrounding Item, Turn, fork,
 or inherited-context copy. Available image renditions are copied into a fork without
 rewriting the immutable artifact reference; absent renditions are skipped. Ordinary
-managed resources remain protected from image-retention reclamation; unavailable bytes
+managed dependencies not used exclusively as artifact renditions remain protected from
+image-retention reclamation, including referenced Outliner resources whose MIME type is
+`image/*`. Resource-role classification recursively reads inherited-context payloads and
+treats a missing or corrupt payload's declared resources as protected. Unavailable bytes
 degrade at runtime through the same inspection-payload policy above.
 
 Generic tool-output images are admitted as bounded provider-visible snapshots: at most
@@ -454,7 +457,9 @@ materializes the best available rendition in original-then-observation order at 
 stable extensionless path, so reclaiming a WebP original and falling back to a PNG
 observation does not change the access handle or misstate the bytes. Preview and
 `file_read` determine image MIME from the rendition bytes. These reproducible copies
-follow the seven-day scratch TTL; canonical originals and observations do not.
+follow the seven-day scratch TTL; canonical originals and observations do not. A
+materialization error during provider projection is recorded and degrades only the
+readable-path hint; available observation bytes and the surrounding Turn still project.
 
 Per Thread, canonical image retention has a 5 GiB target, 6 GiB soft watermark, and
 8 GiB hard resource budget. Crossing the soft watermark reclaims least-recently-used,
@@ -464,6 +469,9 @@ then least-recently-used observations until the write fits. External originals a
 `durable` originals are never automatically deleted. Resource access updates durable
 atime metadata for this ordering without making a valid read fail. Canonical artifact
 references remain unchanged through `FULL -> OBSERVATION_ONLY -> UNAVAILABLE`.
+Retention inventory recursively includes artifacts nested in inherited-context payloads,
+while generic resources and durable originals remain protected. Missing or corrupt
+payloads protect their complete declared resource manifest.
 Resource garbage collection uses the physical key (content hash plus safe filename),
 independently of logical MIME metadata.
 Ephemeral Threads remain memory-only except for temporary payload files, which

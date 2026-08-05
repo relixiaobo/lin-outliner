@@ -195,7 +195,9 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const displayTitle = looseUrlPreview ? urlPageMetadata.title ?? title : title;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
-  const canAdd = canAddPreviewTargetToOutline(props.target);
+  const addTarget = state.status === 'ready' && canAddPreviewTargetToOutline(state.source.target)
+    ? state.source.target
+    : null;
   const {
     mainPanelRef,
     requestTitleDockMeasure,
@@ -375,13 +377,13 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         ...(canReveal
           ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
           : []),
-        ...(canAdd
+        ...(addTarget
           ? [{
               key: 'add',
               label: previewLabels.addToOutline,
               icon: AddChildIcon,
               run: () => {
-                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: props.target });
+                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: addTarget });
               },
             }]
           : []),

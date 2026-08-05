@@ -241,7 +241,10 @@ immutable `artifactRef`, requires its artifact original to match the attachment 
 and forbids an artifact on non-images. Admission rejects an invalid shape before
 publishing the user Item. If corrupt canonical history violates the invariant or an
 admitted observation later becomes unavailable, projection emits an explicit textual
-marker and continues; it never falls back to mutable original-path bytes.
+marker and continues; it never falls back to mutable original-path bytes. Failure to
+materialize a readable artifact path is weaker than rendition loss: projection records
+the error, labels only the path as unavailable, and still includes retained observation
+bytes.
 
 Attachment sources are reference-only. `localFile` records a canonical live
 path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
@@ -366,7 +369,10 @@ result. Images within the generic source budgets pass through the common 2,000 p
 textual output persistence, so neither small nor large base64 images leak into text
 payloads. Forking copies each available managed rendition under the target Thread while
 preserving the same artifact reference; a missing image rendition is skipped rather
-than aborting the fork. A Thread-scoped preview resolves the best available rendition to
+than aborting the fork. This exception is based on actual artifact use, not MIME type;
+an ordinary referenced `image/*` resource remains required. Inherited-context scans are
+recursive, so the same distinction governs child copying and pressure retention. A
+Thread-scoped preview resolves the best available rendition to
 a stable disposable scratch materialization rather than exposing canonical resource
 paths. Deleting a Thread deletes only that Thread's payload directory and materialized
 copies; it never touches an external original.

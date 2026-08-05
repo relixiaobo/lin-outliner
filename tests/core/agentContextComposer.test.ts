@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { Api, Message, Model, TextContent } from '@earendil-works/pi-ai';
 import { encodeThreadContextPayload } from '../../src/core/agent/codec';
@@ -714,6 +714,28 @@ describe('canonical context projection', () => {
       { type: 'image', data: Buffer.from('raw').toString('base64'), mimeType: 'image/jpeg' },
     ]);
     expect(pathResolutions).toBe(2);
+
+    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const pathlessMessages = await new CanonicalContextProjector(model, {
+        ...resources,
+        resolveImageArtifactPath: async () => {
+          throw new Error('EIO');
+        },
+      }).projectTurns([
+        turn(1, [userItem('user-images-pathless', 1_720_000_000_124, 'Render both.'), tool], true),
+      ]);
+      const pathlessResult = pathlessMessages.find((message) => message.role === 'toolResult');
+      expect(pathlessResult?.content).toHaveLength(4);
+      expect(JSON.stringify(pathlessResult?.content)).toContain(Buffer.from('chart').toString('base64'));
+      expect(JSON.stringify(pathlessResult?.content)).not.toContain('Readable path:');
+      expect(warningLog).toHaveBeenCalledWith(
+        '[agent][context-projection] image artifact path unavailable',
+        expect.objectContaining({ artifactId: managedArtifact.id, surface: 'tool-history' }),
+      );
+    } finally {
+      warningLog.mockRestore();
+    }
 
     const unavailableMessages = await new CanonicalContextProjector(
       model,

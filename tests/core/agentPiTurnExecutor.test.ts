@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   AgentEvent,
   AgentTool,
@@ -571,6 +571,53 @@ describe('PiTurnExecutor event normalization', () => {
         mimeType: 'image/png',
       },
     ]);
+  });
+
+  test('keeps an image observation when its readable path cannot be materialized', async () => {
+    const observation = {
+      id: 'f'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'prompt.png',
+    };
+    const artifactRef = imageArtifact(
+      { kind: 'localFile', path: '/outside/source.png' },
+      observation,
+    );
+    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const content = await serializeUserContent([{
+        type: 'attachment',
+        id: 'attachment-image',
+        name: 'source.png',
+        mimeType: 'image/png',
+        sizeBytes: 4096,
+        source: { kind: 'localFile', path: '/outside/source.png' },
+        artifactRef,
+      }], {
+        readResource: async () => ONE_PIXEL_PNG_BYTES,
+        resolveResourceObservationPath: async () => null,
+        resolveImageArtifactPath: async () => {
+          throw new Error('ENOSPC');
+        },
+      });
+
+      expect(content).toEqual(expect.arrayContaining([
+        { type: 'text', text: '[Image attachment: source.png; readable path unavailable]' },
+        {
+          type: 'image',
+          data: ONE_PIXEL_PNG_BYTES.toString('base64'),
+          mimeType: 'image/png',
+        },
+      ]));
+      expect(JSON.stringify(content)).not.toContain('[Unavailable image attachment:');
+      expect(warningLog).toHaveBeenCalledWith(
+        '[agent][context-projection] image artifact path unavailable',
+        expect.objectContaining({ artifactId: artifactRef.id, surface: 'user-attachment' }),
+      );
+    } finally {
+      warningLog.mockRestore();
+    }
   });
 
   test('degrades non-canonical attachment shapes without blocking provider projection', async () => {
@@ -2227,12 +2274,11 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context,
       readResource: async (ref) => ref.id === observation.id ? ONE_PIXEL_PNG_BYTES : null,
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-generate-image',
-      toolName: 'generate_image',
-      args: { prompt: 'A red square' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-generate-image',
+      'generate_image',
+      { prompt: 'A red square' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-generate-image',
@@ -2268,8 +2314,8 @@ describe('PiTurnExecutor event normalization', () => {
 
     const item = fixture.recorder.orderedItems()[0];
     const persistedItem = JSON.stringify(item);
-    expect(persistedItem).toContain(missingPreviewPath);
-    expect(persistedItem).toContain(previewedPath);
+    expect(persistedItem).not.toContain(missingPreviewPath);
+    expect(persistedItem).not.toContain(previewedPath);
     expect(item).toMatchObject({
       type: 'dynamicToolCall',
       tool: 'generate_image',
@@ -2278,6 +2324,13 @@ describe('PiTurnExecutor event normalization', () => {
         artifactRef: generatedArtifact,
       }]),
     });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected generated image output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(missingPreviewPath);
+    expect(persistedOutput).not.toContain(previewedPath);
+    expect(persistedOutput).toContain('Use the adjacent readable path');
   });
 
   test('preserves namespaced generate_image text at both persistence boundaries', async () => {
@@ -2295,12 +2348,11 @@ describe('PiTurnExecutor event normalization', () => {
       instructions: 'Keep plugin fields.',
     });
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-plugin-image',
-      toolName: 'myplugin__generate_image',
-      args: { prompt: 'A plugin image' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-plugin-image',
+      'myplugin__generate_image',
+      { prompt: 'A plugin image' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-plugin-image',

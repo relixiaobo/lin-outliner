@@ -887,7 +887,11 @@ export async function serializeUserContent(
         break;
       case 'attachment': {
         const location = part.artifactRef
-          ? await resources.resolveImageArtifactPath(part.artifactRef).catch(() => null)
+          ? await resolveImageArtifactPathForProjection(
+              resources,
+              part.artifactRef,
+              'user-attachment',
+            )
           : part.source.kind === 'localFile'
             ? part.source.path
             : await resources.resolveResourceObservationPath(part.source.ref).catch(() => null);
@@ -1360,7 +1364,11 @@ async function historyToolResultContent(
           content.push({ type: 'text', text: dynamicToolImageUnavailableIdentity(part) });
           continue;
         }
-        const readablePath = await resources.resolveImageArtifactPath(artifact);
+        const readablePath = await resolveImageArtifactPathForProjection(
+          resources,
+          artifact,
+          'tool-history',
+        );
         content.push({ type: 'text', text: dynamicToolImageIdentity(part, readablePath) });
         content.push({
           type: 'image',
@@ -1403,6 +1411,23 @@ function dynamicToolImageUnavailableIdentity(
 ): string {
   const artifact = part.artifactRef;
   return `[Image output unavailable or corrupt: ${dynamicToolImageLabel(part)}, artifact=${artifact.id}]`;
+}
+
+async function resolveImageArtifactPathForProjection(
+  resources: Pick<ProjectionResources, 'resolveImageArtifactPath'>,
+  artifact: ThreadImageArtifactReference,
+  surface: 'user-attachment' | 'tool-history',
+): Promise<string | null> {
+  try {
+    return await resources.resolveImageArtifactPath(artifact);
+  } catch (error) {
+    console.warn('[agent][context-projection] image artifact path unavailable', {
+      artifactId: artifact.id,
+      surface,
+      error,
+    });
+    return null;
+  }
 }
 
 function dynamicToolImageLabel(

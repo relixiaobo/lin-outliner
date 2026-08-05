@@ -29,6 +29,7 @@ import { uuidV7 } from '../uuid';
 import { appendSubagentTranscript,rebuildSubagentTranscript,removeSubagentTranscript,subagentTranscriptPath,subagentTranscriptSize,sweepOrphanTranscripts } from './SubagentTranscriptArtifact';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
+import type { ThreadResourceOps } from './ThreadResourceOps';
 import { renderTranscript,renderTurn,type TranscriptPayloadReader } from './TranscriptRenderer';
 import type { TurnLifecycle } from './TurnLifecycle';
 
@@ -89,6 +90,7 @@ export class SubagentCollaboration {
   private readonly discardedTranscripts = new Set<ThreadId>();
   constructor(
     private readonly core: ThreadCore,
+    private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: SubagentCatalog,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly subagentBudgets: SubagentRequestLedger,

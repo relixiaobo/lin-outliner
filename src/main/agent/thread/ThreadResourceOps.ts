@@ -8,6 +8,7 @@ ThreadContextPayloadReference,
 ThreadContextReadRequest,
 ThreadContextReadResponse,
 ThreadId,
+ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
 ThreadItemOutputReference,
@@ -25,14 +26,14 @@ type ManagedAttachmentObservation,
 import {
 assertContextPayloadDependencies,
 itemContextPayloadReferences,
-itemImageArtifactReferences,
-itemProtectedResourceReferences,
 itemResourceReferences,
 resourceReferenceKey,
+scanThreadItemResourceUsage,
 } from '../context/contextDependencies';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
 import {
 referencesSameResourceFile,
+type ThreadImageRetentionInventory,
 } from '../persistence/ToolPayloadStore';
 import type {
 ResolvedThreadAttachmentFile,
@@ -256,7 +257,8 @@ export class ThreadResourceOps {
     artifact: ThreadImageArtifactReference,
   ): Promise<ResolvedThreadImageArtifactFile | null> {
     this.core.requireThread(threadId);
-    const matches = this.threadImageArtifactReferences(threadId).filter((candidate) => candidate.id === artifact.id);
+    const matches = (await this.threadImageArtifactReferences(threadId))
+      .filter((candidate) => candidate.id === artifact.id);
     const canonical = matches[0];
     if (!canonical || matches.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(canonical))) return null;
     const identity = `image-artifact:${canonical.id}`;
@@ -393,11 +395,18 @@ export class ThreadResourceOps {
   threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
   }
-  threadImageArtifactReferences(threadId: ThreadId): ThreadImageArtifactReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemImageArtifactReferences));
+  async threadImageArtifactReferences(threadId: ThreadId): Promise<readonly ThreadImageArtifactReference[]> {
+    return (await this.scanResourceUsage(
+      threadId,
+      this.core.allTurns(threadId).flatMap((turn) => turn.items),
+    )).artifacts;
   }
-  threadProtectedResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemProtectedResourceReferences));
+  async threadImageRetentionInventory(threadId: ThreadId): Promise<ThreadImageRetentionInventory> {
+    const usage = await this.scanResourceUsage(
+      threadId,
+      this.core.allTurns(threadId).flatMap((turn) => turn.items),
+    );
+    return { artifacts: usage.artifacts, protectedResources: usage.genericResources };
   }
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
@@ -444,6 +453,13 @@ export class ThreadResourceOps {
       && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
     ));
     await Promise.all(unique.map((ref) => this.core.payloads.deleteResource(threadId, ref)));
+  }
+
+  private scanResourceUsage(threadId: ThreadId, items: readonly ThreadItem[]) {
+    return scanThreadItemResourceUsage(
+      items,
+      (ref) => this.core.payloads.readContext(threadId, ref),
+    );
   }
 }
 

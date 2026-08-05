@@ -145,9 +145,11 @@ model copies the returned path with the ordinary shell. File operations, Preview
 export, and edit input resolve the original first and the observation second. Both
 renditions materialize at the same stable extensionless artifact path, and consumers
 sniff actual image bytes rather than trusting the path suffix. Persisted slim details
-retain the artifact reference and image metadata, not the path. Historical projection
-always reads the bounded observation; if it is missing, projection emits an unavailable
-identity without failing the Thread. Generated originals are reclaimed only by the
+and persisted model-facing result text retain artifact identity and image metadata, not
+the live path. Historical projection derives its only readable path from the artifact in
+the current Thread. If materialization fails, projection records the failure, omits that
+path, and still sends an available bounded observation; if the observation is missing,
+it emits an unavailable identity without failing the Thread. Generated originals are reclaimed only by the
 Thread's pressure-based image retention policy; the seven-day TTL applies only to
 reproducible scratch materializations.
 

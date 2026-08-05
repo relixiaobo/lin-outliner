@@ -422,6 +422,7 @@ describe('ThreadItemView tool row status presentation', () => {
       }],
       success: true,
       durationMs: 4,
+      modelCall: replayableModelCall('inspect_image', {}),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();

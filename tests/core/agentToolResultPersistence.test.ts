@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { TOOL_RESULT_VERSION } from '../../src/main/agent/capabilities/agentToolEnvelope';
-import { persistedToolResultDetails } from '../../src/main/agent/capabilities/agentToolResultPersistence';
+import {
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../../src/main/agent/capabilities/agentToolResultPersistence';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 describe('agent tool result persistence', () => {
@@ -83,6 +86,41 @@ describe('agent tool result persistence', () => {
     expect(JSON.stringify(details)).not.toContain('previewIndex');
   });
 
+  test('removes disposable paths from built-in generated-image history text', () => {
+    const sourcePath = '/scratch/provider-source/image-artifact';
+    const persisted = persistedToolResultText({
+      toolNamespace: null,
+      toolName: 'generate_image',
+      text: JSON.stringify({
+        ok: true,
+        tool: 'generate_image',
+        data: {
+          images: [{
+            providerIndex: 1,
+            artifactId: 'a'.repeat(64),
+            path: sourcePath,
+            sourceDimensions: { width: 4_000, height: 2_000 },
+          }],
+        },
+        instructions: 'Use the returned local path.',
+      }),
+    });
+
+    expect(persisted).not.toContain(sourcePath);
+    expect(JSON.parse(persisted)).toEqual({
+      ok: true,
+      tool: 'generate_image',
+      data: {
+        images: [{
+          providerIndex: 1,
+          artifactId: 'a'.repeat(64),
+          sourceDimensions: { width: 4_000, height: 2_000 },
+        }],
+      },
+      instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use the adjacent readable path for file operations when available.',
+    });
+  });
+
   test('does not persist details for namespaced tools that share the generate_image name', () => {
     expect(persistedToolResultDetails({
       toolNamespace: 'myplugin',
@@ -100,6 +138,13 @@ describe('agent tool result persistence', () => {
         },
       },
     })).toBeUndefined();
+
+    const pluginText = JSON.stringify({ ok: true, data: { images: [{ path: 'plugin://image' }] } });
+    expect(persistedToolResultText({
+      toolNamespace: 'myplugin',
+      toolName: 'generate_image',
+      text: pluginText,
+    })).toBe(pluginText);
   });
 
   test('does not persist mismatched or failed generated image details', () => {

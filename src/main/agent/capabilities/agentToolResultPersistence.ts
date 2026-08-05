@@ -42,6 +42,36 @@ export function persistedToolResultDetails(input: PersistedToolResultDetailsInpu
   return persistedGenerateImageDetails(details);
 }
 
+export function persistedToolResultText(input: {
+  readonly toolNamespace: string | null;
+  readonly toolName: string;
+  readonly text: string;
+}): string {
+  if (input.toolNamespace !== null || input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  try {
+    const visible = JSON.parse(input.text) as unknown;
+    if (
+      !isRecord(visible)
+      || visible.ok !== true
+      || !isRecord(visible.data)
+      || !Array.isArray(visible.data.images)
+    ) return input.text;
+    const images = visible.data.images.map((image) => {
+      if (!isRecord(image)) return image;
+      const persisted = { ...image };
+      delete persisted.path;
+      return persisted;
+    });
+    return JSON.stringify({
+      ...visible,
+      data: { ...visible.data, images },
+      instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use the adjacent readable path for file operations when available.',
+    }, null, 2);
+  } catch {
+    return input.text;
+  }
+}
+
 function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<PersistedGeneratedImageDetailsData> | undefined {
   if (!details.ok || !isRecord(details.data)) return undefined;
   const providerId = requiredString(details.data.providerId);

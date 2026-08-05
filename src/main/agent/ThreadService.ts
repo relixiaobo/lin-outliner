@@ -344,10 +344,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.attachmentScratchRoot,
       options.resolveUserContent ?? ((content) => content),
     );
-    options.stores.payloads.setImageRetentionInventoryProvider((threadId) => ({
-      artifacts: this.resourceOps.threadImageArtifactReferences(threadId),
-      protectedResources: this.resourceOps.threadProtectedResourceReferences(threadId),
-    }));
+    options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
+      this.resourceOps.threadImageRetentionInventory(threadId)
+    ));
     this.turnLifecycle = new TurnLifecycle(
       this.core,
       this.resourceOps,
@@ -382,6 +381,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     );
     this.collaboration = new SubagentCollaboration(
       this.core,
+      this.resourceOps,
       {
         createThread: (...args) => this.catalogOps.createThread(...args),
         deleteThread: (threadId) => this.catalogOps.deleteThread(threadId),

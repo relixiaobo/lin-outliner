@@ -144,7 +144,9 @@ export class ToolPayloadStore {
   private readonly now: () => number;
   private readonly imageRetention: NonNullable<ToolPayloadStoreOptions['imageRetention']>;
   private readonly resourceAccessTouchIntervalMs: number;
-  private imageRetentionInventory: ((threadId: ThreadId) => ThreadImageRetentionInventory) | null = null;
+  private imageRetentionInventory: ((
+    threadId: ThreadId,
+  ) => ThreadImageRetentionInventory | Promise<ThreadImageRetentionInventory>) | null = null;
 
   constructor(private readonly rootPath: string, options: ToolPayloadStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -160,7 +162,9 @@ export class ToolPayloadStore {
   }
 
   setImageRetentionInventoryProvider(
-    provider: (threadId: ThreadId) => ThreadImageRetentionInventory,
+    provider: (
+      threadId: ThreadId,
+    ) => ThreadImageRetentionInventory | Promise<ThreadImageRetentionInventory>,
   ): void {
     this.imageRetentionInventory = provider;
   }
@@ -1036,7 +1040,7 @@ export class ToolPayloadStore {
     if (!this.imageRetentionInventory) return storedBytes;
     let inventory: ThreadImageRetentionInventory;
     try {
-      inventory = this.imageRetentionInventory(threadId);
+      inventory = await this.imageRetentionInventory(threadId);
     } catch {
       return storedBytes;
     }
