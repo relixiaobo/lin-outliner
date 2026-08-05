@@ -382,6 +382,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent images are durable, inspectable artifacts (PR #490, codex-2)** —
+  generated images, user image attachments, and image-producing tools now share
+  one immutable artifact identity with separate source-quality and bounded model
+  renditions. Chat models receive only a normalized observation (at most 2,000 px
+  per edge and 4.5 MiB) plus exact source-to-observation geometry, while Preview,
+  editing, copy, export, and file tools prefer the original and fall back to the
+  observation through one stable materialized path. History, forks, and inherited
+  context preserve the artifact while tolerating missing renditions, so one lost
+  image no longer kills the surrounding Turn. Generated originals remain durable
+  until storage pressure reclaims tiered originals before observations under the
+  Thread's 5/6/8 GiB retention policy; external, user-owned, and ordinary Thread
+  resources stay protected.
+
 - **`/new` starts a Thread without leaving the composer (PR #486, codex-2)** —
   typing `/new` and pressing Enter creates an empty Thread and selects it, so
   starting a fresh conversation no longer means reaching for the Thread list.
