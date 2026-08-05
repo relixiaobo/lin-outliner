@@ -183,10 +183,12 @@ interface ActionContext {
 
 Panel identity lives in attested `view` context keyed to a node object's ref,
 because it identifies *which presentation of that node* the user is acting from;
-it has no independently selectable row and therefore is not a `SurfaceObject`. Pin
-and visual-row facts follow the same rule. There is one object shape across both
-surfaces, not a node shape plus a separate launcher-only command shape. A future
-command object would be one more arm of this same discriminated model.
+it has no independently selectable row and therefore is not a `SurfaceObject`.
+`visualRowId` and `rowExpanded` qualify that same presentation and therefore live in
+`view`; `isPinned` qualifies workspace chrome and lives in `workspace`. There is
+one object shape across both surfaces, not a node shape plus a separate launcher-only
+command shape. A future command object would be one more arm of this same
+discriminated model.
 
 **Out-of-app coverage follows one rule, and the inventory is derived from it, not
 listed by hand.**
@@ -209,7 +211,7 @@ defined relative to a workspace or view that genuinely is not there, which is D7
 doing its job. Earlier drafts said "exactly two", which was wrong in both directions;
 the rule is the contract and the table is its consequence.
 
-### D1a — One object model, one action model, five seam contracts
+### D1a — One object model, one action model, explicit seam contracts
 
 Two review rounds killed a single `ActionDefinition` written in prose, each time
 because one field could not hold the real action set. The later object/action audit
@@ -261,19 +263,26 @@ interface ObjectPresentation {
 
 type ActionSurface = 'contextMenu' | 'actionPanel'; // never `mainList`
 
-// 1. INVOCATION — the object set available in one opening. Main-owned; crosses
-//    the seam as an opaque id. A right-click carries node + selection objects plus
-//    view/workspace facts, while a launcher opening may carry page, draft,
-//    node-result, system-node and app-surface objects.
-interface ActionInvocation {
+// 1. INVOCATION — the object membership available in one opening. Main-owned;
+//    crosses the seam as an opaque id. Fixed objects survive query changes; the
+//    one result generation is replaced atomically on every accepted object query.
+interface ObjectResultGeneration {
+  generation: number; // main-owned monotonic counter; request ids are not trusted
+  requestId: RequestId;
+  state: 'pending' | 'ready';
   objects: readonly SurfaceObject[];
+}
+interface ActionInvocation {
+  fixedObjects: readonly SurfaceObject[]; // ambient page/node/selection chip
+  resultGeneration?: ObjectResultGeneration; // node/system/app/draft results
+  draftText: string; // sanitized input payload; never an implicit subject choice
   // ATTESTED by the main renderer only (sender-checked; see D1b). Never suppliable
   // by the launcher. Facts are tied to the object they qualify, never treated as
   // standalone rows.
-  view?: readonly { objectRef: ObjectRef; panelId: string }[];
-  workspace?: readonly {
-    objectRef: ObjectRef; visualRowId: NodeId; isPinned: boolean; rowExpanded: boolean;
+  view?: readonly {
+    objectRef: ObjectRef; panelId: string; visualRowId: NodeId; rowExpanded: boolean;
   }[];
+  workspace?: readonly { objectRef: ObjectRef; isPinned: boolean }[];
 }
 
 // 2. EVALUATION — three raw states, never a bare list. `absent` has no subject and
@@ -323,8 +332,9 @@ interface SurfaceItemPresentation {
   actions: readonly ActionPresentation[];
 }
 
-// 4. REQUEST — the ONLY thing a renderer may send. No command, no effect, and
-//    no self-asserted confirmation: a boolean would be convention, not admission.
+// 4. REQUEST — the only EXECUTION request a renderer may send. Object queries and
+//    lifecycle events have their own bounded contracts below. No command, no effect,
+//    draft text, or self-asserted confirmation enters through this request.
 type ActionRequest = {
   [K in ActionId]: {
     actionId: K;
@@ -368,15 +378,39 @@ type InvocationSeed =
   ;
 interface InvocationOpened {
   invocationRef: InvocationRef;
-  items: readonly SurfaceItemPresentation[];
+  openSeq: number | null;
+  fixedItems: readonly SurfaceItemPresentation[];  // chips / anchored objects
+  resultItems: readonly SurfaceItemPresentation[]; // current ready generation
   menuActions: readonly ActionPresentation[];
 }
 
-// 4c. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
+// 4c. OBJECT QUERY — the only way a launcher search generation enters the
+// invocation. Main first installs an empty `pending` generation (invalidating every
+// prior result ref), then installs fresh objects only if this request is still current.
+interface ObjectQueryRequest {
+  invocationRef: InvocationRef;
+  openSeq: number;
+  requestId: RequestId;
+  query: string;
+}
+type ObjectQueryResult =
+  | { status: 'ready'; invocationRef: InvocationRef; openSeq: number;
+      requestId: RequestId; generation: number;
+      resultItems: readonly SurfaceItemPresentation[] }
+  | { status: 'superseded'; invocationRef: InvocationRef; openSeq: number;
+      requestId: RequestId; generation: number };
+
+// 4d. LIFECYCLE EVENT — the other inbound message. Like ActionRequest it can only
 //     NAME a transition; main decides whether it is legal in the current phase.
 type InvocationEvent =
   | { kind: 'confirmationCancelled'; invocationRef: InvocationRef; challenge: ChallengeToken }
-  | { kind: 'abandoned'; invocationRef: InvocationRef };   // menu closed, chip removed
+  | { kind: 'objectRemoved'; invocationRef: InvocationRef; objectRef: ObjectRef }
+  | { kind: 'selectionMemberRemoved'; invocationRef: InvocationRef;
+      selectionRef: ObjectRef; memberRef: ObjectRef }
+  | { kind: 'abandoned'; invocationRef: InvocationRef };   // menu/panel closed
+type InvocationEventResult =
+  | { status: 'updated'; opening: InvocationOpened }
+  | { status: 'spent' };
 
 // 5. EFFECT — produced by main, never accepted from a renderer. An ORDERED PLAN,
 //    because real actions cross executors: `editViewSection('filter')` runs
@@ -393,33 +427,49 @@ export const ACTION_BINDINGS = {
   // PRODUCERS: which commands yield a bindable value, and WHERE it lives in the
   // real `CommandResult`. Commands return `focus?: FocusHint` (`types.ts:653-661`)
   // — there is no `result.focusNodeId` anywhere, so the extraction path is stated
-  // rather than assumed. `create_tag` returns `focus(id)` (`core.ts:1918-1924`) and
-  // `documentService` forwards `result.focus`.
+  // rather than assumed. `create_tag` and `create_capture` both return `focus(id)`,
+  // and `documentService` forwards `result.focus`.
   produces: {
-    ensure_date_node: { focusNodeId: 'focus.nodeId' },
-    create_tag:       { focusNodeId: 'focus.nodeId' },
+    ensure_date_node: { focusNodeId: ['focus', 'nodeId'] },
+    create_tag:       { focusNodeId: ['focus', 'nodeId'] },
+    create_capture:   { focusNodeId: ['focus', 'nodeId'] },
   },
-  // CONSUMERS: which arg fields may hold a step reference. Explicit, because
-  // `NodeId` IS `string` (`types.ts:30-33`) — no structural rule can tell
-  // `apply_tag.tagId` from `create_tag.name`, and a name heuristic would be a
-  // guess wearing a type.
+  // CONSUMERS: exact arg paths that may hold a step reference. Paths, rather than
+  // top-level field names, express the real `create_capture.input.destinationParentId`
+  // shape. They remain explicit because `NodeId` IS `string` (`types.ts:30-33`).
   consumes: {
-    apply_tag:       ['tagId'],
-    batch_apply_tag: ['tagId'],
+    create_capture:  [['input', 'destinationParentId']],
+    apply_tag:       [['nodeId'], ['tagId']],
+    batch_apply_tag: [['tagId']],
     // …one line per consumer; everything unlisted stays literal.
   },
 } as const;
 
 type BindableCommand = keyof typeof ACTION_BINDINGS.produces;
-type BindableField<K extends CommandName> =
-  K extends keyof typeof ACTION_BINDINGS.consumes
-    ? typeof ACTION_BINDINGS.consumes[K][number] : never;
 type Bound<T> = T | { fromStep: StepRef; field: 'focusNodeId' };
-
-type BoundCommandArgs<K extends CommandName> = {
-  [F in keyof CommandArgs[K]]:
-    F extends BindableField<K> ? Bound<CommandArgs[K][F]> : CommandArgs[K][F];
-};
+type BindAtPath<T, P extends readonly PropertyKey[]> =
+  P extends readonly [infer Head, ...infer Tail extends readonly PropertyKey[]]
+    ? Head extends keyof T
+      ? { [K in keyof T]: K extends Head
+          ? Tail extends readonly [] ? Bound<T[K]> : BindAtPath<T[K], Tail>
+          : T[K] }
+      : never
+    : T;
+type BindAtPaths<
+  T,
+  Paths extends readonly (readonly PropertyKey[])[],
+> = Paths extends readonly [
+  infer Head extends readonly PropertyKey[],
+  ...infer Tail extends readonly (readonly PropertyKey[])[],
+]
+  ? BindAtPaths<BindAtPath<T, Head>, Tail>
+  : T;
+type ConsumerPaths<K extends CommandName> =
+  K extends keyof typeof ACTION_BINDINGS.consumes
+    ? typeof ACTION_BINDINGS.consumes[K] : readonly [];
+type BoundCommandArgs<K extends CommandName> = BindAtPaths<
+  CommandArgs[K], ConsumerPaths<K>
+>; // only descriptor leaves become `Bound<T>`
 
 // Mapped union: args are correlated WITH the command name, and `bindAs` exists only
 // where a result exists to bind.
@@ -435,6 +485,9 @@ type EffectStep =
   | { on: 'mainRenderer'; kind: 'navigate'; nodeId: Bound<NodeId>; inPlace: boolean }
   | { on: 'mainRenderer'; kind: 'reveal'; surface: RevealTarget }
   | { on: 'mainRenderer'; kind: 'workspace'; op: 'pin' | 'unpin' | 'openSplitPane'; nodeId: Bound<NodeId> }
+  // BrowserWindow lifecycle belongs to the native host and still works when the
+  // main renderer does not exist. `open(appSurface)` resolves to this step.
+  | { on: 'main'; kind: 'activateAppSurface'; surface: 'mainWindow' | 'settings' }
   | { on: 'main';     kind: 'clipboard'; text: string }   // main resolves + writes it
   | { on: 'mainRenderer'; kind: 'composerHandoff'; object: ComposerObject; draftText: string };
 
@@ -443,7 +496,8 @@ type EffectStep =
 type ActionRequestResult =
   | { status: 'confirmationRequired'; challenge: ChallengeToken; confirm: ConfirmationSpec;
       presentation: ReadyActionPresentation } // authoritative copy + subject + args for the dialog
-  | { status: 'reEvaluated'; presentation: ActionPresentation } // stale subject/args; try again
+  | { status: 'reEvaluated'; presentation: ActionPresentation } // current subject, changed args/state
+  | { status: 'stale'; reason: 'invocation' | 'subject' | 'generation' }
   | ActionExecutionResult;
 
 type ActionExecutionResult =
@@ -458,6 +512,52 @@ type ExecutionFailure =
   | { kind: 'bindingUnresolved'; step: number } // a bound result was missing at use
   | { kind: 'invocationStale' };
 ```
+
+**Invocation membership is current state, not an opening-time snapshot.** An
+action subject is admissible only when its ref is in `fixedObjects` or in the one
+`ready` result generation named by the record. On every `ObjectQueryRequest`, main
+validates `(invocationRef, openSeq, consumer)`, sanitizes and bounds the text, and
+atomically replaces the previous generation with an empty `pending` generation
+*before* retrieval begins. That first transition invalidates every old node-result
+and draft ref; if a `confirming` challenge named one of them, the same transaction
+revokes it and returns the record to `live`. Main increments a private generation
+counter on that transition;
+retrieval may install fresh refs only when the captured generation is still current
+and the phase still admits queries,
+so a compromised caller cannot revive work by reusing a `requestId`. Otherwise it
+returns `superseded`. The renderer independently
+drops any response that does not match its latest `(openSeq, requestId)`, so neither
+IPC arrival order nor an old draft replay can resurrect a stale subject.
+Refs are generation-scoped: the same backing node found twice receives a new
+`ObjectRef`, while its `NodeObjectRef` continues to identify the same document node.
+The initial `InvocationOpened` synchronously installs a main-minted ready
+empty-query generation, which is why its Today/system/app rows are already legal
+subjects before the first keystroke. Queries and membership edits are admitted only
+in `live` / `confirming`; `executing` has already frozen the plan, and `spent` is
+terminal.
+
+`draftText` is updated in that same main-owned transition, but it is **payload, not
+selection**. The same characters drive object retrieval and may later become a page
+note or composer question; they never make a result the active subject by
+themselves. `ActionRequest` therefore carries neither note nor question text: main
+reads the latest bounded `draftText` from the admitted invocation when resolving
+`capture` or `sendToAgent`. The launcher's 120 ms debounce delays **retrieval**, not
+this admission: every input event sends its query immediately, and the main handler
+updates `draftText` plus the empty `pending` generation before its first await, then
+resets the retrieval timer. IPC order from the same sender therefore makes
+type-then-immediate-Enter observe the latest text even though results have not
+resolved yet.
+
+**Removing a chip changes membership through main.** `objectRemoved` deletes one
+fixed object; `selectionMemberRemoved` validates the member and atomically replaces
+the aggregate selection with a freshly referenced aggregate (or a single node / no
+chip when the remaining cardinality requires it). Main re-derives the replacement's
+node facets and rekeys only still-current attested facts; the event cannot supply
+either. Removed and replaced refs stop
+being admissible immediately while the opening itself remains live; the returned
+`InvocationOpened` is the authoritative replacement presentation. `abandoned` is
+reserved for closing the menu or panel; it no longer conflates "remove this object"
+with "discard this invocation".
 
 **The three node facets preserve one object, not three rows.** For an ordinary node
 they are identical. For a reference occurrence, `row` is the reference while
@@ -566,13 +666,13 @@ action reads the subject object and contextual facts it needs and ignores the re
 
 **Who supplies what, and where each fact stops being available.** Main derives
 everything document-shaped from the projection (`targetId` resolution, descendant
-and Trash exclusion, `mutable`, row policy). The `workspace` part is different in
-kind, and the previous revision got it wrong by treating "renderer-owned" as one
-category:
+and Trash exclusion, `mutable`, row policy). The `view` and `workspace` parts are
+different in kind, and the previous revision got them wrong by treating
+"renderer-owned" as one category:
 
 **Dependencies are declared per action, not per category.** Each entry names the
-`workspace` fields it needs; the envelope is not an all-or-nothing gate. Bundling
-them was an unnecessary parity loss:
+context fields it needs; the envelope is not an all-or-nothing gate. Bundling them
+was an unnecessary parity loss:
 
 - **Pin / Unpin need `isPinned`**, which lives in the *main renderer's* React state
   and localStorage (`useWorkspacePinnedNodes.ts`). The launcher is a **different
@@ -606,9 +706,9 @@ So D1b gains **one exception, admitted by name and bounded by three conditions**
 qualifies today, and out of app the action resolves `absent` anyway, since there is
 no main renderer to supply the bit.
 
-**One opening produces one `InvocationRef`, one object list and one ordered action
-list**, so a menu never assembles itself from several refs and a command row never
-authors an object/action pair locally.
+**One opening produces one `InvocationRef`, one fixed object set, at most one current
+result generation and one ordered action list**, so a menu never assembles itself
+from several refs and a command row never authors an object/action pair locally.
 
 **Evaluation has three states because the two projections treat non-applicability
 differently.** D2 must preserve the menu's existing disabled rows; D7's searchable
@@ -647,13 +747,16 @@ the preceding main step succeeds**, a failed step stops the plan, and D2's
 equivalence proof compares **step order and failure behaviour**, not just the final
 command.
 
-**Ordering alone is still not enough — three more things the array had to carry:**
+**Ordering alone is still not enough — five more things the array had to carry:**
 
 - **Result binding.** *Add tag → Create* runs `create_tag`, reads the returned
   `focus.nodeId`, and only then builds `apply_tag` / `batch_apply_tag`
   (`NodeContextMenu.tsx:260-269`). Steps therefore name their result (`bindAs`) and
   later steps reference it (`{ fromStep, field }`) — a constrained reference, not a
-  general expression language.
+  general expression language. Tagged capture uses the same mechanism twice:
+  `ensure_date_node` supplies `create_capture.input.destinationParentId`, and
+  `create_capture` supplies the new `apply_tag.nodeId`; a tag draft additionally
+  supplies `apply_tag.tagId` through `create_tag`.
 
   **Decided now, not during implementation: bound references are the contract, and
   the compound-command alternative is closed.** A `create_and_apply_tag` command
@@ -666,6 +769,14 @@ command.
   `composerHandoff` must run in the **main renderer**, not the calling launcher
   renderer — the composer handoff is in-process pub/sub and the pin hook lives in
   the main renderer.
+- **A native-host target.** `open(appSurface)` is neither document navigation nor a
+  renderer reveal. It calls `createWindow` + `focusMainWindow` or
+  `openSettingsWindow` in main, including when the main window is closed. The typed
+  `activateAppSurface` step carries that operation; it cannot fall through to an
+  ad-hoc callback or pretend a renderer exists. Its main-host acknowledgement waits
+  until the existing window is focused or a newly created window reaches its normal
+  ready/show path, so `stayAtDestination` cannot dismiss the panel before there is a
+  destination.
 - **Clipboard is a *main* step, and carries the resolved text.** An earlier draft
   routed it to the invoker with `{ payload: 'text' | 'nodeId', nodeId }`. That works
   for *Copy node id* and is impossible for *Copy text*: the launcher deliberately
@@ -696,11 +807,14 @@ command returns through `focus` (`core.ts:2774-2776`, `CommandPalette.tsx:83-86`
 A missing or invalid binding at use is an executor failure
 (`{ kind: 'bindingUnresolved' }`), not undefined behaviour.
 
-**Which *fields* accept a reference is an explicit allow-list, not a structural
+**Which *paths* accept a reference is an explicit allow-list, not a structural
 rule**, because `NodeId` is literally `string` (`types.ts:30-33`). "Replace every
-`NodeId` with `Bound<NodeId>`" would also open `create_tag.name`, and a
-property-name heuristic would be a guess wearing a type — wrong the first time two
-ids play different roles. So the allow-list names consumers one line at a time.
+`NodeId` with `Bound<NodeId>`" would also open `create_tag.name`, while a top-level
+field list cannot reach the real nested
+`create_capture.input.destinationParentId`. A property-name heuristic would be a
+guess wearing a type — wrong the first time two ids play different roles. The
+descriptor therefore names exact path tuples; `BindAtPaths` and the runtime codec
+both derive from those tuples.
 
 **It is a `const` value, not an `interface`, and that is load-bearing.** TypeScript
 erases interfaces, so a codec or executor cannot read one; a second value-level copy
@@ -710,24 +824,29 @@ thing.
 
 **The producer path is stated, not assumed.** Commands do not return a
 `focusNodeId`. They return `CommandResult` with `focus?: FocusHint`
-(`types.ts:653-661`); `create_tag` yields `focus(id)` (`core.ts:1918-1924`) and
-`documentService` forwards `result.focus` — which is why the shipped consumer reads
-`created.focus?.nodeId` (`NodeContextMenu.tsx:264`). An executor that stored the
-result and looked for `result.focusNodeId` would hit `bindingUnresolved` on
-`open(Today)` and *Add tag → Create*, and a hand-written `focus.nodeId`
-special case would be an undocumented second schema. So the descriptor names the
-extraction (`'focus.nodeId'`) and the executor follows it.
+(`types.ts:653-661`); `create_tag` yields `focus(id)` (`core.ts:1918-1924`),
+`create_capture` yields the new capture through `focus(id)`
+(`core.ts:1106-1131`), and `documentService` forwards `result.focus`. An executor
+that stored either result and looked for `result.focusNodeId` would hit
+`bindingUnresolved` on `open(Today)`, *Add tag → Create* and tagged capture; a
+hand-written `focus.nodeId` special case would be an undocumented second schema.
+The descriptor therefore names the extraction path `['focus', 'nodeId']`, and the
+executor follows it for all three producers.
 
-That is also what makes the negative fixture mean something: the counterexample is
-**`create_tag.name`** — same underlying type as `apply_tag.tagId`, and it must
-**fail** while `tagId` compiles. A fixture using an unrelated numeric field would
-have proved nothing.
+That is also what makes the negative fixture mean something: the counterexamples
+are **`create_tag.name`** and **`create_capture.input.title`**. The former has the
+same underlying type as `apply_tag.tagId`; the latter is a sibling of the permitted
+nested destination. Both must fail while `apply_tag.tagId`, `apply_tag.nodeId` and
+`create_capture.input.destinationParentId` compile. A fixture using an unrelated
+numeric field would have proved nothing.
 
 PR 1 therefore carries a **compile-time negative fixture** — wrong args for a
-command, `bindAs` on a non-bindable step, a step ref in a field that does not accept
+command, `bindAs` on a non-bindable step, a step ref in a path that does not accept
 one, each expected to fail type-checking — alongside a runtime
-`ensure_date_node → navigate(bound focus node)` test. Without those the phrase "the
-compiler decides" is decoration.
+`ensure_date_node → navigate(bound focus node)` test. PR 2 adds the complete
+`ensure_date_node → create_capture(bound destination, bind capture) →
+apply_tag(bound capture, literal or bound tag)` runtime plan and both app-surface
+host operations. Without those the phrase "the compiler decides" is decoration.
 
 **Typed arguments and parameter objects are what make the catalog coherent.**
 Desired states, directions and representations are bound arguments; *Move to*
@@ -770,6 +889,32 @@ mutation client**: submit `{ kind: 'command', … }` with fabricated subjects an
 document changes. That is an A2/A3/A4 violation and it was the sharpest finding
 across both reviews.
 
+**The preload and IPC boundary must make that statement true.** The shipped
+launcher uses the shared preload, which exposes the full `window.lin.invoke`; the
+generic `lin:invoke` document-command branch has no launcher sender gate. A
+compromised launcher could therefore call `get_projection` and `delete_node`
+directly, bypassing every invocation check below. PR 2 closes both layers before it
+adds the action consumer:
+
+1. `src/preload/launcher.ts` becomes a separate Electron-Vite preload entry and
+   exposes only the typed `window.lin.launcher` API. The launcher window loads that
+   bundle; navigating or reloading its renderer can never acquire the full app
+   bridge. The main, Settings and provider-config renderers keep the existing app
+   preload, so their `api/client` path does not regress.
+2. Main registers capabilities against the actual `webContents` at window creation
+   and checks them at every inbound seam. The launcher receives only launcher/query/
+   action-request capabilities; `lin:invoke` rejects it **before dispatch**, and
+   every `launcher:*` handler rejects a non-launcher sender. Destroying a
+   `webContents` removes its capability record. The minimal preload is least
+   privilege; the main gate remains the authoritative defence if that bridge is
+   accidentally widened later.
+
+The negative security fixture invokes `lin:invoke('delete_node', …)` and
+`lin:invoke('get_projection')` from the real launcher sender and requires both to be
+rejected without reading or changing the document. Positive fixtures prove the
+launcher can still query/execute admitted actions and the Settings/provider windows
+retain the app capabilities they use.
+
 The shipped code already demonstrates the correct pattern:
 `launcher:createContextCapture` accepts only an optional note while **main holds
 the authoritative `ExternalContext`**, and the intent is validated at the seam
@@ -790,15 +935,20 @@ before it reaches durable storage. The registry follows it exactly:
    sanitized, bounded input; it cannot carry an arbitrary object ref. The launcher
    can neither submit a seed nor upgrade one; wrong-sender and forged-selection /
    `workspace` attempts are rejected, and both are tested.
-1. Main returns `{ invocationRef, items, menuActions }`.
-2. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
+1. Main returns `{ invocationRef, openSeq, fixedItems, resultItems, menuActions }`.
+2. Each input change sends the bounded `ObjectQueryRequest`; main replaces the
+   result generation and `draftText` as D1a specifies. A query response can present
+   objects but cannot execute one or make it active.
+3. The user picks → the renderer sends an `ActionRequest`: **action id, invocation
    ref, subject ref and correlated typed arguments**. Nothing else.
-3. **Main re-evaluates** that action/subject/argument tuple against the *latest*
+4. **Main re-evaluates** that action/subject/argument tuple against the *latest*
    projection and its own invocation record, then produces and executes the effect
    itself.
 
 So `ActionEffectPlan` only ever travels **main → renderer**, which is the trusted
-direction. A stale or forged request fails re-evaluation instead of mutating.
+direction. A current subject whose state/arguments changed returns `reEvaluated`; a
+removed generation/subject returns `stale` with no invented presentation. Forged
+requests are rejected instead of mutating.
 
 **`InvocationRef` needs an origin, a per-part attestation, and a phase — or the rule
 above is not implementable.** In the command-surface path the renderer that *sends*
@@ -855,7 +1005,7 @@ reversible confirmations thereafter.
 | `confirming` | **the challenge-bearing request — this *is* acceptance** | `executing`, atomically, after token + subject + argument validation |
 | `confirming` | `confirmationCancelled` | `live` — challenge revoked in the same atomic step |
 | `confirming` | challenge TTL expiry | `live` — challenge revoked |
-| `confirming` | subject or argument mismatch on redemption | `live` — challenge revoked, presentation re-issued |
+| `confirming` | subject or argument mismatch on redemption | `live` — challenge revoked; current subject is re-presented, removed subject returns `stale` |
 
 There is deliberately **no separate "accepted" event**: the accepting request is the
 acceptance. An earlier draft split them, which made the normal path unreachable —
@@ -883,7 +1033,8 @@ so a fourth phase existed only to be transited through.
 
 | from | event | to |
 |---|---|---|
-| any phase before `executing` | `abandoned`, chip removal, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
+| `live` / `confirming` | `objectRemoved` / `selectionMemberRemoved` | same phase with membership atomically rewritten; if the confirmed subject was removed/replaced, challenge revoked and phase returns to `live` |
+| any phase before `executing` | `abandoned`, dismissal, superseding open, attesting-renderer reload, invocation TTL | `spent` (terminal) |
 | `executing` | settlement — `completed` / `failed` / `indeterminate` | `spent` |
 | `executing` | dismissal · superseding open · reload | **`executing`** — UI lifetime events must never invalidate an in-flight plan |
 
@@ -899,10 +1050,13 @@ differential still requires the confirmation copy, subjects and eventual effect 
 match. What changes is that the record returns to `live` and the challenge dies with
 it.
 
-**Chip removal is a real invalidation, not a local erase.** D4 lets the user drop a
-context object; without an `abandoned` event the old ref stays admissible with its
-original subject and arguments — exactly the substitution the challenge binding
-exists to prevent.
+**Chip removal is a real membership transition, not a local erase or whole-opening
+abandonment.** D4 lets the user drop one context object and continue searching.
+Main validates the named fixed object/member, rewrites the aggregate when needed,
+and invalidates every removed or replaced ref. Treating that event as `abandoned`
+would secure the old ref only by killing the still-visible opening; treating it as
+renderer-local would leave the ref admissible. The named object events avoid both
+failures.
 
 **Every explicit dismiss path is phase-aware.** Today Esc goes straight to
 `launcher.hide()` (`LauncherApp.tsx:170-175`) and every hide bumps `launcherOpenSeq`
@@ -916,10 +1070,14 @@ Tests: two simultaneous submits, two simultaneous first-leg confirmations, Esc a
 global-hotkey dismissal while step 0 is pending, dismissal between two steps,
 **cancel then run a different action from the same menu opening**, **redeem after
 cancel**, **redeem after challenge expiry**, **submit through a ref whose chip was
-removed**, **PR 1 Confirm-to-effect end to end**, **native Cancel with no token ever
+removed**, selection-member removal with the old aggregate ref replayed,
+out-of-order object-query completion, superseding query, and old draft replay,
+**PR 1 Confirm-to-effect end to end**, **native Cancel with no token ever
 minted**, **a launcher attempt to advance a native confirmation** (rejected), spent-ref replay, wrong sender, superseded open, a launcher attempt to add
 `view`/`workspace`, attestation invalidated by a main-renderer reload, and `open` on
-an app-surface object plus a node-result object **with the main window closed**.
+an app-surface object plus a node-result object **with the main window closed**. The
+IPC suite separately proves the launcher cannot call either `get_projection` or
+`delete_node` through `lin:invoke`.
 
 **Two admissions for renderer-owned facts, both bounded.**
 
@@ -941,7 +1099,7 @@ text, and implying renderer-owned facts may feed a main-side write.
 changing behaviour. Rather than bend the rule silently, it is **listed by name and
 fenced by three conditions, all of which must hold**:
 
-1. the `workspace` facts were **attested by the main renderer** — which is not the
+1. the `view` facts were **attested by the main renderer** — which is not the
    same as "the main renderer sent this request" (see the provenance rule below);
 2. the parameter selects among **view preferences the user can immediately
    change again** — never node identity, never subject membership, never destructive;
@@ -1033,13 +1191,16 @@ resolves **one subject per family** from that set:
 
 ```
 menu.render(
-  registry.actionsForObjectSet(invocation.objects, ctx, {
+  registry.actionsForObjectSet(currentObjects(invocation), ctx, {
       subjectPrecedence: ['nodeSelection', 'node'],
     })
     .filter(action => action.evaluation.status !== 'absent')
     .filter(isMenuAction),
 )
 ```
+
+`currentObjects` is the main-owned union of `fixedObjects` and the one `ready`
+result generation; a context-menu opening has only the fixed node/selection set.
 
 The precedence is conditional on what the family accepts, not a blanket hiding
 rule. With a live multi-selection, selection-capable families (`duplicate`, `move`,
@@ -1107,7 +1268,10 @@ stage.
   the same `open` family; there is no `app` action scope, and the legacy
   `LauncherItem.kind: 'command'` arm is deleted. A surface that claims to be the
   universal entry point cannot omit the app's own objects, but it also cannot encode
-  those objects inside command labels. This does **not** ban a future first-class
+  those objects inside command labels. Node objects resolve to renderer navigation;
+  app surfaces resolve to the main-host `activateAppSurface` effect, which creates or
+  focuses the required BrowserWindow even when no main renderer exists. This does
+  **not** ban a future first-class
   command object: a Raycast-like tool such as *Search Files* is an identity-bearing
   object whose primary action is *Open Command*. Tenon simply has no equivalent in
   this release, so this plan does not ship an empty command provider or a speculative
@@ -1137,21 +1301,37 @@ the focused node or selection (pushed from the main renderer over IPC); out of a
 it is the foreground page.
 
 - Pre-filled on summon, **always visible** — nothing is ever attached silently.
-- **Removable**, because a default is a guess: remove it and the surface falls back
-  to global object search with no contextual object.
-- **Initially active.** The action bar and `Actions ⌘K` resolve against the chip.
-  Typing in the main input and highlighting a main-list object result makes that row
-  the active object; clearing the query returns activity to the chip. Parameter
-  pickers preserve the parent action's subject and bind the highlighted candidate as
-  an argument (D1a); they do not replace the active subject. The action bar always
-  names the action for the currently active object, never for an invisible subject.
+- **Removable through main**, because a default is a guess: remove it and the
+  surface falls back to global object search with no contextual object. The
+  `objectRemoved` transition in D1a invalidates the ref; deletion is never a local
+  visual-only erase.
+- **Initially active, and typing alone does not move activity.** The action bar and
+  `Actions ⌘K` continue to resolve against the chip while the main input also
+  searches objects. `ArrowDown` from the input/chip or clicking a result explicitly
+  makes that row active. `ArrowUp` from the first row, or `Esc` while a result is
+  active, returns to the chip without clearing the input; a subsequent `Esc`
+  dismisses the panel. Escape precedence is subpanel → active result → launcher;
+  D9's executing/dwell lifecycle overrides it once an action is claimed. A new query
+  generation invalidates an active old result and
+  returns activity to the chip. Clearing the query does the same.
+- **The input is independent payload.** With a page chip active, Enter runs
+  `capture(page)` and main supplies the current `draftText` as its note; `Actions
+  ⌘K → Send to Agent` supplies the same text as the editable question. The user can
+  still choose a matched node or no-match draft explicitly. Thus object search does
+  not delete the shipped page + note path or the promised page + question path.
+- Parameter pickers preserve the parent action's subject and bind the highlighted
+  candidate as an argument (D1a); they do not replace the active subject. The action
+  bar always names the action for the currently active object, never for an invisible
+  subject.
 - Carried by ref, not merely displayed — which is what lets the action panel act on
   an object that is not otherwise in the result list.
 
 **A multi-node selection is one aggregate chip** ("5 nodes"), expandable to remove
-individually — not five chips. Five chips overflow a 760px panel and make "remove
-everything → global search" ambiguous, and the actions that accept a selection take
-the set, not its members.
+individually through `selectionMemberRemoved` — not five chips. Main replaces the
+aggregate ref after every edit, so replaying the prior selection cannot address the
+old set. Five chips overflow a 760px panel and make "remove everything → global
+search" ambiguous, and the actions that accept a selection take the set, not its
+members.
 
 The aggregate chip resolves **selection-subject actions only**. It does not inherit
 the context menu's node-only actions, because that menu has a positional anchor and
@@ -1298,6 +1478,15 @@ searches never return mixed row types.
 5. with no chip and no query, Today / Library / Schema / Saved searches / Trash /
    Main window / Settings are the stable object list.
 
+Every input change uses D1a's `(invocationRef, openSeq, requestId)` query contract.
+Accepting the request removes the previous generation immediately; while the new
+generation is pending the list cannot render or submit stale rows. A ready response
+installs fresh refs atomically. A late response is `superseded`, and a search failure
+leaves only fixed objects active until the next query rather than restoring the old
+generation. The fixed chip may still execute while retrieval is pending because its
+latest `draftText` was admitted synchronously; a no-chip opening has no blind-Enter
+subject until the generation is ready.
+
 There is no final "commands" bucket in this release and registry actions never slot
 into the object list. If a real command-object provider ships later, its objects join
 the same ranked results instead of returning as a privileged trailing bucket. Any
@@ -1306,15 +1495,22 @@ system node or app surface.
 
 **Default highlight is a fixed rule, never learned:**
 
-- context chip present and query empty -> the chip is active;
-- no chip and no query -> Today is the first active object;
-- otherwise -> the first object search result.
+- context chip present -> the chip stays active until `ArrowDown` or click explicitly
+  selects a current-generation result;
+- when a selected result is superseded, `ArrowUp`/`Esc` returns from the first row,
+  or the query is cleared -> the chip is active;
+- no chip -> the first current-generation result is active; on an empty query that
+  is Today, and on a no-match query it is the one draft;
+- removing the active chip promotes the first current-generation result under the
+  same rule, or Today after the empty-query generation resolves.
 
 Primary actions are object contracts, not learned behavior: page -> `capture`,
 node-purpose draft -> `create`, stored/system node and app surface -> `open`. When
 non-empty input matches no searchable object, the draft is the sole result: its row
 shows the entered text with the localized type label *New node*, the action bar
-shows *Create node*, and Enter executes `create(draft, { destination: Today })`.
+shows *Create node* **when that row is active**, and Enter executes
+`create(draft, { destination: Today })`. With an ambient chip the user first selects
+the draft; without one it is active by default.
 It is not a *New node in Today* command row. A multi-selection has no primary
 because it has no safe canonical activation.
 The page and draft mutations follow an explicit captured object or text the user
@@ -1504,18 +1700,38 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
 
 - **Today is the bound destination object.** `capture(page, { destination: Today,
   tag? })` and `create(draft, { destination: Today })` use the same system-node
-  object that appears in search. There is no destination picker and no Inbox.
+  object that appears in search. For page capture, main builds the real
+  `CreateCaptureInput` from its authoritative `ExternalContext` plus the invocation's
+  bounded `draftText`. The existing pure builder is factored into a
+  destination-independent capture template and final input materialization, so the
+  plan can attach the bound `input.destinationParentId` without an invented node id or a
+  second metadata builder. The executor resolves that leaf before dispatch. A
+  renderer never authors capture metadata or command input. There is no destination
+  picker and no Inbox.
+- **The existing page + note path remains the blind-Enter path.** With an ambient
+  page chip, typing does not switch subjects: Enter captures that page and uses the
+  input as its note whether the same text matches another object or produces a
+  no-match draft. `ArrowDown` or click is the explicit choice to act on a result;
+  `ArrowUp`/`Esc` returns to the page. This is the brownfield requirement inherited
+  from `launcher:createContextCapture({ note })`, not a new shortcut.
 - **Success is visible.** Capture currently resets and hides with no confirmation
   (`LauncherApp.tsx:121-127`) — when Tenon is in the background the user gets no
   evidence at all. Show a brief confirmation before dismissing.
 - **One optional user tag object at capture time.** Findability comes from tags and
   search, not from location. (The capture-kind tag `#article`/`#video` → `#capture`
-  already exists; what is missing is *the user's own* tag.)
+  already exists; what is missing is *the user's own* tag.) The effect plan is
+  explicit rather than a capture callback: `ensure_date_node → create_capture`
+  (bound destination, bind new capture) `→ apply_tag` (bound capture id, existing tag
+  id). A tag draft inserts `create_tag` **between** `create_capture` and `apply_tag`
+  and binds its result into the final step. Step failure stops the plan under the
+  same partial-commit/result rules
+  as every other multi-step action; no automatic retry can duplicate the capture.
 - **`Send to Agent` is a registry action, not a new AI surface.** It raises the
-  main window, reveals the rail, and stages the subject object *and the text
-  already typed in the panel* — the user edits and submits. Carrying the typed
-  query is not a nicety: dropping it would mean the one entry point that works from
-  outside the app silently discards what the user wrote.
+  main window, reveals the rail, and stages the subject object *and main's current
+  invocation `draftText`* — the user edits and submits. The action request cannot
+  replace that text with a second payload. Carrying the typed question is not a
+  nicety: dropping it would mean the one entry point that works from outside the app
+  silently discards what the user wrote.
 
   **A foreground page object contributes context, not a user message** (PM,
   2026-08-03). A node subject is already expressible as a `nodeReference`, but an external page is not
@@ -1590,8 +1806,9 @@ are exactly D2's list: convergent `Move to` retrieval, convergent mixed-selectio
 Done setters, and normalized action copy. Everything else remains strict parity.
 
 1. **Contracts in `src/core/actions/`** (D1a) as compiling TypeScript with codec
-   tests — invocation, evaluation, presentation, request, effect — and the
-   main-owned admission path (D1b).
+   tests — mutable invocation membership, evaluation, presentation, request,
+   nested-path effect binding — and the main-owned admission path (D1b). View facts
+   contain `visualRowId`/`rowExpanded`; workspace facts contain only `isPinned`.
 2. **Predicates move to core** (D1). The stage-0 spike, done before approval,
    found no renderer dependency that survives tracing: `rowMap` is a cache with an
    existing derivation fallback, `actionPolicy` derives from the projection, and
@@ -1623,22 +1840,35 @@ self-check); the earlier "no locale file" claim is no longer true.
 
 ### PR 2 — the command surface and the capture loop
 
-6. Replace the launcher's ad-hoc `LauncherItem` union with the shared object
+6. **Close the launcher capability boundary first** (D1b): add the dedicated minimal
+   launcher preload entry, register sender capabilities in main, reject launcher
+   access to generic `lin:invoke`, and sender-check every `launcher:*` handler. The
+   negative `get_projection` / `delete_node` tests pass before the registry is
+   exposed to this renderer.
+7. Replace the launcher's ad-hoc `LauncherItem` union with the shared object
    presentation: providers for external page, draft, node result, the five system
    nodes and the two app surfaces; delete the legacy `kind: 'command'` arm and
    reclassify *Open main window* / *Open Settings* as objects (D3/D6). The main
-   input searches only objects, synthesizing its draft only when none match;
-   `Actions ⌘K` searches the active object's actions.
-7. Add the in-app invocation path, aggregate object chip, active-object transitions,
-   optional-primary Enter behavior, focus completion and result signal (D4/D9).
-8. Close the capture loop with the Today destination object, optional tag object,
-   `Send to Agent`, and its `PendingComposerContext` (D9).
-9. **Declared user-visible change:** replace the in-app `ConfirmDialog` with a
+   input searches only objects through the atomic
+   `(invocationRef, openSeq, requestId)` generation contract, synthesizing its draft
+   only when none match; `Actions ⌘K` searches the active object's actions. Implement
+   `activateAppSurface` in main and prove both windows open with the main window
+   initially closed.
+8. Add the in-app invocation path, aggregate object chip and main-owned membership
+   edits. Keep `draftText` independent of subject selection: a chip stays active
+   until `ArrowDown`/click, `ArrowUp`/`Esc` returns to it, and no-chip openings use
+   the first current result. Add optional-primary Enter behavior, focus completion
+   and result signal (D4/D9).
+9. Close the capture loop with the Today destination object, optional tag object,
+   nested `create_capture` binding/producer, `Send to Agent`, and its
+   `PendingComposerContext`. Preserve page + note capture and add page + question
+   handoff as explicit keyboard E2E flows (D9).
+10. **Declared user-visible change:** replace the in-app `ConfirmDialog` with a
    main-owned native sheet for *Delete forever* and *Empty Trash* in **both** views
    (D1b). It belongs here rather than in PR 1 because the threat it answers — a
    locked-down renderer naming an action that `Cmd+Z` cannot reach — arrives with
    this PR. Verified light + dark, with focus and keyboard behaviour.
-10. **If searchable *Indent* / *Outdent* are wanted, they are a declared PR 2
+11. **If searchable *Indent* / *Outdent* are wanted, they are a declared PR 2
    addition, not a side effect.** They are keyboard-only today, so exposing them
    requires: a **surface-exposure rule** so they appear in the searchable view
    without leaking into the context menu (which would break PR 1's differential
@@ -1648,7 +1878,7 @@ self-check); the earlier "no locale file" claim is no longer true.
    (`useWorkspaceKeyboard.ts:521-565`) — which a command-only effect does not
    preserve. Tests must cover nested and transcluded panes. **Not in scope unless
    explicitly ratified**; the plan does not smuggle it in through a field.
-11. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
+12. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
    — the keystroke lives on inside the panel as *Actions*), and the stale `/`-menu
    hint. **The old menu oracle is not deleted here — PR 1's final step already
    removed it** once equivalence was proven.
@@ -1708,9 +1938,11 @@ and a differential test can judge them instead.
   while node-only families appear once with the anchored node subject; no flat-map
   duplicates are possible. System-node and app-surface objects cannot leak in unless
   the anchored node is itself that system node. `setViewToolbarVisible` and
-  `editViewSection` require view facts tied to that node ref, while `setPinned`
-  requires workspace facts; they remain node-subject actions and are absent out of
-  app when those attested facts do not exist.
+  `editViewSection` require view facts tied to that node ref
+  (`panelId + visualRowId + rowExpanded`), while `setPinned` requires only
+  `workspace.isPinned`; they remain node-subject actions and are absent out of app
+  when those attested facts do not exist. A fixture carrying `view` but no
+  `workspace` can still build the correct view-section effect.
 - **AC-06 — Parameter-object binding (D1a/D5).** `Move to` and `Add tag` candidate queries
   return only `ObjectPresentation`s. Choosing a destination node, tag node or tag
   draft preserves the parent request's subject/action and binds only the correlated
@@ -1718,32 +1950,47 @@ and a differential test can judge them instead.
   subjects.
 - **AC-07 — Contract correlation (D1a), the reason these types live in PR 1 at all.** A
   compile-time **negative** fixture: wrong args for a command, `bindAs` on a
-  non-bindable step, and a step ref in **`create_tag.name`** — the
-  same-underlying-type counterexample to `apply_tag.tagId` — must each **fail**
-  type-checking, while the `tagId` case compiles. **Runtime coverage for both bound
-  flows**: `ensure_date_node → navigate(bound focus node)` and the user-visible
-  `create_tag → apply_tag(bound tagId)`, each asserting the value was extracted
-  through `ACTION_BINDINGS.produces`, not a special case. Request fixtures also
-  reject a subject/action mismatch and arguments for the wrong action family.
-  Runtime `open(Today)` must execute `ensure_date_node → navigate(bound focus node)`
-  and cover `bindingUnresolved`; it never relies on a compound navigation row.
+  non-bindable step, and step refs in **`create_tag.name`** and
+  **`create_capture.input.title`** must each **fail** type-checking, while
+  `apply_tag.nodeId`, `apply_tag.tagId` and the nested
+  `create_capture.input.destinationParentId` paths compile. Runtime coverage:
+  `ensure_date_node → navigate(bound focus node)`, user-visible
+  `create_tag → apply_tag(bound tagId)`, and
+  `ensure_date_node → create_capture(bound destination, bind capture) →
+  apply_tag(bound capture, literal or bound tag)`. Each asserts that the value was
+  extracted through `ACTION_BINDINGS.produces`, not a special case. Runtime
+  `open(Today)` covers `bindingUnresolved`; `open(Main window)` and `open(Settings)`
+  execute `activateAppSurface` successfully with the main window initially closed.
+  Request fixtures also reject a subject/action mismatch and arguments for the wrong
+  action family.
 - **AC-08 — Explicit-state convergence (D1a/D2).** A homogeneous selection presents
   only its state-changing Done variant; a mixed selection presents both.
   `setDone(true)` changes only not-done nodes and `setDone(false)` changes only done
   nodes. Re-evaluation after either request reaches the requested homogeneous state;
   no runtime toggle remains in a resolved presentation.
-- **AC-09 — Object activation (D4/D6).** With an ambient chip and no query the chip is
-  active; highlighting a result transfers activity to that object; clearing the
-  query restores the chip. A matching node/system-node/app-surface object uses
-  `open`; only a zero-match query produces a node-purpose draft using `create`. A
-  multi-selection has no primary action, so Enter is inert until the user chooses
-  from `Actions ⌘K`. Its action panel contains only selection-subject families;
-  highlighting an individual node exposes the node-only families without ever
-  inventing an implicit first-node subject.
-- **AC-10 — Lifecycle round-trip (D1b).** The actual response sequence, not just the phases:
-  request → `confirmationRequired` + challenge → dialog → challenge-bearing request →
-  execution result. Plus wrong-sender and forged-seed rejection at invocation
-  creation.
+- **AC-09 — Object activation and draft payload (D4/D6).** With an ambient chip,
+  typing a matching or no-match query leaves the chip active. `ArrowDown`/click
+  transfers activity to a current-generation result; `ArrowUp`/first `Esc`, clearing
+  or superseding the query restores the chip. With no chip, the first current result
+  is active. Removing a chip promotes that result without closing the invocation. A
+  matching node/system-node/app-surface object uses `open`; only a zero-match query
+  produces a node-purpose draft using `create`. The same query remains independent
+  `draftText` throughout. A multi-selection has no primary action, so Enter is inert
+  until the user chooses from `Actions ⌘K`; its panel contains only
+  selection-subject families, and selecting an individual node never invents an
+  implicit first-node subject.
+- **AC-10 — Capability, generation and lifecycle admission (D1a/D1b).** A real
+  launcher sender can call its dedicated query/action API but both
+  `lin:invoke('get_projection')` and `lin:invoke('delete_node', …)` are rejected;
+  non-launcher senders are rejected by `launcher:*`, while Settings/provider app
+  calls remain green. Object-query tests cover an empty `pending` replacement,
+  out-of-order responses, a superseding query, old node/draft replay, chip deletion
+  and selection-aggregate replacement; only the latest
+  `(invocationRef, openSeq, requestId)` generation is admissible, and replay returns
+  `stale` without a fabricated presentation. The confirmation
+  response sequence remains request → `confirmationRequired` + challenge → dialog →
+  challenge-bearing request → execution result, with wrong-sender and forged-seed
+  rejection at invocation creation.
 - **AC-11 — Confirmation parity (D1 `confirm`).** In PR 1 the assertion is **strict**: the
   shipped `ConfirmDialog` still appears, with the same copy and the same subject
   set, and no effect exists before it resolves — no weakening to "some confirmation
@@ -1754,9 +2001,15 @@ and a differential test can judge them instead.
   is rendered with its rejection reason. Nothing silently inapplicable.
 - **AC-13 — Action result signal (D9).** E2E: fire a mutating action from the panel with
   the main window in the background; assert the user gets a result signal.
-- **AC-14 — Capture (D9).** E2E: capture from a background app with Today and a tag bound as
-  objects, assert the node, the tag, and the confirmation. A separate no-match draft
-  case asserts `create(draft, Today)` creates a plain node without capture provenance.
+- **AC-14 — Capture and handoff (D4/D9).** Keyboard E2E from a background page:
+  type a note while the page chip stays active and press Enter before the 120 ms
+  retrieval debounce settles; assert the captured page uses that latest note, Today
+  destination and confirmation. Repeat with an existing tag and a tag draft,
+  asserting the complete bound effect plan and resulting user tag. Then type a
+  question, choose `Send to Agent` without reselecting the page, and assert
+  exactly one staged user draft plus exactly one untrusted page context. A separate
+  no-match case explicitly selects its draft and asserts `create(draft, Today)`
+  creates a plain node without capture provenance.
 - **AC-15 — Full verification.** Light + dark visual verification (UI diff); `typecheck`, `test:core`,
   `test:renderer`, `test:e2e`, `docs:check`.
 
@@ -1768,7 +2021,11 @@ row-policy-driven `remove` (D1a/D8); the boundary between a genuine command obje
 the no-match draft fallback and today's compound pseudo-commands (D3/D6); bound
 references without a `commands.ts` change (D1a); and the `Move to` retrieval path
 through main with debounce, request identity, cancellation and an A9 measurement
-(D5). Two presentation decisions are also closed:
+(D5). The review-driven boundaries are closed too: a dedicated minimal launcher
+preload plus main capability gate; atomic object-result generations; input as
+main-owned payload independent of subject selection; nested `create_capture`
+bindings plus a native-host app-surface effect; and visual-row facts in `view` while
+only pin state remains in `workspace`. Two presentation decisions are also closed:
 
 - **Icons: registry entries carry an `iconId`; each view resolves it.** The
   launcher keeps `launcherIcons.tsx` as its own resolver so the locked-down bundle
@@ -1824,7 +2081,7 @@ implementation start.
 | PR | Overlaps | Handling |
 |---|---|---|
 | [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`**, **`ThreadDock.tsx`**, **`threadStore.ts`** — the `PendingComposerContext` path PR 2 needs | PR 2 lands after it and rebases; PR 1 has no overlap |
-| [#488](https://github.com/relixiaobo/lin-outliner/pull/488) *(open)* | **both locale catalogs**, **`src/main/main.ts`**, plus infrastructure-owned `src/core/commands.ts` / `src/core/types.ts` | PR 1 and PR 2 land after it; neither changes the two protocol files, but both rebase its locale/main work |
+| [#488](https://github.com/relixiaobo/lin-outliner/pull/488) *(open)* | **both locale catalogs**, **`src/main/main.ts`**, **`src/preload/index.ts`**, plus infrastructure-owned `src/core/commands.ts` / `src/core/types.ts` | PR 1 and PR 2 land after it; neither changes the two protocol files, but PR 2 also rebases the preload split after its app-bridge change |
 | [#490](https://github.com/relixiaobo/lin-outliner/pull/490) *(open draft)* | **`src/main/main.ts`** only; generated-image behavior is otherwise disjoint | additive file overlap for both PRs; re-check and rebase whichever lands second |
 | [#480](https://github.com/relixiaobo/lin-outliner/pull/480) *(open)* | none (`AGENTS.md`, release workflow/scripts, `CHANGELOG.md`) | no overlap; dev agents do not touch its main-owned files |
 
@@ -1834,7 +2091,12 @@ main-side admission wiring. It touches no agent, composer or launcher file.
 
 PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
 `src/renderer/launcher/*`, `src/main/launcher/*`,
-`src/main/context/contextCapture.ts`, the composer path and both locale catalogs.
+`src/main/context/contextCapture.ts`, `src/core/launcher/sources.ts` (capture-template
+factoring only), `src/preload/index.ts`, a new minimal
+`src/preload/launcher.ts`, infrastructure-owned `electron.vite.config.ts`, the
+composer path and both locale catalogs. No currently open PR touches
+`electron.vite.config.ts`; the PR 2 Draft claim must name it explicitly and re-run
+the ownership/collision check before editing it.
 
 **Neither `src/core/commands.ts` nor `src/core/types.ts` is touched**, and no
 interface-first PR is required — settled in D1a rather than left to implementation.
@@ -1880,10 +2142,11 @@ in-app `Cmd+K` that looks similar." The reverse-engineering record is
 first slice shipped as #103 and is now `spec/launcher.md`.
 
 **Borrowed — the feel.** One global hotkey, no modes, one always-focused input for
-filter/search with a no-match draft fallback, fuzzy match, Enter runs the highlighted
-row, a non-activating panel that never makes you leave what you were doing. This
-shipped and this plan preserves it except for D6's deliberate change from
-capture-first ordering to no-match-only creation.
+filter/search with a no-match draft fallback, fuzzy match, Enter runs the active
+object, a non-activating panel that never makes you leave what you were doing. This
+shipped and this plan preserves it with two D4/D6 clarifications: creation is a
+no-match-only result, and an ambient chip remains active until the user explicitly
+enters the result list so page + typed note is not lost.
 
 **Borrowed — the row / action-bar split.** Rows are objects with a right-aligned
 type label; the primary action lives in the bottom bar with `↵`, and the rest
