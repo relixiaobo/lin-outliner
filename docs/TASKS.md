@@ -21,11 +21,6 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-- **#493 `agent-process-timeline-stability`** (codex-3, Draft, opened 2026-08-05)
-  — Agent process timeline as one stable compact sequence: equal reasoning-row
-  spacing, no second-frame jump at the followed bottom, folded live reasoning,
-  disclosure only when reasoning has hidden content. The plan file ships with the
-  PR; board it at merge.
 - **#492 `default-managed-browser-pilot`** (codex-4, Draft, opened 2026-08-05) —
   Browser Pilot as an enabled-by-default managed Skill (not built-in): catalog
   entry, default acquisition and opt-out lifecycle, shell/PATH isolation.
@@ -664,6 +659,12 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-process-timeline-stability** (codex-3, PR #493, merged 2026-08-06) —
+  the agent process timeline reads as one compact sequence: equal reasoning-row
+  spacing, no second-frame jump at the followed bottom, live reasoning folded
+  through completion, and a disclosure only when reasoning has hidden content.
+  Reasoning summaries are lexer-derived, so a leading fence/table/list expands
+  from the complete source. Plan archived: `docs/plans/archive/agent-process-timeline-stability.md`.
 - **release-pipeline** (main-agent, PR #480, merged 2026-08-06) — pushing a `v*`
   tag builds the `.dmg` and publishes a GitHub Release whose body is that
   version's changelog section; `[Unreleased]`'s 21 duplicate category sections

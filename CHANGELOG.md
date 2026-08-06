@@ -12,6 +12,22 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **The agent process timeline reads as one compact sequence (PR #493, codex-3)** —
+  reasoning rows now share the timeline's own spacing instead of adding their
+  own, the structural bottom pin happens in the same paint so a followed
+  transcript no longer jumps on the second frame, and a reasoning Item observed
+  while its Turn is live stays folded when the Turn settles rather than
+  expanding under the reader. A reasoning row carries a disclosure only when it
+  actually hides something: a summary that fits its width is a plain row, and a
+  truncated one wraps in place. Summaries are derived with the Markdown lexer
+  rather than split at a physical newline, so a leading fence, table, or list
+  expands from the complete canonical source and literal asterisks, globs, and
+  inline code survive verbatim — the previous `*`-stripping split could destroy
+  a leading code block and leave the mangled line as the only rendering. Empty
+  provider commentary is dropped at the Turn process projection, not at the leaf
+  renderer, so it can no longer open an empty timeline container, split one
+  aggregated tool run into two, or defeat the lone-resultless-reasoning default.
+
 - **`docs:check` no longer fails every branch that introduces a plan (main)** —
   the C2 orphan-plan guard exempts a plan not yet on `origin/main`, because
   boarding it is the integration gate's job at merge. That exemption never fired:

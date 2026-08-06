@@ -90,3 +90,16 @@ The same rule produced the What's New pane parsing the changelog (#488) and the
 board's one-line completion records pointing at CHANGELOG entries instead of
 restating them. When two documents must describe the same thing, make one of
 them generated or make one of them a pointer.
+
+## Hiding a node at the leaf is not removing it from the projection
+
+Empty provider commentary Items were hidden by returning `null` from the leaf
+renderer (#493). The Items stayed in the canonical list, so everything that
+reasons over the list instead of the DOM kept counting them: `items.length > 0`
+opened a process disclosure whose timeline rendered nothing, a non-tool Item
+between two tool runs split one aggregated activity row into two the reader
+could not explain, and the lone-resultless-reasoning default stopped firing.
+Three unrelated-looking symptoms, one root cause, all invisible on screen. When
+something must not exist for the user, remove it where the shape is decided —
+the projection — not where it is painted. The symptom to watch for: a `return
+null` whose siblings are `.filter()`, `.length`, or adjacency checks upstream.
