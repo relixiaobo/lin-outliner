@@ -605,6 +605,7 @@ export function App() {
           onNavigateToday={navigateToday}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
+          onOpenSearch={() => setCommandOpen(true)}
           onOpenSettings={() => {
             void window.lin?.openSettings();
           }}

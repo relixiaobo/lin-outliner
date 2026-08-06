@@ -193,3 +193,26 @@ export function matchesShortcutEvent(event: KeyboardEvent, shortcutId: ShortcutI
 export function shortcutDefinitionsForScope(scope: ShortcutScope): ShortcutDefinition[] {
   return OUTLINER_SHORTCUTS.filter((shortcut) => shortcut.scope === scope);
 }
+
+/**
+ * A shortcut's FIRST binding rendered as macOS key symbols (`⌘K`), for chrome
+ * that teaches a keystroke — today the sidebar's Search row. Derived from the
+ * registry on purpose: a rebind flows through to every hint, and no surface gets
+ * to hardcode a keystroke the registry no longer holds. Modifiers follow the
+ * macOS order (⌃⌥⇧⌘). Returns null when the shortcut has no displayable literal
+ * key (a `printable` or code-only binding), so a caller renders no hint rather
+ * than a wrong one.
+ */
+export function formatShortcutHint(shortcutId: ShortcutId): string | null {
+  const candidate = SHORTCUT_BY_ID.get(shortcutId)?.bindings[0];
+  if (!candidate?.key) return null;
+  const required = (value: ModifierValue | undefined) => value === true;
+  const parts: string[] = [];
+  if (required(candidate.ctrl)) parts.push('⌃');
+  if (required(candidate.alt)) parts.push('⌥');
+  if (required(candidate.shift)) parts.push('⇧');
+  // `mod` is Command on macOS (the only supported dev/ship platform today).
+  if (required(candidate.mod) || required(candidate.meta)) parts.push('⌘');
+  parts.push(candidate.key.length === 1 ? candidate.key.toUpperCase() : candidate.key);
+  return parts.join('');
+}

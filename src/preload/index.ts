@@ -320,6 +320,10 @@ const api = {
   // the stored mode so the settings control can reflect the current pick.
   getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
   setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
+  // The accelerator the global launcher actually registered under, or null when
+  // no candidate was free. Read-only and argument-free: the registration itself
+  // stays main's, this only lets Settings state the fact.
+  getLauncherHotkey: () => ipcRenderer.invoke('lin:launcher-hotkey') as Promise<string | null>,
   clearUrlPreviewData: () =>
     ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
   clearPreviewTranslationCache: () =>

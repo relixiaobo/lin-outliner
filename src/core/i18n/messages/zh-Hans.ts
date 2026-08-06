@@ -94,10 +94,9 @@ export const zhHans: PartialMessages = {
     },
     error: {
       saveFailed: '保存失败。',
-      saveFailedRestart: '保存失败 — 请重启开发版应用（主进程不支持热重载）。',
     },
     saving: '保存中…',
-    emptyState: '输入以捕获、搜索或运行命令。',
+    capturing: '捕获中…',
   },
   settings: {
     providers: {
@@ -380,6 +379,11 @@ export const zhHans: PartialMessages = {
       themeDark: '深色',
       languageLabel: '语言',
       languageSublabel: '选择菜单和界面的显示语言。',
+      shortcutsGroup: '快捷键',
+      launcherHotkeyLabel: '全局启动器',
+      launcherHotkeySublabel: '在任意应用中唤起启动器，用于捕获、搜索或运行命令。',
+      launcherHotkeyUnavailable: ({ app }) =>
+        `不可用 — 候选快捷键已被其他应用占用。请退出冲突的应用后重新启动 ${app}。`,
       memoryGroup: '记忆',
       memoryLabel: '使用记忆',
       memorySublabel: '使用并更新存储在每日笔记可编辑节点中的长期记忆。',
@@ -448,6 +452,7 @@ export const zhHans: PartialMessages = {
     errorDismiss: '关闭错误',
     sidebar: {
       ariaLabel: '主导航',
+      search: '搜索',
       primaryNav: {
         today: '今天',
         library: '资料库',

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildLauncherItems, deriveActiveIndex, filterCommands, formatHotkey, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from '../../src/renderer/launcher/launcherModel';
+import { buildLauncherItems, deriveActiveIndex, filterCommands, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from '../../src/renderer/launcher/launcherModel';
 import type { LauncherItem } from '../../src/renderer/launcher/launcherModel';
 import type { LauncherCommandView, LauncherNodeMatch } from '../../src/core/launcher/commands';
 import type { ExternalContext } from '../../src/core/launcher/context';
@@ -259,22 +259,21 @@ describe('filterCommands', () => {
   });
 });
 
-describe('formatHotkey', () => {
-  test('renders an Electron accelerator as macOS key symbols', () => {
-    expect(formatHotkey('CommandOrControl+Shift+Space')).toBe('⌘⇧␣');
-    expect(formatHotkey('Option+Enter')).toBe('⌥↵');
-  });
-  test('passes unknown tokens through and handles null', () => {
-    expect(formatHotkey('F5')).toBe('F5');
-    expect(formatHotkey(null)).toBeNull();
-  });
-});
-
 describe('primaryActionLabel', () => {
   test('returns the first action label, or null for nothing', () => {
     const items = buildLauncherItems({ query: 'x', context: null, commands: [], t });
     expect(primaryActionLabel(items[0])).toBe('New node in Today');
     expect(primaryActionLabel(undefined)).toBeNull();
+  });
+
+  test('a command row states the VERB, not the command title it would restate', () => {
+    // The row already names the target ("Open main window"); a footer that
+    // repeated it read as a stray button restating the list.
+    const items = buildLauncherItems({ query: '', context: null, commands: COMMANDS, t });
+    const main = items.find((i) => i.kind === 'command' && i.command.id === 'open-main');
+    if (!main) throw new Error('expected open-main');
+    expect(primaryActionLabel(main)).toBe('Open');
+    expect(rowView(main, t).title).toBe('Open main window');
   });
 });
 

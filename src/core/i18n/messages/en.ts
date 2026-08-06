@@ -114,15 +114,14 @@ export const en = {
       cannotReadDetail: ({ app, browser }: { app: string; browser: string }) =>
         `Allow ${app} to control ${browser} in System Settings → Privacy & Security → Automation, then reopen.`,
     },
-    // User-facing capture/save failures shown in the action bar.
+    // User-facing capture/save failures shown in the footer's status zone.
     error: {
       saveFailed: 'Save failed.',
-      saveFailedRestart: 'Save failed — restart the dev app (main process does not hot-reload).',
     },
-    // In-flight save hint shown in place of the primary action label.
+    // In-flight hints shown in the footer's status zone (never inside the
+    // primary action hint): saving a capture, and waiting for the page context.
     saving: 'Saving…',
-    // Empty-state hint when no rows match (idle launcher, no query).
-    emptyState: 'Type to capture, search, or run a command.',
+    capturing: 'Capturing…',
   },
   // The settings window: rail chrome, categories, and the General pane.
   settings: {
@@ -424,6 +423,14 @@ export const en = {
       themeDark: 'Dark',
       languageLabel: 'Language',
       languageSublabel: 'Choose the display language for menus and the interface.',
+      // The global launcher's registered accelerator, read-only: main registers
+      // the first free candidate, so there is nothing to pick here — only the
+      // fact to surface, including the all-candidates-taken state.
+      shortcutsGroup: 'Shortcuts',
+      launcherHotkeyLabel: 'Global launcher',
+      launcherHotkeySublabel: 'Summon the launcher from any app to capture, search, or run a command.',
+      launcherHotkeyUnavailable: ({ app }: { app: string }) =>
+        `Not available — the candidate shortcuts are in use by other apps. Quit the conflicting app and relaunch ${app}.`,
       memoryGroup: 'Memory',
       memoryLabel: 'Use Memory',
       memorySublabel: 'Use and update durable Memory stored as editable Nodes in Daily Notes.',
@@ -496,6 +503,8 @@ export const en = {
     errorDismiss: 'Dismiss error',
     sidebar: {
       ariaLabel: 'Primary navigation',
+      // The topmost row: an action (opens the command surface), not a nav target.
+      search: 'Search',
       primaryNav: {
         today: 'Today',
         library: 'Library',

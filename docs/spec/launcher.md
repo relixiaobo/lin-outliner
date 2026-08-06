@@ -45,6 +45,9 @@ navigation commands.
 - **Show sequence** (`showLauncherWindow`): `showInactive()` first (so the
   previously-frontmost app keeps focus while context is read), run the
   `beforeFocus` hook, then `show()` + `focus()` and send `LAUNCHER_SHOWN_CHANNEL`.
+  The captured context lands **after** that, over `LAUNCHER_CONTEXT_CHANNEL`, so
+  the window is already interactive before the top row becomes the capture row.
+  The renderer covers that window with an **interim** wait, below.
 - **Dismiss.** The hotkey toggles; Esc, clicking away (window `blur`), running a
   command, capturing, or opening a node all hide it. Every hide routes through
   `dismissLauncher()` in `main.ts`, which also forgets the captured context and
@@ -73,6 +76,18 @@ Registers the first free accelerator of `LIN_LAUNCHER_HOTKEY` (env) →
 the renderer via `launcher:getInitialState().hotkey` (or `null` if none was free).
 Released on quit.
 
+The registered accelerator is **shown**, in two places, both formatted by
+`formatHotkey` (`src/core/launcher/commands.ts` — one formatter, two surfaces):
+
+- the launcher footer's identity zone, so a user who arrived by mouse (the
+  sidebar's Search row) learns the keystroke;
+- **Settings → General → Shortcuts**, a read-only "Global launcher" row fed by
+  `window.lin.getLauncherHotkey()` over `ipcMain.handle('lin:launcher-hotkey')`.
+  When registration failed (`null` — every candidate is taken by another app) the
+  row states that, quietly, in secondary text with the fix ("Quit the conflicting
+  app and relaunch Tenon"), and the footer simply shows no keystroke. Registration
+  itself stays main's; neither surface can rebind.
+
 ## The modeless model (`src/renderer/launcher/`)
 
 ONE always-focused input is simultaneously a **command filter**, a **live node
@@ -99,6 +114,36 @@ no disabled "coming soon" placeholders. Selection is tracked by row **identity**
 (not index), resets to the top row on typing, scrolls into view on arrow nav, and
 is single-shot (a re-entrancy lock prevents double-fire). The input is an ARIA
 combobox over the result `listbox` (`aria-activedescendant` follows selection).
+The list is never empty — a query always synthesizes a capture row and an empty
+query always lists the static commands — so there is no empty state.
+
+**Composition keys never drive the launcher.** While an IME composition is
+active (`isImeComposingEvent`, the shared guard in
+`src/renderer/ui/interactions/imeKeyboard.ts`), Enter, ArrowUp/Down and Escape
+belong to the IME: committing a pinyin candidate with Enter does not run the
+active row, arrows do not move the selection, and Escape does not hide the
+window. A second Escape after the composition ends still hides.
+
+**The input keeps focus through every click.** Both the result rows and the
+footer's primary hint `preventDefault` on `mousedown`, so clicking a row never
+blurs the always-focused input — visible on the capture-failure path, where the
+launcher stays open for a retry.
+
+### The empty-query Enter wait (INTERIM)
+
+The context arrives after the window takes focus, so the golden path — hotkey →
+immediate Enter — would otherwise run *Open main window* instead of capturing the
+page the user summoned the launcher over. An Enter with an **empty** query, before
+this open's context has landed, therefore waits for it (600 ms cap) and then acts
+on the current top row; the footer status zone shows "Capturing…" meanwhile. On
+timeout it runs the top row as it stands, so Enter is never dead. The wait is
+single-shot per open, and a **typed query never waits** — typed text always has a
+valid immediate action.
+
+This is a renderer-only mitigation owned by
+[`../plans/launcher-interaction-hardening.md`](../plans/launcher-interaction-hardening.md),
+**explicitly interim**: `unified-command-surface.md` PR 2's synchronous
+invocation open + pending ambient slot is the authoritative fix and deletes it.
 
 ## Capture (basic-info only)
 
@@ -174,6 +219,27 @@ Settings** — both runnable. AI, capture destinations (Inbox / picker), and
 navigation (Go to Today / Library, recents) are deferred to the split plans and
 will appear here when they work, never as disabled rows.
 
+**Action labels are verbs; the footer never restates a row title.** A command
+row's action label is the generic verb ("Open") — the row title already names the
+target, so restating it made the list say *Open main window* and the footer repeat
+it. Capture rows keep their descriptive labels ("Capture page to Today", "New node
+in Today"); there the label IS the information.
+
+## Footer
+
+A slim hint bar, divider-free, with two zones (the anatomy ratified in
+`unified-command-surface.md` D6a):
+
+- **Left — identity and status.** At rest, the app mark plus the formatted summon
+  hotkey as quiet meta text (not a key chip). During execution the same zone
+  carries the status, in priority order: failure (`--status-danger`), then
+  "Saving…", then the interim "Capturing…".
+- **Right — the primary hint.** The active row's action label plus the `↵` chip.
+  It is a real button (click = Enter, `mousedown` preventDefault) styled as a
+  hint, not a control: meta type, secondary ink, no control-height bulk. It states
+  the **action only** — never an error, never "Saving…" — and is disabled while a
+  save is in flight.
+
 ## IPC surface
 
 - Renderer → main (`ipcMain.handle`): `launcher:getInitialState`, `launcher:hide`,
@@ -181,6 +247,8 @@ will appear here when they work, never as disabled rows.
   `launcher:createContextCapture`, `launcher:searchNodes`, `launcher:openNode`.
 - Main → launcher renderer: `LAUNCHER_SHOWN_CHANNEL`, `LAUNCHER_CONTEXT_CHANNEL`.
 - Main → main renderer: `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`.
+- Settings renderer → main: `lin:launcher-hotkey` (read-only, no args) for the
+  Settings row above.
 
 The channel constants and serializable view types live in
 `src/core/launcher/commands.ts`; the capture data model in

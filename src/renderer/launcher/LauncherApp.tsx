@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LauncherInitialState, LauncherNodeMatch } from '../../core/launcher/commands';
+import { formatHotkey, type LauncherInitialState, type LauncherNodeMatch } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
 import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
 import type { LauncherItem, LauncherItemAction } from './launcherModel';
@@ -7,8 +7,8 @@ import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launc
 import { useT } from '../i18n/I18nProvider';
 import { APP_NAME } from '../../core/brand';
 import { Button } from '../ui/primitives/Button';
-import { EmptyState } from '../ui/primitives/FeedbackState';
 import { Input } from '../ui/primitives/Input';
+import { isImeComposingEvent } from '../ui/interactions/imeKeyboard';
 
 // Raycast-style launcher: ONE always-focused input that is simultaneously a
 // command filter, a live node search, AND a live capture draft (no "pick New
@@ -24,6 +24,28 @@ import { Input } from '../ui/primitives/Input';
 
 /** Debounce (ms) before querying the document for inline node matches. */
 const NODE_SEARCH_DEBOUNCE_MS = 120;
+
+/**
+ * INTERIM (deleted by `docs/plans/unified-command-surface.md` PR 2): how long a
+ * blind empty-query Enter waits for the capture context before acting. The
+ * context arrives AFTER the window takes focus, so without this wait the spec's
+ * own golden path — hotkey → Enter — can run *Open main window* instead of
+ * capturing the page the user was looking at. PR 2's synchronous invocation open
+ * + pending ambient slot is the authoritative fix and removes this whole block.
+ */
+const CONTEXT_WAIT_MS = 600;
+
+/** A promise plus its resolver — armed on show, resolved by the context push. */
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve = () => {};
+  const promise = new Promise<void>((res) => { resolve = res; });
+  return { promise, resolve };
+}
 
 export function LauncherApp() {
   const t = useT();
@@ -44,6 +66,18 @@ export function LauncherApp() {
   const [context, setContext] = useState<ExternalContext | null>(null);
   // Inline node search results for the current query (fetched from main, debounced).
   const [nodes, setNodes] = useState<LauncherNodeMatch[]>([]);
+  // INTERIM (unified-command-surface PR 2 deletes all four of these): the
+  // show→context race guard. `contextWaitRef` is armed on show and released once
+  // the arriving context has been folded into the list; `waiting` shows the
+  // "Capturing…" status meanwhile and `waitingRef` keeps the wait single-shot.
+  const [waiting, setWaiting] = useState(false);
+  const waitingRef = useRef(false);
+  const contextWaitRef = useRef<Deferred | null>(null);
+  const contextArrivedRef = useRef(false);
+  // The list + selection as of the LAST render. A key handler's closure is a
+  // render snapshot, so an action that resumes after an await must read the
+  // current rows from here, never from the closure it was created in.
+  const latestRef = useRef<{ items: LauncherItem[]; index: number }>({ items: [], index: 0 });
 
   const reset = useCallback(() => {
     setQuery('');
@@ -53,6 +87,9 @@ export function LauncherApp() {
     setNodes([]);
     // A new open captures fresh context; drop the stale one until it arrives.
     setContext(null);
+    setWaiting(false);
+    waitingRef.current = false;
+    contextArrivedRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -61,10 +98,15 @@ export function LauncherApp() {
     void launcher.getInitialState().then(setState);
     const offShown = launcher.onShown(() => {
       reset();
+      // INTERIM (unified-command-surface PR 2): arm this open's context wait.
+      contextWaitRef.current = deferred();
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-    const offContext = launcher.onContext((next) => setContext(next));
+    const offContext = launcher.onContext((next) => {
+      setContext(next);
+      contextArrivedRef.current = true;
+    });
     return () => {
       offShown();
       offContext();
@@ -119,6 +161,19 @@ export function LauncherApp() {
     activeRowRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex]);
 
+  useEffect(() => {
+    latestRef.current = { items: navItems, index: activeIndex };
+  }, [navItems, activeIndex]);
+
+  // INTERIM (unified-command-surface PR 2): release a waiting blind Enter, but
+  // only from here — an effect that runs AFTER the arriving context has been
+  // folded into `navItems`/`latestRef` above. Resolving straight from the IPC
+  // listener would hand the waiter the same pre-context list the wait exists to
+  // avoid, since React commits that update in a later task.
+  useEffect(() => {
+    if (context) contextWaitRef.current?.resolve();
+  }, [context]);
+
   const finish = useCallback((result: { ok: boolean } | undefined, launcher: NonNullable<typeof window.lin>['launcher']) => {
     if (result?.ok) {
       reset();
@@ -157,8 +212,11 @@ export function LauncherApp() {
         } else if (action.id === 'capture-note' && item.kind === 'capture-note' && item.text) {
           finish(await launcher.createCapture({ title: item.text }), launcher);
         }
-      } catch {
-        setError(t.launcher.error.saveFailedRestart);
+      } catch (caught) {
+        // One generic, shippable failure line for the user; the detail is a dev
+        // concern and belongs in the renderer console, not in the footer.
+        console.error('[launcher] capture failed', caught);
+        setError(t.launcher.error.saveFailed);
       } finally {
         setBusy(false);
       }
@@ -167,8 +225,50 @@ export function LauncherApp() {
     }
   }, [reset, finish, t]);
 
+  /**
+   * What Enter (and the footer's primary hint) runs.
+   *
+   * INTERIM (deleted by `unified-command-surface` PR 2): a blind Enter — empty
+   * query, no context yet, this open's wait still armed — holds for the capture
+   * context up to CONTEXT_WAIT_MS instead of firing the top row that happens to
+   * be showing (which is *Open main window*, not the page the user summoned the
+   * launcher over). It then acts on the CURRENT top row; on timeout that is the
+   * list as-is, so Enter is never dead (A12). A typed query never waits: it
+   * always has a valid immediate action, and delaying every Enter would punish
+   * the common path to cover a rarer ambiguity.
+   */
+  const runPrimary = useCallback(async () => {
+    if (waitingRef.current) return;
+    const pending = contextWaitRef.current;
+    if (query.trim() || contextArrivedRef.current || !pending) {
+      void runAction(activeItem, activeItem?.actions[0]);
+      return;
+    }
+    waitingRef.current = true;
+    setWaiting(true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        pending.promise,
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, CONTEXT_WAIT_MS); }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      waitingRef.current = false;
+      setWaiting(false);
+    }
+    const { items, index } = latestRef.current;
+    const item = items[index];
+    void runAction(item, item?.actions[0]);
+  }, [activeItem, query, runAction]);
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      // While an IME composition is active, Enter/arrows/Escape belong to the
+      // IME — committing a pinyin candidate with Enter must not fire the active
+      // row (capturing half-typed text or opening the main window), arrows must
+      // not move the selection, and Escape must not hide the window.
+      if (isImeComposingEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         void window.lin?.launcher?.hide();
@@ -182,13 +282,21 @@ export function LauncherApp() {
         setActiveKey(stepActiveKey(navItems, activeIndex, -1));
       } else if (event.key === 'Enter') {
         event.preventDefault();
-        void runAction(activeItem, activeItem?.actions[0]);
+        void runPrimary();
       }
     },
-    [activeItem, activeIndex, navItems, runAction],
+    [activeIndex, navItems, runPrimary],
   );
 
-  const primaryLabel = busy ? t.launcher.saving : error ?? primaryActionLabel(activeItem);
+  // The primary hint states the ACTION only — never an error, never "Saving…".
+  // Busy and failure text live in the footer's status zone (left), so the error
+  // is not buried inside a clickable control with no status styling.
+  const primaryLabel = primaryActionLabel(activeItem);
+  const statusText = error ?? (busy ? t.launcher.saving : waiting ? t.launcher.capturing : null);
+  // At rest the status zone carries the identity: the app mark plus the summon
+  // hotkey, which is how a user who arrived by mouse (sidebar Search) learns the
+  // keystroke. `state.hotkey` is null when no candidate accelerator was free.
+  const hotkey = formatHotkey(state?.hotkey ?? null);
   // A quiet "saved, but here's how to capture more" hint when the active tab could
   // not be read at all (Automation denied) — the Lazy-style remediation prompt.
   const remediation = useMemo(() => remediationForContext(context, t, APP_NAME), [context, t]);
@@ -236,11 +344,22 @@ export function LauncherApp() {
               onClick={() => void runAction(item, item.actions[0])}
             />
           ))}
-          {navItems.length === 0 ? <EmptyState className="launcher-empty" size="inline" title={t.launcher.emptyState} /> : null}
         </div>
       </div>
 
+      {/* Two zones (unified-command-surface D6a): identity/status left, the
+          primary hint right. */}
       <div className="launcher-actionbar">
+        <span className="launcher-actionbar-status" role="status">
+          {statusText ? (
+            <span className={error ? 'launcher-actionbar-error' : 'launcher-actionbar-busy'}>{statusText}</span>
+          ) : (
+            <>
+              <span className="launcher-actionbar-mark">{APP_NAME}</span>
+              {hotkey ? <span className="launcher-actionbar-hotkey">{hotkey}</span> : null}
+            </>
+          )}
+        </span>
         {/* The primary hint doubles as a button (Raycast): click runs Enter.
             preventDefault on mousedown keeps the always-on input focused. */}
         <span className="launcher-actionbar-hints">
@@ -249,7 +368,7 @@ export function LauncherApp() {
               className="launcher-actionbar-item launcher-actionbar-primary"
               disabled={busy}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void runAction(activeItem, activeItem?.actions[0])}
+              onClick={() => void runPrimary()}
               size="sm"
               variant="ghost"
             >
@@ -284,6 +403,9 @@ function LauncherRow(props: {
       aria-selected={active}
       className={['launcher-row', active ? 'is-active' : ''].filter(Boolean).join(' ')}
       onMouseEnter={onHover}
+      // Matches the footer button: a row click never blurs the always-focused
+      // input (visible on the capture-error path, where the launcher stays open).
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
     >
       <LauncherRowIcon item={item} />

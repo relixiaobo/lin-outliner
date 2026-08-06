@@ -93,3 +93,34 @@ export function getStaticLauncherCommands(): LauncherCommandView[] {
     { id: 'open-settings', title: 'Open Settings' },
   ];
 }
+
+/**
+ * Render an Electron accelerator (e.g. `CommandOrControl+Shift+Space`) as macOS
+ * key symbols (`⌘⇧␣`). Both the launcher footer (its identity zone teaches the
+ * summon keystroke) and Settings → General render the registered accelerator
+ * through this one formatter. Unknown tokens pass through verbatim so a non-mac
+ * accelerator still reads sensibly.
+ */
+export function formatHotkey(accelerator: string | null): string | null {
+  if (!accelerator) return null;
+  const symbols: Record<string, string> = {
+    commandorcontrol: '⌘',
+    cmdorctrl: '⌘',
+    command: '⌘',
+    cmd: '⌘',
+    control: '⌃',
+    ctrl: '⌃',
+    option: '⌥',
+    alt: '⌥',
+    shift: '⇧',
+    space: '␣',
+    enter: '↵',
+    return: '↵',
+    escape: 'esc',
+    tab: '⇥',
+  };
+  return accelerator
+    .split('+')
+    .map((part) => symbols[part.trim().toLowerCase()] ?? part.trim())
+    .join('');
+}

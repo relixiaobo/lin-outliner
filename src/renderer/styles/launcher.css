@@ -244,14 +244,8 @@ body {
   color: var(--text-tertiary);
 }
 
-.launcher-empty {
-  justify-content: flex-start;
-  color: var(--text-secondary);
-  text-align: left;
-}
-
-/* Persistent footer: every keyboard hint lives in ONE cluster on the right — the
- * primary action (what Enter does) and the ⌘K menu, each label-then-key. No
+/* Persistent footer: a slim hint bar with TWO zones (unified-command-surface
+ * D6a) — identity/status on the left, the primary-action hint on the right. No
  * divider or fill — whitespace alone separates it (cleaner, Raycast-like). The
  * footer gets the SAME roomy invisible box as the input header so the launcher is
  * balanced top↔bottom: --space-6 container padding + the item's own --space-2
@@ -260,12 +254,47 @@ body {
 .launcher-actionbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--space-5);
   padding: var(--space-6) var(--launcher-inset);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   color: var(--text-secondary);
+}
+
+/* Left zone. At rest it is the identity — the app mark plus the summon hotkey,
+ * quiet meta text (NOT a .kbd chip: the chip treatment belongs to the actionable
+ * ↵ hint on the right). During execution it carries the busy/failure text, so
+ * status never renders inside the clickable primary control. */
+.launcher-actionbar-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-tertiary);
+}
+
+.launcher-actionbar-mark {
+  font-weight: 500;
+}
+
+.launcher-actionbar-hotkey {
+  color: var(--text-tertiary);
+}
+
+.launcher-actionbar-busy {
+  color: var(--text-secondary);
+}
+
+/* Failure text — the one place the launcher uses a status color, and it carries
+ * status meaning only (B4). */
+.launcher-actionbar-error {
+  color: var(--status-danger);
 }
 
 .launcher-actionbar-hints {
@@ -283,9 +312,17 @@ body {
   color: inherit;
 }
 
+/* Styled as a HINT, not a control (D6a): meta type, secondary ink, no
+ * control-height bulk — it keeps its button behavior (click = Enter) and its
+ * quiet neutral hover, but it must not read as the footer's one stray button. */
 .launcher-actionbar-primary {
   min-width: 0;
+  min-height: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   font-weight: 500;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
 }
