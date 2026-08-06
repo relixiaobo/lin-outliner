@@ -1632,8 +1632,8 @@ contracts.
 |---|---|---|
 | Main-list row | `ObjectPresentation`, type label right-aligned | current `rowView` is adapted; action rows and legacy compound-command rows are removed |
 | Context chip | the same object presentation, compact; implicit default unless a result was explicitly chosen | new |
-| Action bar, left | the active object's optional primary action + `↵` | current `primaryActionLabel` is adapted |
-| Action bar, right | `Actions ⌘K` | **new** |
+| Action bar, status/identity zone (left) | app mark + formatted summon hotkey at rest; busy text and the D9 outcome during execution (D6a) | **new** |
+| Action bar, right cluster | the active object's optional primary action + `↵`, then `Actions ⌘K` (D6a) | current `primaryActionLabel` is adapted; `Actions ⌘K` is **new** |
 | `Enter` | run the primary action when one exists; otherwise inert | adapted |
 | `⌘K` / click | open the active object's searchable `ActionPresentation[]` | **new** |
 
@@ -1725,6 +1725,73 @@ Rationale for keeping it fixed: a user who types-and-blindly-Enters always exist
 the user just authored or a page they explicitly summoned the launcher over. An
 ambient node or selection mutation is not: it would surprise the user by changing
 pre-existing data, so those objects never receive a mutating blind-Enter primary.
+
+### D6a — Panel presentation, the input guard, and the first open
+
+Added 2026-08-06 (PM-directed, from the systematic launcher review). D6 fixes the
+semantic slots; this section fixes the panel's visible anatomy so PR 2 and the
+pre-PR-2 hardening pass (`launcher-interaction-hardening.md`) implement **one**
+visual language. Token/material authority remains `design-system.md`; nothing here
+introduces a non-token value.
+
+**The action bar is a slim hint bar, never a button row.** The shipped bar's one
+element is a bottom-right ghost button restating the selected row's full title —
+the list says *Open main window* and the button repeats it. That dies with the
+compound rows. The bar has two zones:
+
+- **Left — identity + status.** At rest: the app mark plus the **formatted summon
+  hotkey** (`formatHotkey`, e.g. `⌘⇧␣`) in `--text-tertiary` at `--font-meta`.
+  This is deliberate, not decoration: with the sidebar *Search* row
+  (`command-surface-discoverability.md`) a mouse-first user reaches this panel
+  without ever knowing the keystroke, and the identity slot is where the panel
+  teaches it (the Raycast identity slot, put to work). During execution the zone
+  carries the busy text, then D9's outcome for the dwell — success confirmation in
+  `--text-secondary`, failure reason in `--status-danger` (status color carrying
+  status meaning, B4). Status never renders inside the primary control.
+- **Right — the hint cluster.** The active object's primary action as its D8 verb
+  label + `↵` kbd chip, then `Actions ⌘K`. Both are real buttons (click = the
+  keystroke; mousedown-preventDefault keeps the input focused) styled as hints:
+  `--font-meta`, `--text-secondary`, no fill at rest, quiet `--fill-2` hover, no
+  control-height bulk, no hand cursor (B10). The primary label never restates the
+  row title (D8); when the active object has no safe primary, the cluster shows
+  only `Actions ⌘K` (D4).
+
+No divider — whitespace separates, the ratified B-clean footer. The bar keeps the
+same roomy inset as the input header so the panel stays balanced top↔bottom.
+
+**Rows stay one flat list — reaffirmed, not revisited.** With the object model
+there is no command/object taxonomy left to group: every row is an object and the
+right-aligned type label does the classification. Section headers return only if a
+future provider makes the list genuinely heterogeneous, as a plan-level decision.
+
+**The first open is the empty-query list doing its job.** A new user's first
+summon shows the placeholder ("Capture, search, or run a command…"), the seven
+stable objects (D6 ordering rule 5), and a bar that names the primary action and
+the keystroke that summoned everything. **No onboarding banner, no coach marks, no
+first-run chrome** — the fixed golden-rectangle panel is furnished by real
+content. This is also what retires the shipped first-open defect (two lonely
+command rows adrift in a 470 px window); the fix is the content model, not a
+resized window. The one first-run surface that remains is the existing
+Accessibility/Automation remediation banner, unchanged.
+
+**IME composition guard — a hard requirement, not polish.** While an IME
+composition is active (`isImeComposingEvent`, the shipped palette guard —
+`imeKeyboard.ts`), Enter, ArrowUp/Down and Escape belong to the IME: the panel
+neither runs an action, moves activity, opens the action panel, nor dismisses.
+The guard applies to the main input, the `Actions ⌘K` panel, parameter pickers,
+and any text input a confirmation carries. The shipped launcher has **no** such
+guard — committing a pinyin candidate with Enter fires the active row — and this
+plan's own contract tests would not have caught it; AC-16 exists so the new
+surface cannot regress it. `launcher-interaction-hardening.md` ships the guard on
+the current surface first; PR 2 carries it forward.
+
+**Inherited from the pre-PR-2 hardening pass.** That plan implements this bar
+anatomy early on the shipped surface (same classes and tokens in `launcher.css`),
+so PR 2 inherits the CSS and replaces only the JSX it rewrites anyway. PR 2 also
+**deletes** that plan's interim empty-query Enter wait — superseded by the
+synchronous invocation open, pending ambient slot and synchronous `draftText`
+admission (D1a/D1b) — and replaces its hand-wired status zone with D9's result
+state.
 
 ### D7 — Hidden without a subject; shown with a reason when a predicate fails
 
@@ -2057,7 +2124,10 @@ self-check); the earlier "no locale file" claim is no longer true.
    ambient resolution. A late chip becomes active only while activity is implicit;
    `ArrowDown`/click protects an explicitly selected result, and `ArrowUp`/`Esc`
    returns to the chip. Add optional-primary Enter behavior, focus completion and
-   result signal (D4/D9).
+   result signal (D4/D9). Render the D6a bar anatomy (identity/status zone,
+   hint cluster) inheriting the hardening pass's CSS, carry the IME composition
+   guard into every panel input, and delete the hardening pass's interim
+   empty-query Enter wait (D6a).
 9. Close the capture loop with a resolver-installed Today argument object, optional
    tag candidates in their own argument generations, nested `create_capture`
    binding/producer, `Send to Agent`, and its `PendingComposerContext`. Preserve
@@ -2228,6 +2298,15 @@ and a differential test can judge them instead.
   creates a plain node without capture provenance.
 - **AC-15 — Full verification.** Light + dark visual verification (UI diff); `typecheck`, `test:core`,
   `test:renderer`, `test:e2e`, `docs:check`.
+- **AC-16 — Composition guard and bar presentation (D6a).** Renderer fixtures: a
+  composing keydown (`isComposing` / `key: 'Process'` / `keyCode: 229`) for Enter,
+  ArrowUp/Down and Escape fires no action, moves no activity, opens no panel and
+  never dismisses — in the main input, the `Actions ⌘K` panel and a parameter
+  picker. Presentation: at rest the bar's left zone renders the app mark + the
+  formatted summon hotkey and the right cluster renders the active object's verb
+  label + `↵` and `Actions ⌘K`; a failed action renders its reason in the status
+  zone with the hint cluster intact; the primary label is never the row title.
+  Light + dark covered under AC-15's diff.
 
 ## Open questions
 
@@ -2261,6 +2340,16 @@ only pin state remains in `workspace`. Two presentation decisions are also close
 
 ## Related plans
 
+- `launcher-interaction-hardening.md` — the pre-PR-2 correctness/presentation
+  pass on the *shipped* launcher (IME guard, dev-only error copy, interim
+  empty-query Enter wait, D6a bar anatomy implemented early). PR 2 keeps the
+  guard and the CSS, deletes the interim wait, and replaces the hand-wired
+  status zone with D9's result state (D6a).
+- `command-surface-discoverability.md` — the entry points: the sidebar *Search*
+  row and the Settings hotkey display. When PR 2 retires the global `Cmd+K`
+  (D3), the sidebar row retargets to the panel summon and its hint re-derives
+  from the remaining binding; the plan's single-call-site design makes that a
+  two-line change inside PR 2's step 12 sweep.
 - `floating-toolbar-polish.md` — its *Destination policy* question is answered by
   the same ruling as D9 (Today, no special bucket); its `#` selection-extract is a
   registry action once the registry exists.

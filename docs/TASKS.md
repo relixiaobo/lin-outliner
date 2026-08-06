@@ -120,11 +120,15 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
   dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
   learning, and reversibility-tier framing rather than extending it.
-  **Carry-over requirement for PR 2** (from the 2026-08-06 launcher review): the
-  new surface keeps the IME composition guard that
-  `launcher-interaction-hardening` adds (composition Enter/arrows/Escape never
-  drive the surface), and it deletes that plan's interim empty-query Enter wait
-  along with the rest of the old model.
+  **This is the launcher's final execution plan** (PM, 2026-08-06): the D6a
+  addendum (same date, main-authored from the launcher review) folds in the
+  presentation layer — bar anatomy with identity/status + hint cluster, summon
+  hotkey taught in-surface, first-open = the furnished empty-query list with no
+  onboarding chrome, flat list reaffirmed — plus the IME composition guard as a
+  hard requirement (AC-16). PR 2 keeps the guard and CSS that
+  `launcher-interaction-hardening` ships early, deletes its interim empty-query
+  Enter wait, and retargets the `command-surface-discoverability` sidebar row in
+  its step 12 sweep.
 - **launcher-interaction-hardening** (P1, **approved 2026-08-06, unclaimed**) —
   correctness + presentation pass on the *shipped* launcher, scoped to survive
   `unified-command-surface` PR 2: IME composition guard (P0 for CJK input),

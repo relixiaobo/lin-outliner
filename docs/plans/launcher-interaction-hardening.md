@@ -56,9 +56,6 @@ not separate releases.
   explicitly interim; PR 2's invocation + pending-ambient-slot model is the
   authoritative fix and deletes it.
 - No capture-semantics, provider, or hotkey-registration changes.
-- No hotkey display in the launcher footer — inside the launcher the hotkey has
-  no discovery value (the user just pressed it). Hotkey visibility lives in
-  `command-surface-discoverability.md`.
 
 ## Design
 
@@ -117,13 +114,20 @@ Renderer-only, and deliberately minimal:
 
 ### D4 — Footer: hint cluster, not a restated button
 
-Keep the ratified divider-free, whitespace-separated footer (B-clean). Change
-what is in it:
+**The visual authority is `unified-command-surface.md` D6a** — this plan
+implements that bar anatomy early on the shipped surface, in the same
+`launcher.css` classes and tokens, so PR 2 inherits the CSS and rewrites only
+JSX. Keep the ratified divider-free, whitespace-separated footer (B-clean).
+Change what is in it:
 
-- **Left:** the status zone from D3. When idle, it shows the app identity — the
-  `APP_NAME` wordmark at meta size, `--text-tertiary` (Raycast puts its mark
-  here; it also visually anchors the bar so the right cluster stops floating
-  alone).
+- **Left — identity + status (D6a):** at rest, the `APP_NAME` mark plus the
+  formatted summon hotkey (`formatHotkey(state.hotkey)` — the value
+  `getInitialState` already delivers and nothing renders today) at `--font-meta`
+  in `--text-tertiary`; it teaches the keystroke to users who will arrive by
+  mouse once the sidebar Search row ships. During execution the zone carries the
+  D3 status (busy, then error). `formatHotkey` is used from its current home
+  (`launcherModel.ts`); `command-surface-discoverability.md` relocates it to
+  core afterwards and updates this import.
 - **Right:** the primary hint keeps its ghost-button behavior (click = Enter,
   mousedown-preventDefault) but is styled as a hint: `--font-meta` size,
   `--text-secondary`, tightened padding (drop the `--control-size-md`
@@ -186,7 +190,9 @@ land this PR first.
     timeout path runs the current top row;
   - capture failure → status zone shows `saveFailed`, primary hint still shows
     the action label;
-  - `run-command` primary label is the verb, not the command title.
+  - `run-command` primary label is the verb, not the command title;
+  - the idle footer renders the app mark + the formatted hotkey from
+    `getInitialState().hotkey`, and renders no hotkey when it is `null`.
 - Update `tests/renderer/launcherModel.test.ts` for the label change.
 - Manual (dev run, `bun run dev:<clone>`): pinyin composition Enter/arrow/Esc;
   hotkey → immediate Enter over a browser page captures the page; light + dark

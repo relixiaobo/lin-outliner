@@ -83,8 +83,10 @@ Ship the two discoverability affordances:
 - **`formatHotkey` moves to core.** It lives unused-by-UI in
   `src/renderer/launcher/launcherModel.ts:268` (exported + unit-tested). Move
   it to `src/core/launcher/commands.ts` next to the channel/view types so both
-  the settings renderer and any future launcher use share one formatter; move
-  its test block from `launcherModel.test.ts` into the core test suite.
+  the settings renderer and the launcher share one formatter; move
+  its test block from `launcherModel.test.ts` into the core test suite, and
+  update the launcher-footer usage `launcher-interaction-hardening.md` adds
+  (its D4 identity zone imports from the old location until this move).
   (`src/core/launcher/commands.ts` is launcher-IPC shared surface, not the
   A4-protected document protocol — still, it's an additive pure function;
   note it in the PR body.)
