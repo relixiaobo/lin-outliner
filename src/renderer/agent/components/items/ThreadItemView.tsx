@@ -8,6 +8,7 @@ import {
   type MouseEventHandler,
   type ReactNode,
 } from 'react';
+import { Lexer, type Token, type Tokens } from 'marked';
 import type {
   CollaborationToolName,
   DynamicToolOutputContent,
@@ -68,7 +69,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
-import { basenameForPath } from '../../../../core/referenceMarkup';
+import { basenameForPath, splitReferenceMarkers } from '../../../../core/referenceMarkup';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
@@ -580,9 +581,12 @@ function ReasoningDisclosure({
 }) {
   const t = useT();
   const summaryRef = useRef<HTMLSpanElement | null>(null);
+  const summaryMeasureFrameRef = useRef<number | null>(null);
+  const summaryMeasuredRef = useRef(false);
   const [summaryOverflow, setSummaryOverflow] = useState(false);
   const text = parts.join('\n\n');
   const trimmed = text.trim();
+  const hasText = trimmed.length > 0;
   const presentation = reasoningPresentation(trimmed);
   const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
   const measureSummary = useCallback(() => {
@@ -592,24 +596,64 @@ function ReasoningDisclosure({
     setSummaryOverflow((current) => current === nextOverflow ? current : nextOverflow);
   }, []);
 
+  const cancelScheduledSummaryMeasure = useCallback(() => {
+    if (summaryMeasureFrameRef.current === null) return;
+    window.cancelAnimationFrame(summaryMeasureFrameRef.current);
+    summaryMeasureFrameRef.current = null;
+  }, []);
+
+  const scheduleSummaryMeasure = useCallback(() => {
+    if (summaryMeasureFrameRef.current !== null) return;
+    summaryMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      summaryMeasureFrameRef.current = null;
+      measureSummary();
+    });
+  }, [measureSummary]);
+
   useLayoutEffect(() => {
-    if (!trimmed || expanded) return undefined;
-    measureSummary();
+    if (!hasText) return;
+    const discoveringExpandedOverflow = expanded
+      && !presentation.details
+      && !summaryOverflow;
+    if (expanded && !discoveringExpandedOverflow) return;
+    if (streaming && summaryMeasuredRef.current) scheduleSummaryMeasure();
+    else {
+      cancelScheduledSummaryMeasure();
+      measureSummary();
+      summaryMeasuredRef.current = true;
+    }
+  }, [
+    cancelScheduledSummaryMeasure,
+    expanded,
+    hasText,
+    measureSummary,
+    presentation.details,
+    presentation.summary,
+    scheduleSummaryMeasure,
+    streaming,
+    summaryOverflow,
+  ]);
+
+  const canExpand = Boolean(presentation.details) || summaryOverflow;
+
+  useLayoutEffect(() => {
+    if (!hasText || expanded) return undefined;
     const element = summaryRef.current;
     if (!element || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(measureSummary);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [disclosureId, expanded, measureSummary, presentation.summary, summaryOverflow, trimmed]);
+  }, [canExpand, disclosureId, expanded, hasText, measureSummary]);
 
-  if (!trimmed) {
+  useEffect(() => () => cancelScheduledSummaryMeasure(), [cancelScheduledSummaryMeasure]);
+
+  if (!hasText) {
     // Same class set as the populated branch: the first token must not change
     // the element's classes underneath the reader.
     return streaming
       ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
       : null;
   }
-  const canExpand = Boolean(presentation.details) || summaryOverflow;
   if (!canExpand) {
     return (
       <div className="thread-item thread-reasoning">
@@ -1919,19 +1963,83 @@ function outputLanguage(text: string): string {
 }
 
 function reasoningPresentation(text: string): { readonly summary: string; readonly details: string } {
-  const lines = text.split('\n');
-  const firstLineIndex = lines.findIndex((line) => line.trim().length > 0);
-  if (firstLineIndex < 0) return { summary: '', details: '' };
-  const firstLine = lines[firstLineIndex]!.trim();
-  const summary = firstLine
-    .replace(/^#+\s*/, '')
-    .replace(/\*+/g, '')
+  try {
+    const tokens = Lexer.lex(text);
+    const firstIndex = tokens.findIndex(isVisibleMarkdownToken);
+    const first = tokens[firstIndex];
+    if (!first) return { summary: '', details: '' };
+    const paragraph = first.type === 'paragraph' ? first as Tokens.Paragraph : null;
+    const plainParagraph = paragraph?.tokens.every(isPlainMarkdownTextToken) ?? false;
+    const summary = plainParagraph
+      ? compactReasoningText(paragraph?.text ?? first.raw)
+      : reasoningTokenSummary(first);
+    const firstOffset = tokens
+      .slice(0, firstIndex)
+      .reduce((length, token) => length + token.raw.length, 0);
+    const remainder = text.slice(firstOffset + first.raw.length).trim();
+    const details = plainParagraph
+      ? hasVisibleMarkdown(remainder) ? remainder : ''
+      : text;
+    return {
+      summary: summary || compactReasoningText(first.raw) || text,
+      details,
+    };
+  } catch {
+    return { summary: compactReasoningText(firstLine(text)), details: text };
+  }
+}
+
+function isVisibleMarkdownToken(token: Token): boolean {
+  return token.type !== 'space' && token.type !== 'def';
+}
+
+function hasVisibleMarkdown(text: string): boolean {
+  if (!text) return false;
+  try {
+    return Lexer.lex(text).some(isVisibleMarkdownToken);
+  } catch {
+    return true;
+  }
+}
+
+function isPlainMarkdownTextToken(token: Token): boolean {
+  return token.type === 'text'
+    && (!token.tokens || token.tokens.every(isPlainMarkdownTextToken));
+}
+
+function reasoningTokenSummary(token: Token): string {
+  if (token.type === 'code') return compactReasoningText(firstLine(token.text));
+  if (token.type === 'list') return compactReasoningText(token.items[0]?.text ?? firstLine(token.raw));
+  if (token.type === 'table') {
+    const table = token as Tokens.Table;
+    return compactReasoningText(table.header.map((cell) => markdownTokenText(cell.tokens)).join(' | '));
+  }
+  if ('tokens' in token && Array.isArray(token.tokens)) {
+    const tokenText = compactReasoningText(markdownTokenText(token.tokens));
+    if (tokenText) return tokenText;
+  }
+  if ('text' in token && typeof token.text === 'string') {
+    const tokenText = compactReasoningText(firstLine(token.text));
+    if (tokenText) return tokenText;
+  }
+  return compactReasoningText(firstLine(token.raw));
+}
+
+function markdownTokenText(tokens: readonly Token[]): string {
+  return tokens.map((token) => {
+    if (token.type === 'br') return ' ';
+    if ('tokens' in token && Array.isArray(token.tokens)) return markdownTokenText(token.tokens);
+    if ('text' in token && typeof token.text === 'string') return token.text;
+    return token.raw;
+  }).join('');
+}
+
+function compactReasoningText(text: string): string {
+  return splitReferenceMarkers(text)
+    .map((segment) => segment.type === 'text' ? segment.text : segment.label)
+    .join('')
     .replace(/\s+/g, ' ')
-    .trim() || firstLine;
-  return {
-    summary,
-    details: lines.slice(firstLineIndex + 1).join('\n').trim(),
-  };
+    .trim();
 }
 
 function firstLine(text: string): string {

@@ -21,7 +21,7 @@ import { buildIndex } from '../../src/renderer/state/document';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const mounted: Array<() => void> = [];
-const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'window'] as const;
+const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'ResizeObserver', 'window'] as const;
 let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
 
 afterEach(() => {
@@ -83,7 +83,10 @@ describe('ThreadItemView reasoning presentation', () => {
     const rendered = renderItem(reasoningItem({
       summary: ['Planning an official weather search'],
       content: [],
-    }), { streaming: true });
+    }), {
+      reasoningSummaryMetrics: { clientWidth: 320, scrollWidth: 180 },
+      streaming: true,
+    });
     await flush();
 
     const summary = rendered.document.querySelector('.thread-reasoning-summary');
@@ -92,6 +95,78 @@ describe('ThreadItemView reasoning presentation', () => {
     expect(rendered.document.querySelector('.thread-reasoning-chevron')).toBeNull();
     expect(rendered.document.querySelector('.thread-reasoning')?.textContent).not.toContain('Thinking');
     expect(rendered.document.querySelector('.thread-reasoning')?.textContent).not.toContain('Thought');
+  });
+
+  test('keeps literal asterisks in a fitting single-line reasoning Item', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['Scanning src/**/*.ts and computing 2 * 3'],
+      content: [],
+    }), {
+      reasoningSummaryMetrics: { clientWidth: 320, scrollWidth: 200 },
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-reasoning-summary')?.textContent)
+      .toBe('Scanning src/**/*.ts and computing 2 * 3');
+    expect(rendered.document.querySelector('.thread-reasoning-toggle')).toBeNull();
+  });
+
+  test('renders a leading fenced block from the complete canonical reasoning Markdown', async () => {
+    const source = ['```ts', 'const answer = 2 * 3;', '```'].join('\n');
+    const rendered = renderItem(reasoningItem({ summary: [], content: [source] }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('const answer = 2 * 3;');
+    act(() => toggle?.click());
+    await flush();
+
+    const codeBlock = rendered.document.querySelector('.thread-reasoning-body .agent-code-block');
+    expect(codeBlock?.textContent).toContain('const answer = 2 * 3;');
+  });
+
+  test('restores inline Markdown from the summary line when reasoning expands', async () => {
+    const source = '**Inspect** `src/**/*.ts` before editing.';
+    const rendered = renderItem(reasoningItem({ summary: [source], content: [] }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle).not.toBeNull();
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.querySelector('strong')?.textContent).toBe('Inspect');
+    expect(body?.querySelector('code')?.textContent).toBe('src/**/*.ts');
+  });
+
+  test('measures a long single line that mounts with an expanded disclosure override', async () => {
+    const text = 'A long reasoning line that exceeds the available compact timeline width';
+    const rendered = renderItem(reasoningItem({ summary: [text], content: [] }), {
+      expanded: true,
+      reasoningSummaryMetrics: { clientWidth: 120, scrollWidth: 420 },
+    });
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle?.textContent).toContain(text);
+  });
+
+  test('reuses one summary ResizeObserver while reasoning text updates', async () => {
+    let observerCount = 0;
+    const rendered = renderItem(reasoningItem({ summary: ['Inspect'], content: [] }), {
+      onReasoningResizeObserver: () => { observerCount += 1; },
+      reasoningSummaryMetrics: { clientWidth: 320, scrollWidth: 180 },
+    });
+    await flush();
+
+    rendered.rerender(reasoningItem({ summary: ['Inspect the workspace'], content: [] }));
+    await flush();
+    rendered.rerender(reasoningItem({ summary: ['Inspect the workspace carefully'], content: [] }));
+    await flush();
+
+    expect(observerCount).toBe(1);
   });
 
   test('discloses only the remaining reasoning lines from a direct-content summary', async () => {
@@ -723,8 +798,13 @@ interface RenderItemOptions {
   readonly expanded?: boolean;
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly onReasoningResizeObserver?: () => void;
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
+  readonly reasoningSummaryMetrics?: {
+    readonly clientWidth: number;
+    readonly scrollWidth: number;
+  };
   readonly streaming?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
@@ -734,7 +814,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
   readonly rerender: (nextItem: ThreadItem) => void;
   readonly rerenderWith: (nextItem: ThreadItem, next: RenderItemOptions) => void;
 } {
-  const { document, root } = installDom();
+  const { document, root } = installDom(options);
   const onReadToolOutput = options.onReadToolOutput ?? (async () => null);
   const onReadToolArguments = options.onReadToolArguments ?? (async () => null);
   const renderWith = (nextItem: ThreadItem, next: RenderItemOptions) => act(() => root.render(
@@ -767,8 +847,39 @@ function renderTree(tree: ReactNode): { readonly document: Document } {
   return { document };
 }
 
-function installDom(): { readonly document: Document; readonly root: ReturnType<typeof createRoot> } {
+function installDom(options: RenderItemOptions = {}): {
+  readonly document: Document;
+  readonly root: ReturnType<typeof createRoot>;
+} {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
+  if (options.reasoningSummaryMetrics) {
+    const metrics = options.reasoningSummaryMetrics;
+    Object.defineProperties(window.HTMLElement.prototype, {
+      clientWidth: {
+        configurable: true,
+        get() {
+          return this.classList?.contains('thread-reasoning-summary') ? metrics.clientWidth : 0;
+        },
+      },
+      scrollWidth: {
+        configurable: true,
+        get() {
+          return this.classList?.contains('thread-reasoning-summary') ? metrics.scrollWidth : 0;
+        },
+      },
+    });
+  }
+  class ResizeObserverStub {
+    constructor(_callback: ResizeObserverCallback) {
+      options.onReasoningResizeObserver?.();
+    }
+
+    disconnect() {}
+
+    observe(_target: Element) {}
+
+    unobserve(_target: Element) {}
+  }
   Object.assign(window, {
     getComputedStyle: () => ({ lineHeight: '26px' }),
     lin: {
@@ -776,6 +887,7 @@ function installDom(): { readonly document: Document; readonly root: ReturnType<
       invoke: async () => ({ bytes: null, error: 'unavailable' }),
       onLanguageChanged: () => () => undefined,
     },
+    ResizeObserver: ResizeObserverStub,
   });
   for (const key of GLOBAL_KEYS) savedGlobals.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
   Object.assign(globalThis, {
@@ -783,6 +895,7 @@ function installDom(): { readonly document: Document; readonly root: ReturnType<
     Event: window.Event,
     HTMLElement: window.HTMLElement,
     Node: window.Node,
+    ResizeObserver: ResizeObserverStub,
     window,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -28,22 +28,38 @@ every adjacent compact line. Expanded reasoning text currently adds
 `--space-3`; align the reasoning-body margin with the timeline gap. Preserve
 the established type, line height, hierarchy, and token-only CSS.
 
-Present the first meaningful reasoning line directly in the timeline instead
-of prefixing it with `Thinking` or `Thought`. A single-line reasoning Item is a
-plain row with no disclosure while it fits the available width. Measure the
-collapsed line locally and add a disclosure when it is visually truncated;
-expansion wraps the complete line in place. When content remains after that
-line, the direct summary becomes a disclosure and expansion renders only the
-remainder. Live reasoning starts folded; an explicit expansion remains
-authoritative as newer Items arrive. A folded disclosure hides its chevron until
-hover or keyboard focus while retaining the icon's layout slot; an expanded
-disclosure keeps it visible. Preserve the lone resultless terminal reasoning
-default.
+Present a compact summary of the first visible reasoning Markdown block
+directly in the timeline instead of prefixing it with `Thinking` or `Thought`.
+Derive that summary with the existing Markdown lexer rather than splitting the
+canonical source at a physical newline. A plain-text leading paragraph may be
+separated from later blocks so expansion reveals only the remainder without
+repeating the summary. When the leading block is structured or contains inline
+Markdown, expansion renders the complete canonical source; fences, tables,
+lists, links, references, inline code, glob asterisks, and arithmetic asterisks
+therefore remain recoverable exactly as received.
+
+A compact summary is a plain row with no disclosure while it fits the available
+width. Measure the summary locally and add a disclosure when it is visually
+truncated; expansion wraps the complete summary in place. The first measurement
+also runs when a disclosure mounts with an expanded override, so a long
+single-line Item cannot become permanently clipped. Keep one `ResizeObserver`
+for a folded disclosure across streamed token updates and coalesce subsequent
+text-driven measurements into animation frames instead of forcing layout for
+each token. A folded disclosure hides its chevron until hover or keyboard focus
+while retaining the icon's layout slot; an expanded disclosure keeps it visible.
+
+Live reasoning starts folded; an explicit expansion remains authoritative as
+newer Items arrive. Record reasoning seen while its Turn is live and keep it
+folded when the Turn settles, avoiding a completion-time expansion jolt. Preserve
+the lone resultless terminal default only for reasoning first observed after
+settlement.
 
 Provider timelines may contain empty commentary Items between tool and
-reasoning Items. Keep those Items in the grouping projection, but render no DOM
-node for them so they cannot contribute an extra flex interval between visible
-rows.
+reasoning Items. Remove those Items at the Turn process projection boundary, not
+only at the leaf renderer. They therefore cannot create an empty timeline,
+split consecutive tools into separate activity groups, defeat the lone
+resultless-reasoning default, or contribute an invisible flex interval between
+visible rows.
 
 The E2E geometry assertion derives the expected interval from computed styles
 rather than duplicating a pixel constant. It compares the reasoning
@@ -51,9 +67,10 @@ headline-to-body interval with the body-to-tool and tool-to-next-reasoning
 intervals in the same rendered timeline, and separately measures a single-line
 reasoning row between split Web search/fetch runs separated by real empty
 commentary Items. Component coverage asserts that a fitting single line has no
-button or chevron, empty commentary has no rendered node, visually truncated
-content can expand in full, and a multi-line disclosure does not repeat its
-summary in the expanded body.
+button or chevron, empty commentary does not enter the process projection,
+visually truncated content can expand in full, a plain-text leading block is not
+repeated in the expanded body, and structured leading Markdown expands from the
+complete canonical source.
 
 ### Same-paint structural bottom pin
 
@@ -73,8 +90,15 @@ The immediate path yields to the same authorities as the scheduled path:
 
 - a pending explicit disclosure anchor owns its layout transaction;
 - a pending send anchor owns initial Turn placement;
-- a reader who released follow is never moved;
+- a reader whose DOM position moved upward is treated as having released follow
+  even before the queued `scroll` event synchronizes state;
 - deferred anchor work remains replayable after its owner settles.
+
+Track the last synchronized `scrollTop` in a ref shared by user and
+programmatic scroll synchronization. Before either the immediate or scheduled
+bottom pin writes, compare it with the current DOM position. Release follow on
+an unsynchronized upward divergence, while ignoring a browser clamp when
+content contraction lowered the maximum reachable offset.
 
 Transient scheduling and ownership flags remain refs. The structural trigger is
 the primitive Item count, so ordinary Turn object replacement and text deltas do
@@ -90,7 +114,10 @@ painted frames. Assert that:
 - an existing process node keeps its DOM identity;
 - existing content has no second-frame position correction;
 - the timeline remains bottom-pinned after later frames settle;
-- a reader who scrolled upward is still not pulled down.
+- a reader who scrolled upward is still not pulled down; and
+- assigning an upward `scrollTop` and appending an Item in the same task, without
+  manually dispatching `scroll`, preserves the reader's position across the
+  first painted frames.
 
 Keep the existing send-anchor, disclosure-anchor, completion-layout, and virtual
 compensation tests as regression coverage. Verify the compact timeline in light
@@ -106,6 +133,7 @@ and same-paint structural follow guarantees.
 - `src/renderer/styles/thread.css`
 - `tests/e2e/agent-thread.spec.ts`
 - `tests/renderer/threadItemView.test.tsx`
+- `tests/renderer/threadProcessSummary.test.ts`
 - `docs/spec/agent-thread-rendering.md`
 - `docs/plans/agent-process-timeline-stability.md`
 
@@ -120,11 +148,15 @@ and same-paint structural follow guarantees.
   deferred behind an anchor. Tests cover both the immediate path and release.
 - Removing `content-visibility` would regress long-Thread rendering and would not
   address the measured two-frame scroll correction; containment stays unchanged.
-- Splitting a reasoning Item at its first meaningful line must preserve the
-  remaining Markdown exactly once; component and E2E assertions cover both
-  halves.
-- Width measurement must run only against the collapsed summary; otherwise the
-  expanded line wrapping would incorrectly remove its own disclosure.
+- Deriving a summary must never split a Markdown construct. Lexer-backed tests
+  cover fenced code, inline formatting, and literal asterisks, while expansion
+  keeps the canonical source available for structured leading blocks.
+- Width measurement must discover overflow even for an initially expanded
+  single-line disclosure, then avoid measuring expanded wrapping as evidence
+  that the disclosure is no longer needed.
+- Streaming summary changes must not recreate observers or force a synchronous
+  layout read per token; the observer lifetime and frame-coalesced reads have
+  component coverage.
 
 ## Collision Result
 

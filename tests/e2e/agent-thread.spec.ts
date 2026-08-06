@@ -2923,7 +2923,7 @@ test.describe('canonical agent Thread surface', () => {
     });
   });
 
-  test('spaces and expands a truncated reasoning line between split web tool runs', async ({ page }) => {
+  test('groups tools across empty commentary and spaces a truncated reasoning line', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -3033,15 +3033,18 @@ test.describe('canonical agent Thread surface', () => {
       hasText: fixture.reasoningText,
     });
     await expect(summary).toHaveCount(1);
-    await expect(turn.locator('.thread-tool-toggle')).toHaveCount(4);
+    await expect(turn.locator('.thread-tool-activity-toggle')).toHaveCount(2);
+    await expect(turn.locator('.thread-tool-toggle')).toHaveCount(0);
     await expect(turn.locator('.thread-agent-message-commentary')).toHaveCount(0);
     await expect(turn.getByText('Thought', { exact: true })).toHaveCount(0);
 
     const rhythm = await summary.evaluate((element) => {
       const reasoning = element.closest<HTMLElement>('.thread-reasoning');
       const timeline = reasoning?.parentElement;
-      const previousTool = reasoning?.previousElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
-      const nextTool = reasoning?.nextElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      const previousTool = reasoning?.previousElementSibling
+        ?.querySelector<HTMLElement>('.thread-tool-activity-toggle');
+      const nextTool = reasoning?.nextElementSibling
+        ?.querySelector<HTMLElement>('.thread-tool-activity-toggle');
       if (!reasoning || !timeline || !previousTool || !nextTool) {
         throw new Error('Missing split web timeline rhythm elements');
       }
@@ -4389,6 +4392,7 @@ test.describe('canonical agent Thread surface', () => {
       const turnId = '01910000-0000-7000-8000-00000000ab01';
       const userMessageId = '01910000-0000-7000-8000-00000000ab02';
       const reasoningId = '01910000-0000-7000-8000-00000000ab03';
+      const commentaryId = '01910000-0000-7000-8000-00000000ab04';
       const provenance = (itemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId: itemId });
       const turn = {
         id: turnId,
@@ -4407,6 +4411,14 @@ test.describe('canonical agent Thread surface', () => {
             provenance: provenance(reasoningId),
             summary: ['The outline is currently empty.'],
             content: ['No outline nodes require inspection.'],
+          },
+          {
+            id: commentaryId,
+            type: 'agentMessage',
+            provenance: provenance(commentaryId),
+            text: '   ',
+            phase: 'commentary',
+            memoryCitation: null,
           },
         ],
         status: 'completed',
@@ -4428,6 +4440,62 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('The outline is currently empty.', { exact: true })).toBeVisible();
     await expect(page.getByText('No outline nodes require inspection.', { exact: true })).toBeVisible();
     await expect(page.getByText('Thought', { exact: true })).toHaveCount(0);
+  });
+
+  test('keeps live lone reasoning folded when the Turn settles without a response', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ac01';
+      const reasoningId = '01910000-0000-7000-8000-00000000ac02';
+      const reasoning = {
+        id: reasoningId,
+        type: 'reasoning',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
+        summary: ['Inspecting the current outline'],
+        content: ['No outline nodes currently require changes.'],
+      };
+      const turn = {
+        id: turnId,
+        items: [reasoning],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'turn/started', threadId, turnId, turn });
+      return { reasoningId, threadId, turn, turnId };
+    });
+
+    const toggle = page.locator(`[data-thread-disclosure-id="reasoning:${fixture.reasoningId}"]`);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    const top = await toggle.evaluate((element) => element.getBoundingClientRect().top);
+
+    await page.evaluate(({ threadId, turn, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: { ...turn, status: 'completed', completedAt: 2, durationMs: 1 },
+      });
+    }, fixture);
+
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    expect(Math.abs(await toggle.evaluate((element) => element.getBoundingClientRect().top) - top)).toBeLessThan(1);
   });
 
   test('keeps the composer primary action identical to the active Turn state', async ({ page }) => {
@@ -4890,12 +4958,10 @@ test.describe('canonical agent Thread surface', () => {
 
     const transcript = page.locator('.thread-transcript');
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-    await transcript.evaluate((element) => {
-      element.scrollTop = 0;
-      element.dispatchEvent(new Event('scroll'));
-    });
+    await setTranscriptFollowingBottom(page);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
-    await page.evaluate(async () => {
+    const frames = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4903,8 +4969,11 @@ test.describe('canonical agent Thread surface', () => {
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
       const threadId = response?.data[0]?.id;
       if (!threadId) throw new Error('Mock Thread not found');
+      const scroll = document.querySelector<HTMLElement>('.thread-transcript');
+      if (!scroll) throw new Error('Thread transcript not found');
       const turnId = '01910000-0000-7000-8000-00000000ef01';
       const itemId = '01910000-0000-7000-8000-00000000ef02';
+      scroll.scrollTop = 0;
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/completed',
         threadId,
@@ -4928,8 +4997,22 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       });
+      const samples: Array<{ bottomGap: number; messageMounted: boolean; scrollTop: number }> = [];
+      for (let frame = 0; frame < 4; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        samples.push({
+          bottomGap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
+          messageMounted: document.body.textContent?.includes('New evidence arrived.') ?? false,
+          scrollTop: scroll.scrollTop,
+        });
+      }
+      return samples;
     });
 
+    const mountedFrames = frames.filter((frame) => frame.messageMounted);
+    expect(mountedFrames.length).toBeGreaterThan(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.scrollTop))).toBeLessThanOrEqual(1);
+    expect(Math.min(...mountedFrames.map((frame) => frame.bottomGap))).toBeGreaterThan(1);
     await expect(page.getByText('New evidence arrived.')).toHaveCount(1);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
   });
