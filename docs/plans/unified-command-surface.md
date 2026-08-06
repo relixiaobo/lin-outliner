@@ -1742,7 +1742,7 @@ compound rows. The bar has two zones:
 - **Left — identity + status.** At rest: the app mark plus the **formatted summon
   hotkey** (`formatHotkey`, e.g. `⌘⇧␣`) in `--text-tertiary` at `--font-meta`.
   This is deliberate, not decoration: with the sidebar *Search* row
-  (`command-surface-discoverability.md`) a mouse-first user reaches this panel
+  (`launcher-interaction-hardening.md` D7) a mouse-first user reaches this panel
   without ever knowing the keystroke, and the identity slot is where the panel
   teaches it (the Raycast identity slot, put to work). During execution the zone
   carries the busy text, then D9's outcome for the dwell — success confirmation in
@@ -2340,16 +2340,15 @@ only pin state remains in `workspace`. Two presentation decisions are also close
 
 ## Related plans
 
-- `launcher-interaction-hardening.md` — the pre-PR-2 correctness/presentation
-  pass on the *shipped* launcher (IME guard, dev-only error copy, interim
-  empty-query Enter wait, D6a bar anatomy implemented early). PR 2 keeps the
-  guard and the CSS, deletes the interim wait, and replaces the hand-wired
-  status zone with D9's result state (D6a).
-- `command-surface-discoverability.md` — the entry points: the sidebar *Search*
-  row and the Settings hotkey display. When PR 2 retires the global `Cmd+K`
-  (D3), the sidebar row retargets to the panel summon and its hint re-derives
-  from the remaining binding; the plan's single-call-site design makes that a
-  two-line change inside PR 2's step 12 sweep.
+- `launcher-interaction-hardening.md` — the ONE pre-PR-2 PR on the *shipped*
+  surface (the discoverability plan was merged into it 2026-08-06):
+  correctness (IME guard, dev-only error copy, interim empty-query Enter
+  wait), the D6a bar anatomy implemented early, the sidebar *Search* row and
+  the Settings hotkey display. PR 2 keeps the guard and the CSS, deletes the
+  interim wait, replaces the hand-wired status zone with D9's result state
+  (D6a), and — when it retires the global `Cmd+K` (D3) — retargets the sidebar
+  row to the panel summon so its hint re-derives from the remaining binding; the
+  single-call-site design makes that a two-line change inside step 12's sweep.
 - `floating-toolbar-polish.md` — its *Destination policy* question is answered by
   the same ruling as D9 (Today, no special bucket); its `#` selection-extract is a
   registry action once the registry exists.

@@ -1,5 +1,11 @@
 # Command Surface Discoverability
 
+> **Merged, not shipped (2026-08-06).** Folded into
+> [`../launcher-interaction-hardening.md`](../launcher-interaction-hardening.md)
+> (its D7/D8) before any build started, PM-directed — one PR removes the
+> shared-file choreography and the two-step `formatHotkey` move. Kept for
+> provenance; the design below is superseded by that plan.
+
 ## Goal
 
 The command surface is keyboard-only knowledge today: the in-app palette hangs

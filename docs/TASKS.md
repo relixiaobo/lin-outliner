@@ -24,16 +24,14 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
 - **Claimed:** `whats-new-user-notes` — cc-2, PR #494.
-- **Approved and unclaimed, small (PM-directed 2026-08-06, plans authored by
-  main from the launcher review):**
-  - `launcher-interaction-hardening` — shipped-launcher correctness (IME guard,
-    show→context race, error copy/presentation) + footer hint-cluster redo; see
-    `docs/plans/launcher-interaction-hardening.md`.
-  - `command-surface-discoverability` — sidebar Search entry with the real
-    shortcut hint + Settings row for the global launcher hotkey incl. the
-    silent-registration-failure state; see
-    `docs/plans/command-surface-discoverability.md`. Lands after
-    `launcher-interaction-hardening` (shared files, disjoint regions).
+- **Approved and unclaimed, small (PM-directed 2026-08-06, plan authored by
+  main from the launcher review):** `launcher-interaction-hardening` — ONE PR:
+  shipped-launcher correctness (IME guard, show→context race, error
+  copy/presentation), the D6a footer implemented early, sidebar Search entry
+  with the real shortcut hint, and the Settings launcher-hotkey row incl. the
+  silent-registration-failure state; see
+  `docs/plans/launcher-interaction-hardening.md`. (The separate
+  `command-surface-discoverability` draft was merged into it, 2026-08-06.)
 
 ## Backlog
 
@@ -127,21 +125,18 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   onboarding chrome, flat list reaffirmed — plus the IME composition guard as a
   hard requirement (AC-16). PR 2 keeps the guard and CSS that
   `launcher-interaction-hardening` ships early, deletes its interim empty-query
-  Enter wait, and retargets the `command-surface-discoverability` sidebar row in
-  its step 12 sweep.
+  Enter wait, and retargets the hardening plan's sidebar Search row in its
+  step 12 sweep.
 - **launcher-interaction-hardening** (P1, **approved 2026-08-06, unclaimed**) —
-  correctness + presentation pass on the *shipped* launcher, scoped to survive
-  `unified-command-surface` PR 2: IME composition guard (P0 for CJK input),
-  interim renderer-only fix for the show→context Enter race, error copy/
-  presentation split, footer hint-cluster redo (verb labels, status zone), row
-  focus retention, dead empty-state removal. One PR. See
-  `docs/plans/launcher-interaction-hardening.md`.
-- **command-surface-discoverability** (P2, **approved 2026-08-06, unclaimed**) —
-  sidebar **Search** entry (registry-derived `⌘K` hint) + Settings → General row
-  showing the global launcher hotkey, including the silent-registration-failure
-  state; moves `formatHotkey` to core. One PR; lands after
-  `launcher-interaction-hardening`. See
-  `docs/plans/command-surface-discoverability.md`.
+  ONE PR on the *shipped* surface, scoped to survive `unified-command-surface`
+  PR 2: IME composition guard (P0 for CJK input), interim renderer-only fix for
+  the show→context Enter race, error copy/presentation split, D6a footer
+  implemented early (verb labels, identity/status zone with the summon hotkey),
+  row focus retention, dead empty-state removal, sidebar **Search** entry
+  (registry-derived `⌘K` hint), and the Settings → General launcher-hotkey row
+  incl. the silent-registration-failure state (`formatHotkey` moves to core).
+  See `docs/plans/launcher-interaction-hardening.md`. (The
+  `command-surface-discoverability` draft merged in, 2026-08-06 — archived.)
 - **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command

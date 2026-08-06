@@ -1,10 +1,13 @@
-# Launcher Interaction Hardening
+# Launcher Hardening & Discoverability
 
 ## Goal
 
-Fix the shipped global launcher's interaction defects and its footer
-presentation — the things users hit today, on the surface they use today —
-without pre-building anything `unified-command-surface.md` PR 2 owns.
+One usability pass on the *shipped* command surface: fix the launcher's
+interaction defects, bring its footer onto the ratified visual language, and
+make the surface reachable without keyboard-only knowledge — without
+pre-building anything `unified-command-surface.md` PR 2 owns. The presentation
+authority is that plan's **D6a**; this PR implements it early on the current
+surface so PR 2 inherits the CSS.
 
 Source: the 2026-08-06 systematic launcher review (main agent). The defects:
 
@@ -25,37 +28,47 @@ Source: the 2026-08-06 systematic launcher review (main agent). The defects:
 3. **P1 — dev-only error copy ships to users.** Any exception in the capture IPC
    surfaces `saveFailedRestart` — "restart the dev app (main process does not
    hot-reload)" — in packaged builds too (`LauncherApp.tsx:161`).
-4. **P2 — error/busy state rendered inside the primary button.**
+4. **P1 — the surface is keyboard-only knowledge.** The in-app palette hangs off
+   `⌘K` with no visible entry point; the launcher's global hotkey is displayed
+   nowhere (`launcher:getInitialState().hotkey` is delivered and never
+   rendered); if both candidate accelerators are taken, registration fails
+   silently and the launcher is unreachable with zero indication. Search is
+   fused into these surfaces, so a mouse-first user cannot discover search at
+   all (PM-raised).
+5. **P2 — error/busy state rendered inside the primary button.**
    `primaryLabel = busy ? saving : error ?? label` (`LauncherApp.tsx:191`): the
    error text replaces the action hint inside a clickable button, with no status
    styling and no visible retry affordance.
-5. **P2 — footer reads as a stray button.** The footer's only content is a
+6. **P2 — footer reads as a stray button.** The footer's only content is a
    bottom-right button restating the selected row's full title (`run-command`
    rows use `command.title` verbatim, `launcherModel.ts:139`), so the list says
-   *Open main window* and the button repeats *Open main window*. Raycast's
-   footer is a slim hint bar: identity on the left, "verb ↵" hints on the right.
-6. **P3 — row clicks steal focus from the always-focused input.** Rows lack the
+   *Open main window* and the button repeats *Open main window*.
+7. **P3 — row clicks steal focus from the always-focused input.** Rows lack the
    `onMouseDown` preventDefault the footer button has; on the error path the
    input is left unfocused.
-7. **P3 — the empty state is unreachable.** A non-empty query always synthesizes
+8. **P3 — the empty state is unreachable.** A non-empty query always synthesizes
    a capture-note row and an empty query always lists the two static commands,
    so `navItems.length === 0` never holds and the `emptyState` string is dead.
 
-**Shape (a): ONE complete feature in one PR** — a correctness-and-presentation
-pass on the existing launcher renderer. Internal ordering below is build order,
-not separate releases.
+**Shape (a): ONE complete feature in one PR.** All of it is renderer/settings
+work plus one read-only IPC; internal ordering below is build order, not
+separate releases. (Merged from the earlier `launcher-interaction-hardening` +
+`command-surface-discoverability` drafts, PM-directed 2026-08-06 — one PR
+removes their shared-file choreography and the two-step `formatHotkey` move.)
 
 ## Non-goals
 
-- **Nothing `unified-command-surface` PR 2 owns.** No idle-content rows
-  (Go to Today / recents), no section headers, no `Actions ⌘K`, no chip, no
-  object model, and no changes to the in-app `CommandPalette.tsx` (PR 2 deletes
-  it). Its D3 empty-query object list is the real fix for the launcher's empty
-  look; nothing here anticipates it.
-- **No IPC / protocol changes.** The race mitigation is renderer-only and
-  explicitly interim; PR 2's invocation + pending-ambient-slot model is the
-  authoritative fix and deletes it.
-- No capture-semantics, provider, or hotkey-registration changes.
+- **Nothing `unified-command-surface` PR 2 owns.** No idle-content rows, no
+  section headers, no `Actions ⌘K`, no chip, no object model, and no changes to
+  the in-app `CommandPalette.tsx` (PR 2 deletes it). Its D3/D6 empty-query
+  object list is the real fix for the launcher's empty look; nothing here
+  anticipates it.
+- **No mutation-protocol changes.** The one IPC addition is a read-only
+  hotkey getter; the race mitigation is renderer-only and explicitly interim
+  (PR 2's invocation + pending-ambient-slot model is the authoritative fix and
+  deletes it).
+- No capture-semantics, provider, or hotkey-registration changes; no shortcut
+  customization UI; no menu-bar/tray affordance.
 
 ## Design
 
@@ -68,14 +81,13 @@ if (isImeComposingEvent(event)) return;
 ```
 
 - Import `isImeComposingEvent` from `../ui/interactions/imeKeyboard` (the helper
-  is DOM-free; the launcher bundle stays editor-free — verify nothing heavier
-  rides in via that module's imports; it has none today).
+  is DOM-free; the launcher bundle stays editor-free — it has no imports).
 - Pass the React synthetic event exactly as `CommandPalette.tsx` does — the
   helper's `key === 'Process'` / `keyCode === 229` fallbacks are what fire for
   synthetics.
 - Behavior: while composing, Enter/arrows/Escape belong to the IME. Escape
-  therefore does NOT hide the window mid-composition (matches the palette's
-  intent); a second Escape after composition ends still hides.
+  therefore does NOT hide the window mid-composition; a second Escape after
+  composition ends still hides.
 
 ### D2 — Interim guard for the show→context race
 
@@ -123,11 +135,10 @@ Change what is in it:
 - **Left — identity + status (D6a):** at rest, the `APP_NAME` mark plus the
   formatted summon hotkey (`formatHotkey(state.hotkey)` — the value
   `getInitialState` already delivers and nothing renders today) at `--font-meta`
-  in `--text-tertiary`; it teaches the keystroke to users who will arrive by
-  mouse once the sidebar Search row ships. During execution the zone carries the
-  D3 status (busy, then error). `formatHotkey` is used from its current home
-  (`launcherModel.ts`); `command-surface-discoverability.md` relocates it to
-  core afterwards and updates this import.
+  in `--text-tertiary`; it teaches the keystroke to users who arrive by mouse
+  through the sidebar Search row (D7). During execution the zone carries the
+  D3 status (busy, then error). `formatHotkey` is used from its new core home
+  (D8 moves it in this same PR).
 - **Right:** the primary hint keeps its ghost-button behavior (click = Enter,
   mousedown-preventDefault) but is styled as a hint: `--font-meta` size,
   `--text-secondary`, tightened padding (drop the `--control-size-md`
@@ -151,9 +162,67 @@ capture-error path, where the launcher stays open).
 ### D6 — Remove the unreachable empty state
 
 Delete the `navItems.length === 0` branch, the `launcher-empty` CSS block, and
-the `emptyState` string (en + zh-Hans). Rationale in Goal item 7; PR 2's
+the `emptyState` string (en + zh-Hans). Rationale in Goal item 8; PR 2's
 empty-query object list keeps the list non-empty by construction too, so this
 is not a state the next surface reintroduces.
+
+### D7 — Sidebar Search entry
+
+- **Placement:** first row of the primary nav group, above Today
+  (`primaryNavItems`, `src/renderer/ui/Sidebar.tsx:32-37`). Search is the
+  universal entry point (Notion/Linear convention: topmost). Note
+  `primaryNavItems` maps keys to `navTargets` node ids — Search is an *action*,
+  not a nav target, so render it as its own row above the mapped loop rather
+  than forcing a pseudo-target into the record.
+- **Row anatomy:** existing sidebar-row primitive + `SearchIcon`
+  (`src/renderer/ui/icons.ts` already exports it), label from new
+  `t.shell.sidebar.search` (en "Search", zh-Hans "搜索"), and a right-aligned
+  shortcut hint.
+- **Shortcut hint:** derived from the shortcut registry, never hardcoded —
+  format the first binding of `global.command_palette`
+  (`shortcutRegistry.ts:139`, `binding('k', { mod: true })` → `⌘K` on macOS).
+  If the registry already has a display formatter, reuse it; otherwise add a
+  small formatter next to the registry (mod → `⌘`, shift → `⇧`, alt → `⌥`,
+  key uppercased) so future rebinds flow through. Rendered as quiet meta text
+  (`--text-tertiary`, `--font-meta`), always visible — visibility is the
+  point. Not a `.kbd` chip box: sidebar rows keep their flat look; the chip
+  treatment stays in overlays.
+- **Wiring:** `App.tsx` owns the palette state (`setCommandOpen(true)` on
+  `global.command_palette`, `useWorkspaceKeyboard.ts:220-224`). Thread one new
+  callback `onOpenSearch` into `Sidebar` alongside `onOpenSettings` and route
+  the row through it. **Single call site is a requirement:** when
+  `unified-command-surface` PR 2 retires `⌘K` and deletes the palette, this
+  row retargets to the panel summon and the hint re-derives from whatever
+  binding remains — a two-line change recorded in that plan's step 12 sweep.
+- **A11y:** same semantics as the other nav rows (button, focus-visible ring);
+  the hint is `aria-hidden` (the row's accessible name stays "Search").
+
+### D8 — Settings shows the global launcher hotkey
+
+- **Data path:** main already holds the winner in `launcherHotkeyAccelerator`
+  (`src/main/main.ts:1671`, set at `main.ts:4076-4077`, `null` when both
+  candidates were taken). Expose it read-only to the settings renderer the same
+  way the General pane reads theme state (`window.lin.*`,
+  `SettingsGeneralSection.tsx:49-68`): a preload method
+  `getLauncherHotkey(): Promise<string | null>` over a new
+  `ipcMain.handle('lin:launcher-hotkey')`. Read-only, no args, no secrets —
+  keep the preload surface minimal and typed like its neighbors.
+- **Rendering:** a "Global launcher" row in `SettingsGeneralSection.tsx`:
+  - registered → the formatted accelerator, e.g. `⌘⇧␣`, via `formatHotkey`;
+  - `null` → quiet warning copy (en: "Not available — the candidate shortcuts
+    are in use by other apps. Quit the conflicting app and relaunch Tenon.";
+    zh-Hans equivalent), `--text-secondary` with a status icon, not a red
+    banner (informational, not destructive).
+- **`formatHotkey` moves to core, once.** It lives unused-by-UI in
+  `src/renderer/launcher/launcherModel.ts:268` (exported + unit-tested). Move
+  it to `src/core/launcher/commands.ts` next to the channel/view types; the
+  launcher footer (D4) and the settings row both import the core home; move
+  its test block from `launcherModel.test.ts` into the core test suite.
+  (`src/core/launcher/commands.ts` is launcher-IPC shared surface, not the
+  A4-protected document protocol — still, it's an additive pure function;
+  note it in the PR body.)
+- i18n: new strings in both `en.ts` and `zh-Hans.ts` (sidebar label, settings
+  row label, value fallback, warning copy).
 
 ### Spec updates (A6, same PR)
 
@@ -164,21 +233,24 @@ is not a state the next surface reintroduces.
 - "Show sequence" / "Inline node search": document the interim empty-query
   Enter wait (marked interim, owned by this plan, deleted by
   `unified-command-surface` PR 2).
-- "Commands": note the action-label rule (command rows use the generic verb;
-  the footer never restates the row title) and the footer structure (left
-  status/identity zone, right primary hint).
+- "Commands": the action-label rule (command rows use the generic verb; the
+  footer never restates the row title) and the footer structure (left
+  identity/status zone, right primary hint).
+- "Hotkey": the registered accelerator is surfaced in the launcher footer and
+  Settings → General, including the registration-failure state.
 - Remove the empty-state sentence if present.
+
+`docs/spec/workspace-layout.md` (sidebar section): the Search row, its
+position, and the registry-derived hint.
 
 ### Collision check (run at claim time, 2026-08-06 snapshot)
 
 Open PRs: #494 (`cc-2/whats-new-user-notes`) — no file overlap. The two
-`unified-command-surface` implementation PRs are unclaimed; PR 2 rewrites this
-renderer wholesale. **Merge order:** this PR is small and lands first; PR 2
-rebases over it trivially (its rewrite wins conflicts). If PR 2 is already in
-flight when this is claimed, coordinate on the PR threads before starting.
-`command-surface-discoverability.md` touches the tail of `launcherModel.ts`
-(relocating `formatHotkey`) and the i18n message files — disjoint regions;
-land this PR first.
+`unified-command-surface` implementation PRs are unclaimed; PR 2 rewrites the
+launcher renderer wholesale and retargets the sidebar row. **Merge order:**
+this PR is small and lands first; PR 2 rebases over it (its rewrite wins
+conflicts). If PR 2 is already in flight when this is claimed, coordinate on
+the PR threads before starting.
 
 ## Verification
 
@@ -193,12 +265,23 @@ land this PR first.
   - `run-command` primary label is the verb, not the command title;
   - the idle footer renders the app mark + the formatted hotkey from
     `getInitialState().hotkey`, and renders no hotkey when it is `null`.
-- Update `tests/renderer/launcherModel.test.ts` for the label change.
+- Update `tests/renderer/launcherModel.test.ts` for the label change; move the
+  `formatHotkey` cases to the core suite unchanged.
+- Sidebar/settings renderer tests:
+  - Sidebar renders the Search row first with the registry-derived hint text
+    (assert it changes when the registry binding is stubbed differently — the
+    no-hardcoding guard);
+  - clicking the row fires `onOpenSearch`;
+  - settings General row renders the formatted hotkey, and the warning state
+    when the IPC returns `null`.
 - Manual (dev run, `bun run dev:<clone>`): pinyin composition Enter/arrow/Esc;
-  hotkey → immediate Enter over a browser page captures the page; light + dark
-  footer check (visual verification at the gate).
+  hotkey → immediate Enter over a browser page captures the page; sidebar row
+  opens the palette; Settings shows the hotkey, and the warning state with
+  `LIN_LAUNCHER_HOTKEY` set to a taken accelerator. Light + dark visual
+  verification at the gate.
 
 ## Open questions
 
-None — reversible presentation details (exact spacing, wordmark vs. glyph) are
-the implementer's call under the design-system tokens.
+None — reversible presentation details (exact spacing, wordmark vs. glyph,
+settings-row placement) are the implementer's call under the design-system
+tokens.
