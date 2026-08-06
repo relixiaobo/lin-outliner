@@ -329,18 +329,32 @@ section; if absent, `Unreleased` is labelled as that version's development train
 and multiple sections use a native select.
 
 What's New renders **only** that section's opening user-register note — the block
-above its first `###` — inline and uncollapsed, followed by one external "Full
-changelog" row. The `### Added` … `### Internal` categories are the engineering
-ledger: hundreds of entries per release describing work no user experiences, so
-they are never rendered here, collapsed or otherwise, and the note is short
-enough to need neither a scroll bound nor the focus stop one would carry. The
-link pins to the tag the build shipped as (`blob/vX.Y.Z/CHANGELOG.md#anchor`), so
-an old build lands on its section as it shipped; a development build reads
-`main`. A section written before the convention has no note and degrades to the
-link alone rather than dumping categories. `scripts/release-notes.ts` lifts the
-same note through the same parser for the GitHub Release body, so the two user
-surfaces cannot disagree; it exits non-zero when the note is missing. Changelog
-links use external navigation; legal links to the actual MIT license.
+above its first heading of any depth — inline and uncollapsed, followed by one
+external "Full changelog" row. The `### Added` … `### Internal` categories are the
+engineering ledger: hundreds of entries per release describing work no user
+experiences, so they are never rendered here, collapsed or otherwise, and the note
+is short enough to need neither a scroll bound nor the focus stop one would carry
+(a table inside a note scrolls within itself instead). The note boundary is *any*
+heading below the version heading, not `###` specifically — a depth test that
+holds only while every section follows the convention would let a `####` section
+pour its whole ledger, Internal included, into both user surfaces.
+
+The link pins to the tag the build shipped as
+(`blob/vX.Y.Z/CHANGELOG.md#anchor`), so an old build lands on its section as it
+shipped; a development build reads `main`. Between the freeze commit and the tag
+push the running version matches a dated section whose tag does not exist yet,
+and the app cannot tell that state from a published one — that window belongs to
+whoever is cutting the release, never to a user, since every build a user has was
+published. A section written before the convention has no note and degrades to
+the link alone rather than dumping categories.
+
+`scripts/release-notes.ts` lifts the same note through the same parser for the
+GitHub Release body and appends the same "Full changelog" link from the same
+helper, so the two user surfaces can neither disagree about what a release says
+nor point at different places for the entries. It exits non-zero when the section
+or its note is missing; it cannot judge whether a note is *good*, which is what
+the release-freeze rule in `AGENTS.md` — main drafts, the PM ratifies — is for.
+Changelog links use external navigation; legal links to the actual MIT license.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in
 [components.md → Inset Groups And Rows](./components.md#inset-groups-and-rows).

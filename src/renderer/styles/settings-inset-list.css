@@ -46,6 +46,18 @@
   margin-bottom: 0;
 }
 
+/* A note is prose and bullets, but the pane must not break if one carries a GFM
+   table: a table cannot shrink below its intrinsic width, so without this it
+   widens the inset card and the whole settings pane scrolls sideways. The wide
+   element scrolls inside itself instead — bounding the note container again
+   would put a focus stop on every visit for a case that may never occur. */
+.settings-about-release-note table {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Native System Settings section header: sentence-case, prominent, NOT the old
    uppercase micro-caption (matches "Known Networks" / "Other Networks"). */
 .inset-group-header {

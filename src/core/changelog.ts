@@ -25,6 +25,13 @@ const RELEASE_HEADING = /^\[([^\]\r\n]+)\](?:\s+-\s+(.+))?$/;
  * engineering ledger, read on GitHub. Only the note is parsed out, so no amount
  * of category detail — Internal included — can reach a user surface by accident.
  *
+ * ANY heading below the version heading ends the note, not `###` exactly. The
+ * convention writes categories at depth 3, but a section that reaches for `####`
+ * would otherwise leave `insideCategories` unset and pour the entire ledger into
+ * the note — the pane rendering it inline and the release body publishing
+ * Internal. A depth test that only holds while everyone follows the convention is
+ * not the guarantee this doc comment claims.
+ *
  * Tokenized rather than line-scanned so a `###` inside a fenced code block does
  * not read as the end of the note.
  */
@@ -67,7 +74,7 @@ export function parseChangelogReleases(source: string): ChangelogRelease[] {
       insideCategories = false;
       continue;
     }
-    if (token.type === 'heading' && token.depth === 3) insideCategories = true;
+    if (token.type === 'heading' && token.depth >= 3) insideCategories = true;
     if (!insideCategories) current.chunks.push(token.raw);
   }
 
@@ -96,6 +103,12 @@ export function resolveChangelogRelease(
  * lands on the section as that build shipped it — on `main` the heading, its
  * date, and therefore its anchor keep moving. An unreleased dev build has no tag
  * to pin to, so it reads the live file.
+ *
+ * The app cannot tell a published version from a frozen-but-untagged one: both
+ * are a dated section whose version matches the running build. So between the
+ * freeze commit and the tag push, an unpublished build links to a tag that does
+ * not exist yet. That window belongs to whoever is cutting the release, never to
+ * a user — every build a user has was published, so its tag resolves.
  */
 export function changelogSectionPath(release: ChangelogRelease): string {
   const isUnreleased = release.version.toLowerCase() === 'unreleased';
@@ -116,6 +129,12 @@ function headingAnchor(heading: string): string {
     .replace(/ /g, '-');
 }
 
-function normalizedVersion(version: string | null | undefined): string {
+/**
+ * The one spelling rule for a version. Exported because `scripts/release-notes.ts`
+ * looks the same section up from the tag name: two copies of this drifted once
+ * already, and a `## [V0.1.0]` the pane resolved would fail the tag push with
+ * "no section for 0.1.0".
+ */
+export function normalizedVersion(version: string | null | undefined): string {
   return version?.trim().replace(/^v(?=\d)/i, '') ?? '';
 }

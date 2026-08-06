@@ -66,6 +66,27 @@ Tracks main.
     }
   });
 
+  // The categories are written at depth 3 by convention, but a guarantee that
+  // holds only while everyone follows the convention is not a guarantee: at
+  // `depth === 3` exactly, a section headed with `####` poured its whole ledger —
+  // Internal included — into the note the pane renders and the release publishes.
+  test('ends the note at any heading depth, not just three', () => {
+    const [release] = parseChangelogReleases(`## [0.3.0] - 2026-09-01
+
+The note.
+
+#### Added
+
+- An entry written one level deeper.
+
+#### Internal
+
+- Provenance nobody outside the repo should read.
+`);
+
+    expect(release?.note).toBe('The note.');
+  });
+
   test('reports an empty note for a section that predates the convention', () => {
     const [release] = parseChangelogReleases(`## [0.0.9] - 2026-07-01
 

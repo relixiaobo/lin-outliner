@@ -11,7 +11,8 @@
  * The `### Added` … `### Internal` categories under the note stay behind: they
  * are the engineering ledger, read on GitHub in the file itself, and shipping
  * hundreds of them as the release body is what buried the note in the first
- * place.
+ * place. The body links to them rather than reprinting them, so "left behind"
+ * never means "unreachable".
  *
  * Usage: bun scripts/release-notes.ts 0.1.0 [path/to/CHANGELOG.md]
  * Exits 1 when the version has no section or its note is missing — a release
@@ -19,20 +20,27 @@
  * to publish.
  */
 
-import { parseChangelogReleases } from '../src/core/changelog';
+import { fileURLToPath } from 'node:url';
+import { isAbsolute, resolve } from 'node:path';
+import { changelogSectionPath, normalizedVersion, parseChangelogReleases } from '../src/core/changelog';
 
-const version = process.argv[2]?.replace(/^v/, '');
+const REPO_URL = 'https://github.com/relixiaobo/lin-outliner';
+
+const version = normalizedVersion(process.argv[2]);
 if (!version) {
   console.error('usage: release-notes <version> [changelog-path]');
   process.exit(1);
 }
 
+// Resolved as a path, never interpolated into a URL: a clone directory holding
+// `#`, `?`, or `%` would otherwise be parsed as URL syntax and the script would
+// die on an unhandled ENOENT instead of reaching either error message below.
 const changelogPath = process.argv[3]
-  ? new URL(process.argv[3], `file://${process.cwd()}/`)
-  : new URL('../CHANGELOG.md', import.meta.url);
+  ? (isAbsolute(process.argv[3]) ? process.argv[3] : resolve(process.cwd(), process.argv[3]))
+  : fileURLToPath(new URL('../CHANGELOG.md', import.meta.url));
 
 const releases = parseChangelogReleases(await Bun.file(changelogPath).text());
-const release = releases.find((entry) => entry.version.replace(/^v/, '') === version);
+const release = releases.find((entry) => normalizedVersion(entry.version) === version);
 if (!release) {
   console.error(`CHANGELOG.md has no section for ${version}. Add it before tagging.`);
   process.exit(1);
@@ -45,11 +53,16 @@ if (!release.note) {
   process.exit(1);
 }
 
-// The build is unsigned and un-notarized (`mac.identity: null`), so first launch
-// is blocked by Gatekeeper until the user right-clicks Open. Saying so here is
-// not boilerplate: without it the download reads as broken.
+// The entries themselves still have to be reachable. Publishing the note alone
+// would leave a release page whose forty-odd fixes and additions appear nowhere
+// and are pointed at by nothing — the categories are read on GitHub, so the body
+// carries the same link the About pane grew, built by the same helper so the two
+// surfaces cannot point at different places. The tag exists by now: this runs
+// from the workflow the tag push triggers.
 console.log([
   release.note,
+  '',
+  `**[Full changelog](${REPO_URL}/blob/${changelogSectionPath(release)})** — every entry in this release.`,
   '',
   '---',
   '',
