@@ -8791,8 +8791,10 @@ describe('ThreadService', () => {
   });
 
   test('admits direct inline Skill guidance as typed evidence without changing user input', async () => {
+    let admittedTurnId: string | null = null;
     const fixture = await createFixture(undefined, {
-      resolveSkillAdmission: async ({ thread, content, acceptedAt }) => {
+      resolveSkillAdmission: async ({ thread, turnId, content, acceptedAt }) => {
+        admittedTurnId = turnId;
         const runtime = new AgentSkillRuntime({
           localRoot: thread.cwd,
           threadId: thread.id,
@@ -8819,6 +8821,7 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting();
     const turn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    expect(admittedTurnId).toBe(turn.id);
     const invocationItem = turn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'skillInvocation');
     const userItem = turn.items.find((item) => item.type === 'userMessage');
     expect(invocationItem).toBeDefined();

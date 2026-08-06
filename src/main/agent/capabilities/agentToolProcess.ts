@@ -33,16 +33,22 @@ export interface AgentToolProcessOptions {
 
 export interface AgentLocalToolProcessEnvOptions {
   bundledRipgrepBinDir?: string;
-  defaultToolPathSegments?: string[];
+  defaultToolPathSegments?: readonly string[];
+  leadingToolPathSegments?: readonly string[];
+  env?: NodeJS.ProcessEnv;
 }
 
 export function buildAgentLocalToolProcessEnv(options: AgentLocalToolProcessEnvOptions = {}): NodeJS.ProcessEnv {
   const bundledRipgrepBinDir = options.bundledRipgrepBinDir ?? getBundledRipgrepBinDirForPath();
+  const sourceEnv = { ...process.env, ...options.env };
   const pathValue = buildAgentToolPathValue({
+    leadingSegments: options.leadingToolPathSegments,
+    extraToolPath: sourceEnv.LIN_AGENT_EXTRA_TOOL_PATH,
+    processPath: sourceEnv.PATH,
     defaultToolPathSegments: options.defaultToolPathSegments,
     trailingSegments: bundledRipgrepBinDir ? [bundledRipgrepBinDir] : [],
   });
-  return { ...process.env, PATH: pathValue };
+  return { ...sourceEnv, PATH: pathValue };
 }
 
 export async function runAgentToolProcess(

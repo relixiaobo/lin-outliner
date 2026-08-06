@@ -4,7 +4,11 @@ import {
   evaluateAgentToolCapability,
   type AgentCapabilityConfig,
 } from './agentCapabilities';
-import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
+import {
+  runLocalBashCommand,
+  type AgentShellProcessEnvironmentProvider,
+  type LocalBashRunResult,
+} from './agentLocalTools';
 import {
   unavailableToolResultMessage,
   type AgentToolCapabilityLogInput,
@@ -18,6 +22,7 @@ export interface AgentSkillShellCommandInput {
   capabilityEventHandler?: (input: AgentToolCapabilityLogInput) => Promise<void> | void;
   signal?: AbortSignal;
   toolCallId?: string;
+  processEnvironment?: AgentShellProcessEnvironmentProvider;
 }
 
 export class AgentSkillShellError extends Error {
@@ -66,6 +71,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       scratchRoot: input.scratchRoot,
       command: input.command,
       signal: input.signal,
+      processEnvironment: input.processEnvironment,
     });
   } catch (error) {
     throw new AgentSkillShellError('command_failed', errorMessage(error));

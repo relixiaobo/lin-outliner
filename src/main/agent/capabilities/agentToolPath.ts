@@ -1,8 +1,10 @@
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 export const EXTRA_TOOL_PATH_ENV = 'LIN_AGENT_EXTRA_TOOL_PATH';
 
 export const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
+  path.join(homedir(), '.local', 'bin'),
   '/opt/homebrew/bin',
   '/opt/homebrew/sbin',
   '/usr/local/bin',
@@ -14,15 +16,17 @@ export const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
 ];
 
 export interface AgentToolPathOptions {
+  leadingSegments?: readonly string[];
   extraToolPath?: string;
   processPath?: string;
-  defaultToolPathSegments?: string[];
-  trailingSegments?: string[];
+  defaultToolPathSegments?: readonly string[];
+  trailingSegments?: readonly string[];
 }
 
 export function buildAgentToolPathValue(options: AgentToolPathOptions = {}): string {
   const segments = [
     ...pathSegments(options.extraToolPath ?? process.env[EXTRA_TOOL_PATH_ENV]),
+    ...(options.leadingSegments ?? []),
     ...pathSegments(options.processPath ?? process.env.PATH),
     ...(options.defaultToolPathSegments ?? DEFAULT_AGENT_TOOL_PATH_SEGMENTS),
     ...(options.trailingSegments ?? []),

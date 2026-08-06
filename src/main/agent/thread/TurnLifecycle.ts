@@ -371,9 +371,10 @@ export class TurnLifecycle {
             : await this.extensions.threadContext(thread);
           const canonicalTurns = this.core.allTurns(request.threadId);
           const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
-            ? { catalogSnapshot: null, invocation: null }
-            : await this.resolveSkillAdmission({
+              ? { catalogSnapshot: null, invocation: null }
+              : await this.resolveSkillAdmission({
                 thread,
+                turnId: active.turnId,
                 configuration: active.configuration,
                 content: admission.content,
                 acceptedAt,
@@ -855,6 +856,7 @@ export class TurnLifecycle {
         ? { catalogSnapshot: null, invocation: null }
         : await this.resolveSkillAdmission({
             thread: record.thread,
+            turnId,
             configuration: record.configuration,
             content: input,
             acceptedAt: startedAt,

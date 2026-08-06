@@ -16,10 +16,21 @@ input only and must never be used as a risk confirmation prompt.
 
 That extends to Skills. There is no per-Skill ratification gate: a Skill does not
 have to be accepted before the model may invoke it, and installing one enables it.
-An accept-before-use step is an approval policy by another name. Consent to a
-third-party Skill is given once, in the install review, which shows what the Skill
-tells the model — a Skill install executes nothing, but enabling one puts its text
-into the agent's context, and that is what the review covers.
+An accept-before-use step is an approval policy by another name. For a
+user-initiated third-party install, consent is given once in the install review,
+which shows what the Skill tells the model. A named product-default managed Skill
+may instead be acquired and enabled by product policy as specified in
+[`agent-skills.md`](agent-skills.md). Either acquisition path executes nothing,
+but enabling the Skill puts its text into the agent's context.
+
+Default availability does not widen execution authority. Browser Pilot remains
+subject to the effective Configuration Profile or Role Skill ceiling, the
+ordinary tool ceiling, `disabledSkills`, and explicit capability blocks. Its
+preflight and every `bp` command execute through ordinary `bash` under Full
+Access; missing network access, installer ownership conflicts, and operating-
+system failures remain native command results. Chrome separately controls remote-
+debugging availability and its connection authorization. Tenon adds no Browser
+Pilot-specific approval mode or per-action bypass.
 
 Creating or resuming an Automation is standing authorization for its future
 occurrences under this same Full Access boundary. It introduces no separate

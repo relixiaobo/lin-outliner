@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   buildAgentLocalToolProcessEnv,
@@ -110,6 +110,7 @@ test('agent local tool process env includes configured, standard, and bundled ri
     const env = buildAgentLocalToolProcessEnv({ bundledRipgrepBinDir });
     const segments = env.PATH?.split(path.delimiter) ?? [];
     expect(segments.slice(0, 3)).toEqual([extraPath, '/usr/bin', '/opt/homebrew/bin']);
+    expect(segments.indexOf(path.join(homedir(), '.local', 'bin'))).toBeLessThan(segments.indexOf('/usr/local/bin'));
     expect(segments).toContain('/usr/local/bin');
     expect(segments.at(-1)).toBe(bundledRipgrepBinDir);
     expect(segments.filter((segment) => segment === '/usr/bin')).toHaveLength(1);
@@ -126,6 +127,96 @@ test('agent local tool process env includes configured, standard, and bundled ri
       process.env.LIN_AGENT_EXTRA_TOOL_PATH = originalExtraPath;
     }
   }
+});
+
+test('agent local tool process env keeps the explicit override ahead of a host-managed command directory', () => {
+  const managedBin = path.join(tmpdir(), 'tenon-browser-pilot-bin');
+  const extraPath = path.join(tmpdir(), 'lin-extra-tools');
+  const env = buildAgentLocalToolProcessEnv({
+    bundledRipgrepBinDir: path.join(tmpdir(), 'lin-bundled-rg'),
+    defaultToolPathSegments: [],
+    leadingToolPathSegments: [managedBin],
+    env: {
+      PATH: '/external/bin',
+      LIN_AGENT_EXTRA_TOOL_PATH: extraPath,
+      BROWSER_PILOT_CLIENT_KEY: 'tenon.test-key',
+    },
+  });
+
+  expect(env.PATH?.split(path.delimiter).slice(0, 3)).toEqual([
+    extraPath,
+    managedBin,
+    '/external/bin',
+  ]);
+  expect(env.BROWSER_PILOT_CLIENT_KEY).toBe('tenon.test-key');
+});
+
+posixBashProcessTest('a host environment failure does not block an unrelated bash command', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      async () => { throw new Error('optional host failed'); },
+    );
+    const bash = createLocalTools({ workspace }).find((tool) => tool.name === 'bash')!;
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      const result = await (bash.execute as any)('provider-failure', { command: 'printf shell-ok' });
+      const envelope = result.details as ToolEnvelope<BashData>;
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data?.stdout).toBe('shell-ok');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
+
+posixBashProcessTest('foreground and background bash receive the same host process environment', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const managedBin = path.join(workspaceRoot, 'managed-bin');
+    const outputDirectory = path.join(workspaceRoot, 'browser-output');
+    const bpPath = path.join(managedBin, 'bp');
+    await mkdir(managedBin, { recursive: true });
+    await writeFile(bpPath, '#!/bin/sh\nprintf browser-pilot-test\n', 'utf8');
+    await chmod(bpPath, 0o700);
+    const processEnvironment = async () => ({
+      env: {
+        BROWSER_PILOT_CLIENT_KEY: 'tenon.thread-key',
+        BROWSER_PILOT_OUTPUT_DIR: outputDirectory,
+      },
+      leadingToolPathSegments: [managedBin],
+    });
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      processEnvironment,
+    );
+    const bash = createLocalTools({ workspace }).find((tool) => tool.name === 'bash')!;
+
+    const foregroundResult = await (bash.execute as any)('foreground-env', {
+      command: 'printf "%s|%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR" "$(command -v bp)"',
+    });
+    const foreground = foregroundResult.details as ToolEnvelope<BashData>;
+    expect(foreground.ok).toBe(true);
+    expect(foreground.data?.stdout).toBe(`tenon.thread-key|${outputDirectory}|${bpPath}`);
+
+    const backgroundResult = await (bash.execute as any)('background-env', {
+      command: 'printf "%s|%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR" "$(command -v bp)"',
+      run_in_background: true,
+    });
+    const background = backgroundResult.details as ToolEnvelope<BashData>;
+    expect(background.ok).toBe(true);
+    const persistedOutputPath = background.data?.persistedOutputPath;
+    expect(persistedOutputPath).toBeDefined();
+    const output = await waitForFileContent(
+      persistedOutputPath!,
+      (content) => content.includes('status: completed'),
+    );
+    expect(output).toContain(`tenon.thread-key|${outputDirectory}|${bpPath}`);
+  });
 });
 
 test('agent local tool process env exposes bundled rg after user and system paths', () => {

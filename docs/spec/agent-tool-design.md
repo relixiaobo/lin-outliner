@@ -112,6 +112,47 @@ identity, and may return a background handle. `bash_stop` addresses only a known
 live process handle. Native command exit and filesystem errors remain visible to
 the model.
 
+Browser Pilot remains a managed Skill workflow over this same shell surface:
+
+```text
+Agent -> browser-pilot Skill -> bash -> bp CLI -> Chrome
+```
+
+On the first shell-environment request in a Turn, the managed-Skill environment
+registry reads the active managed runtime roots and invokes only contributors
+whose Skills are enabled, clean, and compatible. It memoizes the composed result
+for that Turn, so Skill-shell, foreground `bash`, and background `bash` processes
+share one environment. Browser Pilot contributes only while its managed record is
+active. An active-root lookup or one contributor failure is logged and omitted;
+the shell continues with the remaining or ordinary environment, so an optional
+integration cannot make unrelated `bash` unavailable.
+
+Agent command-path precedence is explicit: `LIN_AGENT_EXTRA_TOOL_PATH`, validated
+managed-Skill bin contributions, the inherited process `PATH`, then standard
+fallbacks with `~/.local/bin` before Homebrew. The explicit override therefore
+stays authoritative, while a Tenon-managed Browser Pilot command normally wins
+over an incompatible command on the ordinary user path without overwriting,
+moving, or deleting it. Before contributing `userData/browser-pilot/bin`, the
+host requires it to be absent, empty, or contain only the owned `bp` and
+`browser-pilot` links/shims resolving into the managed `versions` directory.
+Unexpected contents reject that contribution rather than entering Agent `PATH`.
+
+`BROWSER_PILOT_CLIENT_KEY` is a base64url SHA-256 identity derived from the
+installation ID and Thread ID. It is stable across Turns in one Thread and
+different for root, forked, child, isolated-Skill, and concurrent Threads.
+`BROWSER_PILOT_OUTPUT_DIR` is a canonical private directory under Agent scratch,
+scoped by Thread ID and Turn ID. The host rejects unsafe IDs and symlink escapes
+before launching the process; the existing scratch TTL owns cleanup.
+
+These values, `BROWSER_PILOT_INSTALL_ROOT`, and `BROWSER_PILOT_BIN_DIR` are host
+execution context. They never enter model parameters, tool arguments, canonical
+Items, transcripts, or diagnostics. Tenon does not set `BROWSER_PILOT_HOME`, so
+compatible clients keep using Browser Pilot's ordinary shared service, and it
+does not set one Turn-wide `BROWSER_PILOT_REQUEST_ID` because request identity is
+per command. The installation identity is cached only after a successful load;
+a transient read failure drops that Turn's optional contribution and can retry on
+a later Turn.
+
 ### Web, Image, And Import
 
 - `web_search`: bounded web or image discovery

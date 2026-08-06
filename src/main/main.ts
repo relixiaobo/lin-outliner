@@ -80,6 +80,9 @@ import {
   managedSkillErrorView,
 } from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
+import { DEFAULT_MANAGED_SKILLS } from './managedSkillDefaults';
+import { BROWSER_PILOT_MANAGED_SKILL_ID, BrowserPilotHost } from './browserPilotHost';
+import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnvironment';
 import { AgentImportService } from './agent/capabilities/agentImportService';
 import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
@@ -443,7 +446,12 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
+const browserPilotHost = new BrowserPilotHost({
+  userDataRoot: resolvedUserDataDir,
+  scratchRoot: agentScratchRoot,
+});
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
+let managedSkillShellEnvironment: ManagedSkillShellEnvironmentRegistry | null = null;
 let skillRuntime!: AgentSkillRuntime;
 const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
 const turnSkillRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
@@ -451,6 +459,7 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
   store: managedSkillStore,
   onChanged: async (): Promise<void> => {
+    managedSkillShellEnvironment?.invalidate();
     await Promise.all(
       [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
     );
@@ -465,6 +474,15 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     ));
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
+});
+managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
+  activeSkillIds: async () => new Set(
+    (await managedSkillService.activeRuntimeRoots()).map((root) => root.id),
+  ),
+  contributors: [{
+    skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
+    processEnvironment: (threadId, turnId) => browserPilotHost.processEnvironment(threadId, turnId),
+  }],
 });
 // An available Skill update should be visible without going looking for it, but
 // nothing about that is urgent enough to spend the launch path on. So: one
@@ -509,12 +527,34 @@ skillRuntime = new AgentSkillRuntime({
     signal,
   }),
 });
+const managedSkillBootstrap = managedSkillService.bootstrapDefaults(DEFAULT_MANAGED_SKILLS, {
+  findNameConflict: findUnmanagedSkillNameConflict,
+});
+void managedSkillBootstrap.then((results) => {
+  for (const result of results) {
+    if (result.status === 'failed') {
+      console.warn(`[managed-skills] default acquisition failed for ${result.id}: ${result.error?.code ?? 'unexpected_error'}`);
+    }
+  }
+});
 void getAgentRuntimeSettings().then((settings) => {
   for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
     runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
     runtime.updateDisabledSkills(settings.disabledSkills ?? []);
   }
 }).catch((error) => console.error('[agent] failed to load skill settings', error));
+
+async function findUnmanagedSkillNameConflict(name: string) {
+  const normalized = name.trim();
+  if (!normalized) return null;
+  const settings = await getAgentRuntimeSettings();
+  const runtime = new AgentSkillRuntime({
+    localRoot: agentLocalFileRoot,
+    additionalSkillDirectories: settings.additionalSkillDirectories,
+  });
+  const conflict = (await runtime.listAllSkills()).find((skill) => skill.name === normalized);
+  return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
+}
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
 let threadService!: ThreadService;
@@ -600,6 +640,7 @@ threadService = ThreadService.open(
     },
     resolveSkillAdmission: async ({
       thread,
+      turnId,
       configuration,
       content,
       acceptedAt,
@@ -623,6 +664,7 @@ threadService = ThreadService.open(
           localRoot: agentLocalFileRoot,
           scratchRoot: agentScratchRoot,
           signal,
+          processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
         }),
       });
       const settings = await getAgentRuntimeSettings();
@@ -670,6 +712,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       localRoot: agentLocalFileRoot,
       scratchRoot: agentScratchRoot,
       signal,
+      processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
     }),
     executeIsolatedSkill: async ({
       skill,
@@ -741,6 +784,7 @@ async function prepareSkillRuntimeForTurn(
     if (turnSkillRuntimeInitializations.get(context.turn.id) === initialization) {
       turnSkillRuntimeInitializations.delete(context.turn.id);
       turnSkillRuntimes.delete(context.turn.id);
+      managedSkillShellEnvironment?.clearTurn(context.turn.id);
     }
     throw error;
   }
@@ -775,6 +819,7 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
     agentLocalFileRoot,
     agentScratchRoot,
     skillRuntimeForTurn(context),
+    () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
   );
 }
 
@@ -843,6 +888,7 @@ threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed') {
     turnSkillRuntimes.delete(notification.turnId);
     turnSkillRuntimeInitializations.delete(notification.turnId);
+    managedSkillShellEnvironment?.clearTurn(notification.turnId);
   }
   if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
     automationService.wake();

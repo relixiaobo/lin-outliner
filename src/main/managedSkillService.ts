@@ -31,6 +31,7 @@ import {
   type ManagedSkillFile,
   type ValidatedManagedSkill,
 } from './managedSkillValidation';
+import type { ManagedSkillDefaultManifest } from './managedSkillDefaults';
 
 export const MANAGED_SKILL_CATALOG_URL = 'https://raw.githubusercontent.com/relixiaobo/lin-outliner/main/catalog/managed-skills-v1.json';
 const CATALOG_SCHEMA_VERSION = 1;
@@ -85,6 +86,16 @@ export interface ManagedSkillServiceOptions {
   findNameConflict?: (name: string, excludingManagedSkillId?: string) => Promise<ManagedSkillNameConflict | null>;
 }
 
+export interface ManagedSkillDefaultBootstrapOptions {
+  findNameConflict?: (name: string) => Promise<ManagedSkillNameConflict | null>;
+}
+
+export interface ManagedSkillDefaultBootstrapResult {
+  id: string;
+  status: 'installed' | 'preserved' | 'opted-out' | 'name-conflict' | 'failed';
+  error?: ManagedSkillErrorView;
+}
+
 export interface CatalogDocument {
   schemaVersion: 1;
   entries: CatalogEntry[];
@@ -131,8 +142,10 @@ export class ManagedSkillService {
   private readonly ready: Promise<void>;
   private readonly discoverySessions = new Map<string, DiscoverySession>();
   private readonly updatePreviews = new Map<string, UpdatePreviewSession>();
+  private readonly defaultManifests = new Map<string, ManagedSkillDefaultManifest>();
   private lastCatalog: CatalogDocument | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
+  private defaultBootstrapPromise: Promise<ManagedSkillDefaultBootstrapResult[]> | null = null;
 
   constructor(private readonly options: ManagedSkillServiceOptions) {
     this.github = options.github ?? new ManagedSkillGitHubClient();
@@ -144,8 +157,18 @@ export class ManagedSkillService {
     return this.options.store.contentRoot;
   }
 
+  bootstrapDefaults(
+    manifests: readonly ManagedSkillDefaultManifest[],
+    options: ManagedSkillDefaultBootstrapOptions = {},
+  ): Promise<ManagedSkillDefaultBootstrapResult[]> {
+    if (this.defaultBootstrapPromise) return this.defaultBootstrapPromise;
+    for (const manifest of manifests) this.defaultManifests.set(manifest.id, manifest);
+    this.defaultBootstrapPromise = this.runDefaultBootstrap(manifests, options);
+    return this.defaultBootstrapPromise;
+  }
+
   async loadCatalog(): Promise<ManagedSkillCatalogView> {
-    await this.ready;
+    await this.readyForUse();
     let refreshError: ManagedSkillErrorView | undefined;
     try {
       const remote = parseCatalogDocument(await this.github.fetchJsonFromRaw(MANAGED_SKILL_CATALOG_URL, MANAGED_SKILL_LIMITS.catalogBytes));
@@ -168,7 +191,7 @@ export class ManagedSkillService {
   }
 
   async discover(input: { sourceUrl?: string; catalogId?: string }): Promise<ManagedSkillDiscoveryView> {
-    await this.ready;
+    await this.readyForUse();
     this.pruneSessions();
     let sourceUrl: string;
     let trackingRef: string | undefined;
@@ -227,7 +250,7 @@ export class ManagedSkillService {
     candidateId: string;
     expectedCommit: string;
   }): Promise<ManagedSkillView> {
-    await this.ready;
+    await this.readyForUse();
     const session = this.discoverySession(input.discoveryId);
     if (session.discovery.origin.commit !== input.expectedCommit) {
       throw new ManagedSkillServiceError('stale_discovery', 'The resolved GitHub commit changed. Discover the skill again before installing.');
@@ -298,7 +321,7 @@ export class ManagedSkillService {
   }
 
   async list(): Promise<ManagedSkillView[]> {
-    await this.ready;
+    await this.readyForUse();
     const integrityChecked = await this.refreshIntegrityDiagnostics();
     const index = await this.refreshNameConflictDiagnostics(integrityChecked);
     return index.skills
@@ -307,7 +330,7 @@ export class ManagedSkillService {
   }
 
   async activeRuntimeRoots(): Promise<ManagedSkillRuntimeRoot[]> {
-    await this.ready;
+    await this.readyForUse();
     const index = await this.refreshIntegrityDiagnostics('detached');
     return index.skills.flatMap((record): ManagedSkillRuntimeRoot[] => {
       if (
@@ -326,7 +349,7 @@ export class ManagedSkillService {
   }
 
   async assertInvocable(skillId: string, expectedContentHash: string): Promise<void> {
-    await this.ready;
+    await this.readyForUse();
     const index = await this.options.store.readIndex();
     const record = requireRecord(index, skillId);
     if (!record.enabled) throw new ManagedSkillServiceError('skill_disabled', `Managed skill ${record.name} is disabled.`);
@@ -364,7 +387,7 @@ export class ManagedSkillService {
    * and every pane mount.
    */
   async checkUpdates(skillId?: string, options?: { throttleMs?: number }): Promise<ManagedSkillView[]> {
-    await this.ready;
+    await this.readyForUse();
     const index = await this.options.store.readIndex();
     const requested = skillId ? [requireRecord(index, skillId)] : index.skills;
     const throttleMs = options?.throttleMs;
@@ -403,7 +426,7 @@ export class ManagedSkillService {
   }
 
   async previewUpdate(input: { skillId: string; expectedActiveHash: string }): Promise<ManagedSkillUpdatePreviewView> {
-    await this.ready;
+    await this.readyForUse();
     this.pruneSessions();
     const index = await this.options.store.readIndex();
     const record = requireRecord(index, input.skillId);
@@ -489,7 +512,7 @@ export class ManagedSkillService {
     expectedActiveHash: string;
     expectedCandidateHash: string;
   }): Promise<ManagedSkillView> {
-    await this.ready;
+    await this.readyForUse();
     const preview = this.updatePreview(input.previewId);
     if (
       preview.skillId !== input.skillId
@@ -559,7 +582,7 @@ export class ManagedSkillService {
   }
 
   async setEnabled(input: { skillId: string; enabled: boolean; expectedActiveHash: string }): Promise<ManagedSkillView> {
-    await this.ready;
+    await this.readyForUse();
     return this.withMutation(async () => {
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
@@ -589,7 +612,7 @@ export class ManagedSkillService {
     expectedActiveHash: string;
     expectedPreviousHash: string;
   }): Promise<ManagedSkillView> {
-    await this.ready;
+    await this.readyForUse();
     return this.withMutation(async () => {
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
@@ -642,11 +665,13 @@ export class ManagedSkillService {
   }
 
   async uninstall(input: { skillId: string; expectedActiveHash: string }): Promise<ManagedSkillView[]> {
-    await this.ready;
+    await this.readyForUse();
     return this.withMutation(async () => {
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
       this.assertExpectedActive(record, input.expectedActiveHash);
+      const productDefault = this.defaultManifestForRecord(record);
+      if (productDefault) await this.options.store.recordDefaultOptOut(productDefault.id);
       const next = { ...before, skills: before.skills.filter((candidate) => candidate.id !== record.id) };
       try {
         await this.options.store.replaceIndex(next);
@@ -658,6 +683,128 @@ export class ManagedSkillService {
       await this.options.store.removeSkill(record.id).catch(() => undefined);
       return next.skills.map((record) => managedSkillView(record, this.options.appVersion));
     });
+  }
+
+  private async runDefaultBootstrap(
+    manifests: readonly ManagedSkillDefaultManifest[],
+    options: ManagedSkillDefaultBootstrapOptions,
+  ): Promise<ManagedSkillDefaultBootstrapResult[]> {
+    try {
+      await this.ready;
+    } catch (error) {
+      return manifests.map((manifest) => ({
+        id: manifest.id,
+        status: 'failed',
+        error: managedSkillErrorView(error),
+      }));
+    }
+    const results: ManagedSkillDefaultBootstrapResult[] = [];
+    for (const manifest of manifests) {
+      try {
+        results.push(await this.bootstrapDefault(manifest, options));
+      } catch (error) {
+        results.push({ id: manifest.id, status: 'failed', error: managedSkillErrorView(error) });
+      }
+    }
+    return results;
+  }
+
+  private async bootstrapDefault(
+    manifest: ManagedSkillDefaultManifest,
+    options: ManagedSkillDefaultBootstrapOptions,
+  ): Promise<ManagedSkillDefaultBootstrapResult> {
+    const preflight = await this.withMutation(() => this.defaultAcquisitionDisposition(manifest, options));
+    if (preflight) return preflight;
+
+    const discovery = await this.github.discover({
+      sourceUrl: manifest.repository,
+      appVersion: this.options.appVersion,
+      trackingRef: manifest.initialCommit,
+      subdirectory: manifest.subdirectory,
+      catalogCompatibilityRange: manifest.catalogCompatibilityRange,
+    });
+    if (discovery.origin.commit !== manifest.initialCommit) {
+      throw new ManagedSkillServiceError(
+        'stale_discovery',
+        `The pinned default commit for ${manifest.name} resolved unexpectedly.`,
+        `${manifest.initialCommit} -> ${discovery.origin.commit}`,
+      );
+    }
+    const candidate = discovery.candidates.find((entry) => (
+      entry.view.name === manifest.name && entry.view.subdirectory === manifest.subdirectory
+    ));
+    if (!candidate) {
+      throw new ManagedSkillServiceError(
+        'catalog_entry_mismatch',
+        `The pinned default no longer contains ${manifest.name} at ${manifest.subdirectory}.`,
+        `${manifest.id} @ ${manifest.subdirectory}`,
+      );
+    }
+    const validated = await this.github.downloadCandidate({
+      origin: discovery.origin,
+      candidate,
+      appVersion: this.options.appVersion,
+      catalogCompatibilityRange: manifest.catalogCompatibilityRange,
+    });
+    if (validated.name !== manifest.name || validated.contentHash !== manifest.expectedContentHash) {
+      throw new ManagedSkillServiceError(
+        'candidate_changed',
+        `The pinned default content for ${manifest.name} did not match its reviewed identity.`,
+        `${manifest.expectedContentHash} -> ${validated.contentHash}`,
+      );
+    }
+
+    return this.withMutation(async () => {
+      const disposition = await this.defaultAcquisitionDisposition(manifest, options);
+      if (disposition) return disposition;
+
+      const before = await this.options.store.readIndex();
+      const installedAt = this.now();
+      const active = storedVersionFromValidated(manifest.initialCommit, installedAt, validated);
+      await this.options.store.installValidatedContent(manifest.id, validated);
+      const record: ManagedSkillRecord = {
+        id: manifest.id,
+        name: manifest.name,
+        origin: {
+          owner: manifest.owner,
+          repo: manifest.repo,
+          repository: manifest.repository,
+          subdirectory: manifest.subdirectory,
+          trackingRef: manifest.trackingRef,
+        },
+        recommended: true,
+        catalogId: manifest.catalogId,
+        catalogCompatibilityRange: manifest.catalogCompatibilityRange,
+        enabled: true,
+        active,
+      };
+      try {
+        await this.options.store.updateIndex((index) => ({ ...index, skills: [...index.skills, record] }));
+        await this.options.onChanged?.();
+      } catch (error) {
+        const restored = await this.restoreIndex(before);
+        if (restored && !indexReferencesVersion(before, record.id, active.contentHash)) {
+          await this.options.store.removeVersion(record.id, active.contentHash).catch(() => undefined);
+        }
+        throw error;
+      }
+      return { id: manifest.id, status: 'installed' };
+    });
+  }
+
+  private async defaultAcquisitionDisposition(
+    manifest: ManagedSkillDefaultManifest,
+    options: ManagedSkillDefaultBootstrapOptions,
+  ): Promise<ManagedSkillDefaultBootstrapResult | null> {
+    const before = await this.options.store.readIndex();
+    const existing = before.skills.find((record) => record.name === manifest.name || record.id === manifest.id);
+    if (existing) return { id: manifest.id, status: 'preserved' };
+    if (await this.options.store.hasDefaultOptOut(manifest.id)) {
+      return { id: manifest.id, status: 'opted-out' };
+    }
+    const conflict = await options.findNameConflict?.(manifest.name);
+    if (conflict) return { id: manifest.id, status: 'name-conflict' };
+    return null;
   }
 
   private async refreshIntegrityDiagnostics(
@@ -856,6 +1003,17 @@ export class ManagedSkillService {
 
   private async compatibilityRangeForRecord(record: ManagedSkillRecord): Promise<string | undefined> {
     return record.catalogCompatibilityRange;
+  }
+
+  private async readyForUse(): Promise<void> {
+    await this.ready;
+  }
+
+  private defaultManifestForRecord(record: ManagedSkillRecord): ManagedSkillDefaultManifest | null {
+    for (const manifest of this.defaultManifests.values()) {
+      if (isOfficialDefaultRecord(record, manifest)) return manifest;
+    }
+    return null;
   }
 
   private async restoreIndex(index: ManagedSkillIndex): Promise<boolean> {
@@ -1079,6 +1237,18 @@ function sameManagedRecordSnapshot(current: ManagedSkillRecord, expected: Manage
     && current.origin.repository === expected.origin.repository
     && current.origin.subdirectory === expected.origin.subdirectory
     && current.origin.trackingRef === expected.origin.trackingRef;
+}
+
+function isOfficialDefaultRecord(
+  record: ManagedSkillRecord,
+  manifest: ManagedSkillDefaultManifest,
+): boolean {
+  return record.id === manifest.id
+    && record.name === manifest.name
+    && record.origin.owner === manifest.owner
+    && record.origin.repo === manifest.repo
+    && record.origin.repository === manifest.repository
+    && record.origin.subdirectory === manifest.subdirectory;
 }
 
 function nameConflictDiagnostic(record: ManagedSkillRecord, conflict: ManagedSkillNameConflict): string {
