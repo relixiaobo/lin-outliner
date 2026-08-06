@@ -103,3 +103,16 @@ Three unrelated-looking symptoms, one root cause, all invisible on screen. When
 something must not exist for the user, remove it where the shape is decided —
 the projection — not where it is painted. The symptom to watch for: a `return
 null` whose siblings are `.filter()`, `.length`, or adjacency checks upstream.
+
+## A blanket `git add` ships whatever is lying in the clone
+
+A 26KB agent-generated test deck sat in the main clone's root on 2026-06-15;
+a same-day bookkeeping commit used a blanket add and published it to the
+public repo, where it survived seven weeks and entered the `v0.1.0` tag tree
+(caught by the PM, removed from HEAD in `[Unreleased]`). Two rules fall out:
+main's record commits **add named files only** — board, changelog, the files
+the record is about — never the whole tree; and anything an agent produces
+belongs under the contained scratch root, never the clone root (the
+containment shipped later as `agent-local-root-boundary`; this file predates
+it). History rewrite was judged not worth the eight-clone coordination cost —
+removal from HEAD is the fix, the lesson is the guard.

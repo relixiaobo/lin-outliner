@@ -52,6 +52,17 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Removed a stray agent test deliverable from the repo root (main-agent)** —
+  `美国政府限制外国人使用Fable5事件分析.pptx`, a 26KB deck the in-app agent
+  produced on 2026-06-15 while the inline-deliverable-preview feature was being
+  exercised (its near-namesake lives on as a fixture path in
+  `tests/renderer/inlineFilePreviewData.test.ts`). The deliverable landed in the
+  clone root — this predates the agent local-root containment — and a blanket
+  `git add` in a same-day bookkeeping commit (`36a7c72a`) swept it in unnoticed.
+  Removed from HEAD; it remains reachable in git history and the `v0.1.0` tag
+  tree unless a coordinated history rewrite is ever deemed worth it. The packaged
+  app never shipped it (`build.files` packs only `out/**`).
+
 - **Open the 0.2.0 train; seed user-register release notes (main-agent)** —
   `package.json` dials to `0.2.0` after the v0.1.0 publication. `[0.1.0]` gains
   a user-language welcome note as its opening block (its engineering provenance
