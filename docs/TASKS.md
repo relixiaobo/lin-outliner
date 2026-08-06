@@ -660,6 +660,10 @@ older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
   version's changelog section; `[Unreleased]`'s 21 duplicate category sections
   folded into `[0.1.0] - 2026-08-06` (multiset-verified, no entry edited);
   oversized bodies degrade to a counted summary instead of failing the publish.
+  **v0.1.0 is published** — the project's first installable build
+  (`Tenon-0.1.0-arm64.dmg`), rehearsed via `workflow_dispatch` before tagging;
+  the rehearsal caught electron-builder's implicit CI publish (fixed with
+  `build.publish: null`).
 - **docs-system-overhaul** (main-agent, direct on `main`, 2026-08-06,
   *fast-track*) — board diet (one-line completion records, no status table),
   [`lessons.md`](lessons.md), `plans/reference/` tier for standing authorities,
