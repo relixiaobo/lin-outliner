@@ -116,6 +116,27 @@ describe('ThreadItemView reasoning presentation', () => {
   });
 });
 
+describe('ThreadItemView commentary presentation', () => {
+  test('does not render an empty commentary timeline item', async () => {
+    const rendered = renderItem({
+      id: 'commentary-1',
+      provenance: {
+        originThreadId: 'thread-1',
+        originTurnId: 'turn-1',
+        originItemId: 'commentary-1',
+      },
+      type: 'agentMessage',
+      text: '   ',
+      phase: 'commentary',
+      memoryCitation: null,
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-agent-message-commentary')).toBeNull();
+    expect(rendered.document.querySelector('.thread-item')).toBeNull();
+  });
+});
+
 describe('ThreadItemView tool output disclosure', () => {
   test('keeps one read across item identity updates and settles a rejected read', async () => {
     let rejectRead: ((error: Error) => void) | null = null;

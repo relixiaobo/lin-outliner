@@ -70,7 +70,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   the outliner
 - reasoning places its first meaningful line directly in the process timeline,
   without a `Thinking` / `Thought` prefix once content exists. A single-line
-  Item is plain text with no disclosure affordance. When more provider content
+  Item that fits the available width is plain text with no disclosure
+  affordance. A visually truncated single line becomes a disclosure whose
+  expansion wraps the complete line in place. When more provider content
   follows, the first line becomes the disclosure summary and expansion reveals
   only the remaining content, without repeating the summary; only the actual
   tail Item streams. An empty live Item retains the `Thinking` placeholder
@@ -269,7 +271,9 @@ vertical interval on either side of the separator. Within the timeline, the
 direct reasoning summary, expanded reasoning body, and adjacent compact process
 rows use one shared tokenized interval; reasoning between separate tool runs
 therefore has the same visible interval above and below, and expansion does not
-introduce a tighter internal step.
+introduce a tighter internal step. Empty commentary Items produce no rendered
+timeline node, so inspection-only provider boundaries cannot add invisible flex
+intervals between visible rows.
 
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
@@ -817,13 +821,14 @@ terminal completion, failure, interruption, Thread deletion, catalog reload,
 or application restart removes it. The pill is the Plan's *content* surface —
 the current step — and does not replace the record that the tool ran.
 
-Process, multi-line reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
+Process, expandable reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;
 switching Threads, streaming-to-terminal remounts, and application reloads do not
 discard an explicit user choice. A live reasoning Item starts folded while
 streaming. A terminal multi-line reasoning Item rests folded unless it is the
 only process Item in a Turn without a final agent response, in which case it
-opens by default. A single-line reasoning Item has no disclosure state. Expanding
+opens by default. A single-line reasoning Item has disclosure state only while
+its collapsed text exceeds the available row width. Expanding
 or collapsing any explicit transcript disclosure preserves its activated surface's
 viewport position. This includes the persisted process, reasoning, tool-group, and
 tool-detail disclosures as well as measured long-user-message and image-gallery

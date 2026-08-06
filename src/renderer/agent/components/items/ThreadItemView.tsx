@@ -143,6 +143,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     case 'userMessage':
       return <UserMessageItem {...props} item={props.item} />;
     case 'agentMessage':
+      if (props.item.phase === 'commentary' && !props.item.text.trim()) return null;
       return (
         <article
           className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}
@@ -578,8 +579,29 @@ function ReasoningDisclosure({
   readonly streaming: boolean;
 }) {
   const t = useT();
+  const summaryRef = useRef<HTMLSpanElement | null>(null);
+  const [summaryOverflow, setSummaryOverflow] = useState(false);
   const text = parts.join('\n\n');
   const trimmed = text.trim();
+  const presentation = reasoningPresentation(trimmed);
+  const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
+  const measureSummary = useCallback(() => {
+    const element = summaryRef.current;
+    if (!element) return;
+    const nextOverflow = element.scrollWidth > element.clientWidth + 1;
+    setSummaryOverflow((current) => current === nextOverflow ? current : nextOverflow);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!trimmed || expanded) return undefined;
+    measureSummary();
+    const element = summaryRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measureSummary);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [disclosureId, expanded, measureSummary, presentation.summary, summaryOverflow, trimmed]);
+
   if (!trimmed) {
     // Same class set as the populated branch: the first token must not change
     // the element's classes underneath the reader.
@@ -587,26 +609,25 @@ function ReasoningDisclosure({
       ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
       : null;
   }
-  const presentation = reasoningPresentation(trimmed);
-  if (!presentation.details) {
+  const canExpand = Boolean(presentation.details) || summaryOverflow;
+  if (!canExpand) {
     return (
       <div className="thread-item thread-reasoning">
-        <span className="thread-reasoning-summary" title={presentation.summary}>
+        <span className="thread-reasoning-summary" ref={summaryRef} title={presentation.summary}>
           {presentation.summary}
         </span>
       </div>
     );
   }
-  const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
   return (
     <div className="thread-item thread-reasoning">
       <ButtonControl
         aria-expanded={expanded}
-        className="thread-reasoning-toggle"
+        className={`thread-reasoning-toggle${expanded ? ' is-expanded' : ''}`}
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <span className="thread-reasoning-summary" title={presentation.summary}>
+        <span className="thread-reasoning-summary" ref={summaryRef} title={presentation.summary}>
           {presentation.summary}
         </span>
         <ChevronRightIcon
@@ -615,7 +636,7 @@ function ReasoningDisclosure({
           size={ICON_SIZE.menu}
         />
       </ButtonControl>
-      {expanded ? (
+      {expanded && presentation.details ? (
         <div className="thread-reasoning-body">
           <ThreadMarkdown
             index={index}

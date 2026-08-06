@@ -2922,9 +2922,9 @@ test.describe('canonical agent Thread surface', () => {
     });
   });
 
-  test('spaces a direct reasoning line evenly between split web tool runs', async ({ page }) => {
+  test('spaces and expands a truncated reasoning line between split web tool runs', async ({ page }) => {
     await createNewThread(page);
-    const turnId = await page.evaluate(async () => {
+    const fixture = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -2971,15 +2971,20 @@ test.describe('canonical agent Thread surface', () => {
         success: true,
         durationMs: 4,
       });
-      const hiddenReasoning = (id: string) => ({
+      const emptyCommentary = (id: string) => ({
         id,
-        type: 'reasoning',
+        type: 'agentMessage',
         provenance: provenance(id),
-        summary: [],
-        content: [],
+        text: '',
+        phase: 'commentary',
+        memoryCitation: null,
       });
       const reasoningId = itemId('af06');
       const answerId = itemId('af10');
+      const reasoningText = [
+        'Planning an additional official NMC search with enough detail to exceed the compact timeline width',
+        'while preserving the complete reasoning text when the disclosure is opened',
+      ].join(' ');
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/completed',
         threadId,
@@ -2988,17 +2993,17 @@ test.describe('canonical agent Thread surface', () => {
           id: turnId,
           items: [
             webSearch(itemId('af02'), 'Chengdu weather August 5'),
-            hiddenReasoning(itemId('af03')),
+            emptyCommentary(itemId('af03')),
             webFetch(itemId('af04'), 'https://weather.example.com/chengdu'),
             {
               id: reasoningId,
               type: 'reasoning',
               provenance: provenance(reasoningId),
-              summary: ['Planning an additional official NMC search'],
+              summary: [reasoningText],
               content: [],
             },
             webSearch(itemId('af07'), 'Chengdu NMC forecast'),
-            hiddenReasoning(itemId('af08')),
+            emptyCommentary(itemId('af08')),
             webFetch(itemId('af09'), 'https://www.nmc.cn/chengdu'),
             {
               id: answerId,
@@ -3018,16 +3023,17 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 36_000,
         },
       });
-      return turnId;
+      return { reasoningText, turnId };
     });
 
-    const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
+    const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
     await turn.getByRole('button', { name: 'Worked for 36s' }).click();
     const summary = turn.locator('.thread-reasoning-summary', {
-      hasText: 'Planning an additional official NMC search',
+      hasText: fixture.reasoningText,
     });
     await expect(summary).toHaveCount(1);
     await expect(turn.locator('.thread-tool-toggle')).toHaveCount(4);
+    await expect(turn.locator('.thread-agent-message-commentary')).toHaveCount(0);
     await expect(turn.getByText('Thought', { exact: true })).toHaveCount(0);
 
     const rhythm = await summary.evaluate((element) => {
@@ -3052,6 +3058,24 @@ test.describe('canonical agent Thread surface', () => {
     expect(Math.abs(rhythm.above - rhythm.expected)).toBeLessThan(1);
     expect(Math.abs(rhythm.below - rhythm.expected)).toBeLessThan(1);
     expect(Math.abs(rhythm.above - rhythm.below)).toBeLessThan(1);
+
+    const reasoningToggle = summary.locator('xpath=..');
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(await summary.evaluate((element) => element.scrollWidth > element.clientWidth + 1)).toBe(true);
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
+    const expandedMetrics = await summary.evaluate((element) => ({
+      fits: element.scrollWidth <= element.clientWidth + 1,
+      lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      height: element.getBoundingClientRect().height,
+      text: element.textContent,
+    }));
+    expect(expandedMetrics).toEqual(expect.objectContaining({
+      fits: true,
+      text: fixture.reasoningText,
+    }));
+    expect(expandedMetrics.height).toBeGreaterThan(expandedMetrics.lineHeight + 1);
+    await expect(turn.locator('.thread-reasoning-body')).toHaveCount(0);
   });
 
   test('explains only non-zero shell exit codes', async ({ page }) => {

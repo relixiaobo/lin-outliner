@@ -30,18 +30,28 @@ the established type, line height, hierarchy, and token-only CSS.
 
 Present the first meaningful reasoning line directly in the timeline instead
 of prefixing it with `Thinking` or `Thought`. A single-line reasoning Item is a
-plain row with no disclosure. When content remains after that line, the direct
-summary becomes a disclosure and expansion renders only the remainder. Live
-reasoning starts folded; an explicit expansion remains authoritative as newer
-Items arrive. Preserve the lone resultless terminal reasoning default.
+plain row with no disclosure while it fits the available width. Measure the
+collapsed line locally and add a disclosure when it is visually truncated;
+expansion wraps the complete line in place. When content remains after that
+line, the direct summary becomes a disclosure and expansion renders only the
+remainder. Live reasoning starts folded; an explicit expansion remains
+authoritative as newer Items arrive. Preserve the lone resultless terminal
+reasoning default.
+
+Provider timelines may contain empty commentary Items between tool and
+reasoning Items. Keep those Items in the grouping projection, but render no DOM
+node for them so they cannot contribute an extra flex interval between visible
+rows.
 
 The E2E geometry assertion derives the expected interval from computed styles
 rather than duplicating a pixel constant. It compares the reasoning
 headline-to-body interval with the body-to-tool and tool-to-next-reasoning
 intervals in the same rendered timeline, and separately measures a single-line
-reasoning row between split Web search/fetch runs. Component coverage asserts
-that a single line has no button or chevron and that a multi-line disclosure
-does not repeat its summary in the expanded body.
+reasoning row between split Web search/fetch runs separated by real empty
+commentary Items. Component coverage asserts that a fitting single line has no
+button or chevron, empty commentary has no rendered node, visually truncated
+content can expand in full, and a multi-line disclosure does not repeat its
+summary in the expanded body.
 
 ### Same-paint structural bottom pin
 
@@ -111,6 +121,8 @@ and same-paint structural follow guarantees.
 - Splitting a reasoning Item at its first meaningful line must preserve the
   remaining Markdown exactly once; component and E2E assertions cover both
   halves.
+- Width measurement must run only against the collapsed summary; otherwise the
+  expanded line wrapping would incorrectly remove its own disclosure.
 
 ## Collision Result
 

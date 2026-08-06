@@ -1835,6 +1835,17 @@
   flex: 0 1 auto;
 }
 
+.thread-reasoning-toggle.is-expanded {
+  align-items: flex-start;
+}
+
+.thread-reasoning-toggle.is-expanded .thread-reasoning-summary {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .thread-reasoning > .thread-reasoning-summary {
   display: block;
   max-width: min(100%, 520px);
