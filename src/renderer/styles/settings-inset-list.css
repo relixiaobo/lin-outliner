@@ -24,28 +24,26 @@
   box-shadow: var(--inset-hairline), var(--focus-ring-shadow);
 }
 
-.settings-about-release-notes-row {
+/* The release's user note reads inline: it is a short paragraph and a handful of
+   bullets, so it needs neither a scroll bound nor the focus stop a scrollable
+   region would have to carry. The pane's own scroller is the only one. */
+.settings-about-release-note-row {
   min-width: 0;
 }
 
-.settings-about-release-notes {
-  max-height: min(480px, 50vh);
+.settings-about-release-note {
   max-width: none;
-  overflow: auto;
-  overscroll-behavior: contain;
   padding: var(--space-5);
   font-size: var(--font-content);
   line-height: var(--line-content);
-  scrollbar-gutter: stable;
 }
 
-.settings-about-release-notes > :first-child {
+.settings-about-release-note > :first-child {
   margin-top: 0;
 }
 
-.settings-about-release-notes:focus-visible {
-  box-shadow: var(--outline-focus);
-  outline: none;
+.settings-about-release-note > :last-child {
+  margin-bottom: 0;
 }
 
 /* Native System Settings section header: sentence-case, prominent, NOT the old

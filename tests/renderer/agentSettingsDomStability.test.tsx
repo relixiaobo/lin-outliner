@@ -15,9 +15,11 @@ mock.module('../../CHANGELOG.md?raw', () => ({
 
 ## [Unreleased]
 
+A deterministic user note, which is all the pane renders.
+
 ### Changed
 
-- Deterministic release-note fixture.
+- The engineering entry the pane must never show.
 `,
 }));
 import type {

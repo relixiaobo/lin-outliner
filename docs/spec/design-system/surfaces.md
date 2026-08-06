@@ -325,9 +325,21 @@ The preview Languages popover writes the same cross-window preference store.
 
 **About.** Identity/version with copy, per-version What's New, support, and legal.
 The native About item opens this page. `AppInfo.version` selects its `CHANGELOG`
-section; if absent, `Unreleased` is labelled as that version's development train.
-`Internal` is hidden, multiple sections use a native select, and notes start
-collapsed before expanding into a bounded keyboard-scrollable region. Changelog
+section; if absent, `Unreleased` is labelled as that version's development train,
+and multiple sections use a native select.
+
+What's New renders **only** that section's opening user-register note — the block
+above its first `###` — inline and uncollapsed, followed by one external "Full
+changelog" row. The `### Added` … `### Internal` categories are the engineering
+ledger: hundreds of entries per release describing work no user experiences, so
+they are never rendered here, collapsed or otherwise, and the note is short
+enough to need neither a scroll bound nor the focus stop one would carry. The
+link pins to the tag the build shipped as (`blob/vX.Y.Z/CHANGELOG.md#anchor`), so
+an old build lands on its section as it shipped; a development build reads
+`main`. A section written before the convention has no note and degrades to the
+link alone rather than dumping categories. `scripts/release-notes.ts` lifts the
+same note through the same parser for the GitHub Release body, so the two user
+surfaces cannot disagree; it exits non-zero when the note is missing. Changelog
 links use external navigation; legal links to the actual MIT license.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in

@@ -1,58 +1,55 @@
 #!/usr/bin/env bun
 /**
- * release-notes — lifts one version's section out of CHANGELOG.md.
+ * release-notes — lifts one version's user note out of CHANGELOG.md.
  *
- * The release body is the changelog section, not a second hand-written summary:
- * two descriptions of one release drift, and the one nobody edits is the one
- * users read. This reads the file that already has to be right.
+ * The release body is the changelog's own note, not a second hand-written
+ * summary: two descriptions of one release drift, and the one nobody edits is
+ * the one users read. This reads the file that already has to be right, through
+ * the same parser the in-app What's New pane uses — so the two user surfaces
+ * cannot disagree about what a release says.
  *
- * Usage: bun scripts/release-notes.ts 0.1.0
- * Exits 1 when the version has no section — a release whose notes would be empty
- * is a mistake worth stopping for, not a blank body to publish.
+ * The `### Added` … `### Internal` categories under the note stay behind: they
+ * are the engineering ledger, read on GitHub in the file itself, and shipping
+ * hundreds of them as the release body is what buried the note in the first
+ * place.
+ *
+ * Usage: bun scripts/release-notes.ts 0.1.0 [path/to/CHANGELOG.md]
+ * Exits 1 when the version has no section or its note is missing — a release
+ * whose notes would be empty is a mistake worth stopping for, not a blank body
+ * to publish.
  */
+
+import { parseChangelogReleases } from '../src/core/changelog';
 
 const version = process.argv[2]?.replace(/^v/, '');
 if (!version) {
-  console.error('usage: release-notes <version>');
+  console.error('usage: release-notes <version> [changelog-path]');
   process.exit(1);
 }
 
-const lines = (await Bun.file(new URL('../CHANGELOG.md', import.meta.url)).text()).split('\n');
-const start = lines.findIndex((line) => line.startsWith(`## [${version}]`));
-if (start === -1) {
+const changelogPath = process.argv[3]
+  ? new URL(process.argv[3], `file://${process.cwd()}/`)
+  : new URL('../CHANGELOG.md', import.meta.url);
+
+const releases = parseChangelogReleases(await Bun.file(changelogPath).text());
+const release = releases.find((entry) => entry.version.replace(/^v/, '') === version);
+if (!release) {
   console.error(`CHANGELOG.md has no section for ${version}. Add it before tagging.`);
   process.exit(1);
 }
-const rest = lines.slice(start + 1);
-const end = rest.findIndex((line) => line.startsWith('## ['));
-let body = (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
-if (!body) {
-  console.error(`The ${version} section is empty.`);
+if (!release.note) {
+  console.error(
+    `The ${version} section has no user note. Write one above its first "###" heading `
+    + '— it is both the release body and What\'s New.',
+  );
   process.exit(1);
-}
-
-// GitHub rejects release bodies over 125,000 characters. The 0.1.0 section —
-// the project's entire pre-release history — is ~500KB, so an oversized section
-// becomes a summary that points at the section instead of failing the publish.
-const MAX_BODY_CHARS = 100_000;
-if (body.length > MAX_BODY_CHARS) {
-  const bodyLines = body.split('\n');
-  const entryCount = bodyLines.filter((line) => line.startsWith('- **')).length;
-  const categories = bodyLines
-    .filter((line) => line.startsWith('### '))
-    .map((line) => line.slice(4).trim());
-  body = [
-    `This release's changelog section is larger than a GitHub release body allows`,
-    `(${entryCount} entries across ${categories.join(', ')}), so the full notes live in`,
-    `[CHANGELOG.md](https://github.com/relixiaobo/lin-outliner/blob/v${version}/CHANGELOG.md).`,
-  ].join('\n');
 }
 
 // The build is unsigned and un-notarized (`mac.identity: null`), so first launch
 // is blocked by Gatekeeper until the user right-clicks Open. Saying so here is
 // not boilerplate: without it the download reads as broken.
 console.log([
-  body,
+  release.note,
   '',
   '---',
   '',
