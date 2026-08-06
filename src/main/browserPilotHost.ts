@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import type { AgentShellProcessEnvironment } from './agent/capabilities/agentLocalTools';
 import { loadOrCreateInstallationId } from './installationIdentity';
 
@@ -97,8 +98,7 @@ export async function prepareBrowserPilotOutputDirectory(
     await ensurePrivateDirectory(directory, false);
   }
   const [canonicalRoot, canonicalOutput] = await Promise.all([realpath(root), realpath(outputDirectory)]);
-  const relative = path.relative(canonicalRoot, canonicalOutput);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (canonicalOutput === canonicalRoot || !isPathInside(canonicalRoot, canonicalOutput)) {
     throw new Error('Browser Pilot output directory escaped Agent scratch.');
   }
   return canonicalOutput;
@@ -182,16 +182,13 @@ async function assertManagedCommandTarget(
 ): Promise<void> {
   const target = await realpath(targetPath);
   const targetStat = await lstat(target);
-  const relative = path.relative(versionsRoot, target);
   const targetName = path.basename(target);
   const hasExpectedName = process.platform === 'win32'
     ? targetName.toLowerCase() === executableName.toLowerCase()
     : targetName === executableName;
   if (
     !targetStat.isFile()
-    || !relative
-    || relative.startsWith('..')
-    || path.isAbsolute(relative)
+    || !isPathInside(versionsRoot, target)
     || !hasExpectedName
   ) {
     throw new Error(`Browser Pilot command link escapes the managed install root: ${commandPath}`);
