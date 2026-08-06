@@ -23,9 +23,17 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
-- **Approved and unclaimed, small:** `whats-new-user-notes` — What's New renders
-  a user-register note per release instead of the engineering changelog
-  (PM-ratified 2026-08-06); see `docs/plans/whats-new-user-notes.md`.
+- **Claimed:** `whats-new-user-notes` — cc-2, PR #494.
+- **Approved and unclaimed, small (PM-directed 2026-08-06, plans authored by
+  main from the launcher review):**
+  - `launcher-interaction-hardening` — shipped-launcher correctness (IME guard,
+    show→context race, error copy/presentation) + footer hint-cluster redo; see
+    `docs/plans/launcher-interaction-hardening.md`.
+  - `command-surface-discoverability` — sidebar Search entry with the real
+    shortcut hint + Settings row for the global launcher hotkey incl. the
+    silent-registration-failure state; see
+    `docs/plans/command-surface-discoverability.md`. Lands after
+    `launcher-interaction-hardening` (shared files, disjoint regions).
 
 ## Backlog
 
@@ -112,6 +120,24 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
   dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
   learning, and reversibility-tier framing rather than extending it.
+  **Carry-over requirement for PR 2** (from the 2026-08-06 launcher review): the
+  new surface keeps the IME composition guard that
+  `launcher-interaction-hardening` adds (composition Enter/arrows/Escape never
+  drive the surface), and it deletes that plan's interim empty-query Enter wait
+  along with the rest of the old model.
+- **launcher-interaction-hardening** (P1, **approved 2026-08-06, unclaimed**) —
+  correctness + presentation pass on the *shipped* launcher, scoped to survive
+  `unified-command-surface` PR 2: IME composition guard (P0 for CJK input),
+  interim renderer-only fix for the show→context Enter race, error copy/
+  presentation split, footer hint-cluster redo (verb labels, status zone), row
+  focus retention, dead empty-state removal. One PR. See
+  `docs/plans/launcher-interaction-hardening.md`.
+- **command-surface-discoverability** (P2, **approved 2026-08-06, unclaimed**) —
+  sidebar **Search** entry (registry-derived `⌘K` hint) + Settings → General row
+  showing the global launcher hotkey, including the silent-registration-failure
+  state; moves `formatHotkey` to core. One PR; lands after
+  `launcher-interaction-hardening`. See
+  `docs/plans/command-surface-discoverability.md`.
 - **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command
