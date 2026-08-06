@@ -316,6 +316,8 @@ Language is `SelectControl variant="popup"`.
 **Agent.** Model services and Skills are pages; Memory and Permissions stay
 inline. Permissions states the Full Access boundary, lists explicit blocks, and
 commits removal on the row; boundary explanation is a footnote under that row.
+The Skill library is a scan-and-toggle surface: descriptions stay clamped to two
+lines, and focusing or operating a row's menu or switch never expands the row.
 
 **Preview.** Translation owns target language, webpage/EPUB auto-translation,
 model, and clearing saved translations; Websites clears URL-preview session data.

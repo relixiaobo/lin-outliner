@@ -1,22 +1,14 @@
 /* A Skill's description is written for the model to route on, so it routinely
    runs to a paragraph. The library is a scan-and-toggle surface — one row should
    be one glance — so clamp it to two lines and let the row stay a row. The full
-   text is still on hover, and lives in the Skill itself. Clamping (rather than
-   shrinking the type) keeps every row the same height, so the list does not
-   ripple as descriptions vary. */
+   text remains in the DOM for assistive technology and lives in the Skill itself.
+   Clamping (rather than shrinking the type) keeps every row the same height, so
+   focusing its menu or switch never reflows the list. */
 .settings-skill-description {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-/* Focus, not hover: the rest of a clamped description has to be reachable without
-   a mouse, but B7 forbids hover changing layout — and reflowing a list under the
-   pointer is exactly the thrash that rule exists to prevent. Focus is deliberate,
-   so expanding there is the affordance without the churn. */
-.inset-row:focus-within .settings-skill-description {
-  -webkit-line-clamp: unset;
 }
 
 /* Why a Skill needs attention, on its own line under the description. A fault in

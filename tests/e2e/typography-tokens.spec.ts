@@ -184,8 +184,10 @@ const layoutTransitionProperties = new Set([
 const stateLayoutDeclarationProperties = new Set([
   ...layoutTransitionProperties,
   'font-size',
+  'line-clamp',
   'letter-spacing',
   'line-height',
+  'webkit-line-clamp',
 ]);
 const inlineFoundationStyleProperties = new Set([
   'borderRadius',

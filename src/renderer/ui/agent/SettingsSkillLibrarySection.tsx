@@ -660,9 +660,9 @@ export function SettingsSkillLibrarySection({
               )}
               sublabel={(
                 <>
-                  {/* Clamped to two lines, and the full text stays reachable by
-                      expanding the row rather than by hovering: a native `title`
-                      is mouse-only, undismissable, and unreliably announced. */}
+                  {/* Keep the list scan-stable at two description lines. The full
+                      text remains in the accessibility tree and in the Skill
+                      source; focusing the menu or switch must not reflow rows. */}
                   <span className="settings-skill-description">
                     {row.description}
                   </span>
