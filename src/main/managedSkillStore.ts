@@ -6,6 +6,7 @@ import {
   type ManagedSkillCompatibilityView,
   type ManagedSkillErrorCode,
 } from '../core/types';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
@@ -626,8 +627,8 @@ async function assertNormalDirectory(target: string): Promise<void> {
 function safeChildPath(root: string, relativePath: string): string {
   if (!relativePath || relativePath.startsWith('/') || relativePath.includes('\\')) throw new Error(`Unsafe managed skill path: ${relativePath}`);
   const target = path.resolve(root, ...relativePath.split('/'));
-  const relative = path.relative(path.resolve(root), target);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Unsafe managed skill path: ${relativePath}`);
+  // `isPathInside` admits the root itself; a child path that resolves back to the root is not a child.
+  if (target === path.resolve(root) || !isPathInside(root, target)) throw new Error(`Unsafe managed skill path: ${relativePath}`);
   return target;
 }
 
