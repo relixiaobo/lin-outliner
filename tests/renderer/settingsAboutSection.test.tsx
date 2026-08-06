@@ -111,14 +111,20 @@ function openedUrls(): string[] {
 }
 
 describe('SettingsAboutSection', () => {
-  test('shows the running version\'s note inline and no category detail', async () => {
+  test('heads What\'s New with the running version and shows its note inline', async () => {
     await renderAbout();
 
-    const releasePicker = document.querySelector<HTMLSelectElement>('select[aria-label="Release notes version"]');
-    expect(releasePicker?.value).toBe('0.1.0');
+    // The heading names the version the person is running — no picker, and none
+    // of the changelog's own bookkeeping for it.
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new in 0.1.0');
+    expect(document.querySelector('select')).toBeNull();
+    expect(document.body.textContent).not.toContain('Unreleased');
+    expect(document.body.textContent).not.toContain('development');
+
     // The note is the pane's content, not something behind a disclosure.
-    const note = document.querySelector('[role="region"][aria-label="What’s new in 0.1.0 - 2026-08-05"]');
-    expect(note?.textContent).toContain('Welcome to Tenon 0.1.');
+    expect(document.querySelector('.settings-about-release-note')?.textContent)
+      .toContain('Welcome to Tenon 0.1.');
     expect([...document.querySelectorAll('button')].map((button) => button.getAttribute('aria-expanded')))
       .not.toContain('false');
 
@@ -130,7 +136,7 @@ describe('SettingsAboutSection', () => {
     expect(document.body.textContent).not.toContain('Next public fix.');
   });
 
-  test('switches releases and pins the full-changelog link to the selected tag', async () => {
+  test('pins the full-changelog link to the tag the build shipped as', async () => {
     await renderAbout();
     const opened = openedUrls();
 
@@ -140,22 +146,25 @@ describe('SettingsAboutSection', () => {
     expect(opened.at(-1)).toBe(
       'https://github.com/relixiaobo/lin-outliner/blob/v0.1.0/CHANGELOG.md#010---2026-08-05',
     );
+  });
 
-    const releasePicker = document.querySelector<HTMLSelectElement>('select[aria-label="Release notes version"]');
-    await act(async () => {
-      if (!releasePicker) throw new Error('Missing release picker');
-      Object.defineProperty(releasePicker, 'value', {
-        configurable: true,
-        value: 'Unreleased',
-      });
-      releasePicker.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+  test('a development build reads the live file and still names its own version', async () => {
+    // No `[0.2.0]` section yet, so the build resolves to Unreleased — which the
+    // user never sees under that name, and which has no tag to pin to.
+    if (!window.lin) throw new Error('Missing test bridge');
+    const appInfo = window.lin.appInfo;
+    window.lin.appInfo = async () => ({ ...(await appInfo!()), version: '0.2.0' });
+    await renderAbout();
+    const opened = openedUrls();
 
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new in 0.2.0');
     expect(document.body.textContent).toContain('Next release is taking shape.');
-    expect(document.body.textContent).not.toContain('Welcome to Tenon 0.1.');
-    expect(document.body.textContent).not.toContain('Private implementation detail.');
+    expect(document.body.textContent).not.toContain('Unreleased');
+
+    const fullChangelog = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Full changelog'));
     await act(async () => { fullChangelog?.click(); });
-    // A development build has no tag to pin to, so it reads the live file.
     expect(opened.at(-1)).toBe('https://github.com/relixiaobo/lin-outliner/blob/main/CHANGELOG.md#unreleased');
   });
 
@@ -172,7 +181,21 @@ describe('SettingsAboutSection', () => {
     expect(document.body.textContent).toContain('Full changelog');
     expect(document.body.textContent).not.toContain('Only engineering detail here.');
     expect(document.body.textContent).not.toContain('Added');
-    expect(document.querySelector('[role="region"]')).toBeNull();
+    expect(document.querySelector('.settings-about-release-note')).toBeNull();
+  });
+
+  test('claims no version in the heading when app info does not load', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
+    window.lin.appInfo = async () => { throw new Error('unavailable'); };
+
+    await renderAbout();
+
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new');
+    // Falling back to the changelog's own label here is what surfaced the word
+    // `Unreleased` in the shipped build.
+    expect(document.body.textContent).not.toContain('Unreleased');
+    expect(document.body.textContent).toContain('Next release is taking shape.');
   });
 
   test('omits the identity group when app info cannot be loaded', async () => {

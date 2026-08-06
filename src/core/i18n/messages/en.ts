@@ -387,12 +387,11 @@ export const en = {
       copyVersionInfo: 'Copy version info',
       copiedNotice: 'Version info copied.',
       copyFailed: 'Could not copy version info.',
+      // The heading names the running version. `whatsNewGroup` is the fallback for
+      // a build whose app info did not load, where there is no version to name.
       whatsNewGroup: 'What’s new',
-      releaseLabel: 'Release',
-      releasePickerLabel: 'Release notes version',
+      whatsNewInVersion: ({ version }: { version: string }) => `What’s new in ${version}`,
       fullChangelogAction: 'Full changelog',
-      developmentReleaseLabel: ({ version }: { version: string }) => `${version} development`,
-      releaseNoteAriaLabel: ({ version }: { version: string }) => `What’s new in ${version}`,
       releaseNotesUnavailable: 'Release notes are unavailable.',
       supportGroup: 'Support',
       helpAction: 'Tenon Help',

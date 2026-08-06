@@ -323,10 +323,18 @@ lines, and focusing or operating a row's menu or switch never expands the row.
 model, and clearing saved translations; Websites clears URL-preview session data.
 The preview Languages popover writes the same cross-window preference store.
 
-**About.** Identity/version with copy, per-version What's New, support, and legal.
-The native About item opens this page. `AppInfo.version` selects its `CHANGELOG`
-section; if absent, `Unreleased` is labelled as that version's development train,
-and multiple sections use a native select.
+**About.** Identity/version with copy, What's New for the running version,
+support, and legal. The native About item opens this page. `AppInfo.version`
+selects its `CHANGELOG` section, falling back to `Unreleased`.
+
+The group is headed **"What's new in `<AppInfo.version>`"** — the version the
+person is running, never the changelog's bookkeeping for it. `Unreleased` and
+"development train" are how the repo talks to itself; a user has 0.2.0, and this
+is what is new in it. Without app info the heading claims no version rather than
+falling back to the section label, which is how the word `Unreleased` reached a
+shipped build. There is no version picker: browsing other releases' notes is a
+maintainer's errand served by the full changelog, and the control existed mainly
+to surface that same vocabulary.
 
 What's New renders **only** that section's opening user-register note — the block
 above its first heading of any depth — inline and uncollapsed, followed by one

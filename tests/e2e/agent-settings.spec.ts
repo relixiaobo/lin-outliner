@@ -81,11 +81,15 @@ test.describe('agent settings window', () => {
 
     await expect(settings.getByRole('heading', { name: 'About' })).toBeVisible();
     await expect(settings.getByText('Version 0.1.0', { exact: true })).toBeVisible();
-    const whatsNew = settings.getByRole('list', { name: 'What’s new' });
+    // The group names the running version; the changelog's own `Unreleased` /
+    // development-train vocabulary never reaches the pane.
+    const whatsNew = settings.getByRole('list', { name: 'What’s new in 0.1.0' });
     await expect(whatsNew).toBeVisible();
+    await expect(settings.getByText('Unreleased')).toHaveCount(0);
+    await expect(settings.locator('select')).toHaveCount(0);
 
     // The note reads inline — nothing to expand, and no engineering category.
-    const note = whatsNew.getByRole('region', { name: /What’s new in 0\.1\.0/ });
+    const note = whatsNew.locator('.settings-about-release-note');
     await expect(note).toBeVisible();
     expect((await note.innerText()).trim().length).toBeGreaterThan(0);
     await expect(whatsNew.getByRole('button', { expanded: false })).toHaveCount(0);

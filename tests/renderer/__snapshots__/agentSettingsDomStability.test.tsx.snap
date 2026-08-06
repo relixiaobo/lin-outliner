@@ -1056,10 +1056,10 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
           </div>
         </div>
         <div data-settings-anchor="whats-new" class="inset-group">
-          <div class="inset-group-header">What’s new</div>
-          <div role="list" class="inset-card" aria-label="What’s new">
+          <div class="inset-group-header">What’s new in 0.1.0</div>
+          <div role="list" class="inset-card" aria-label="What’s new in 0.1.0">
             <div role="listitem" class="settings-about-release-note-row">
-              <div role="region" class="file-preview-markdown settings-about-release-note" aria-label="What’s new in 0.1.0 development">
+              <div class="file-preview-markdown settings-about-release-note">
                 <p>A deterministic user note, which is all the pane renders.</p>
               </div>
             </div>
