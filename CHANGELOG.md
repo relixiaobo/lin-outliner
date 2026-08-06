@@ -8,7 +8,19 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-Nothing yet. `main` is at `0.1.0`; add entries here and they move under the next tag.
+`main` is at `0.1.0`; entries here move under the next tag.
+
+### Fixed
+
+- **`docs:check` no longer fails every branch that introduces a plan (main)** —
+  the C2 orphan-plan guard exempts a plan not yet on `origin/main`, because
+  boarding it is the integration gate's job at merge. That exemption never fired:
+  it keyed off `git cat-file -e` exiting 1 for a missing path, but `cat-file`
+  exits 128 for both a missing path and a missing ref, so every probe fell
+  through to strict checking and reported a false orphan. The ref is now probed
+  separately with `git rev-parse --verify --quiet`, and any `cat-file` failure
+  under a present ref means the path is absent. A genuine orphan — a plan on
+  `origin/main` with no board reference — still fails as before.
 
 ## [0.1.0] - 2026-08-06
 

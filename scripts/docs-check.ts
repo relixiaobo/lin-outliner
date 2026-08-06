@@ -148,18 +148,30 @@ for (const match of stripMarkdownCode(tasks).matchAll(markdownLinkRe)) {
 // C2 — every active plan is referenced in TASKS.md as a real board reference.
 // Top-level files only: archive/ holds terminal plans and reference/ holds standing
 // authorities; neither is a unit of active work the board must carry.
+// `git cat-file -e` exits 128 for BOTH a missing path and a missing ref, so the
+// two cases cannot be told apart by its status. Probe the ref separately with
+// `rev-parse --verify`, which exits non-zero only when the ref itself is absent.
+function originMainIsAvailable(): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main^{commit}'], {
+      cwd: ROOT,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 function existsOnOriginMain(repoRelPath: string): boolean | null {
+  if (!originMainIsAvailable()) return null;
   try {
     execFileSync('git', ['cat-file', '-e', `origin/main:${repoRelPath}`], {
       cwd: ROOT,
       stdio: 'ignore',
     });
     return true;
-  } catch (error) {
-    // Distinguish "object missing" (status 1 → plan not on origin/main) from
-    // "no origin/main ref at all" (status 128 → fall back to strict checking).
-    const status = (error as { status?: number }).status;
-    return status === 1 ? false : null;
+  } catch {
+    return false;
   }
 }
 const activePlanSlugs = readdirSync(PLANS_DIR, { withFileTypes: true })
