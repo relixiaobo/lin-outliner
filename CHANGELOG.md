@@ -8,7 +8,7 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is at `0.1.0`; entries here move under the next tag.
+`main` is the `0.2.0` train; entries here move under the next tag.
 
 ### Fixed
 
@@ -34,11 +34,33 @@ Entries reference the pull request that introduced them.
   move reports the stale entry instead of the residue it silently stopped
   covering. `plans/reference/` is still not exempt as a directory.
 
+### Internal
+
+- **Open the 0.2.0 train; seed user-register release notes (main-agent)** —
+  `package.json` dials to `0.2.0` after the v0.1.0 publication. `[0.1.0]` gains
+  a user-language welcome note as its opening block (its engineering provenance
+  moved under that section's Internal category), `AGENTS.md` records the
+  release-freeze rule — main drafts the user note from the section's entries,
+  the PM ratifies — and the What's New renderer change is boarded as
+  `whats-new-user-notes` (plan PM-ratified, unclaimed).
+
 ## [0.1.0] - 2026-08-06
 
-First tagged release. Everything below shipped to `main` before this tag and had been
-accumulating under `[Unreleased]` across 21 duplicate category sections, which made "what
-changed in this release" unanswerable; the sections are merged, no entry was edited.
+**Welcome to Tenon 0.1 — the first public build.** Tenon is a local-first
+outliner with a built-in AI agent.
+
+- **Outline your thinking** — keyboard-first outlining with tags, fields,
+  dates, and search.
+- **Direct a local agent** — it works in a side dock, reads and edits your
+  outline, runs tools, and asks before doing anything risky.
+- **Extend it with Skills** — install Skills from the library, or author your
+  own and let the agent use them.
+- **Read anything** — PDF, EPUB, Office, and web previews, with bilingual
+  translation.
+- **Capture from anywhere** — a global launcher drops thoughts into Today
+  without leaving what you were doing.
+
+Your data stays on your machine. Future updates list what's new here.
 
 ### Added
 
@@ -5364,6 +5386,12 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
 
 ### Internal
+
+- **How this section was assembled** — everything under `[0.1.0]` shipped to
+  `main` before the first tag and had been accumulating under `[Unreleased]`
+  across 21 duplicate category sections, which made "what changed in this
+  release" unanswerable; the sections were merged by category,
+  multiset-verified, no entry edited.
 
 - **Publish releases from the changelog (PR #480, main-agent)** — pushing a `v*`
   tag builds the unsigned Apple-silicon `.dmg` and creates the GitHub Release

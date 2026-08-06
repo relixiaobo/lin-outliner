@@ -373,7 +373,11 @@ open an isolated PR and let the other agent rebase before continuing:
   `.dmg` and creates the GitHub Release with that version's `CHANGELOG.md`
   section as its body; the tag and `package.json` version must agree or the job
   fails. Builds are unsigned and Apple-silicon-only, both stated in the release
-  notes rather than left for the downloader to discover.
+  notes rather than left for the downloader to discover. A release freeze also
+  writes the version section's opening **user-register note** — the What's New
+  source and the release-body lead: main drafts it from the section's entries,
+  the PM ratifies. Versions dial per release train (minor pre-1.0), never per
+  PR; dial `package.json` right after tagging so dev builds name the next train.
 - `.github/workflows/`, `playwright.config.ts` — the `main` e2e signal;
   main-agent-owned. It is deliberately not a PR gate and deliberately runs with
   `retries: 0` — turning retries on would make an unstable suite report green,

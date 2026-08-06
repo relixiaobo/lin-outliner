@@ -31,6 +31,9 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
   entry, default acquisition and opt-out lifecycle, shell/PATH isolation.
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
+- **Approved and unclaimed, small:** `whats-new-user-notes` — What's New renders
+  a user-register note per release instead of the engineering changelog
+  (PM-ratified 2026-08-06); see `docs/plans/whats-new-user-notes.md`.
 
 ## Backlog
 
@@ -459,6 +462,12 @@ archived `done` (see Recently completed). Remaining active work:
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
   `docs/spec/outliner-parity-matrix.md`. See `docs/plans/reference/nodex-parity-decisions.md`.
+- **whats-new-user-notes** (P2, build-ready, **PM-ratified 2026-08-06**) — the
+  What's New pane renders a short user-register note per release instead of the
+  engineering changelog, and `[0.1.0]`'s note is a product welcome rather than a
+  change record. Renderer + `release-notes.ts` + spec/tests in one PR; the
+  welcome text, the AGENTS freeze rule, and the `0.2.0` dial are main-owned and
+  landed separately. See `docs/plans/whats-new-user-notes.md`.
 - **macos-liquid-glass-icon** — `shelved` (PM, 2026-08-06): shipping the true
   Liquid Glass `.icon` makes Xcode 26 (`actool`) a hard dependency on every
   packaging machine, and the icon still needs a real Icon Composer design pass;
