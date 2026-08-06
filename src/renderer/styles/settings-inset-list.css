@@ -26,9 +26,26 @@
 
 /* The release's user note reads inline: it is a short paragraph and a handful of
    bullets, so it needs neither a scroll bound nor the focus stop a scrollable
-   region would have to carry. The pane's own scroller is the only one. */
+   region would have to carry. The pane's own scroller is the only one.
+
+   It is a card row, so it draws the card's hairline like every other row —
+   the note is not an `.inset-row` (it holds prose, not the label/trailing grid),
+   and without this the "Full changelog" row below butts against the note's last
+   paragraph and reads as one more line of prose instead of something to click. */
 .settings-about-release-note-row {
+  position: relative;
   min-width: 0;
+}
+
+.settings-about-release-note-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: var(--inset-separator-inset-right, 0);
+  bottom: 0;
+  left: var(--inset-separator-inset, var(--space-4));
+  height: 1px;
+  background: var(--separator);
+  pointer-events: none;
 }
 
 .settings-about-release-note {

@@ -353,21 +353,27 @@ heading below the version heading, not `###` specifically — a depth test that
 holds only while every section follows the convention would let a `####` section
 pour its whole ledger, Internal included, into both user surfaces.
 
-The link pins to the tag the build shipped as
+The link pins to the tag of the release being shown
 (`blob/vX.Y.Z/CHANGELOG.md#anchor`), so an old build lands on its section as it
-shipped; a development build reads `main`. Between the freeze commit and the tag
-push the running version matches a dated section whose tag does not exist yet,
-and the app cannot tell that state from a published one — that window belongs to
-whoever is cutting the release, never to a user, since every build a user has was
-published. A section written before the convention has no note and degrades to
-the link alone rather than dumping categories.
+shipped. It is always a tag, never `main`: the selected release is always a real
+version, so a development build links to the last release's tag rather than the
+live file. Between the freeze commit and the tag push the running version matches
+a dated section whose tag does not exist yet, and the app cannot tell that state
+from a published one — that window belongs to whoever is cutting the release,
+never to a user, since every build a user has was published. A section written
+before the convention has no note and degrades to the link alone rather than
+dumping categories.
 
 `scripts/release-notes.ts` lifts the same note through the same parser for the
 GitHub Release body and appends the same "Full changelog" link from the same
 helper, so the two user surfaces can neither disagree about what a release says
 nor point at different places for the entries. It exits non-zero when the section
-or its note is missing; it cannot judge whether a note is *good*, which is what
-the release-freeze rule in `AGENTS.md` — main drafts, the PM ratifies — is for.
+or its note is missing, when asked for `Unreleased`, and when the note is still
+the `[Unreleased]` train line — the one bad note with a straight path to
+production, since freezing by renaming the heading carries that line into the
+released section where it reads as perfectly non-empty prose. Beyond that it
+cannot judge whether a note is *good*, which is what the release-freeze rule in
+`AGENTS.md` — main drafts, the PM ratifies — is for.
 Changelog links use external navigation; legal links to the actual MIT license.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in

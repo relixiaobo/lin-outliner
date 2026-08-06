@@ -121,4 +121,38 @@ describe('release-notes', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain('usage:');
   });
+
+  test('refuses to publish Unreleased', () => {
+    const { code, stderr } = run(CHANGELOG, 'Unreleased');
+
+    expect(code).toBe(1);
+    expect(stderr).toContain('not a release');
+  });
+
+  // The freeze renames `## [Unreleased]` to `## [X.Y.Z] - <date>` and opens a
+  // fresh Unreleased above it. That motion carries the train line down into the
+  // released section, where it is no longer recognizable by heading and reads as
+  // a perfectly non-empty note — so the emptiness check alone would publish
+  // "`main` is the 0.2.0 train…" as the entire body, and show it in the pane.
+  test('refuses a section still opening with the Unreleased train line', () => {
+    const frozen = `# Changelog
+
+## [Unreleased]
+
+\`main\` is the 0.3.0 train; entries here move under the next tag.
+
+## [0.2.0] - 2026-09-01
+
+\`main\` is the \`0.2.0\` train; entries here move under the next tag.
+
+### Fixed
+
+- A real entry nobody would ever read in the body.
+`;
+    const { code, stdout, stderr } = run(frozen, '0.2.0');
+
+    expect(code).toBe(1);
+    expect(stderr).toContain('train line');
+    expect(stdout).not.toContain('train');
+  });
 });

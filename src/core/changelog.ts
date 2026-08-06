@@ -5,8 +5,6 @@ export interface ChangelogRelease {
   version: string;
   /** Optional date suffix from `## [version] - date`. */
   date: string | null;
-  /** Human-readable option label for a release picker. */
-  label: string;
   /**
    * The release's user-register note: everything between the version heading and
    * its first category heading. Empty for a section written before the
@@ -49,7 +47,6 @@ export function parseChangelogReleases(source: string): ChangelogRelease[] {
     releases.push({
       version: current.version,
       date: current.date,
-      label: current.date ? `${current.version} - ${current.date}` : current.version,
       note: current.chunks.join('').trim(),
     });
   }
@@ -90,10 +87,13 @@ export function parseChangelogReleases(source: string): ChangelogRelease[] {
  * link rather than borrowing an older release's words.
  *
  * A build running ahead of the last release — a dev build, or any build before
- * the next freeze — falls back to the newest release that HAS a note. `Unreleased`
- * is never it. Its opening block is the maintainer bookkeeping naming the train
- * `main` is on, not a note; rendering it as one put "`main` is the `0.2.0` train;
- * entries here move under the next tag" in front of the user as their What's New.
+ * the next freeze — falls back to the HIGHEST-VERSIONED release that HAS a note.
+ * By version, not by file position: newest-first ordering is a convention, and a
+ * `0.1.1` hotfix section appended under `## [0.1.0]` would otherwise make every
+ * such build show the older note and link to the older tag. `Unreleased` is never
+ * it — its opening block is the maintainer bookkeeping naming the train `main` is
+ * on, not a note; rendering it as one put "`main` is the `0.2.0` train; entries
+ * here move under the next tag" in front of the user as their What's New.
  */
 export function resolveChangelogRelease(
   releases: readonly ChangelogRelease[],
@@ -104,11 +104,41 @@ export function resolveChangelogRelease(
     const matching = releases.find((release) => normalizedVersion(release.version) === expected);
     if (matching) return matching;
   }
-  return releases.find((release) => !isUnreleased(release) && release.note) ?? null;
+  return releases
+    .filter((release) => !isUnreleased(release) && release.note)
+    .reduce<ChangelogRelease | null>(
+      (highest, release) => (highest && compareVersions(release, highest) <= 0 ? highest : release),
+      null,
+    );
 }
 
+/** `Unreleased` is a heading, not a version — it never wins the comparison. */
 function isUnreleased(release: ChangelogRelease): boolean {
   return release.version.trim().toLowerCase() === 'unreleased';
+}
+
+/**
+ * Numeric dotted-segment order, longest run wins ties (`0.1.1` > `0.1`). A
+ * segment that is not a number sorts below every one that is, so a malformed
+ * heading loses rather than silently outranking a real release.
+ */
+function compareVersions(a: ChangelogRelease, b: ChangelogRelease): number {
+  const left = versionSegments(a.version);
+  const right = versionSegments(b.version);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? -1) - (right[index] ?? -1);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function versionSegments(version: string): number[] {
+  return normalizedVersion(version)
+    .split('.')
+    .map((segment) => {
+      const parsed = Number.parseInt(segment, 10);
+      return Number.isNaN(parsed) ? -1 : parsed;
+    });
 }
 
 /**
@@ -117,8 +147,12 @@ function isUnreleased(release: ChangelogRelease): boolean {
  *
  * Pinned to the tag rather than `main` so an old build's "full changelog" link
  * lands on the section as that build shipped it — on `main` the heading, its
- * date, and therefore its anchor keep moving. An unreleased dev build has no tag
- * to pin to, so it reads the live file.
+ * date, and therefore its anchor keep moving.
+ *
+ * Every release this can be called with is a real version: the pane never selects
+ * `Unreleased`, and the release script refuses it. There is no `main` branch here
+ * for that reason — one existed, unreachable, while the spec and this comment both
+ * described a link neither surface could produce.
  *
  * The app cannot tell a published version from a frozen-but-untagged one: both
  * are a dated section whose version matches the running build. So between the
@@ -127,9 +161,8 @@ function isUnreleased(release: ChangelogRelease): boolean {
  * a user — every build a user has was published, so its tag resolves.
  */
 export function changelogSectionPath(release: ChangelogRelease): string {
-  const ref = isUnreleased(release) ? 'main' : `v${normalizedVersion(release.version)}`;
   const heading = `[${release.version}]${release.date ? ` - ${release.date}` : ''}`;
-  return `${ref}/CHANGELOG.md#${headingAnchor(heading)}`;
+  return `v${normalizedVersion(release.version)}/CHANGELOG.md#${headingAnchor(heading)}`;
 }
 
 /**

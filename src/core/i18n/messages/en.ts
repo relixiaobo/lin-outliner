@@ -387,8 +387,10 @@ export const en = {
       copyVersionInfo: 'Copy version info',
       copiedNotice: 'Version info copied.',
       copyFailed: 'Could not copy version info.',
-      // The heading names the running version. `whatsNewGroup` is the fallback for
-      // a build whose app info did not load, where there is no version to name.
+      // The heading names the release whose note is shown. `whatsNewGroup` is the
+      // fallback for a heading the changelog left unnamed (`## [ ]`), the only way
+      // that version can come out empty — NOT for a build whose app info failed to
+      // load, which still resolves a release and names it.
       whatsNewGroup: 'What’s new',
       whatsNewInVersion: ({ version }: { version: string }) => `What’s new in ${version}`,
       fullChangelogAction: 'Full changelog',

@@ -39,6 +39,11 @@ const changelogPath = process.argv[3]
   ? (isAbsolute(process.argv[3]) ? process.argv[3] : resolve(process.cwd(), process.argv[3]))
   : fileURLToPath(new URL('../CHANGELOG.md', import.meta.url));
 
+if (version.toLowerCase() === 'unreleased') {
+  console.error('`Unreleased` is not a release. Freeze it under a version heading first.');
+  process.exit(1);
+}
+
 const releases = parseChangelogReleases(await Bun.file(changelogPath).text());
 const release = releases.find((entry) => normalizedVersion(entry.version) === version);
 if (!release) {
@@ -49,6 +54,23 @@ if (!release.note) {
   console.error(
     `The ${version} section has no user note. Write one above its first "###" heading `
     + '— it is both the release body and What\'s New.',
+  );
+  process.exit(1);
+}
+
+// The one bad note with a straight path to production. Freezing by renaming
+// `## [Unreleased]` to `## [X.Y.Z] - <date>` and opening a fresh `## [Unreleased]`
+// above it — the natural motion — carries the train line down into the released
+// section, where it stops being recognizable as `Unreleased` by heading and
+// becomes a perfectly non-empty "note". The emptiness check passes and the train
+// line publishes as the entire release body. This is not a prose-quality judge:
+// no check distinguishes a good note from a mediocre one, and that is what
+// main-drafts-PM-ratifies is for. It refuses exactly one known sentence.
+const TRAIN_LINE = /^`?main`?\s+is\s+the\s+`?\d+\.\d+\.\d+`?\s+train\b/i;
+if (TRAIN_LINE.test(release.note)) {
+  console.error(
+    `The ${version} section still opens with the Unreleased train line, not a user note. `
+    + 'The freeze renames the heading; it also has to replace that line.',
   );
   process.exit(1);
 }
