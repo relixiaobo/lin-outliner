@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { getMessages } from '../../src/core/i18n';
 import type { ProviderChoice } from '../../src/renderer/ui/agent/settingsProviderModel';
-import { resolveProviderStatus, providerStatusSentence } from '../../src/renderer/ui/agent/providerStatus';
+import {
+  providerCheckedAtText,
+  providerStatusSentence,
+  resolveProviderStatus,
+} from '../../src/renderer/ui/agent/providerStatus';
 
 /**
  * The old-label → new-state mapping table.
@@ -145,5 +149,33 @@ describe('provider status — verdicts the legacy ladder could not express', () 
   test('a successful probe reads exactly as an unprobed connection does', () => {
     expect(resolveProviderStatus(choice({ connectionCheck: { outcome: 'ok', at: 1 } })))
       .toEqual(resolveProviderStatus(choice({})));
+  });
+});
+
+/**
+ * A probe timestamp is in the PAST. Routing it through the OAuth expiry formatter,
+ * whose non-positive branch means "this token has run out", made every recorded
+ * verdict announce itself as "Checked expired" — a connection verified seconds ago
+ * reading as stale, and in zh-Hans as the English word "expired" inside a Chinese
+ * sentence.
+ */
+describe('provider checked-at', () => {
+  const now = Date.UTC(2026, 0, 2, 12, 0, 0);
+  const zh = getMessages('zh-Hans');
+
+  test('reads as an age, never as an expiry', () => {
+    expect(providerCheckedAtText(now - 5_000, now, en)).toBe('Checked just now');
+    expect(providerCheckedAtText(now - 60_000, now, en)).toBe('Checked 1 minute ago');
+    expect(providerCheckedAtText(now - 5 * 60_000, now, en)).toBe('Checked 5 minutes ago');
+    expect(providerCheckedAtText(now - 3 * 3_600_000, now, en)).toBe('Checked 3 hours ago');
+    expect(providerCheckedAtText(now - 2 * 86_400_000, now, en)).toBe('Checked 2 days ago');
+  });
+
+  test('is one localized sentence rather than an English fragment in a frame', () => {
+    expect(providerCheckedAtText(now - 5 * 60_000, now, zh)).toBe('5 分钟前检查过');
+  });
+
+  test('a clock that moved backwards still reads as recent, not as a negative age', () => {
+    expect(providerCheckedAtText(now + 10_000, now, en)).toBe('Checked just now');
   });
 });

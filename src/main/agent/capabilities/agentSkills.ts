@@ -1088,6 +1088,26 @@ class SkillRegistry {
     }
   }
 
+  /**
+   * The activated managed roots, or none.
+   *
+   * Managed skills are one source among five, and the only one behind a
+   * user-writable JSON index. Letting that index's decode failure propagate made
+   * every skill load throw — slash commands, the Skill library, and any turn that
+   * touches skills — and the catch below clears built-in and workspace skills too,
+   * so one unreadable managed index took out the whole skill system (A12). It
+   * degrades to "no managed skills" instead; the store heals the index itself.
+   */
+  private async loadManagedSkillRoots(): Promise<Array<{ id: string; name: string; rootDir: string; contentHash: string }>> {
+    if (!this.managedSkillRoots) return [];
+    try {
+      return await this.managedSkillRoots();
+    } catch (error) {
+      console.warn(`Loading managed skills failed; continuing without them: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
   private async performLoad(loadGeneration: number): Promise<void> {
     await this.ensureProvenanceLoaded();
     this.skills.clear();
@@ -1111,13 +1131,26 @@ class SkillRegistry {
       for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
         await this.addLoadedSkill(skill);
       }
-      const managedRoots = await this.managedSkillRoots?.() ?? [];
+      const managedRoots = await this.loadManagedSkillRoots();
       // The service hands back only the activated records, so this set is the
       // managed index's activation flag as of this load.
       this.activeManagedSkillNames = new Set(managedRoots.map((managed) => normalizeSkillName(managed.name)));
       for (const managed of managedRoots) {
-        const skill = await loadSkillFromRoot(managed.rootDir, 'managed', managed.name, managed.contentHash);
-        if (!skill) throw new Error(`Managed skill ${managed.name} is missing a valid ${SKILL_FILE_NAME}.`);
+        // A12: a managed root that no longer holds a readable SKILL.md is one
+        // broken install, not a reason to leave the user with no skills at all.
+        // Skipping it keeps built-in, user, and project skills loadable, and the
+        // Skill library still shows the record with its own diagnostic.
+        let skill: SkillDefinition | null;
+        try {
+          skill = await loadSkillFromRoot(managed.rootDir, 'managed', managed.name, managed.contentHash);
+        } catch (error) {
+          console.warn(`Skipping managed skill ${managed.name}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
+        if (!skill) {
+          console.warn(`Skipping managed skill ${managed.name}: missing a valid ${SKILL_FILE_NAME}.`);
+          continue;
+        }
         await this.addLoadedSkill(skill);
       }
       const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);

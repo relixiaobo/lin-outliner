@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { OAuthCredential } from '@earendil-works/pi-ai';
 
 // The persisted connection verdict, and specifically the narrowing that keeps it
 // honest. `testProviderConnection` does not read a status code off a response —
@@ -39,6 +40,7 @@ const {
   setProviderApiKey,
   upsertProviderConfig,
 } = await import('../../src/main/agent/capabilities/agentSettings');
+const { piCredentialStore } = await import('../../src/main/piModels');
 
 const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'];
 let savedEnv: Record<string, string | undefined> = {};
@@ -157,6 +159,61 @@ describe('provider connection check', () => {
     const afterOAuth = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
     expect(afterOAuth.connectionGeneration).toBeGreaterThan(beforeOAuth.connectionGeneration!);
     expect(await connectionCheck('anthropic')).toBeUndefined();
+  });
+
+  test('an OAuth access-token refresh keeps the verdict it says nothing about', async () => {
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: true });
+    await persistOAuthCredential('anthropic', { access: 'access-1', refresh: 'refresh-1', expires: 1 });
+    await recordProviderConnectionCheck('anthropic', { success: true });
+    const connected = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+
+    // Exactly what pi does on every automatic refresh — same login, new short-lived
+    // access token — through the same `modify` hook it uses in production.
+    await piCredentialStore().modify('anthropic', async (current) => ({
+      ...(current as OAuthCredential),
+      access: 'access-2',
+      expires: 2,
+    }));
+
+    const afterRefresh = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+    expect(afterRefresh.connectionGeneration).toBe(connected.connectionGeneration);
+    expect((await connectionCheck('anthropic'))?.outcome).toBe('ok');
+  });
+
+  test('a different OAuth login through the same hook does clear the verdict', async () => {
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: true });
+    await persistOAuthCredential('anthropic', { access: 'access-1', refresh: 'refresh-1', expires: 1 });
+    await recordProviderConnectionCheck('anthropic', { success: true });
+    const connected = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+
+    await piCredentialStore().modify('anthropic', async () => ({
+      type: 'oauth' as const,
+      access: 'access-2',
+      refresh: 'refresh-2',
+      expires: 2,
+    }));
+
+    const afterLogin = await prepareProviderConnectionProbe({ providerId: 'anthropic' });
+    expect(afterLogin.connectionGeneration).toBeGreaterThan(connected.connectionGeneration!);
+    expect(await connectionCheck('anthropic')).toBeUndefined();
+  });
+
+  test('re-upserting the same row with no endpoint keeps the verdict', async () => {
+    // What the list's enable switch sends. It used to fall through to the catalog's
+    // default Base URL for a row that stores none, which main then read as a new
+    // endpoint — so merely flipping the switch discarded a good verdict and wrote in
+    // a URL the user never entered.
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
+    await recordProviderConnectionCheck('openai', { success: true });
+    const connected = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    await upsertProviderConfig({ providerId: 'openai', baseUrl: null, enabled: false });
+    const afterToggle = await prepareProviderConnectionProbe({ providerId: 'openai' });
+
+    expect(afterToggle.connectionGeneration).toBe(connected.connectionGeneration);
+    expect((await connectionCheck('openai'))?.outcome).toBe('ok');
+    expect((await getProviderSettings()).providers.find((p) => p.providerId === 'openai')?.baseUrl)
+      .toBeUndefined();
   });
 
   test('a probe from an older connection generation cannot overwrite the new row', async () => {

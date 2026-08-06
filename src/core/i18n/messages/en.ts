@@ -1634,7 +1634,10 @@ commandPalette: {
   providerConfig: {
     activeChip: 'Active',
     statusAriaLabel: 'Connection status',
-    checkedAt: ({ when }: { when: string }) => `Checked ${when}`,
+    checkedJustNow: 'Checked just now',
+    checkedMinutesAgo: ({ count }: { count: number }) => `Checked ${count} minute${count === 1 ? '' : 's'} ago`,
+    checkedHoursAgo: ({ count }: { count: number }) => `Checked ${count} hour${count === 1 ? '' : 's'} ago`,
+    checkedDaysAgo: ({ count }: { count: number }) => `Checked ${count} day${count === 1 ? '' : 's'} ago`,
     learnMore: 'Learn more',
     providerIdLabel: 'Provider ID',
     providerIdPlaceholder: 'my-provider',

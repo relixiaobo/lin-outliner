@@ -34,6 +34,7 @@ import type {
   ProviderAuthView,
 } from '../../../core/types';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
+import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import {
   CC_SWITCH_LOCAL_PROVIDER_ID,
   LOCAL_GATEWAY_PROVIDER_REGISTRY,
@@ -176,7 +177,10 @@ interface CcSwitchModelSortKey {
 }
 
 const ccSwitchModelSortKeysByProvider = new Map<string, Map<string, CcSwitchModelSortKey>>();
-const providerCredentialMutationChains = new Map<string, Promise<void>>();
+// Credential writes for one provider are serialized: a login, a key edit, and pi's
+// own OAuth refresh all read-modify-write the same secret file entry, and each
+// then decides whether the connection verdict survives.
+const providerCredentialMutations = createKeyedSerialMutationQueue();
 let providerConnectionGenerationClock = Date.now();
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
@@ -324,7 +328,10 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
       // the identity version. A late probe for the old endpoint can no longer
       // overwrite the new row even after the old verdict has been cleared.
       const previous = file.providers[index]!;
-      const endpointUnchanged = previous.baseUrl === config.baseUrl;
+      // Compared normalized, so an absent endpoint and an empty one are the same
+      // endpoint. A raw !== would let a stored '' and an incoming undefined read as
+      // a change and discard a verdict nothing about the connection invalidated.
+      const endpointUnchanged = normalizeBaseUrl(previous.baseUrl) === normalizeBaseUrl(config.baseUrl);
       file.providers[index] = {
         ...config,
         connectionGeneration: endpointUnchanged
@@ -585,7 +592,7 @@ export async function prepareProviderConnectionProbe(input: {
   apiKeyOverride?: boolean;
 }): Promise<ProviderConnectionProbeContext> {
   const providerId = normalizeProviderId(input.providerId);
-  await providerCredentialMutationChains.get(providerId);
+  await providerCredentialMutations.settled(providerId);
   const file = await readProviderFile();
   const provider = file.providers.find((candidate) => candidate.providerId === providerId);
   const storedBaseUrl = normalizeBaseUrl(provider?.baseUrl);
@@ -1202,20 +1209,55 @@ async function listPiCredentials(): Promise<readonly CredentialInfo[]> {
     ));
 }
 
+/**
+ * pi's credential-store `modify` hook — the write path for logins AND for every
+ * automatic OAuth token refresh, which `Models.getAuth()` runs under this lock.
+ *
+ * So it invalidates the connection verdict only when the credential is a
+ * different *connection*, not on every write. Invalidating unconditionally meant
+ * an OAuth verdict was wiped each time the access token rotated (roughly hourly),
+ * and — worse — that it could never stick at all: pressing Test on an expired
+ * token refreshes it mid-probe, which bumped the very generation
+ * `prepareProviderConnectionProbe` had captured, so `recordProviderConnectionCheck`
+ * silently discarded the successful result.
+ */
 async function modifyPiCredential(
   providerId: string,
   fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 ): Promise<Credential | undefined> {
   let nextCredential: Credential | undefined;
+  let connectionChanged = false;
   await withProviderCredentialMutation(providerId, async () => {
     await mutateSecretFileAsync(async (secrets) => {
       const currentCredential = toPiCredential(secrets.credentials[providerId]);
       nextCredential = await fn(currentCredential) ?? currentCredential;
       if (nextCredential) secrets.credentials[providerId] = fromPiCredential(nextCredential);
+      connectionChanged = credentialConnectionChanged(currentCredential, nextCredential);
     });
-    await invalidateProviderConnection(providerId);
+    if (connectionChanged) await invalidateProviderConnection(providerId);
   });
   return nextCredential;
+}
+
+/**
+ * Whether two stored credentials describe different connections.
+ *
+ * A verdict answers "does this credential reach this endpoint", so what identifies
+ * it is the durable half: the api key, or the OAuth refresh token that identifies
+ * the login. `access`/`expires` rotate underneath a single login and say nothing
+ * about whether it still works.
+ */
+function credentialConnectionChanged(
+  previous: Credential | undefined,
+  next: Credential | undefined,
+): boolean {
+  if (!previous || !next) return Boolean(previous) !== Boolean(next);
+  if (previous.type === 'api_key' && next.type === 'api_key') {
+    return !secretsEqual(previous.key, next.key)
+      || JSON.stringify(previous.env ?? null) !== JSON.stringify(next.env ?? null);
+  }
+  if (previous.type === 'oauth' && next.type === 'oauth') return !secretsEqual(previous.refresh, next.refresh);
+  return true;
 }
 
 async function deletePiCredential(providerId: string): Promise<void> {
@@ -1228,16 +1270,7 @@ async function deletePiCredential(providerId: string): Promise<void> {
 }
 
 async function withProviderCredentialMutation<T>(providerId: string, task: () => Promise<T>): Promise<T> {
-  const prior = providerCredentialMutationChains.get(providerId) ?? Promise.resolve();
-  const run = prior.then(task, task);
-  const tail = run.then(() => undefined, () => undefined);
-  providerCredentialMutationChains.set(providerId, tail);
-  void tail.then(() => {
-    if (providerCredentialMutationChains.get(providerId) === tail) {
-      providerCredentialMutationChains.delete(providerId);
-    }
-  });
-  return run;
+  return providerCredentialMutations.run(providerId, task);
 }
 
 async function mutateSecretFileAsync(mutator: (file: SecretFile) => Promise<void>): Promise<SecretFile> {

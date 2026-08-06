@@ -78,6 +78,42 @@ test('provider enable is optimistic, live while pending, and does not request a 
   });
 });
 
+// The switch says nothing about the endpoint, so it must send exactly what the row
+// stores — including none. It used to fall through to the catalog's default Base
+// URL for a row that has none (a key saved with the field left empty, the normal
+// case), which main reads as an endpoint change: flipping the switch silently
+// dropped a good connection verdict and wrote in a URL the user never entered.
+test('the enable toggle never invents a Base URL for a row that stores none', async () => {
+  const stored = providerSettings(true);
+  const withoutBaseUrl: AgentProviderSettingsView = {
+    ...stored,
+    providers: [{ providerId: 'openai', enabled: true, hasApiKey: true }],
+  };
+  const write = deferred<AgentProviderSettingsView>();
+  const calls: Array<Record<string, unknown> | undefined> = [];
+  const rendered = await renderSettings({ page: 'services' }, async (command, args) => {
+    if (command === 'agent_get_provider_settings') return withoutBaseUrl;
+    if (command === 'agent_upsert_provider_config') {
+      calls.push(args);
+      return write.promise;
+    }
+    return fixtureCommand(command);
+  });
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
+
+  await act(async () => {
+    control.click();
+    await Promise.resolve();
+  });
+
+  expect(calls[0]?.provider).toMatchObject({ providerId: 'openai', baseUrl: null, enabled: false });
+
+  await act(async () => {
+    write.resolve(withoutBaseUrl);
+    await settle();
+  });
+});
+
 test('two provider clicks before render serialize as off then on', async () => {
   const writes = [deferred<AgentProviderSettingsView>(), deferred<AgentProviderSettingsView>()];
   const calls: Array<Record<string, unknown> | undefined> = [];

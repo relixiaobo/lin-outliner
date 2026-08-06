@@ -1536,7 +1536,10 @@ commandPalette: {
   providerConfig: {
     activeChip: '当前',
     statusAriaLabel: '连接状态',
-    checkedAt: ({ when }: { when: string }) => `${when}检查过`,
+    checkedJustNow: '刚刚检查过',
+    checkedMinutesAgo: ({ count }: { count: number }) => `${count} 分钟前检查过`,
+    checkedHoursAgo: ({ count }: { count: number }) => `${count} 小时前检查过`,
+    checkedDaysAgo: ({ count }: { count: number }) => `${count} 天前检查过`,
     learnMore: '了解更多',
     providerIdLabel: '提供方 ID',
     providerIdPlaceholder: 'my-provider',

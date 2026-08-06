@@ -107,3 +107,24 @@ export function providerStatusSentence(status: ProviderStatus, t: Messages): str
   const base = providerStatusText(status, t);
   return status.uncheckable ? t.settings.providers.status.uncheckableSuffix({ status: base }) : base;
 }
+
+/**
+ * When the stored verdict was recorded — "Checked just now", "Checked 5 minutes
+ * ago". `nowMs` is injected so this is pure and testable.
+ *
+ * A probe timestamp is in the PAST. Routing it through the OAuth expiry formatter,
+ * which reads a non-positive delta as a token that has run out, made every
+ * recorded verdict read "Checked expired" — a connection verified seconds ago
+ * announcing itself as stale. The whole sentence lives in the message rather than
+ * a `when` fragment, because a language that puts the verb first cannot assemble
+ * one from an English phrase.
+ */
+export function providerCheckedAtText(checkedAtMs: number, nowMs: number, t: Messages): string {
+  const c = t.providerConfig;
+  const minutes = Math.floor(Math.max(0, nowMs - checkedAtMs) / 60_000);
+  if (minutes < 1) return c.checkedJustNow;
+  if (minutes < 60) return c.checkedMinutesAgo({ count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return c.checkedHoursAgo({ count: hours });
+  return c.checkedDaysAgo({ count: Math.floor(hours / 24) });
+}

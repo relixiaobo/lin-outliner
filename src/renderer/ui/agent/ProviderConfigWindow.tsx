@@ -16,9 +16,8 @@ import {
 } from './providerCatalog';
 import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
-import { resolveProviderStatus } from './providerStatus';
+import { providerCheckedAtText, resolveProviderStatus } from './providerStatus';
 import { buildProviderChoices } from './settingsProviderModel';
-import { formatRelativeExpiry } from './oauthLoginFlow';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
@@ -102,7 +101,7 @@ export function ProviderConfigWindow() {
     : undefined;
   const status = choice ? resolveProviderStatus(choice) : undefined;
   const checkedAt = existing?.connectionCheck
-    ? t.providerConfig.checkedAt({ when: formatRelativeExpiry(existing.connectionCheck.at, Date.now()) })
+    ? providerCheckedAtText(existing.connectionCheck.at, Date.now(), t)
     : undefined;
   const initialBaseUrl = existing?.baseUrl
     ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');

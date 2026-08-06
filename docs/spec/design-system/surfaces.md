@@ -386,6 +386,20 @@ clear the result and advance a main-only generation; results commit only when
 their generation still matches. Explicit Test persists only for the stored
 endpoint and credential, compared via fixed-size digests in constant time.
 
+A *connection* change is a change to what the verdict was about: the endpoint, or
+the durable half of the credential — the API key, or the OAuth refresh token that
+identifies the login. An access token rotating under one login is not one. Every
+write counting as a change wiped an OAuth verdict roughly hourly and made it
+impossible to record at all, because pressing Test on an expired token refreshes
+it mid-probe and so advanced the generation the probe had captured. Endpoints are
+compared normalized, so an absent and an empty Base URL are the same endpoint, and
+the list's enable switch sends the row's own endpoint — never a catalog default the
+user did not enter.
+
+The stored verdict is displayed as an age ("Checked just now", "Checked 5 minutes
+ago"), localized as a whole sentence rather than an English fragment placed in a
+localized frame.
+
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.
 Validation success/failure uses status colour for status only. The primary footer

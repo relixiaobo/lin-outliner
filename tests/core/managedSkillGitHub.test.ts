@@ -89,6 +89,49 @@ describe('managed skill GitHub client', () => {
     expect(discovery.candidates).toHaveLength(1);
   });
 
+  // Install refuses what the review dialog cannot show in full, so this bound is
+  // what decides whether a Skill is installable at all. Sharing the update diff's
+  // 240 lines made an ordinary ~250-line SKILL.md uninstallable with no workaround.
+  test('shows an ordinary long SKILL.md in full, and still marks a pathological one', async () => {
+    async function discoverBody(bodyLines: number) {
+      const skill = new TextEncoder().encode([
+        '---',
+        'name: long-skill',
+        'description: A long but ordinary skill.',
+        '---',
+        ...Array.from({ length: bodyLines }, (_unused, index) => `Line ${index + 1}`),
+      ].join('\n'));
+      const commit = '8'.repeat(40);
+      const fetchImpl: typeof fetch = async (input) => {
+        const url = new URL(requestUrl(input));
+        if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/main')) {
+          return jsonResponse([{ ref: 'refs/heads/main', object: { type: 'commit', sha: commit } }]);
+        }
+        if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/main')) {
+          return jsonResponse([]);
+        }
+        if (url.hostname === 'api.github.com' && url.pathname.endsWith(`/git/trees/${commit}`)) {
+          return jsonResponse({ truncated: false, tree: [treeEntry('skills/long/SKILL.md', skill)] });
+        }
+        if (url.hostname === 'raw.githubusercontent.com') return bytesResponse(skill);
+        return jsonResponse({ message: 'not found' }, 404);
+      };
+      const client = new ManagedSkillGitHubClient({ fetchImpl });
+      const discovery = await client.discover({
+        sourceUrl: 'https://github.com/public/repo/tree/main/skills/long',
+        appVersion: '0.1.0',
+      });
+      return discovery.candidates[0]!.view;
+    }
+
+    const ordinary = await discoverBody(250);
+    expect(ordinary.skillBodyTruncated).toBeUndefined();
+    expect(ordinary.skillBody).toContain('Line 250');
+
+    const pathological = await discoverBody(2_500);
+    expect(pathological.skillBodyTruncated).toBe(true);
+  });
+
   test('resolves a default-branch tree URL with a fixed API request count', async () => {
     const skill = skillMarkdown('default-skill', 'Default branch skill.');
     const commit = '9'.repeat(40);

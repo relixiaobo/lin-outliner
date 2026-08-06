@@ -213,7 +213,14 @@ export function SettingsProvidersSection({
       void window.lin?.openProviderConfig?.({ providerId, mode: 'configure' });
       return;
     }
-    onToggleProviderEnabled(providerId, provider?.baseUrl ?? catalogEntry?.defaultBaseUrl ?? null);
+    // An existing row keeps exactly the endpoint it stores — including none. Falling
+    // through to the catalog default wrote a Base URL the user never entered, and
+    // main reads that as an endpoint change, so merely flipping the switch dropped
+    // the connection verdict. The default belongs only to the row being created.
+    onToggleProviderEnabled(
+      providerId,
+      provider ? provider.baseUrl ?? null : catalogEntry?.defaultBaseUrl ?? null,
+    );
   }
 
   function deleteProviderFor(providerId: string) {

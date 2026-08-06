@@ -135,6 +135,27 @@ describe('managed skill store', () => {
     expect(await store.verifyVersion(orphanSkill.name, storedVersionFromValidated('c'.repeat(40), 110, orphanSkill)))
       .toMatchObject({ ok: false });
   });
+
+  test('initialization quarantines an index this build cannot decode and starts empty', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    // An index written by an older schema. Decoding stays fail-closed, but that
+    // verdict used to be permanent: every later read threw, so the runtime roots,
+    // the library, and every install stayed broken with no way back.
+    await mkdir(path.dirname(store.indexPath), { recursive: true });
+    await writeFile(store.indexPath, JSON.stringify({ schemaVersion: 1, skills: [] }), 'utf8');
+
+    await store.initialize();
+
+    expect(await store.readIndex()).toEqual({ schemaVersion: 2, skills: [] });
+    const quarantined = (await readdir(path.dirname(store.indexPath)))
+      .filter((entry) => entry.startsWith('index.json.unreadable-'));
+    expect(quarantined).toHaveLength(1);
+    // Renamed, never deleted: a schema break must not destroy the record of what
+    // was installed.
+    expect(JSON.parse(await readFile(path.join(path.dirname(store.indexPath), quarantined[0]!), 'utf8')))
+      .toEqual({ schemaVersion: 1, skills: [] });
+  });
 });
 
 async function temporaryRoot(): Promise<string> {

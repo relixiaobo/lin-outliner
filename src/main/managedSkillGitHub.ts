@@ -638,10 +638,15 @@ function candidateScriptPaths(
   return scripts;
 }
 
-// Same bound the update diff uses: enough to read a SKILL.md in full in every
-// realistic case, and marked rather than silently cut when it is not.
-const MAX_SKILL_BODY_LINES = 240;
-const MAX_SKILL_BODY_CHARS = 24_000;
+// Install refuses what it cannot show in full, so this bound decides which
+// SKILL.md files are installable at all — it is NOT the update diff's bound, which
+// only decides how much of a change is worth scrolling. Sized past any
+// hand-written SKILL.md rather than at the typical one: at the diff's 240 lines a
+// perfectly ordinary ~250-line Skill became uninstallable with no workaround.
+// Still bounded, because validation admits a 1 MiB file and the review dialog has
+// to render whatever this returns.
+const MAX_SKILL_BODY_LINES = 2_000;
+const MAX_SKILL_BODY_CHARS = 160_000;
 
 function boundedSkillBody(skillContent: string): { skillBody: string; skillBodyTruncated?: boolean } {
   const lines = skillContent.split('\n');

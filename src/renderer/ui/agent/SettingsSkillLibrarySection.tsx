@@ -21,6 +21,8 @@ import {
 import { useManagedSkills } from './useManagedSkills';
 import { cx } from '../primitives/cx';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
+import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
+import { skillLibraryCount } from './skillLibraryCount';
 
 /** A fault in the Skill's own bytes or identity, as opposed to a failed check. */
 function isSkillFault(skill: ManagedSkillView): boolean {
@@ -81,6 +83,13 @@ function directoryContaining(
 interface LibraryRow {
   key: string;
   name: string;
+  /**
+   * The managed index's id for this row, absent on every other source. Managed
+   * per-row state — override, target, queue, generation, error — is keyed by it,
+   * because a name is not an identity here: the `name_conflict` state this pane
+   * surfaces is precisely a name held by more than one Skill.
+   */
+  managedId?: string;
   displayName: string;
   /** Whether typing `/name` in the composer actually invokes it. */
   userInvocable: boolean;
@@ -149,7 +158,7 @@ export function SettingsSkillLibrarySection({
   const disabledSkillsRef = useRef(disabledSkills);
   disabledSkillsRef.current = disabledSkills;
   const managedToggleTargetsRef = useRef(new Map<string, boolean>());
-  const managedToggleQueuesRef = useRef(new Map<string, Promise<void>>());
+  const managedToggleQueuesRef = useRef(createKeyedSerialMutationQueue());
   const managedToggleGenerationsRef = useRef(new Map<string, number>());
   const managed = useManagedSkills(onApplied, async (installed) => {
     if (!disabledSkillsRef.current.includes(installed.name)) return true;
@@ -287,9 +296,7 @@ export function SettingsSkillLibrarySection({
 
   useEffect(() => {
     if (!skillsLoaded || !managed.listLoaded) return;
-    onSkillCountChange(
-      allSkills.filter((skill) => skill.source !== 'managed').length + managed.skills.length,
-    );
+    onSkillCountChange(skillLibraryCount(allSkills, managed.skills));
   }, [allSkills, managed.listLoaded, managed.skills, onSkillCountChange, skillsLoaded]);
 
   const runSkillProvenanceAction = (action: () => Promise<SkillDefinition[]>) => {
@@ -355,11 +362,10 @@ export function SettingsSkillLibrarySection({
     const generation = beginKeyedMutation(managedToggleGenerationsRef.current, skill.id);
     managedToggleTargetsRef.current.set(skill.id, enabled);
     setManagedToggleOverrides((current) => withMapValue(current, skill.id, enabled));
-    setManagedToggleErrors((current) => withoutMapKey(current, skill.name));
+    setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
     managed.clearFeedback();
 
-    const prior = managedToggleQueuesRef.current.get(skill.id) ?? Promise.resolve();
-    const run = prior.then(async () => {
+    void managedToggleQueuesRef.current.run(skill.id, async () => {
       const result = await managed.setEnabled(skill, enabled);
       if (!result.ok) {
         if (isCurrentManagedToggle(skill.id, generation)) {
@@ -367,7 +373,7 @@ export function SettingsSkillLibrarySection({
           setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
           setManagedToggleErrors((current) => withMapValue(
             current,
-            skill.name,
+            skill.id,
             managedSkillErrorMessage(result.error, t),
           ));
         }
@@ -391,16 +397,22 @@ export function SettingsSkillLibrarySection({
       if (isCurrentManagedToggle(skill.id, generation)) {
         managedToggleTargetsRef.current.delete(skill.id);
         setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
-        setManagedToggleErrors((current) => withoutMapKey(current, skill.name));
+        setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
         managed.showEnabledNotice(skill.name, enabled);
       }
     });
-    managedToggleQueuesRef.current.set(skill.id, run.then(() => undefined, () => undefined));
   }
 
   function isCurrentManagedToggle(skillId: string, generation: number): boolean {
     return mountedRef.current
       && isCurrentKeyedMutation(managedToggleGenerationsRef.current, skillId, generation);
+  }
+
+  // Two stores, two keys: the shell's disabledSkills errors are per Skill name
+  // (that list IS a set of names), the managed ones per managed id.
+  function rowToggleError(row: LibraryRow): string | undefined {
+    return toggleErrors.get(row.name)
+      ?? (row.managedId === undefined ? undefined : managedToggleErrors.get(row.managedId));
   }
 
   /**
@@ -419,6 +431,7 @@ export function SettingsSkillLibrarySection({
     return {
       key: `managed:${skill.id}`,
       name: skill.name,
+      managedId: skill.id,
       displayName: skill.name,
       userInvocable: skill.userInvocable,
       // The description always survives. A failed update check is produced for
@@ -642,8 +655,8 @@ export function SettingsSkillLibrarySection({
           {rows.map((row) => (
             <InsetRow
               dimmed={row.dimmed}
-              feedback={(toggleErrors.get(row.name) ?? managedToggleErrors.get(row.name)) ? (
-                <span role="alert">{toggleErrors.get(row.name) ?? managedToggleErrors.get(row.name)}</span>
+              feedback={rowToggleError(row) ? (
+                <span role="alert">{rowToggleError(row)}</span>
               ) : undefined}
               key={row.key}
               label={(

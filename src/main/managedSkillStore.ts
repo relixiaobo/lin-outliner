@@ -98,8 +98,42 @@ export class ManagedSkillStore {
     await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.contentRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.stagingRoot, PRIVATE_DIRECTORY_MODE);
+    await this.healUnreadableIndex();
     await this.pruneStaging();
     await this.pruneOrphanVersions();
+  }
+
+  /**
+   * Move an index this build cannot decode aside, once, at startup.
+   *
+   * Decoding stays fail-closed — the index admits records into the store, so a
+   * half-read one must not enter it — but that verdict used to be permanent: every
+   * later read threw the same error, so the runtime roots, the Skill library, and
+   * every install stayed broken with no way back short of deleting the file by
+   * hand. Pre-release we do not migrate formats (AGENTS.md), so the heal is to
+   * quarantine and start empty: `pruneOrphanVersions` then reaps the content, and
+   * the skills are reinstallable. Renamed rather than deleted, so a schema break
+   * never destroys the record of what was installed.
+   */
+  private async healUnreadableIndex(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await readFile(this.indexPath, 'utf8');
+    } catch {
+      // No index yet, or a fault that is not about this file's content. Neither
+      // is a corrupt index, and neither may trigger a quarantine.
+      return;
+    }
+    try {
+      parseManagedSkillIndex(JSON.parse(raw));
+    } catch (error) {
+      const quarantinePath = `${this.indexPath}.unreadable-${Date.now()}`;
+      await rename(this.indexPath, quarantinePath);
+      console.warn(
+        `Managed skill index could not be read (${error instanceof Error ? error.message : String(error)}); `
+        + `moved to ${quarantinePath}. Managed skills must be reinstalled.`,
+      );
+    }
   }
 
   async readIndex(): Promise<ManagedSkillIndex> {

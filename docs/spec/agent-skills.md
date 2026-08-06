@@ -23,6 +23,20 @@ Skill definitions. A resource-backed built-in may separately expose its normaliz
 bundle directory as a live read locator. Mutable Skills resolve to their real
 `SKILL.md` files.
 
+**One failing source never takes out the registry (A12).** A registry load that
+throws clears every loaded Skill, built-ins included, so the managed source — the
+only one behind a user-writable JSON index — is loaded defensively: a managed
+index that cannot be decoded degrades to "no managed skills", and a managed root
+missing a readable `SKILL.md` drops that row alone. Otherwise one unreadable index
+costs the user every Skill they have: no slash commands, no library, and a throw
+on any turn that touches Skills.
+
+Decoding that index stays fail-closed — it admits records into the store — but the
+verdict is no longer permanent. `ManagedSkillStore.initialize()` moves an index it
+cannot decode aside (renamed, never deleted) and starts empty, after which the
+orphan-version prune reaps its content and the Skills are reinstallable. Pre-release
+we do not migrate formats, so a schema break is a reinstall, not a broken app.
+
 ## Format
 
 YAML frontmatter may define description, usage guidance, allowed tools,
@@ -311,6 +325,12 @@ The install review shows the candidate description and the complete bounded
 review bound; that candidate's Install action is disabled, and main repeats the
 check before any candidate download so a stale or bypassed renderer cannot admit
 instructions the user could not review in full.
+
+Because refusing what cannot be shown decides which Skills are installable at
+all, the review bound is **not** the update diff's bound and is sized well past
+any hand-written `SKILL.md` — a diff is a reading aid that may be skimmed, a
+review body is consent. It stays bounded only because validation admits a 1 MiB
+file and the dialog has to render whatever discovery returns.
 
 The panel is a dialog-class surface: opaque `--bg-elevated` at
 `--overlay-shadow-level-2`, matching `.confirm-dialog`. Translucent material is

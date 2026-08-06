@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
-import { api } from '../../api/client';
 import { TRANSLATION_LANGUAGES } from '../../../core/translationLanguage';
 import type { TranslationLanguage } from '../../../core/translationLanguage';
 import { useT } from '../../i18n/I18nProvider';
@@ -30,6 +29,14 @@ import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGene
 interface SettingsPreviewSectionProps {
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
+  /**
+   * Only to build the translation-model menu — null until the shell has loaded.
+   * Taken from the shell rather than fetched here, like the Agent pane's: the
+   * shell already holds this and re-reads it on every settings-changed broadcast,
+   * so a private copy was both a second IPC round trip on mount and a one-shot
+   * snapshot that went stale while the pane stayed open.
+   */
+  settings: AgentProviderSettingsView | null;
 }
 
 /**
@@ -46,13 +53,10 @@ interface SettingsPreviewSectionProps {
  * Named Preview rather than Reading because that is the word the app already
  * ships — including in this pane's own website-data copy.
  */
-export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSectionProps) {
+export function SettingsPreviewSection({ onError, onNotice, settings }: SettingsPreviewSectionProps) {
   const t = useT();
   const { language } = useTranslationLanguagePreference();
   const preferences = useUrlPageTranslationPreferences();
-  // Only to build the model menu. Read-only and best-effort: a menu that cannot
-  // be built falls back to "Agent model", which is also the default.
-  const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [preferenceErrors, setPreferenceErrors] = useState<Map<string, string>>(new Map());
   const preferenceMutationGenerationsRef = useRef(new Map<string, number>());
   const autoTranslateUrlsIntentRef = useRef(preferences.autoTranslateUrls);
@@ -60,17 +64,9 @@ export function SettingsPreviewSection({ onError, onNotice }: SettingsPreviewSec
   autoTranslateUrlsIntentRef.current = preferences.autoTranslateUrls;
   autoTranslateEpubsIntentRef.current = preferences.autoTranslateEpubs;
 
-  useEffect(() => {
-    let active = true;
-    void api.agentGetProviderSettings()
-      .then((next) => { if (active) setProviderSettings(next); })
-      .catch(() => { /* the menu degrades to the default */ });
-    return () => { active = false; };
-  }, []);
-
-  const modelGroups = translationModelGroups(providerSettings);
+  const modelGroups = translationModelGroups(settings);
   const model = preferences.translationModel;
-  const modelsLoaded = providerSettings !== null;
+  const modelsLoaded = settings !== null;
   const modelAvailable = modelGroups.some((group) => group.models.some((entry) => entry.value === model));
 
   function persistPreference(preference: string, action: () => Promise<void>): void {

@@ -171,6 +171,55 @@ describe('managed skill runtime integration', () => {
       expectedActiveHash: validated.contentHash,
     });
   });
+
+  // A12. Managed skills are one source among five, and the only one behind a
+  // user-writable index. Letting that index's failure through took out the whole
+  // registry — the catch in performLoad clears built-ins and workspace skills too —
+  // so an unreadable managed index left the user with no skills at all: no slash
+  // commands, no library, and a throw on any turn that touches skills.
+  test('an unreadable managed index costs the managed skills, not every skill', async () => {
+    const fixture = await managedFixture('degraded');
+    const projectRoot = path.join(fixture.workspace, '.agents', 'skills', 'project-skill');
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(path.join(projectRoot, 'SKILL.md'), skillMarkdown('project-skill', 'Survives.'), 'utf8');
+    const runtime = new AgentSkillRuntime({
+      localRoot: fixture.workspace,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+      managedSkillRoots: async () => { throw new Error('Managed skill index has an unsupported or corrupt schema.'); },
+      assertManagedSkillInvocable: async () => undefined,
+    });
+
+    expect((await runtime.listAllSkills()).map((skill) => skill.name)).toEqual(['project-skill']);
+  });
+
+  test('a managed root missing its SKILL.md drops that row only', async () => {
+    const fixture = await managedFixture('present');
+    const projectRoot = path.join(fixture.workspace, '.agents', 'skills', 'project-skill');
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(path.join(projectRoot, 'SKILL.md'), skillMarkdown('project-skill', 'Survives.'), 'utf8');
+    const runtime = new AgentSkillRuntime({
+      localRoot: fixture.workspace,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+      managedSkillContentRoot: fixture.contentRoot,
+      managedSkillRoots: async () => [
+        { id: 'present', name: 'present', rootDir: fixture.versionRoot, contentHash: fixture.hash },
+        {
+          id: 'vanished',
+          name: 'vanished',
+          rootDir: path.join(fixture.contentRoot, 'vanished', fixture.hash),
+          contentHash: fixture.hash,
+        },
+      ],
+      assertManagedSkillInvocable: async () => undefined,
+    });
+
+    expect((await runtime.listAllSkills()).map((skill) => skill.name).sort())
+      .toEqual(['present', 'project-skill']);
+  });
 });
 
 async function managedFixture(name: string) {

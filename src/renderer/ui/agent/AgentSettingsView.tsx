@@ -37,6 +37,8 @@ import { SettingsPreviewSection } from './SettingsPreviewSection';
 import { SettingsAboutSection } from './SettingsAboutSection';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
+import { createSerialMutationQueue } from '../../../core/serialMutationQueue';
+import { skillLibraryCount } from './skillLibraryCount';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -167,12 +169,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const latestDisabledSkillsRef = useRef<readonly string[]>([]);
   const skillDraftRef = useRef<SkillDraft>(EMPTY_SKILL_DRAFT);
   const skillDisabledTargetsRef = useRef(new Map<string, boolean>());
-  const skillDisableQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const skillDisableQueueRef = useRef(createSerialMutationQueue());
   // Every provider command returns a complete settings snapshot. Serialize those
   // responses as one family so an older Set active / Remove / Refresh response
   // cannot land after a newer enable toggle and replace that row with stale state.
   // Controls still move optimistically, so coordination never makes the UI inert.
-  const providerMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const providerMutationQueueRef = useRef(createSerialMutationQueue());
   const providerSettingsRef = useRef<AgentProviderSettingsView | null>(null);
   const providerEnabledTargetsRef = useRef(new Map<string, boolean>());
   const settingsRequestRef = useRef(0);
@@ -197,9 +199,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       .catch(() => { /* no badge */ });
     void Promise.all([allSkillsRequest, managedSkillsRequest])
       .then(([allSkills, managedSkills]) => {
-        if (active) {
-          setSkillCount(allSkills.filter((skill) => skill.source !== 'managed').length + managedSkills.length);
-        }
+        if (active) setSkillCount(skillLibraryCount(allSkills, managedSkills));
       })
       .catch(() => { /* the row falls back to zero rather than blocking the pane */ });
     return () => { active = false; };
@@ -450,7 +450,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     applySkillDisabledToView(skillName, disabled);
     setSkillToggleErrors((current) => withoutMapKey(current, skillName));
 
-    const run = skillDisableQueueRef.current.then(async () => {
+    return skillDisableQueueRef.current.run(async () => {
       const persisted = latestDisabledSkillsRef.current;
       const next = disabled
         ? [...new Set([...persisted, skillName])]
@@ -485,8 +485,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         return false;
       }
     });
-    skillDisableQueueRef.current = run.then(() => undefined, () => undefined);
-    return run;
   }
 
   /**
@@ -577,9 +575,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   }
 
   function enqueueProviderMutation<T>(action: () => Promise<T>): Promise<T> {
-    const run = providerMutationQueueRef.current.then(action, action);
-    providerMutationQueueRef.current = run.then(() => undefined, () => undefined);
-    return run;
+    return providerMutationQueueRef.current.run(action);
   }
 
   async function runProviderMutationStep(
@@ -738,7 +734,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 skillUpdateCount={skillUpdateCount}
               />
             ) : (
-              <SettingsPreviewSection onError={setError} onNotice={setNotice} />
+              <SettingsPreviewSection onError={setError} onNotice={setNotice} settings={settings} />
             )}
 
             {/* Pinned to the bottom of the pane rather than sitting at the end of
