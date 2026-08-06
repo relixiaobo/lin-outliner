@@ -1854,7 +1854,8 @@
 .thread-reasoning-chevron {
   flex: 0 0 auto;
   color: var(--text-faint);
-  transition: transform var(--motion-fast), color var(--motion-fast);
+  opacity: 0;
+  transition: transform var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
 }
 
 .thread-reasoning-chevron.is-expanded {
@@ -1862,8 +1863,10 @@
 }
 
 .thread-reasoning-toggle:hover .thread-reasoning-chevron,
-.thread-reasoning-toggle:focus-visible .thread-reasoning-chevron {
+.thread-reasoning-toggle:focus-visible .thread-reasoning-chevron,
+.thread-reasoning-toggle.is-expanded .thread-reasoning-chevron {
   color: var(--text-soft);
+  opacity: 1;
 }
 
 .thread-reasoning-body {

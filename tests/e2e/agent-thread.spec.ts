@@ -2764,7 +2764,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(thought.locator('.thread-reasoning-summary')).toHaveCSS('font-weight', '400');
     await expect(thought).toHaveAttribute('aria-expanded', 'false');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
-    await expect(thoughtChevron).toHaveCSS('opacity', '1');
+    await expect(thoughtChevron).toHaveCSS('opacity', '0');
     const activity = page.getByRole('button', { name: /^Ran a command · read / });
     const [thoughtBox, activityBox] = await Promise.all([thought.boundingBox(), activity.boundingBox()]);
     expect(thoughtBox).toBeTruthy();
@@ -2772,6 +2772,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(Math.abs(thoughtBox!.x - activityBox!.x)).toBeLessThan(1);
     await thought.hover();
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
+    expect(await thought.boundingBox()).toEqual(thoughtBox);
     await setTranscriptFollowingBottom(page);
     await toggleDisclosureWithStableAnchor(thought);
     await expect(thought).toHaveAttribute('aria-expanded', 'true');

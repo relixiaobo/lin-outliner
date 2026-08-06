@@ -75,7 +75,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   expansion wraps the complete line in place. When more provider content
   follows, the first line becomes the disclosure summary and expansion reveals
   only the remaining content, without repeating the summary; only the actual
-  tail Item streams. An empty live Item retains the `Thinking` placeholder
+  tail Item streams. A folded disclosure keeps its chevron hidden at rest and
+  reveals it on hover or keyboard focus without changing row geometry; an open
+  disclosure keeps the chevron visible. An empty live Item retains the
+  `Thinking` placeholder
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes

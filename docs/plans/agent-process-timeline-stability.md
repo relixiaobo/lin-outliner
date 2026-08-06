@@ -35,8 +35,10 @@ collapsed line locally and add a disclosure when it is visually truncated;
 expansion wraps the complete line in place. When content remains after that
 line, the direct summary becomes a disclosure and expansion renders only the
 remainder. Live reasoning starts folded; an explicit expansion remains
-authoritative as newer Items arrive. Preserve the lone resultless terminal
-reasoning default.
+authoritative as newer Items arrive. A folded disclosure hides its chevron until
+hover or keyboard focus while retaining the icon's layout slot; an expanded
+disclosure keeps it visible. Preserve the lone resultless terminal reasoning
+default.
 
 Provider timelines may contain empty commentary Items between tool and
 reasoning Items. Keep those Items in the grouping projection, but render no DOM
